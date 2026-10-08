@@ -588,6 +588,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(PIN_USER_BTN_ANA)
   analog_btn.begin();
 #endif
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  encoder_btn.begin();
+#endif
 
   _node_prefs = node_prefs;
 
@@ -778,6 +781,14 @@ void UITask::loop() {
     } else if (rotaryEv == RotaryInputEvent::Prev) {
       c = KEY_PREV;
     }
+  }
+#endif
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  int enc_ev = encoder_btn.check();
+  if (enc_ev == BUTTON_EVENT_CLICK) {
+    c = checkDisplayOn(KEY_ENTER);
+  } else if (enc_ev == BUTTON_EVENT_LONG_PRESS) {
+    c = handleLongPress(KEY_ENTER);
   }
 #endif
 #if defined(PIN_USER_BTN_ANA)
