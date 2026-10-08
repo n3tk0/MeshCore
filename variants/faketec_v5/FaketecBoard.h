@@ -6,9 +6,9 @@
 
 #define  PIN_VBAT_READ 17  // P0.31 / AIN7
 
-// mV per raw 12-bit count = (3600 / 4096) * divider ratio.
-// 1.815 matches the stock Faketec/ProMicro 1:1 divider (e.g. 1M/1M); change it here,
-// with -D ADC_MULTIPLIER=..., or at runtime via the CLI 'set adc.multiplier'.
+// mV per raw 12-bit count. Theory: (3600 / 4096) * (R1 + R2) / R2, i.e. 1.758 for a 1:1
+// divider; 1.815 is the value calibrated on the stock ProMicro/Faketec 1:1 divider.
+// Override with -D ADC_MULTIPLIER=..., or at runtime via the CLI 'set adc.multiplier'.
 #ifndef ADC_MULTIPLIER
   #define  ADC_MULTIPLIER   (1.815f)
 #endif
@@ -21,6 +21,7 @@ protected:
 public:
   FaketecBoard() : NRF52Board("Faketec_OTA") {}
   void begin();
+  void powerOff() override;
 
   #define BATTERY_SAMPLES 8
 

@@ -15,6 +15,7 @@ public:
   bool begin() override;
   RotaryInputEvent poll() override;
   bool isReady() const override { return _ready; }
+  void end();  // detach interrupts and drop pull-ups (e.g. before system off)
 
 private:
   static void onEdge();
@@ -28,7 +29,9 @@ private:
 
   volatile uint8_t _state = 0x03;
   volatile int8_t _accum = 0;
-  volatile int8_t _pending = 0;
+  // written only by the ISR, read by poll(); single-byte counters need no IRQ masking
+  volatile uint8_t _fwd_count = 0, _back_count = 0;
+  uint8_t _fwd_seen = 0, _back_seen = 0;
 
   static QuadratureRotaryInput* _instance;
 };

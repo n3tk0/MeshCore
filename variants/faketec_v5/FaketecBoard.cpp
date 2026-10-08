@@ -2,6 +2,7 @@
 #include <Wire.h>
 
 #include "FaketecBoard.h"
+#include "target.h"
 
 void FaketecBoard::begin() {    
     NRF52Board::begin();
@@ -22,4 +23,11 @@ void FaketecBoard::begin() {
     pinMode(SX126X_POWER_EN, OUTPUT);
     digitalWrite(SX126X_POWER_EN, HIGH);
     delay(10);   // give sx1262 some time to power up
+}
+
+void FaketecBoard::powerOff() {
+#if defined(UI_HAS_ROTARY_INPUT)
+  ((QuadratureRotaryInput&)rotary_input).end();   // no pull-up current through a closed encoder contact
+#endif
+  NRF52Board::powerOff();
 }
