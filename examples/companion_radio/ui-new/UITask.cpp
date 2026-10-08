@@ -23,7 +23,7 @@
   #define UI_RECENT_LIST_SIZE 4
 #endif
 
-#if UI_HAS_JOYSTICK
+#if UI_HAS_JOYSTICK || (defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN))
   #define PRESS_LABEL "press Enter"
 #else
   #define PRESS_LABEL "long press"
@@ -437,6 +437,10 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (c == KEY_CANCEL) {   // back: return to the first page
+      _page = HomePage::FIRST;
+      return true;
+    }
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
@@ -570,6 +574,10 @@ public:
     }
     if (c == KEY_ENTER) {
       num_unread = 0;  // clear unread queue
+      _task->gotoHomeScreen();
+      return true;
+    }
+    if (c == KEY_CANCEL) {   // back: leave the preview, keep unread messages
       _task->gotoHomeScreen();
       return true;
     }
@@ -761,6 +769,22 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
     c = handleTripleClick(KEY_SELECT);
   }
+#elif defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  // encoder push = Enter, user button = Back. Multi-clicks (incl. contact bounce)
+  // collapse into one key press.
+  int ev = encoder_btn.check();
+  if (ev == BUTTON_EVENT_CLICK || ev == BUTTON_EVENT_DOUBLE_CLICK || ev == BUTTON_EVENT_TRIPLE_CLICK) {
+    c = checkDisplayOn(KEY_ENTER);
+  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+    c = checkDisplayOn(KEY_ENTER);
+    if (c) c = handleLongPress(KEY_ENTER);
+  }
+  ev = user_btn.check();
+  if (ev == BUTTON_EVENT_CLICK || ev == BUTTON_EVENT_DOUBLE_CLICK || ev == BUTTON_EVENT_TRIPLE_CLICK) {
+    c = checkDisplayOn(KEY_CANCEL);
+  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+    c = handleLongPress(checkDisplayOn(KEY_CANCEL));
+  }
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -774,21 +798,13 @@ void UITask::loop() {
   }
 #endif
 #if defined(UI_HAS_ROTARY_INPUT)
-  RotaryInputEvent rotaryEv = rotary_input.poll();
-  if (c == 0 && _display != NULL && _display->isOn()) {
+  if (c == 0) {   // leave queued steps for the next loop if a button already produced a key
+    RotaryInputEvent rotaryEv = rotary_input.poll();
     if (rotaryEv == RotaryInputEvent::Next) {
-      c = KEY_NEXT;
+      c = checkDisplayOn(KEY_NEXT);
     } else if (rotaryEv == RotaryInputEvent::Prev) {
-      c = KEY_PREV;
+      c = checkDisplayOn(KEY_PREV);
     }
-  }
-#endif
-#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
-  int enc_ev = encoder_btn.check();
-  if (enc_ev == BUTTON_EVENT_CLICK) {
-    c = checkDisplayOn(KEY_ENTER);
-  } else if (enc_ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_ENTER);
   }
 #endif
 #if defined(PIN_USER_BTN_ANA)

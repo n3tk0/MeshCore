@@ -6,7 +6,7 @@
   #define QRI_ISR_ATTR
 #endif
 
-#define QRI_MAX_PENDING  8
+#define QRI_MAX_PENDING  8   // steps queued beyond this are dropped
 
 QuadratureRotaryInput* QuadratureRotaryInput::_instance = nullptr;
 
@@ -29,7 +29,8 @@ bool QuadratureRotaryInput::begin() {
 
   _state = readState();
   _accum = 0;
-  _pending = 0;
+  _fwd_seen = _fwd_count;
+  _back_seen = _back_count;
   _instance = this;
 
   attachInterrupt(digitalPinToInterrupt(_pin_a), onEdge, CHANGE);
@@ -67,12 +68,17 @@ QRI_ISR_ATTR void QuadratureRotaryInput::handleEdge() {
   }
   _accum = acc;
 
-  if (step != 0) {
-    int8_t p = _pending + step;
-    if (p > QRI_MAX_PENDING) p = QRI_MAX_PENDING;
-    if (p < -QRI_MAX_PENDING) p = -QRI_MAX_PENDING;
-    _pending = p;
-  }
+  if (step > 0) _fwd_count++;
+  else if (step < 0) _back_count++;
+}
+
+void QuadratureRotaryInput::end() {
+  if (!_ready) return;
+  detachInterrupt(digitalPinToInterrupt(_pin_a));
+  detachInterrupt(digitalPinToInterrupt(_pin_b));
+  pinMode(_pin_a, INPUT);
+  pinMode(_pin_b, INPUT);
+  _ready = false;
 }
 
 RotaryInputEvent QuadratureRotaryInput::poll() {
@@ -81,11 +87,14 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
     return RotaryInputEvent::None;
   }
 
+  uint8_t fwd = (uint8_t)(_fwd_count - _fwd_seen);
+  uint8_t back = (uint8_t)(_back_count - _back_seen);
+  if (fwd > QRI_MAX_PENDING) { _fwd_seen += fwd - QRI_MAX_PENDING; fwd = QRI_MAX_PENDING; }
+  if (back > QRI_MAX_PENDING) { _back_seen += back - QRI_MAX_PENDING; back = QRI_MAX_PENDING; }
+
   int8_t dir = 0;
-  noInterrupts();
-  if (_pending > 0) { _pending--; dir = 1; }
-  else if (_pending < 0) { _pending++; dir = -1; }
-  interrupts();
+  if (fwd > 0 && fwd >= back) { _fwd_seen++; dir = 1; }
+  else if (back > 0) { _back_seen++; dir = -1; }
 
   if (dir == 0) return RotaryInputEvent::None;
   if (_reverse) dir = -dir;

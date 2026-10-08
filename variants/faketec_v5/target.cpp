@@ -33,8 +33,8 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
   static QuadratureRotaryInput rotaryInputImpl(PIN_ENCODER_A, PIN_ENCODER_B, ENCODER_STEPS_PER_DETENT, ENCODER_REVERSE);
   RotaryInput& rotary_input = rotaryInputImpl;
   #if defined(PIN_ENCODER_BTN)
-    // no multi-click, so a click is reported immediately as Enter
-    MomentaryButton encoder_btn(PIN_ENCODER_BTN, 1000, true, true, false);
+    // multi-click window doubles as debounce; UITask maps any click count to a single Enter
+    MomentaryButton encoder_btn(PIN_ENCODER_BTN, 1000, true, true);
   #endif
 #endif
 
