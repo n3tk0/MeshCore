@@ -40,8 +40,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 // UART pin definition
 
-#define PIN_SERIAL1_TX       (1)
-#define PIN_SERIAL1_RX       (0)
+#define PIN_SERIAL1_TX       (3)   // P0.20, GPS header (P0.06/P0.08 drive the T3/T2 MOSFET gates)
+#define PIN_SERIAL1_RX       (4)   // P0.22, GPS header
 
 ////////////////////////////////////////////////////////////////////////////////
 // I2C pin definition
@@ -86,8 +86,9 @@
 #define PIN_ENCODER_B        (19)  // P1.02
 #define PIN_ENCODER_BTN      (23)  // P1.07
 
-// Vibration motor: PIN_VIBRATION is set from platformio.ini (default 9 = P1.06),
-// driving the gate of a low-side N-MOSFET.
+// Vibration motor: PIN_VIBRATION is set from platformio.ini (default 0 = P0.08 = T2G,
+// gate of the on-board T2 MOSFET footprint). Other Faketec MOSFET gates: T1G = P0.24
+// (shared with PIN_GPS_EN), T3G = P0.06.
 
 //////////////////////////////////////////////////////////////////////////////
 // LoRa
