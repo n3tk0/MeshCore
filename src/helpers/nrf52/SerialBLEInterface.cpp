@@ -29,7 +29,7 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   if (instance) {
     instance->_conn_handle = connection_handle;
     instance->_isDeviceConnected = false;
-    instance->clearBuffers();
+    instance->requestFlush();
   }
 }
 
@@ -39,7 +39,7 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     if (instance->_conn_handle == connection_handle) {
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
       instance->_isDeviceConnected = false;
-      instance->clearBuffers();
+      instance->requestFlush();
     }
   }
 }
@@ -201,9 +201,11 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
 
 }
 
+// loop() context only
 void SerialBLEInterface::clearBuffers() {
+  _flush_req = false;
   send_queue_len = 0;
-  recv_queue_len = 0;
+  recv_head = recv_tail;   // consumer side: drop everything queued so far
   _last_retry_attempt = 0;
   bleuart.flush();
 }
@@ -217,14 +219,6 @@ void SerialBLEInterface::shiftSendQueueLeft() {
   }
 }
 
-void SerialBLEInterface::shiftRecvQueueLeft() {
-  if (recv_queue_len > 0) {
-    recv_queue_len--;
-    for (uint8_t i = 0; i < recv_queue_len; i++) {
-      recv_queue[i] = recv_queue[i + 1];
-    }
-  }
-}
 
 bool SerialBLEInterface::isValidConnection(uint16_t handle, bool requireWaitingForSecurity) const {
   if (_conn_handle != handle) {
@@ -296,6 +290,10 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  if (_flush_req) {
+    clearBuffers();
+  }
+
   if (send_queue_len > 0) {
     if (!isConnected()) {
       BLE_DEBUG_PRINTLN("writeBytes: connection invalid, clearing send queue");
@@ -330,13 +328,15 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     }
   }
   
-  if (recv_queue_len > 0) {
-    size_t len = recv_queue[0].len;
-    memcpy(dest, recv_queue[0].buf, len);
+  uint8_t head = recv_head;
+  if (head != recv_tail) {
+    size_t len = recv_queue[head].len;
+    memcpy(dest, recv_queue[head].buf, len);
     
     BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
     
-    shiftRecvQueueLeft();
+    __DMB();   // finish reading the slot before handing it back to the producer
+    recv_head = (head + 1) % FRAME_QUEUE_SIZE;
     return len;
   }
   
@@ -370,7 +370,9 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
   }
   
   while (instance->bleuart.available() > 0) {
-    if (instance->recv_queue_len >= FRAME_QUEUE_SIZE) {
+    uint8_t tail = instance->recv_tail;
+    uint8_t next = (tail + 1) % FRAME_QUEUE_SIZE;
+    if (next == instance->recv_head) {   // ring full
       while (instance->bleuart.available() > 0) {
         instance->bleuart.read();
       }
@@ -391,9 +393,10 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
     }
     
     int read_len = avail;
-    instance->recv_queue[instance->recv_queue_len].len = read_len;
-    instance->bleuart.readBytes(instance->recv_queue[instance->recv_queue_len].buf, read_len);
-    instance->recv_queue_len++;
+    instance->recv_queue[tail].len = read_len;
+    instance->bleuart.readBytes(instance->recv_queue[tail].buf, read_len);
+    __DMB();   // publish the slot contents before the new tail
+    instance->recv_tail = next;
   }
 }
 
