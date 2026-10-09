@@ -19,6 +19,8 @@ class MomentaryButton {
   unsigned long _last_click_time;
   int _multi_click_window;
   bool _pending_click;
+  uint8_t _debounce_ms = 0;
+  unsigned long _last_change = 0;
 
   bool isPressed(int level) const;
 
@@ -27,7 +29,8 @@ public:
   MomentaryButton(int8_t pin, int long_press_mills, int analog_threshold);
   void begin();
   int check(bool repeat_click=false);  // returns one of BUTTON_EVENT_*
-  void cancelClick();  // suppress next BUTTON_EVENT_CLICK (if already in DOWN state)
+  void cancelClick();
+  void setDebounce(uint8_t ms) { _debounce_ms = ms; }  // ignore level changes within ms of the last one  // suppress next BUTTON_EVENT_CLICK (if already in DOWN state)
   uint8_t getPin() { return _pin; }
   bool isPressed() const;
 };
