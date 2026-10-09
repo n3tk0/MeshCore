@@ -15,7 +15,7 @@ public:
   bool begin() override;
   RotaryInputEvent poll() override;
   bool isReady() const override { return _ready; }
-  void end();  // detach interrupts and drop pull-ups (e.g. before system off)
+  void end() override;  // detach interrupts and drop pull-ups
 
 private:
   static void onEdge();

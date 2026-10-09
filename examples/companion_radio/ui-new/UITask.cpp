@@ -608,6 +608,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 #if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
   encoder_btn.begin();
+  encoder_btn.setDebounce(15);
+  user_btn.setDebounce(15);
 #endif
 
   _node_prefs = node_prefs;
@@ -782,21 +784,26 @@ void UITask::loop() {
     c = handleTripleClick(KEY_SELECT);
   }
 #elif defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
-  // encoder push = Enter, user button = Back. Multi-clicks (incl. contact bounce)
-  // collapse into one key press.
+  // encoder push = Enter, user button = Back
   int ev = encoder_btn.check();
-  if (ev == BUTTON_EVENT_CLICK || ev == BUTTON_EVENT_DOUBLE_CLICK || ev == BUTTON_EVENT_TRIPLE_CLICK) {
+  if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_ENTER);
   } else if (ev == BUTTON_EVENT_LONG_PRESS) {
     c = checkDisplayOn(KEY_ENTER);
     if (c) c = handleLongPress(KEY_ENTER);
   }
-  ev = user_btn.check();
-  if (ev == BUTTON_EVENT_CLICK || ev == BUTTON_EVENT_DOUBLE_CLICK || ev == BUTTON_EVENT_TRIPLE_CLICK) {
-    c = checkDisplayOn(KEY_CANCEL);
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(checkDisplayOn(KEY_CANCEL));
+  if (c == 0) {   // one key per loop; Back is picked up on the next pass
+    ev = user_btn.check();
+    if (ev == BUTTON_EVENT_CLICK) {
+      c = checkDisplayOn(KEY_CANCEL);
+    } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+      c = checkDisplayOn(KEY_CANCEL);
+      if (c) c = handleLongPress(KEY_CANCEL);
+    }
   }
+#ifdef PIN_VIBRATION
+  if (c != 0) vibration.pulse(UI_HAPTIC_CLICK_MS);
+#endif
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -809,13 +816,25 @@ void UITask::loop() {
     c = handleTripleClick(KEY_SELECT);
   }
 #endif
-#if defined(UI_HAS_ROTARY_INPUT)
-  if (c == 0) {   // leave queued steps for the next loop if a button already produced a key
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  if (c == 0) {   // steps are queued by the ISR, so they wait while a button produced a key
     RotaryInputEvent rotaryEv = rotary_input.poll();
     if (rotaryEv == RotaryInputEvent::Next) {
       c = checkDisplayOn(KEY_NEXT);
     } else if (rotaryEv == RotaryInputEvent::Prev) {
       c = checkDisplayOn(KEY_PREV);
+    }
+  #ifdef PIN_VIBRATION
+    if (c != 0) vibration.pulse(UI_HAPTIC_TICK_MS);
+  #endif
+  }
+#elif defined(UI_HAS_ROTARY_INPUT)
+  RotaryInputEvent rotaryEv = rotary_input.poll();
+  if (c == 0 && _display != NULL && _display->isOn()) {
+    if (rotaryEv == RotaryInputEvent::Next) {
+      c = KEY_NEXT;
+    } else if (rotaryEv == RotaryInputEvent::Prev) {
+      c = KEY_PREV;
     }
   }
 #endif
@@ -846,13 +865,6 @@ void UITask::loop() {
   }
 #endif
 
-#ifdef PIN_VIBRATION
-  if (c == KEY_NEXT || c == KEY_PREV) {
-    vibration.pulse(UI_HAPTIC_TICK_MS);
-  } else if (c != 0) {
-    vibration.pulse(UI_HAPTIC_CLICK_MS);
-  }
-#endif
   if (c != 0 && curr) {
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer

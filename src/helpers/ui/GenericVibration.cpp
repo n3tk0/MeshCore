@@ -26,8 +26,10 @@ void GenericVibration::trigger() {
 
 void GenericVibration::pulse(uint16_t millis_on) {
   if (isVibrating() || millis_on == 0) return;
-  pulse_until = millis() + millis_on;
-  if (pulse_until == 0) pulse_until = 1;
+  unsigned long until = millis() + millis_on;
+  if (until == 0) until = 1;
+  if (pulse_until && (long)(pulse_until - until) >= 0) return;   // longer pulse already running
+  pulse_until = until;
   drive(true);
 }
 

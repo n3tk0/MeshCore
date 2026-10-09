@@ -67,7 +67,8 @@ int MomentaryButton::check(bool repeat_click) {
 
   int event = BUTTON_EVENT_NONE;
   int btn = _threshold > 0 ? (analogRead(_pin) < _threshold) : digitalRead(_pin);
-  if (btn != prev) {
+  if (btn != prev && (_debounce_ms == 0 || (unsigned long)(millis() - _last_change) >= _debounce_ms)) {
+    _last_change = millis();
     if (isPressed(btn)) {
       down_at = millis();
     } else {

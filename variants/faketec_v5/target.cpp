@@ -20,7 +20,11 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
-  MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true);
+  #if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+    MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true, false);   // Back: no multi-click delay
+  #else
+    MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true);
+  #endif
 #endif
 
 #if defined(UI_HAS_ROTARY_INPUT)
@@ -33,8 +37,8 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
   static QuadratureRotaryInput rotaryInputImpl(PIN_ENCODER_A, PIN_ENCODER_B, ENCODER_STEPS_PER_DETENT, ENCODER_REVERSE);
   RotaryInput& rotary_input = rotaryInputImpl;
   #if defined(PIN_ENCODER_BTN)
-    // multi-click window doubles as debounce; UITask maps any click count to a single Enter
-    MomentaryButton encoder_btn(PIN_ENCODER_BTN, 1000, true, true);
+    // no multi-click: every press is reported at once; contact bounce is filtered by setDebounce()
+    MomentaryButton encoder_btn(PIN_ENCODER_BTN, 1000, true, true, false);
   #endif
 #endif
 
