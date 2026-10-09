@@ -194,6 +194,9 @@ void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, co
   contact.type = frame[i++];
   contact.flags = frame[i++];
   contact.out_path_len = frame[i++];
+  if (contact.out_path_len != OUT_PATH_UNKNOWN && !mesh::Packet::isValidPathLen(contact.out_path_len)) {
+    contact.out_path_len = OUT_PATH_UNKNOWN;   // bad encoding, fall back to flood
+  }
   memcpy(contact.out_path, &frame[i], MAX_PATH_SIZE);
   i += MAX_PATH_SIZE;
   memcpy(contact.name, &frame[i], 32);
