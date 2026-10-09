@@ -86,6 +86,9 @@
 #define PIN_ENCODER_B        (19)  // P1.02
 #define PIN_ENCODER_BTN      (23)  // P1.07
 
+// Vibration motor: PIN_VIBRATION is set from platformio.ini (default 9 = P1.06),
+// driving the gate of a low-side N-MOSFET.
+
 //////////////////////////////////////////////////////////////////////////////
 // LoRa
 

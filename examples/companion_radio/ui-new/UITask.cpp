@@ -19,6 +19,16 @@
 
 #define LONG_PRESS_MILLIS   1200
 
+#ifndef UI_HAPTIC_CLICK_MS
+  #define UI_HAPTIC_CLICK_MS  25    // key press feedback (0 = off)
+#endif
+#ifndef UI_HAPTIC_TICK_MS
+  #define UI_HAPTIC_TICK_MS   0     // per encoder detent (0 = off)
+#endif
+#ifndef UI_HAPTIC_ACK_MS
+  #define UI_HAPTIC_ACK_MS    120   // action confirmed (e.g. advert sent)
+#endif
+
 #ifndef UI_RECENT_LIST_SIZE
   #define UI_RECENT_LIST_SIZE 4
 #endif
@@ -652,8 +662,10 @@ switch(t){
 #endif
 
 #ifdef PIN_VIBRATION
-  // Trigger vibration for all UI events except none
-  if (t != UIEventType::none) {
+  if (t == UIEventType::ack) {
+    vibration.pulse(UI_HAPTIC_ACK_MS);   // confirmation of a local action: one short buzz
+  } else if (t != UIEventType::none) {
+    // Trigger vibration for all other UI events except none
     vibration.trigger();
   }
 #endif
@@ -834,6 +846,13 @@ void UITask::loop() {
   }
 #endif
 
+#ifdef PIN_VIBRATION
+  if (c == KEY_NEXT || c == KEY_PREV) {
+    vibration.pulse(UI_HAPTIC_TICK_MS);
+  } else if (c != 0) {
+    vibration.pulse(UI_HAPTIC_CLICK_MS);
+  }
+#endif
   if (c != 0 && curr) {
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
