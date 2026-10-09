@@ -677,6 +677,9 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
 }
 
 void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) {
+  // largest header below is 8 bytes (status response) + (len - 4) payload bytes; a max-size
+  // decrypted response (176 bytes, incl. zero padding) would otherwise run past out_frame
+  if (len > MAX_FRAME_SIZE - 4) len = MAX_FRAME_SIZE - 4;
   uint32_t tag;
   memcpy(&tag, data, 4);
 
@@ -1131,7 +1134,7 @@ void MyMesh::handleCmdFrame(size_t len) {
                         ? ERR_CODE_NOT_FOUND
                         : ERR_CODE_UNSUPPORTED_CMD); // unknown recipient, or unsupported TXT_TYPE_*
     }
-  } else if (cmd_frame[0] == CMD_SEND_CHANNEL_TXT_MSG) { // send GroupChannel text msg
+  } else if (cmd_frame[0] == CMD_SEND_CHANNEL_TXT_MSG && len >= 7) { // send GroupChannel text msg
     int i = 1;
     uint8_t txt_type = cmd_frame[i++]; // should be TXT_TYPE_PLAIN
     uint8_t channel_idx = cmd_frame[i++];
