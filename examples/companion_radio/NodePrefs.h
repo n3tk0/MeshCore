@@ -44,6 +44,8 @@ public:
   int8_t  ui_tz = 0;             // encoder UI: clock offset from UTC in hours
   uint8_t ui_off = 0;            // encoder UI: screen timeout index (15s/30s/1m/5m)
   uint8_t ui_lang = 0;           // encoder UI: language 0=BG, 1=EN
+  uint8_t ui_enc_rev = 0;        // encoder UI: 1 = turn direction flipped vs. the build default
+  uint8_t ui_enc_steps = 0;      // encoder UI: transitions per detent (2 or 4), 0 = build default
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -123,6 +125,8 @@ private:
       def("ui_tz", _parent->ui_tz);
       def("ui_off", _parent->ui_off);
       def("ui_lang", _parent->ui_lang);
+      def("ui_enc_rev", _parent->ui_enc_rev);
+      def("ui_enc_steps", _parent->ui_enc_steps);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }

@@ -101,6 +101,7 @@ public:
   bool getGPSState();
   void toggleGPS();
   void hibernate();
+  void applyEncoderPrefs();   // turn direction and steps per detent from NodePrefs
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
