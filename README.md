@@ -1,3 +1,53 @@
+> **This is a fork of [meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore).**
+> It tracks upstream and adds a Faketec v5 companion build with an encoder-driven UI, plus a few robustness fixes.
+> Everything below "About MeshCore" is the upstream README. For general MeshCore support, issues and contributions, please use the upstream repository.
+
+## 🍴 What this fork adds
+
+### Faketec v5 companion with encoder UI
+
+A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/MOSFET, with a local screen and jog-dial controls so the node can be used without a phone.
+
+| Part | Used here |
+|---|---|
+| MCU | Nice!Nano v2 / nRF52840 Pro Micro clone |
+| Radio | Heltec HT-RA62 (SX1262) |
+| Display | 128x64 SSD1306 I2C OLED (e.g. WINSTAR WEA012864) |
+| Encoder | Quadrature rotary encoder with push switch (e.g. ZIPPY AN-P1S-2SP-Z) |
+| Haptics | 3 V coin vibration motor on the board's T2 MOSFET footprint (optional) |
+| Power | 1S LiPo straight from the controller's charger, battery read through a divider |
+
+**Wiring**
+
+| Function | Pin |
+|---|---|
+| Encoder A / B | P1.01 / P1.02 (common to GND) |
+| Encoder push | P1.07 |
+| User button (Back) | P1.00 |
+| OLED SDA / SCL | P1.04 / P0.11 (board I2C) |
+| Vibration motor | T2 gate = P0.08, motor between B+ and drain pad J7, flyback diode across the motor |
+
+**Firmware**
+
+- Variant: [`variants/faketec_v5`](./variants/faketec_v5), environments `Faketec_v5_companion_radio_ble` and `Faketec_v5_companion_radio_usb`.
+- UI: [`examples/companion_radio/ui-encoder`](./examples/companion_radio/ui-encoder), a Sony Ericsson Z7-style jog-dial interface:
+  turn = move / next status card, push = open, hold push = quick menu, BTN = back (in standby: screen off), hold BTN = standby from anywhere.
+- Cyrillic font (`-D DISPLAY_CYRILLIC`) and a Bulgarian / English language setting in the menu.
+- Haptic feedback patterns via `-D PIN_VIBRATION` (`-D VIBRATION_PWM=190` keeps the motor near 3.1 V on a full LiPo). Remove the flag to build without a motor.
+- Since there is no BMS, the node hibernates below `AUTO_SHUTDOWN_MILLIVOLTS` (3300 mV). Adjust `-D ADC_MULTIPLIER` (or the CLI `set adc.multiplier`) to match your divider.
+- Encoder tuning: `-D ENCODER_STEPS_PER_DETENT=2` if the menu moves only every second click, `-D ENCODER_REVERSE=true` if the direction is inverted.
+
+Build with PlatformIO, e.g. `pio run -e Faketec_v5_companion_radio_ble`, then flash the resulting UF2 by double-tapping reset and copying it to the bootloader drive.
+
+### Robustness fixes
+
+- **I2C hang guards.** New opt-in flags `-D DISABLE_RTC_AUTODISCOVERY` and `-D DISABLE_ENV_SENSORS` skip the boot-time I2C probes. The nRF52 Wire driver has no timeout, so a missing or misbehaving device on the bus can otherwise hang boot. Recommended for boards with no RTC or environment sensors.
+- **Malformed frame hardening.** Length checks before parsing frames from the companion app and packets from the radio, so short frames can no longer underflow length arithmetic; a lock-free BLE RX ring on nRF52.
+- **Atomic saves on nRF52.** Contacts, channels and preferences are written to a temp file and renamed, so a reset or brown-out during a save no longer corrupts them.
+- **Display off before sleep.** The OLED is put to sleep before the MCU enters SYSTEMOFF, so it does not keep drawing current from the battery.
+
+> Status: the Faketec v5 build compiles but has not been tested on hardware yet.
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
