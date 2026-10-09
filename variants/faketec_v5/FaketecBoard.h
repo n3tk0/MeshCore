@@ -7,7 +7,7 @@
 #define  PIN_VBAT_READ 17  // P0.31 / AIN7
 
 // mV per raw 12-bit count. Theory: (3600 / 4096) * (R1 + R2) / R2, i.e. 1.758 for a 1:1
-// divider; 1.815 is the value calibrated on the stock ProMicro/Faketec 1:1 divider.
+// divider; 1.815 is the value calibrated on the stock Faketec 1:1 divider (R4/R5 10M/10M, C1 100nF).
 // Override with -D ADC_MULTIPLIER=..., or at runtime via the CLI 'set adc.multiplier'.
 #ifndef ADC_MULTIPLIER
   #define  ADC_MULTIPLIER   (1.815f)
