@@ -751,6 +751,9 @@ void UITask::shutdown(bool restart){
 }
 
 bool UITask::isButtonPressed() const {
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  if (encoder_btn.isPressed()) return true;
+#endif
 #ifdef PIN_USER_BTN
   return user_btn.isPressed();
 #else
