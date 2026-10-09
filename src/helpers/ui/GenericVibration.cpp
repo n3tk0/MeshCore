@@ -15,17 +15,30 @@ void GenericVibration::begin() {
   digitalWrite(PIN_VIBRATION, LOW);
   duration = 0;
   pulse_until = 0;
+  step_count = 0;
+}
+
+void GenericVibration::playPattern(const uint16_t* seq, uint8_t count) {
+  if (isVibrating() || count == 0) return;
+  if (count > VIBRATION_MAX_STEPS) count = VIBRATION_MAX_STEPS;
+  memcpy(steps, seq, count * sizeof(uint16_t));
+  step_count = count;
+  step_idx = 0;
+  step_started = millis();
+  pulse_until = 0;
+  drive(true);
 }
 
 void GenericVibration::trigger() {
   pulse_until = 0;
+  step_count = 0;
   duration = millis();
   pattern_on = true;
   drive(true);
 }
 
 void GenericVibration::pulse(uint16_t millis_on) {
-  if (isVibrating() || millis_on == 0) return;
+  if (isVibrating() || step_count || millis_on == 0) return;
   unsigned long until = millis() + millis_on;
   if (until == 0) until = 1;
   if (pulse_until && (long)(pulse_until - until) >= 0) return;   // longer pulse already running
@@ -34,6 +47,18 @@ void GenericVibration::pulse(uint16_t millis_on) {
 }
 
 void GenericVibration::loop() {
+  if (step_count) {
+    if (millis() - step_started >= steps[step_idx]) {
+      step_started = millis();
+      step_idx++;
+      if (step_idx >= step_count) {
+        step_count = 0;
+        drive(false);
+      } else {
+        drive((step_idx & 1) == 0);   // even steps on, odd steps off
+      }
+    }
+  }
   if (pulse_until && (long)(millis() - pulse_until) >= 0) {
     pulse_until = 0;
     if (!isVibrating()) drive(false);
@@ -55,6 +80,7 @@ bool GenericVibration::isVibrating() {
 void GenericVibration::stop() {
   duration = 0;
   pulse_until = 0;
+  step_count = 0;
   drive(false);
 }
 

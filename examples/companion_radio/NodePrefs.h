@@ -40,6 +40,9 @@ public:
   uint8_t autoadd_max_hops = 0;  // 0 = no limit, 1 = direct (0 hops), N = up to N-1 hops (max 64)
   char default_scope_name[31];
   uint8_t default_scope_key[16];
+  uint8_t ui_dots = 0;           // encoder UI: page dots 0=bottom, 1=right, 2=hidden
+  int8_t  ui_tz = 0;             // encoder UI: clock offset from UTC in hours
+  uint8_t ui_off = 0;            // encoder UI: screen timeout index (15s/30s/1m/5m)
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -115,6 +118,9 @@ private:
       def("tel_base", _parent->telemetry_mode_base);
       def("tel_loc", _parent->telemetry_mode_loc);
       def("tel_env", _parent->telemetry_mode_env);
+      def("ui_dots", _parent->ui_dots);
+      def("ui_tz", _parent->ui_tz);
+      def("ui_off", _parent->ui_off);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }

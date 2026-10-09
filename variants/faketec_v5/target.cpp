@@ -21,7 +21,7 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
   #if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
-    MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true, false);   // Back: no multi-click delay
+    MomentaryButton user_btn(PIN_USER_BTN, 800, true, true, false);   // Back: no multi-click delay
   #else
     MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true);
   #endif
@@ -38,7 +38,7 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
   RotaryInput& rotary_input = rotaryInputImpl;
   #if defined(PIN_ENCODER_BTN)
     // no multi-click: every press is reported at once; contact bounce is filtered by setDebounce()
-    MomentaryButton encoder_btn(PIN_ENCODER_BTN, 1000, true, true, false);
+    MomentaryButton encoder_btn(PIN_ENCODER_BTN, 800, true, true, false);
   #endif
 #endif
 
