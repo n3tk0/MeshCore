@@ -48,7 +48,7 @@
 
 #define WIRE_INTERFACES_COUNT 2
 
-#define PIN_WIRE_SDA         (6)
+#define PIN_WIRE_SDA         (8)    // P1.04, same as PIN_BOARD_SDA (pin 6 is the BTN)
 #define PIN_WIRE_SCL         (7)
 #define PIN_WIRE1_SDA        (13)
 #define PIN_WIRE1_SCL        (14)

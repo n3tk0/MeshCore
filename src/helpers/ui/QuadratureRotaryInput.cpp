@@ -1,9 +1,11 @@
 #include "QuadratureRotaryInput.h"
 
 #if defined(ESP32)
-  #define QRI_ISR_ATTR IRAM_ATTR
+  #define QRI_ISR_ATTR  IRAM_ATTR
+  #define QRI_ISR_DATA  DRAM_ATTR
 #else
   #define QRI_ISR_ATTR
+  #define QRI_ISR_DATA
 #endif
 
 #define QRI_MAX_PENDING  8   // steps queued beyond this are dropped
@@ -12,7 +14,7 @@ QuadratureRotaryInput* QuadratureRotaryInput::_instance = nullptr;
 
 // indexed by (prev_state << 2) | new_state, state = (A << 1) | B
 // +1 / -1 for a valid Gray-code step, 0 for no change or an invalid (bounced) jump
-static const int8_t QRI_TRANSITIONS[16] = {
+static const int8_t QRI_ISR_DATA QRI_TRANSITIONS[16] = {
    0, -1,  1,  0,
    1,  0,  0, -1,
   -1,  0,  0,  1,
@@ -40,7 +42,7 @@ bool QuadratureRotaryInput::begin() {
   return true;
 }
 
-uint8_t QuadratureRotaryInput::readState() const {
+QRI_ISR_ATTR uint8_t QuadratureRotaryInput::readState() const {
   return (digitalRead(_pin_a) ? 0x02 : 0) | (digitalRead(_pin_b) ? 0x01 : 0);
 }
 
@@ -54,8 +56,10 @@ QRI_ISR_ATTR void QuadratureRotaryInput::handleEdge() {
   _state = s;
 
   int8_t step = 0;
-  if (s == 0x03) {
-    // detent / rest position: emit if we moved at least half a detent, then resync
+  // rest positions: 11 for full-step encoders, 11 and 00 for half-step (2 transitions per detent)
+  bool detent = (s == 0x03) || (_steps_per_detent == 2 && s == 0x00);
+  if (detent) {
+    // emit if we moved at least half a detent, then resync
     if (acc >= (int8_t)(_steps_per_detent / 2) && acc > 0) step = 1;
     else if (acc <= -(int8_t)(_steps_per_detent / 2) && acc < 0) step = -1;
     acc = 0;
