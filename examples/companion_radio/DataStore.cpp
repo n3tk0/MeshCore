@@ -42,6 +42,38 @@ static File openWrite(FILESYSTEM* fs, const char* filename) {
 #endif
 }
 
+// Rewrite 'filename' so that a reset or brown-out mid-write cannot leave it truncated or
+// missing. On nRF52 (LittleFS) the new content goes to '<filename>.tmp' and is renamed over
+// the original, which LittleFS does atomically. If there is no room for a second copy (eg. a
+// full contacts list on the 100KB ExtraFS), fall back to the old in-place rewrite.
+template <typename Writer>
+static bool saveFileSafely(FILESYSTEM* fs, const char* filename, Writer writer) {
+#if defined(NRF52_PLATFORM)
+  char tmp_name[48];
+  snprintf(tmp_name, sizeof(tmp_name), "%s.tmp", filename);
+  fs->remove(tmp_name);
+  File tmp = fs->open(tmp_name, FILE_O_WRITE);
+  if (tmp) {
+    bool ok = writer(tmp);
+    uint32_t expected = tmp.size();
+    tmp.close();   // close() flushes the last block; it can still fail when the FS is full
+    if (ok) {
+      File check = fs->open(tmp_name, FILE_O_READ);
+      ok = check && check.size() == expected;
+      if (check) check.close();
+    }
+    if (ok && fs->rename(tmp_name, filename)) return true;
+    fs->remove(tmp_name);
+    MESH_DEBUG_PRINTLN("saveFileSafely: no room for %s, rewriting in place", tmp_name);
+  }
+#endif
+  File file = openWrite(fs, filename);
+  if (!file) return false;
+  bool ok = writer(file);
+  file.close();
+  return ok;
+}
+
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   static uint32_t _ContactsChannelsTotalBlocks = 0;
 #endif
@@ -247,13 +279,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs) {
 }
 
 bool DataStore::savePrefs(NodePrefs& _prefs) {
-  File file = openWrite(_fs, "/prefs.json");
-  if (file) {
-    bool success = _prefs.saveSerial(file);
-    file.close();
-    return success;
-  }
-  return false;
+  return saveFileSafely(_fs, "/prefs.json", [&](File& file) { return _prefs.saveSerial(file); });
 }
 
 void DataStore::loadContacts(DataStoreHost* host) {
@@ -280,6 +306,9 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 
         if (!success) break; // EOF
 
+        if (c.out_path_len != OUT_PATH_UNKNOWN && !mesh::Packet::isValidPathLen(c.out_path_len)) {
+          c.out_path_len = OUT_PATH_UNKNOWN;   // corrupt entry, fall back to flood
+        }
         c.id = mesh::Identity(pub_key);
         if (!host->onContactLoaded(c)) full = true;
       }
@@ -288,8 +317,7 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
-  File file = openWrite(_getContactsChannelsFS(), "/contacts3");
-  if (file) {
+  saveFileSafely(_getContactsChannelsFS(), "/contacts3", [&](File& file) {
     uint32_t idx = 0;
     ContactInfo c;
     uint8_t unused = 0;
@@ -312,12 +340,12 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
       success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
       success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
 
-      if (!success) break; // write failed
+      if (!success) return false; // write failed, keep the previous file
 
       idx++;  // advance to next contact
     }
-    file.close();
-  }
+    return true;
+  });
 }
 
 void DataStore::loadChannels(DataStoreHost* host) {
@@ -346,8 +374,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
-  File file = openWrite(_getContactsChannelsFS(), "/channels2");
-  if (file) {
+  saveFileSafely(_getContactsChannelsFS(), "/channels2", [&](File& file) {
     uint8_t channel_idx = 0;
     ChannelDetails ch;
     uint8_t unused[4];
@@ -358,11 +385,11 @@ void DataStore::saveChannels(DataStoreHost* host) {
       success = success && (file.write((uint8_t *)ch.name, 32) == 32);
       success = success && (file.write((uint8_t *)ch.channel.secret, 32) == 32);
 
-      if (!success) break; // write failed
+      if (!success) return false; // write failed, keep the previous file
       channel_idx++;
     }
-    file.close();
-  }
+    return true;
+  });
 }
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

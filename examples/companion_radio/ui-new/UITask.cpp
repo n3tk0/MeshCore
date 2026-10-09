@@ -745,6 +745,11 @@ void UITask::shutdown(bool restart){
   if (restart) {
     _board->reboot();
   } else {
+    // Boards without a display power switch keep the panel lit through SYSTEMOFF,
+    // so put it to sleep first (e-ink keeps its last image without power anyway)
+    if (_display != NULL && _display->isOn() && !_display->isEink()) {
+      _display->turnOff();
+    }
     // Power off board including radio, display, GPS and components
     _board->powerOff();
   }
