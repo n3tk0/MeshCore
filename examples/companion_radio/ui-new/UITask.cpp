@@ -19,11 +19,21 @@
 
 #define LONG_PRESS_MILLIS   1200
 
+#ifndef UI_HAPTIC_CLICK_MS
+  #define UI_HAPTIC_CLICK_MS  25    // key press feedback (0 = off)
+#endif
+#ifndef UI_HAPTIC_TICK_MS
+  #define UI_HAPTIC_TICK_MS   0     // per encoder detent (0 = off)
+#endif
+#ifndef UI_HAPTIC_ACK_MS
+  #define UI_HAPTIC_ACK_MS    120   // action confirmed (e.g. advert sent)
+#endif
+
 #ifndef UI_RECENT_LIST_SIZE
   #define UI_RECENT_LIST_SIZE 4
 #endif
 
-#if UI_HAS_JOYSTICK
+#if UI_HAS_JOYSTICK || (defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN))
   #define PRESS_LABEL "press Enter"
 #else
   #define PRESS_LABEL "long press"
@@ -437,6 +447,10 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (c == KEY_CANCEL) {   // back: return to the first page
+      _page = HomePage::FIRST;
+      return true;
+    }
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
@@ -573,6 +587,10 @@ public:
       _task->gotoHomeScreen();
       return true;
     }
+    if (c == KEY_CANCEL) {   // back: leave the preview, keep unread messages
+      _task->gotoHomeScreen();
+      return true;
+    }
     return false;
   }
 };
@@ -587,6 +605,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 #if defined(PIN_USER_BTN_ANA)
   analog_btn.begin();
+#endif
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  encoder_btn.begin();
+  encoder_btn.setDebounce(15);
+  user_btn.setDebounce(15);
 #endif
 
   _node_prefs = node_prefs;
@@ -641,8 +664,10 @@ switch(t){
 #endif
 
 #ifdef PIN_VIBRATION
-  // Trigger vibration for all UI events except none
-  if (t != UIEventType::none) {
+  if (t == UIEventType::ack) {
+    vibration.pulse(UI_HAPTIC_ACK_MS);   // confirmation of a local action: one short buzz
+  } else if (t != UIEventType::none) {
+    // Trigger vibration for all other UI events except none
     vibration.trigger();
   }
 #endif
@@ -726,6 +751,9 @@ void UITask::shutdown(bool restart){
 }
 
 bool UITask::isButtonPressed() const {
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  if (encoder_btn.isPressed()) return true;
+#endif
 #ifdef PIN_USER_BTN
   return user_btn.isPressed();
 #else
@@ -758,6 +786,27 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
     c = handleTripleClick(KEY_SELECT);
   }
+#elif defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  // encoder push = Enter, user button = Back
+  int ev = encoder_btn.check();
+  if (ev == BUTTON_EVENT_CLICK) {
+    c = checkDisplayOn(KEY_ENTER);
+  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+    c = checkDisplayOn(KEY_ENTER);
+    if (c) c = handleLongPress(KEY_ENTER);
+  }
+  if (c == 0) {   // one key per loop; Back is picked up on the next pass
+    ev = user_btn.check();
+    if (ev == BUTTON_EVENT_CLICK) {
+      c = checkDisplayOn(KEY_CANCEL);
+    } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+      c = checkDisplayOn(KEY_CANCEL);
+      if (c) c = handleLongPress(KEY_CANCEL);
+    }
+  }
+#ifdef PIN_VIBRATION
+  if (c != 0) vibration.pulse(UI_HAPTIC_CLICK_MS);
+#endif
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -770,7 +819,19 @@ void UITask::loop() {
     c = handleTripleClick(KEY_SELECT);
   }
 #endif
-#if defined(UI_HAS_ROTARY_INPUT)
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN)
+  if (c == 0) {   // steps are queued by the ISR, so they wait while a button produced a key
+    RotaryInputEvent rotaryEv = rotary_input.poll();
+    if (rotaryEv == RotaryInputEvent::Next) {
+      c = checkDisplayOn(KEY_NEXT);
+    } else if (rotaryEv == RotaryInputEvent::Prev) {
+      c = checkDisplayOn(KEY_PREV);
+    }
+  #ifdef PIN_VIBRATION
+    if (c != 0) vibration.pulse(UI_HAPTIC_TICK_MS);
+  #endif
+  }
+#elif defined(UI_HAS_ROTARY_INPUT)
   RotaryInputEvent rotaryEv = rotary_input.poll();
   if (c == 0 && _display != NULL && _display->isOn()) {
     if (rotaryEv == RotaryInputEvent::Next) {
