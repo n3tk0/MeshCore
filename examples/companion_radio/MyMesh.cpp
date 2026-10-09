@@ -1284,7 +1284,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // unknown contact
     }
-  } else if (cmd_frame[0] == CMD_ADD_UPDATE_CONTACT && len >= 1 + 32 + 2 + 1) {
+  } else if (cmd_frame[0] == CMD_ADD_UPDATE_CONTACT && len >= 1 + PUB_KEY_SIZE + 3 + MAX_PATH_SIZE + 32 + 4) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     uint32_t last_mod = getRTCClock()->getCurrentTime();  // fallback value if not present in cmd_frame
@@ -1305,7 +1305,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         writeErrFrame(ERR_CODE_TABLE_FULL);
       }
     }
-  } else if (cmd_frame[0] == CMD_REMOVE_CONTACT) {
+  } else if (cmd_frame[0] == CMD_REMOVE_CONTACT && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient && removeContact(*recipient)) {
@@ -1315,7 +1315,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // not found, or unable to remove
     }
-  } else if (cmd_frame[0] == CMD_SHARE_CONTACT) {
+  } else if (cmd_frame[0] == CMD_SHARE_CONTACT && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient) {
@@ -1327,7 +1327,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND);
     }
-  } else if (cmd_frame[0] == CMD_GET_CONTACT_BY_KEY) {
+  } else if (cmd_frame[0] == CMD_GET_CONTACT_BY_KEY && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *contact = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (contact) {
@@ -1382,7 +1382,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       out_frame[0] = RESP_CODE_NO_MORE_MESSAGES;
       _serial->writeFrame(out_frame, 1);
     }
-  } else if (cmd_frame[0] == CMD_SET_RADIO_PARAMS) {
+  } else if (cmd_frame[0] == CMD_SET_RADIO_PARAMS && len >= 11) {
     int i = 1;
     uint32_t freq;
     memcpy(&freq, &cmd_frame[i], 4);
@@ -1418,7 +1418,7 @@ void MyMesh::handleCmdFrame(size_t len) {
                          (uint32_t)cr);
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
-  } else if (cmd_frame[0] == CMD_SET_RADIO_TX_POWER) {
+  } else if (cmd_frame[0] == CMD_SET_RADIO_TX_POWER && len >= 2) {
     int8_t power = (int8_t)cmd_frame[1];
     if (power < -9 || power > MAX_LORA_TX_POWER) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
@@ -1428,7 +1428,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       radio_driver.setTxPower(_prefs.tx_power_dbm);
       writeOKFrame();
     }
-  } else if (cmd_frame[0] == CMD_SET_TUNING_PARAMS) {
+  } else if (cmd_frame[0] == CMD_SET_TUNING_PARAMS && len >= 9) {
     int i = 1;
     uint32_t rx, af;
     memcpy(&rx, &cmd_frame[i], 4);
@@ -1446,7 +1446,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&out_frame[i], &rx, 4); i += 4;
     memcpy(&out_frame[i], &af, 4); i += 4;
     _serial->writeFrame(out_frame, i);
-  } else if (cmd_frame[0] == CMD_SET_OTHER_PARAMS) {
+  } else if (cmd_frame[0] == CMD_SET_OTHER_PARAMS && len >= 2) {
     _prefs.manual_add_contacts = cmd_frame[1];
     if (len >= 3) {
       _prefs.telemetry_mode_base = cmd_frame[2] & 0x03; // v5+
@@ -1462,7 +1462,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     }
     savePrefs();
     writeOKFrame();
-  } else if (cmd_frame[0] == CMD_SET_PATH_HASH_MODE && cmd_frame[1] == 0 && len >= 3) {
+  } else if (cmd_frame[0] == CMD_SET_PATH_HASH_MODE && len >= 3 && cmd_frame[1] == 0) {
     if (cmd_frame[2] >= 3) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else {
@@ -1470,7 +1470,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       savePrefs();
       writeOKFrame();
     }
-  } else if (cmd_frame[0] == CMD_REBOOT && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
+  } else if (cmd_frame[0] == CMD_REBOOT && len >= 7 && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
     if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
       saveContacts();
     }
@@ -1518,7 +1518,8 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SEND_RAW_DATA && len >= 6) {
     int i = 1;
     int8_t path_len = cmd_frame[i++];
-    if (path_len >= 0 && i + path_len + 4 <= len) { // minimum 4 byte payload
+    // raw path bytes are 1-byte hashes, so path_len must also be a valid 1-byte-hash encoding
+    if (path_len >= 0 && path_len < 64 && i + path_len + 4 <= len) { // minimum 4 byte payload
       uint8_t *path = &cmd_frame[i];
       i += path_len;
       auto pkt = createRawData(&cmd_frame[i], len - i);
@@ -1605,7 +1606,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // contact not found
     }
-  } else if (cmd_frame[0] == CMD_SEND_PATH_DISCOVERY_REQ && cmd_frame[1] == 0 && len >= 2 + PUB_KEY_SIZE) {
+  } else if (cmd_frame[0] == CMD_SEND_PATH_DISCOVERY_REQ && len >= 2 + PUB_KEY_SIZE && cmd_frame[1] == 0) {
     uint8_t *pub_key = &cmd_frame[2];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient) {
@@ -1919,7 +1920,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG); // invalid stats sub-type
     }
-  } else if (cmd_frame[0] == CMD_FACTORY_RESET && memcmp(&cmd_frame[1], "reset", 5) == 0) {
+  } else if (cmd_frame[0] == CMD_FACTORY_RESET && len >= 6 && memcmp(&cmd_frame[1], "reset", 5) == 0) {
     if (_serial) {
       MESH_DEBUG_PRINTLN("Factory reset: disabling serial interface to prevent reconnects (BLE/WiFi)");
       _serial->disable(); // Phone app disconnects before we can send OK frame so it's safe here
@@ -1945,7 +1946,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_SET_DEFAULT_FLOOD_SCOPE && len >= 1) {
     if (len >= 1+31+16) {
-      int n = strlen((char *) &cmd_frame[1]);
+      int n = strnlen((char *) &cmd_frame[1], 31);
       if (n > 0 && n < 31) {
         strcpy(_prefs.default_scope_name, (char *) &cmd_frame[1]);
         memcpy(_prefs.default_scope_key, &cmd_frame[1+31], 16);
@@ -1977,7 +1978,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_TABLE_FULL);
     }
-  } else if (cmd_frame[0] == CMD_SET_AUTOADD_CONFIG) {
+  } else if (cmd_frame[0] == CMD_SET_AUTOADD_CONFIG && len >= 2) {
     _prefs.autoadd_config = cmd_frame[1];
     if (len >= 3) {
       _prefs.autoadd_max_hops = min(cmd_frame[2], (uint8_t)64);

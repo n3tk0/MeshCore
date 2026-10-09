@@ -26,12 +26,18 @@ class SerialBLEInterface : public BaseSerialInterface {
   uint8_t send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
   
-  uint8_t recv_queue_len;
+  // recv_queue is a single-producer/single-consumer ring: onBleUartRX() runs in the
+  // Bluefruit callback task and only advances recv_tail, checkRecvFrame() runs in
+  // loop() and only advances recv_head. BLE events request a flush via _flush_req
+  // instead of touching the queues from another task.
+  volatile uint8_t recv_head;
+  volatile uint8_t recv_tail;
   Frame recv_queue[FRAME_QUEUE_SIZE];
+  volatile bool _flush_req;
 
   void clearBuffers();
+  void requestFlush() { _flush_req = true; }
   void shiftSendQueueLeft();
-  void shiftRecvQueueLeft();
   bool isValidConnection(uint16_t handle, bool requireWaitingForSecurity = false) const;
   bool isAdvertising() const;
   static void onConnect(uint16_t connection_handle);
@@ -50,7 +56,8 @@ public:
     _last_health_check = 0;
     _last_retry_attempt = 0;
     send_queue_len = 0;
-    recv_queue_len = 0;
+    recv_head = recv_tail = 0;
+    _flush_req = false;
   }
 
   /**
