@@ -16,4 +16,6 @@ public:
   virtual RotaryInputEvent poll() = 0;
   virtual bool isReady() const = 0;
   virtual void end() { }   // release pins/interrupts, e.g. before system off
+  virtual void setReverse(bool reverse) { }
+  virtual void setStepsPerDetent(uint8_t steps) { }
 };
