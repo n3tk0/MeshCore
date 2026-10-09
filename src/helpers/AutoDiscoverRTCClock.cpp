@@ -27,6 +27,12 @@ bool AutoDiscoverRTCClock::i2c_probe(TwoWire& wire, uint8_t addr) {
 }
 
 void AutoDiscoverRTCClock::begin(TwoWire& wire) {
+  #ifdef DISABLE_RTC_AUTODISCOVERY
+  // Boards without an RTC can skip the probes: on nRF52 the Wire driver has no timeout,
+  // so a probe on a faulty/unpulled bus can hang the boot forever. Falls back to _fallback.
+  return;
+  #endif
+
   #if !defined(DISABLE_DS3231_PROBE)
   if (i2c_probe(wire, DS3231_ADDRESS)) {
     ds3231_success = rtc_3231.begin(&wire);

@@ -214,7 +214,10 @@ static RAK12500LocationProvider RAK12500_provider;
 // I2C bus scanner
 // Probes every valid address and records which ones ACK.
 // This runs before any sensor library is touched, so a missing
-// or misbehaving device cannot stall or crash the boot sequence.
+// device is never initialized by a library. Note the scan itself
+// still does I2C transfers: on nRF52 the Wire driver has no timeout,
+// so a stuck or unpulled bus can hang here. Boards without sensors
+// can skip it with -D DISABLE_ENV_SENSORS.
 // ============================================================
 
 static void scanI2CBus(TwoWire* wire, bool found[128]) {
@@ -634,7 +637,9 @@ bool EnvironmentSensorManager::begin() {
 
   // Scan the I2C bus before touching any sensor library.
   bool detected[128] = {};
+  #ifndef DISABLE_ENV_SENSORS
   scanI2CBus(TELEM_WIRE, detected);
+  #endif
 
   // Walk the sensor table and initialize only detected devices.
   _active_sensor_count = 0;
