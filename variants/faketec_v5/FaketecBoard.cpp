@@ -27,7 +27,7 @@ void FaketecBoard::begin() {
 
 void FaketecBoard::powerOff() {
 #if defined(UI_HAS_ROTARY_INPUT)
-  ((QuadratureRotaryInput&)rotary_input).end();   // no pull-up current through a closed encoder contact
+  rotary_input.end();   // no pull-up current through a closed encoder contact
 #endif
 #ifdef PIN_VIBRATION
   pinMode(PIN_VIBRATION, OUTPUT);

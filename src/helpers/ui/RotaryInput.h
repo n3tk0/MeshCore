@@ -15,4 +15,5 @@ public:
   virtual bool begin() = 0;
   virtual RotaryInputEvent poll() = 0;
   virtual bool isReady() const = 0;
+  virtual void end() { }   // release pins/interrupts, e.g. before system off
 };
