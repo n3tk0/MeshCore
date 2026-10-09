@@ -35,11 +35,143 @@ static const uint8_t icon_mail[] = { 0xFF, 0xC3, 0xA5, 0x99, 0x81, 0x81, 0xFF, 0
 static const uint8_t icon_bt[]   = { 0x20, 0x30, 0xA8, 0x70, 0xA8, 0x30, 0x20, 0x00 };
 
 static const unsigned long AUTO_OFF_TABLE[] = { 15000, 30000, 60000, 300000 };
-static const char* AUTO_OFF_LABELS[] = { "15с", "30с", "1мин", "5мин" };
-static const char* DOTS_LABELS[] = { "отдолу", "вдясно", "няма" };
 #define DOTS_BOTTOM 0
 #define DOTS_RIGHT  1
 #define DOTS_NONE   2
+
+// ---------------------------------------------------------------- UI language (0 = BG, 1 = EN)
+
+#define LANG_COUNT 2
+static const char* LANG_NAMES[LANG_COUNT] = { "BG", "EN" };
+static NodePrefs* lang_prefs = NULL;
+
+enum StrId {
+  S_AGE_S,
+  S_AGE_M,
+  S_AGE_H,
+  S_AGE_D,
+  S_EMPTY,
+  S_YES,
+  S_NO,
+  S_MSG,
+  S_DEL,
+  S_DEL_ALL,
+  S_MARK_READ,
+  S_MSGS,
+  S_MSGS_N,
+  S_NO_MSGS,
+  S_DELETED,
+  S_ALL_DELETED,
+  S_READ,
+  S_RECENT,
+  S_RECENT_ADV,
+  S_SETTINGS,
+  S_SETTINGS_EDIT,
+  S_LANG_FMT,
+  S_DOTS_FMT,
+  S_VIBE_FMT,
+  S_TZ_FMT,
+  S_TZ_EDIT_FMT,
+  S_SCREEN_FMT,
+  S_ON,
+  S_OFF,
+  S_DOTS_BOTTOM,
+  S_DOTS_RIGHT,
+  S_DOTS_NONE,
+  S_OFF_15S,
+  S_OFF_30S,
+  S_OFF_1M,
+  S_OFF_5M,
+  S_MENU,
+  S_QUICK,
+  S_SEND_ADV,
+  S_HIBERNATE,
+  S_HIB_Q,
+  S_ADV_SENT,
+  S_ADV_FAIL,
+  S_MORE_FMT,
+  S_PHONE,
+  S_HEARD_FMT,
+  S_NOBODY,
+  S_NOISE_FMT,
+  S_NO_GPS,
+  S_FIX,
+  S_NOFIX,
+  S_SAT_FMT,
+  S_ALT_FMT,
+  S_NEW_FMT,
+  S_POWER_OFF,
+  S_BATT_EMPTY,
+  S_GPS_ON,
+  S_GPS_OFF,
+  S_COUNT
+};
+
+static const char* const STRINGS[S_COUNT][2] = {
+  { "%luс", "%lus" },
+  { "%luм", "%lum" },
+  { "%luч", "%luh" },
+  { "%luд", "%lud" },
+  { "Няма записи", "No entries" },
+  { "Натисни = да", "Press = yes" },
+  { "Back = не", "Back = no" },
+  { "Съобщение", "Message" },
+  { "Изтрий", "Delete" },
+  { "Изтрий всички", "Delete all" },
+  { "Маркирай прочетени", "Mark all read" },
+  { "Съобщения", "Messages" },
+  { "Съобщения (%d)", "Messages (%d)" },
+  { "Няма съобщения", "No messages" },
+  { "Изтрито", "Deleted" },
+  { "Всички изтрити", "All deleted" },
+  { "Прочетени", "Marked read" },
+  { "Скорошни", "Recent" },
+  { "Скорошни adverts", "Recent adverts" },
+  { "Настройки", "Settings" },
+  { "Настройки: промяна", "Settings: edit" },
+  { "Език: %s", "Language: %s" },
+  { "Точки: %s", "Dots: %s" },
+  { "Вибрация: %s", "Vibration: %s" },
+  { "Час: UTC%+d", "Time: UTC%+d" },
+  { "Час: < UTC%+d >", "Time: < UTC%+d >" },
+  { "Екран: %s", "Screen: %s" },
+  { "вкл", "on" },
+  { "изкл", "off" },
+  { "отдолу", "bottom" },
+  { "вдясно", "right" },
+  { "няма", "hidden" },
+  { "15с", "15s" },
+  { "30с", "30s" },
+  { "1мин", "1min" },
+  { "5мин", "5min" },
+  { "Меню", "Menu" },
+  { "Бързо меню", "Quick menu" },
+  { "Изпрати advert", "Send advert" },
+  { "Хибернация", "Hibernate" },
+  { "Хибернация?", "Hibernate?" },
+  { "Advert изпратен", "Advert sent" },
+  { "Advert неуспешен", "Advert failed" },
+  { "+%d още", "+%d more" },
+  { "Телефон: свързан", "Phone: connected" },
+  { "Чут: %s %s", "Heard: %s %s" },
+  { "Никой не е чут", "Nobody heard yet" },
+  { "Шум: %d", "Noise: %d" },
+  { "Няма GPS модул", "No GPS module" },
+  { "fix", "fix" },
+  { "без fix", "no fix" },
+  { "%s %d сат", "%s %d sat" },
+  { "%.0f м", "%.0f m" },
+  { "Ново: %s", "New: %s" },
+  { "Изключване...", "Powering off..." },
+  { "Батерията е изтощена", "Battery empty" },
+  { "GPS: вкл", "GPS: on" },
+  { "GPS: изкл", "GPS: off" },
+};
+
+static const char* T(StrId id) {
+  uint8_t lang = lang_prefs ? lang_prefs->ui_lang % LANG_COUNT : 0;
+  return STRINGS[id][lang];
+}
 
 // ---------------------------------------------------------------- UTF-8 / text helpers
 
@@ -70,10 +202,10 @@ static void utf8Slice(char* dest, size_t dest_size, const char* src, int from, i
 }
 
 static void formatAge(char* buf, size_t n, uint32_t secs) {
-  if (secs < 60) snprintf(buf, n, "%luс", (unsigned long)secs);
-  else if (secs < 3600) snprintf(buf, n, "%luм", (unsigned long)(secs / 60));
-  else if (secs < 86400) snprintf(buf, n, "%luч", (unsigned long)(secs / 3600));
-  else snprintf(buf, n, "%luд", (unsigned long)(secs / 86400));
+  if (secs < 60) snprintf(buf, n, T(S_AGE_S), (unsigned long)secs);
+  else if (secs < 3600) snprintf(buf, n, T(S_AGE_M), (unsigned long)(secs / 60));
+  else if (secs < 86400) snprintf(buf, n, T(S_AGE_H), (unsigned long)(secs / 3600));
+  else snprintf(buf, n, T(S_AGE_D), (unsigned long)(secs / 86400));
 }
 
 // Draws text clipped to max_chars; if it is longer and 'scroll' is set, it scrolls (marquee)
@@ -160,7 +292,7 @@ protected:
   virtual void label(int i, char* buf, size_t n) = 0;
   virtual bool onEnter(int i) { return false; }
   virtual bool onContext(int i) { return false; }
-  virtual const char* emptyText() { return "Няма записи"; }
+  virtual const char* emptyText() { return T(S_EMPTY); }
 
   void select(int i) {
     int n = count();
@@ -243,8 +375,8 @@ public:
     d.setColor(UIColor::primary_txt);
     d.drawRect(0, 0, d.width(), d.height());
     d.drawTextCentered(d.width() / 2, 14, _question);
-    d.drawTextCentered(d.width() / 2, 34, "Натисни = да");
-    d.drawTextCentered(d.width() / 2, 46, "Back = не");
+    d.drawTextCentered(d.width() / 2, 34, T(S_YES));
+    d.drawTextCentered(d.width() / 2, 46, T(S_NO));
     return 1000;
   }
   bool handleInput(char c) override {
@@ -340,11 +472,10 @@ public:
 class MessageActionsScreen : public ListScreen {
   int _idx = 0;
 protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, "Съобщение"); }
+  void title(char* buf, size_t n) override { snprintf(buf, n, T(S_MSG)); }
   int count() override { return 3; }
   void label(int i, char* buf, size_t n) override {
-    static const char* items[] = { "Изтрий", "Изтрий всички", "Маркирай прочетени" };
-    snprintf(buf, n, "%s", items[i]);
+    snprintf(buf, n, "%s", T((StrId)(S_DEL + i)));
   }
   bool onEnter(int i) override;
 public:
@@ -354,14 +485,14 @@ public:
 
 class MessagesScreen : public ListScreen {
 protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, "Съобщения"); }
+  void title(char* buf, size_t n) override { snprintf(buf, n, T(S_MSGS)); }
   int count() override { return _task->historyCount(); }
   void label(int i, char* buf, size_t n) override {
     UIMsgEntry* m = _task->historyAt(i);
     if (m) snprintf(buf, n, "%s%s: %s", m->unread ? "*" : "", m->from, m->text);   // control chars are filtered out
     else buf[0] = 0;
   }
-  const char* emptyText() override { return "Няма съобщения"; }
+  const char* emptyText() override { return T(S_NO_MSGS); }
   bool onEnter(int i) override;
   bool onContext(int i) override;
 public:
@@ -399,14 +530,14 @@ bool MessageActionsScreen::onEnter(int i) {
   if (i == 0) {
     if (_task->current() == message_view) _task->pop();
     _task->deleteHistory(_idx);
-    _task->showAlert("Изтрито", 800);
+    _task->showAlert(T(S_DELETED), 800);
   } else if (i == 1) {
     if (_task->current() == message_view) _task->pop();
     _task->clearHistory();
-    _task->showAlert("Всички изтрити", 800);
+    _task->showAlert(T(S_ALL_DELETED), 800);
   } else {
     _task->markAllRead();
-    _task->showAlert("Прочетени", 800);
+    _task->showAlert(T(S_READ), 800);
   }
   _task->haptic(UI_HAPTIC_ACK_MS);
   return true;
@@ -418,7 +549,7 @@ class RecentScreen : public ListScreen {
   AdvertPath _recent[16];
   int _n = 0;
 protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, "Скорошни"); }
+  void title(char* buf, size_t n) override { snprintf(buf, n, T(S_RECENT)); }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override {
     char age[12];
@@ -443,23 +574,25 @@ static RecentScreen* recent_screen;
 class SettingsScreen : public ListScreen {
   bool _editing = false;
 protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, _editing ? "Настройки: промяна" : "Настройки"); }
-  int count() override { return 4; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, _editing ? T(S_SETTINGS_EDIT) : T(S_SETTINGS)); }
+  int count() override { return 5; }
   void label(int i, char* buf, size_t n) override {
     NodePrefs* p = _task->prefs();
     switch (i) {
-      case 0: snprintf(buf, n, "Точки: %s", DOTS_LABELS[p->ui_dots % 3]); break;
-      case 1: snprintf(buf, n, "Вибрация: %s", p->vibe_quiet ? "изкл" : "вкл"); break;
-      case 2: snprintf(buf, n, _editing ? "Час: < UTC%+d >" : "Час: UTC%+d", p->ui_tz); break;
-      default: snprintf(buf, n, "Екран: %s", AUTO_OFF_LABELS[p->ui_off % 4]); break;
+      case 0: snprintf(buf, n, T(S_LANG_FMT), LANG_NAMES[p->ui_lang % LANG_COUNT]); break;
+      case 1: snprintf(buf, n, T(S_DOTS_FMT), T((StrId)(S_DOTS_BOTTOM + p->ui_dots % 3))); break;
+      case 2: snprintf(buf, n, T(S_VIBE_FMT), p->vibe_quiet ? T(S_OFF) : T(S_ON)); break;
+      case 3: snprintf(buf, n, _editing ? T(S_TZ_EDIT_FMT) : T(S_TZ_FMT), p->ui_tz); break;
+      default: snprintf(buf, n, T(S_SCREEN_FMT), T((StrId)(S_OFF_15S + p->ui_off % 4))); break;
     }
   }
   bool onEnter(int i) override {
     NodePrefs* p = _task->prefs();
     switch (i) {
-      case 0: p->ui_dots = (p->ui_dots + 1) % 3; break;
-      case 1: p->vibe_quiet = !p->vibe_quiet; break;
-      case 2: _editing = !_editing; if (_editing) return true; break;   // save when leaving edit
+      case 0: p->ui_lang = (p->ui_lang + 1) % LANG_COUNT; break;
+      case 1: p->ui_dots = (p->ui_dots + 1) % 3; break;
+      case 2: p->vibe_quiet = !p->vibe_quiet; break;
+      case 3: _editing = !_editing; if (_editing) return true; break;   // save when leaving edit
       default: p->ui_off = (p->ui_off + 1) % 4; break;
     }
     the_mesh.savePrefs();
@@ -486,17 +619,17 @@ static SettingsScreen* settings_screen;
 
 class MainMenuScreen : public ListScreen {
 protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, "Меню"); }
+  void title(char* buf, size_t n) override { snprintf(buf, n, T(S_MENU)); }
   int count() override { return 3; }
   void label(int i, char* buf, size_t n) override {
     if (i == 0) {
       int u = _task->unreadCount();
-      if (u > 0) snprintf(buf, n, "Съобщения (%d)", u);
-      else snprintf(buf, n, "Съобщения");
+      if (u > 0) snprintf(buf, n, T(S_MSGS_N), u);
+      else snprintf(buf, n, T(S_MSGS));
     } else if (i == 1) {
-      snprintf(buf, n, "Скорошни adverts");
+      snprintf(buf, n, T(S_RECENT_ADV));
     } else {
-      snprintf(buf, n, "Настройки");
+      snprintf(buf, n, T(S_SETTINGS));
     }
   }
   bool onEnter(int i) override {
@@ -518,16 +651,16 @@ class QuickMenuScreen : public ListScreen {
 #endif
     HIBERNATE, COUNT };
 protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, "Бързо меню"); }
+  void title(char* buf, size_t n) override { snprintf(buf, n, T(S_QUICK)); }
   int count() override { return COUNT; }
   void label(int i, char* buf, size_t n) override {
     switch (i) {
-      case ADVERT: snprintf(buf, n, "Изпрати advert"); break;
-      case BLUETOOTH: snprintf(buf, n, "Bluetooth: %s", _task->isBluetoothEnabled() ? "вкл" : "изкл"); break;
+      case ADVERT: snprintf(buf, n, T(S_SEND_ADV)); break;
+      case BLUETOOTH: snprintf(buf, n, "Bluetooth: %s", _task->isBluetoothEnabled() ? T(S_ON) : T(S_OFF)); break;
 #if ENV_INCLUDE_GPS == 1
-      case GPS: snprintf(buf, n, "GPS: %s", _task->getGPSState() ? "вкл" : "изкл"); break;
+      case GPS: snprintf(buf, n, "GPS: %s", _task->getGPSState() ? T(S_ON) : T(S_OFF)); break;
 #endif
-      default: snprintf(buf, n, "Хибернация"); break;
+      default: snprintf(buf, n, T(S_HIBERNATE)); break;
     }
   }
   bool onEnter(int i) override {
@@ -535,9 +668,9 @@ protected:
       case ADVERT:
         if (the_mesh.advert()) {
           _task->notify(UIEventType::ack);
-          _task->showAlert("Advert изпратен", 1000);
+          _task->showAlert(T(S_ADV_SENT), 1000);
         } else {
-          _task->showAlert("Advert неуспешен", 1000);
+          _task->showAlert(T(S_ADV_FAIL), 1000);
         }
         break;
       case BLUETOOTH:
@@ -551,7 +684,7 @@ protected:
         break;
 #endif
       default:
-        confirm_screen->setup("Хибернация?", doHibernate);
+        confirm_screen->setup(T(S_HIB_Q), doHibernate);
         _task->push(confirm_screen);
         break;
     }
@@ -646,22 +779,22 @@ class StandbyScreen : public UIScreen {
         if (fresh) scrolling = true;
       }
       if (unread > 1) {
-        snprintf(buf, sizeof(buf), "+%d още", unread - 1);
+        snprintf(buf, sizeof(buf), T(S_MORE_FMT), unread - 1);
         d.setCursor(1, 47);
         d.print(buf);
       }
     } else {
       // empty state: phone connection and last heard node
-      if (_task->hasConnection()) snprintf(buf, sizeof(buf), "Телефон: свързан");
-      else if (!_task->isBluetoothEnabled()) snprintf(buf, sizeof(buf), "Bluetooth: изкл");
+      if (_task->hasConnection()) snprintf(buf, sizeof(buf), T(S_PHONE));
+      else if (!_task->isBluetoothEnabled()) snprintf(buf, sizeof(buf), "Bluetooth: %s", T(S_OFF));
       else if (the_mesh.getBLEPin() != 0) snprintf(buf, sizeof(buf), "BT PIN: %lu", (unsigned long)the_mesh.getBLEPin());
-      else snprintf(buf, sizeof(buf), "Bluetooth: вкл");
+      else snprintf(buf, sizeof(buf), "Bluetooth: %s", T(S_ON));
       drawMarquee(d, 1, 36, buf, max_chars, 0, false);
       int n = the_mesh.getRecentlyHeard(_recent, 1);
       if (n > 0 && _recent[0].name[0]) {
         char age[12];
         formatAge(age, sizeof(age), rtc_clock.getCurrentTime() - _recent[0].recv_timestamp);
-        snprintf(buf, sizeof(buf), "Чут: %s %s", _recent[0].name, age);
+        snprintf(buf, sizeof(buf), T(S_HEARD_FMT), _recent[0].name, age);
         if (drawMarquee(d, 1, 47, buf, max_chars, _since, true)) scrolling = true;
       }
     }
@@ -680,7 +813,7 @@ class StandbyScreen : public UIScreen {
       d.drawTextRightAlign(w - 1, y, age);
       y += 11;
     }
-    if (y == 14) d.drawTextCentered(w / 2, 30, "Никой не е чут");
+    if (y == 14) d.drawTextCentered(w / 2, 30, T(S_NOBODY));
   }
 
   void renderRadio(DisplayDriver& d) {
@@ -688,7 +821,7 @@ class StandbyScreen : public UIScreen {
     d.setCursor(0, 14); snprintf(buf, sizeof(buf), "FQ %.3f SF%d", _prefs->freq, _prefs->sf); d.print(buf);
     d.setCursor(0, 25); snprintf(buf, sizeof(buf), "BW %.1f CR%d", _prefs->bw, _prefs->cr); d.print(buf);
     d.setCursor(0, 36); snprintf(buf, sizeof(buf), "TX %d dBm", _prefs->tx_power_dbm); d.print(buf);
-    d.setCursor(0, 47); snprintf(buf, sizeof(buf), "Шум: %d", radio_driver.getNoiseFloor()); d.print(buf);
+    d.setCursor(0, 47); snprintf(buf, sizeof(buf), T(S_NOISE_FMT), radio_driver.getNoiseFloor()); d.print(buf);
   }
 
 #if ENV_INCLUDE_GPS == 1
@@ -696,17 +829,17 @@ class StandbyScreen : public UIScreen {
     char buf[40];
     LocationProvider* nmea = sensors.getLocationProvider();
     d.setCursor(0, 14);
-    d.print(_task->getGPSState() ? "GPS: вкл" : "GPS: изкл");
+    d.print(_task->getGPSState() ? T(S_GPS_ON) : T(S_GPS_OFF));
     if (nmea == NULL) {
       d.setCursor(0, 25);
-      d.print("Няма GPS модул");
+      d.print(T(S_NO_GPS));
       return;
     }
-    snprintf(buf, sizeof(buf), "%s %d сат", nmea->isValid() ? "fix" : "без fix", (int)nmea->satellitesCount());
+    snprintf(buf, sizeof(buf), T(S_SAT_FMT), nmea->isValid() ? T(S_FIX) : T(S_NOFIX), (int)nmea->satellitesCount());
     d.drawTextRightAlign(w - 1, 14, buf);
     d.setCursor(0, 25); snprintf(buf, sizeof(buf), "%.5f", nmea->getLatitude() / 1000000.); d.print(buf);
     d.setCursor(0, 36); snprintf(buf, sizeof(buf), "%.5f", nmea->getLongitude() / 1000000.); d.print(buf);
-    d.setCursor(0, 47); snprintf(buf, sizeof(buf), "%.0f м", nmea->getAltitude() / 1000.); d.print(buf);
+    d.setCursor(0, 47); snprintf(buf, sizeof(buf), T(S_ALT_FMT), nmea->getAltitude() / 1000.); d.print(buf);
   }
 #endif
 
@@ -748,6 +881,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _display = display;
   _sensors = sensors;
   _node_prefs = node_prefs;
+  lang_prefs = node_prefs;
   _auto_off = millis() + autoOffMillis();
 
   user_btn.begin();
@@ -899,7 +1033,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       home();
     } else if (_display->isOn() && current() != standby) {
       char alert[48];
-      snprintf(alert, sizeof(alert), "Ново: %s", from_name);
+      snprintf(alert, sizeof(alert), T(S_NEW_FMT), from_name);
       showAlert(alert, 1500);
     }
     if (_display->isOn()) _auto_off = millis() + autoOffMillis();
@@ -927,7 +1061,7 @@ void UITask::toggleGPS() {
       _node_prefs->gps_enabled = on;
       the_mesh.savePrefs();
       notify(UIEventType::ack);
-      showAlert(on ? "GPS: вкл" : "GPS: изкл", 800);
+      showAlert(on ? T(S_GPS_ON) : T(S_GPS_OFF), 800);
       break;
     }
   }
@@ -938,7 +1072,7 @@ void UITask::hibernate() {
     _display->startFrame();
     _display->setTextSize(1);
     _display->setColor(UIColor::warning_txt);
-    _display->drawTextCentered(_display->width() / 2, 28, "Изключване...");
+    _display->drawTextCentered(_display->width() / 2, 28, T(S_POWER_OFF));
     _display->endFrame();
   }
 #ifdef PIN_VIBRATION
@@ -1073,8 +1207,8 @@ void UITask::loop() {
         _display->startFrame();
         _display->setTextSize(1);
         _display->setColor(UIColor::warning_txt);
-        _display->drawTextCentered(_display->width() / 2, 20, "Батерията е изтощена");
-        _display->drawTextCentered(_display->width() / 2, 36, "Изключване...");
+        _display->drawTextCentered(_display->width() / 2, 20, T(S_BATT_EMPTY));
+        _display->drawTextCentered(_display->width() / 2, 36, T(S_POWER_OFF));
         _display->endFrame();
         delay(2000);
       }
