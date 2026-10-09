@@ -16,6 +16,12 @@ public:
   RotaryInputEvent poll() override;
   bool isReady() const override { return _ready; }
   void end() override;  // detach interrupts and drop pull-ups
+  void setReverse(bool reverse) override { _reverse = reverse; }
+  void setStepsPerDetent(uint8_t steps) override {
+    if (steps == 0) return;
+    _steps_per_detent = steps;   // single byte, read by the ISR
+    _accum = 0;
+  }
 
 private:
   static void onEdge();

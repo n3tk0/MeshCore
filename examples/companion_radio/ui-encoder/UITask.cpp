@@ -7,6 +7,13 @@
   #error "ui-encoder needs UI_HAS_ROTARY_INPUT, PIN_ENCODER_BTN (Enter) and PIN_USER_BTN (Back)"
 #endif
 
+#ifndef ENCODER_STEPS_PER_DETENT
+  #define ENCODER_STEPS_PER_DETENT 4
+#endif
+#ifndef ENCODER_REVERSE
+  #define ENCODER_REVERSE false
+#endif
+
 #define BOOT_SCREEN_MILLIS   2500
 #define RESCUE_WINDOW_MILLIS 8000     // hold Back this soon after boot -> CLI rescue
 #define MARQUEE_PAUSE_MILLIS 1000
@@ -104,6 +111,10 @@ enum StrId {
   S_BATT_EMPTY,
   S_GPS_ON,
   S_GPS_OFF,
+  S_ENC_FMT,
+  S_ENC_NORMAL,
+  S_ENC_REVERSED,
+  S_STEPS_FMT,
   S_COUNT
 };
 
@@ -166,6 +177,10 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Батерията е изтощена", "Battery empty" },
   { "GPS: вкл", "GPS: on" },
   { "GPS: изкл", "GPS: off" },
+  { "Енкодер: %s", "Encoder: %s" },
+  { "нормален", "normal" },
+  { "обърнат", "reversed" },
+  { "Щрак: %d стъпки", "Detent: %d steps" },
 };
 
 static const char* T(StrId id) {
@@ -571,11 +586,16 @@ static RecentScreen* recent_screen;
 
 // ---- settings
 
+static uint8_t encoderSteps(const NodePrefs* p) {
+  // only 2 or 4 are valid; anything else (0, corrupt prefs) falls back to the build default
+  return (p->ui_enc_steps == 2 || p->ui_enc_steps == 4) ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
+}
+
 class SettingsScreen : public ListScreen {
   bool _editing = false;
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, _editing ? T(S_SETTINGS_EDIT) : T(S_SETTINGS)); }
-  int count() override { return 5; }
+  int count() override { return 7; }
   void label(int i, char* buf, size_t n) override {
     NodePrefs* p = _task->prefs();
     switch (i) {
@@ -583,7 +603,9 @@ protected:
       case 1: snprintf(buf, n, T(S_DOTS_FMT), T((StrId)(S_DOTS_BOTTOM + p->ui_dots % 3))); break;
       case 2: snprintf(buf, n, T(S_VIBE_FMT), p->vibe_quiet ? T(S_OFF) : T(S_ON)); break;
       case 3: snprintf(buf, n, _editing ? T(S_TZ_EDIT_FMT) : T(S_TZ_FMT), p->ui_tz); break;
-      default: snprintf(buf, n, T(S_SCREEN_FMT), T((StrId)(S_OFF_15S + p->ui_off % 4))); break;
+      case 4: snprintf(buf, n, T(S_SCREEN_FMT), T((StrId)(S_OFF_15S + p->ui_off % 4))); break;
+      case 5: snprintf(buf, n, T(S_ENC_FMT), T(p->ui_enc_rev ? S_ENC_REVERSED : S_ENC_NORMAL)); break;
+      default: snprintf(buf, n, T(S_STEPS_FMT), encoderSteps(p)); break;
     }
   }
   bool onEnter(int i) override {
@@ -593,7 +615,9 @@ protected:
       case 1: p->ui_dots = (p->ui_dots + 1) % 3; break;
       case 2: p->vibe_quiet = !p->vibe_quiet; break;
       case 3: _editing = !_editing; if (_editing) return true; break;   // save when leaving edit
-      default: p->ui_off = (p->ui_off + 1) % 4; break;
+      case 4: p->ui_off = (p->ui_off + 1) % 4; break;
+      case 5: p->ui_enc_rev = !p->ui_enc_rev; _task->applyEncoderPrefs(); break;
+      default: p->ui_enc_steps = encoderSteps(p) == 4 ? 2 : 4; _task->applyEncoderPrefs(); break;
     }
     the_mesh.savePrefs();
     _task->haptic(UI_HAPTIC_ACK_MS);
@@ -889,6 +913,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   encoder_btn.begin();
   encoder_btn.setDebounce(15);
   rotary_input.begin();
+  applyEncoderPrefs();
 
   if (_display != NULL) _display->turnOn();
 
@@ -916,6 +941,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   confirm_screen = new ConfirmScreen(this);
   _depth = 0;   // splash until home()
   _next_refresh = 100;
+}
+
+void UITask::applyEncoderPrefs() {
+  rotary_input.setReverse((bool)ENCODER_REVERSE != (_node_prefs->ui_enc_rev != 0));
+  rotary_input.setStepsPerDetent(encoderSteps(_node_prefs));
 }
 
 unsigned long UITask::autoOffMillis() const {
