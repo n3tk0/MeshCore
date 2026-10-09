@@ -1,0 +1,71 @@
+name: Build Faketec v5 Firmware
+
+# Builds the Faketec v5 companion (BLE + USB) as .uf2 and OTA .zip.
+# - push to main / manual run: files are attached to the workflow run (Actions > run > Artifacts)
+# - tag "faketec-v1.2.3": also publishes a GitHub release with the files
+# Works with the Nice!Nano / ProMicro Adafruit bootloader (S140 6.1.1), incl. the OTAFIX builds.
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags:
+      - 'faketec-*'
+    paths:
+      - 'src/**'
+      - 'examples/companion_radio/**'
+      - 'variants/faketec_v5/**'
+      - 'platformio.ini'
+      - 'build.sh'
+      - '.github/workflows/build-faketec-v5.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - Faketec_v5_companion_radio_ble
+          - Faketec_v5_companion_radio_usb
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build ${{ matrix.target }}
+        env:
+          FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
+        run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: out
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+          path: out
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Faketec v5 Companion ${{ github.ref_name }}"
+          body: |
+            Faketec v5 companion firmware (Nice!Nano v2 + HT-RA62, SSD1306, rotary encoder).
+            Copy the `_ble.uf2` (phone over Bluetooth) or `_usb.uf2` file to the bootloader drive
+            (double-tap RST). The `.zip` files are for OTA DFU updates.
+          files: out/*
