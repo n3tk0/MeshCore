@@ -587,7 +587,8 @@ static RecentScreen* recent_screen;
 // ---- settings
 
 static uint8_t encoderSteps(const NodePrefs* p) {
-  return p->ui_enc_steps ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
+  // only 2 or 4 are valid; anything else (0, corrupt prefs) falls back to the build default
+  return (p->ui_enc_steps == 2 || p->ui_enc_steps == 4) ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
 }
 
 class SettingsScreen : public ListScreen {
