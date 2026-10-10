@@ -126,6 +126,18 @@ enum StrId {
   S_SENT,
   S_SEND_FAIL,
   S_NO_TARGET,
+  S_QUICK_MSG,
+  S_WRITE,
+  S_QUICK_MSGS,
+  S_QUICK_N_FMT,
+  S_SAVE,
+  S_SAVED,
+  S_ADD_TEXT,
+  S_CSORT_FMT,
+  S_CSORT_NAME,
+  S_CSORT_RECENT,
+  S_EMPTY_SLOT,
+  S_NO_QUICK,
   S_COUNT
 };
 
@@ -202,6 +214,32 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Изпратено", "Sent" },
   { "Неуспешно", "Send failed" },
   { "Няма получател", "Unknown recipient" },
+  { "Готово съобщение", "Quick reply" },
+  { "Напиши", "Write" },
+  { "Готови съобщения", "Quick replies" },
+  { "Готово %d", "Quick reply %d" },
+  { "Запази", "Save" },
+  { "Запазено", "Saved" },
+  { "Допиши", "Edit first" },
+  { "Контакти: %s", "Contacts: %s" },
+  { "по име", "by name" },
+  { "последни", "recent" },
+  { "(празно)", "(empty)" },
+  { "Няма готови", "No quick replies" },
+};
+
+// built-in quick replies, used until the user edits one in Settings
+static const char* const QUICK_DEFAULTS[UI_QUICK_COUNT][2] = {
+  { "Добре", "OK" },
+  { "Идвам", "On my way" },
+  { "Къде си?", "Where are you?" },
+  { "Обади се", "Call me" },
+  { "Всичко е наред", "All good" },
+  { "Чакам те", "Waiting for you" },
+  { "Да", "Yes" },
+  { "Не", "No" },
+  { "Благодаря", "Thanks" },
+  { "Ще закъснея", "Running late" },
 };
 
 static const char* T(StrId id) {
@@ -329,6 +367,8 @@ protected:
   virtual bool onEnter(int i) { return false; }
   virtual bool onContext(int i) { return false; }
   virtual const char* emptyText() { return T(S_EMPTY); }
+  virtual bool renderHeader(DisplayDriver& d) { return false; }   // true = drew its own title row
+  virtual bool listFocused() { return true; }                     // false = no selection bar
 
   void select(int i) {
     int n = count();
@@ -351,14 +391,18 @@ public:
     if (_sel >= n) select(n - 1);
     d.setTextSize(1);
     d.setColor(UIColor::title_txt);
-    title(buf, sizeof(buf));
-    bool scrolling = drawMarquee(d, 0, 0, buf, n > ROWS ? 15 : 21, _sel_since, true);
-    if (n > ROWS) {
-      char pos[12];
-      snprintf(pos, sizeof(pos), "%d/%d", _sel + 1, n);
-      d.drawTextRightAlign(d.width() - 1, 0, pos);
+    bool scrolling = false;
+    if (!renderHeader(d)) {
+      title(buf, sizeof(buf));
+      scrolling = drawMarquee(d, 0, 0, buf, n > ROWS ? 15 : 21, _sel_since, true);
+      if (n > ROWS) {
+        char pos[12];
+        snprintf(pos, sizeof(pos), "%d/%d", _sel + 1, n);
+        d.drawTextRightAlign(d.width() - 1, 0, pos);
+      }
+      d.fillRect(0, 9, d.width(), 1);
     }
-    d.fillRect(0, 9, d.width(), 1);
+    d.setColor(UIColor::primary_txt);
 
     if (n == 0) {
       d.drawTextCentered(d.width() / 2, 32, emptyText());
@@ -370,7 +414,7 @@ public:
       int i = _top + r;
       int y = TOP + r * ROW_H;
       label(i, buf, sizeof(buf));
-      if (i == _sel) {
+      if (i == _sel && listFocused()) {
         d.setColor(UIColor::primary_txt);
         d.fillRect(0, y - 1, text_w, ROW_H);
         d.setColor(COLOR_BLACK);
@@ -617,61 +661,6 @@ public:
 
 static RecentScreen* recent_screen;
 
-// ---- settings
-
-static uint8_t encoderSteps(const NodePrefs* p) {
-  // only 2 or 4 are valid; anything else (0, corrupt prefs) falls back to the build default
-  return (p->ui_enc_steps == 2 || p->ui_enc_steps == 4) ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
-}
-
-class SettingsScreen : public ListScreen {
-  bool _editing = false;
-protected:
-  void title(char* buf, size_t n) override { snprintf(buf, n, _editing ? T(S_SETTINGS_EDIT) : T(S_SETTINGS)); }
-  int count() override { return 7; }
-  void label(int i, char* buf, size_t n) override {
-    NodePrefs* p = _task->prefs();
-    switch (i) {
-      case 0: snprintf(buf, n, T(S_LANG_FMT), LANG_NAMES[p->ui_lang % LANG_COUNT]); break;
-      case 1: snprintf(buf, n, T(S_DOTS_FMT), T((StrId)(S_DOTS_BOTTOM + p->ui_dots % 3))); break;
-      case 2: snprintf(buf, n, T(S_VIBE_FMT), p->vibe_quiet ? T(S_OFF) : T(S_ON)); break;
-      case 3: snprintf(buf, n, _editing ? T(S_TZ_EDIT_FMT) : T(S_TZ_FMT), p->ui_tz); break;
-      case 4: snprintf(buf, n, T(S_SCREEN_FMT), T((StrId)(S_OFF_15S + p->ui_off % 4))); break;
-      case 5: snprintf(buf, n, T(S_ENC_FMT), T(p->ui_enc_rev ? S_ENC_REVERSED : S_ENC_NORMAL)); break;
-      default: snprintf(buf, n, T(S_STEPS_FMT), encoderSteps(p)); break;
-    }
-  }
-  bool onEnter(int i) override {
-    NodePrefs* p = _task->prefs();
-    switch (i) {
-      case 0: p->ui_lang = (p->ui_lang + 1) % LANG_COUNT; break;
-      case 1: p->ui_dots = (p->ui_dots + 1) % 3; break;
-      case 2: p->vibe_quiet = !p->vibe_quiet; break;
-      case 3: _editing = !_editing; if (_editing) return true; break;   // save when leaving edit
-      case 4: p->ui_off = (p->ui_off + 1) % 4; break;
-      case 5: p->ui_enc_rev = !p->ui_enc_rev; _task->applyEncoderPrefs(); break;
-      default: p->ui_enc_steps = encoderSteps(p) == 4 ? 2 : 4; _task->applyEncoderPrefs(); break;
-    }
-    the_mesh.savePrefs();
-    _task->haptic(UI_HAPTIC_ACK_MS);
-    return true;
-  }
-public:
-  SettingsScreen(UITask* task) : ListScreen(task) { }
-  bool handleInput(char c) override {
-    if (_editing) {
-      NodePrefs* p = _task->prefs();
-      if (c == KEY_NEXT && p->ui_tz < 14) { p->ui_tz++; return true; }
-      if (c == KEY_PREV && p->ui_tz > -12) { p->ui_tz--; return true; }
-      if (c == KEY_CANCEL) { _editing = false; the_mesh.savePrefs(); return true; }
-      if (c == KEY_NEXT || c == KEY_PREV) return true;
-    }
-    return ListScreen::handleInput(c);
-  }
-};
-
-static SettingsScreen* settings_screen;
-
 // ---- writing: on-screen keyboard with word prediction
 
 #ifndef KB_DOUBLE_CLICK_MS
@@ -708,6 +697,26 @@ static bool findTarget(const char* name, ComposeTarget& t) {
     }
   }
   return false;
+}
+
+static void closeWriting(UITask* task);
+static void openReplyChoice(UITask* task, const ComposeTarget& t);
+
+static bool sendText(UITask* task, const ComposeTarget& t, const char* text, int len) {
+  if (len <= 0) return false;
+  uint32_t ts = rtc_clock.getCurrentTimeUnique();
+  if (t.is_channel) {
+#ifdef MAX_GROUP_CHANNELS
+    ChannelDetails ch;
+    if (the_mesh.getChannel(t.channel_idx, ch) && ch.name[0]) {
+      return the_mesh.sendGroupMessage(ts, ch.channel, task->prefs()->node_name, text, len);
+    }
+#endif
+    return false;
+  }
+  ContactInfo* c = the_mesh.lookupContactByPubKey(t.pub_key, PUB_KEY_SIZE);
+  uint32_t ack, timeout;
+  return c && the_mesh.sendMessage(*c, ts, 0, text, ack, timeout) != MSG_SEND_FAILED;
 }
 
 static void utf8Upper(char* dest, const char* ch, int bytes) {
@@ -747,6 +756,9 @@ class ComposeScreen : public UIScreen {
   int _undo_len = 0;                          // bytes the last press typed, 0 = not undoable
   bool _undo_shift = false;
   unsigned long _last_press = 0;
+  bool _edit = false;                         // editing quick reply _slot instead of a message
+  int _slot = 0;
+  bool _draft = false;                        // _text is an unsent message for _target
 
   const char* chars() const {
     static const char* const SETS[3] = {
@@ -916,7 +928,10 @@ class ComposeScreen : public UIScreen {
           d.setCursor(x + 2, y);
           d.print(_set == SET_BG ? "EN" : "БГ");
           break;
-        case K_SEND: d.drawXbm(x + 4, y, icon_mail, 8, 8); break;
+        case K_SEND:
+          if (_edit) { d.setCursor(x + 2, y); d.print("OK"); }
+          else d.drawXbm(x + 4, y, icon_mail, 8, 8);
+          break;
       }
     }
     d.setColor(UIColor::primary_txt);
@@ -957,49 +972,64 @@ public:
     memset(&_target, 0, sizeof(_target));
   }
 
-  void open(const ComposeTarget& t) {
-    bool same = t.is_channel == _target.is_channel && (t.is_channel ? t.channel_idx == _target.channel_idx
-                                                                   : memcmp(t.pub_key, _target.pub_key, PUB_KEY_SIZE) == 0);
+  // write to t; 'prefill' (a quick reply to finish) replaces the text, otherwise an unsent draft
+  // to the same recipient is kept
+  void openSend(const ComposeTarget& t, const char* prefill) {
+    bool same = _draft && t.is_channel == _target.is_channel &&
+                (t.is_channel ? t.channel_idx == _target.channel_idx : memcmp(t.pub_key, _target.pub_key, PUB_KEY_SIZE) == 0);
     _target = t;
-    if (!same) clear();   // keep the draft when writing to the same recipient again
+    _edit = false;
     _max_len = MAX_TEXT_LEN;
     if (_target.is_channel) _max_len -= strlen(_task->prefs()->node_name) + 2;   // "<name>: " is prepended
-    if (_max_len > MAX_TEXT_LEN) _max_len = MAX_TEXT_LEN;
+    if (_max_len > MAX_TEXT_LEN || _max_len < 0) _max_len = MAX_TEXT_LEN;
+    if (prefill) setText(prefill);
+    else if (!same) setText("");
+    _draft = true;
+    start();
+  }
+
+  void openEdit(int slot) {
+    _edit = true;
+    _draft = false;
+    _slot = slot;
+    _max_len = UI_QUICK_LEN - 1;
+    setText(_task->quickReply(slot));
+    start();
+  }
+
+  void start() {
     while (_len > _max_len) backspace();
     _set = _letters = (_task->prefs()->ui_lang % LANG_COUNT) == 0 ? SET_BG : SET_EN;
     _sel = 0;
     _undo_len = 0;
     autoShift();
+    if (_len > 0 && _text[_len - 1] != ' ') _shift = false;
     updateSuggestion();
+  }
+
+  void setText(const char* s) {
+    StrHelper::strncpy(_text, s, sizeof(_text));
+    _len = strlen(_text);
   }
 
   void clear() { _len = 0; _text[0] = 0; _undo_len = 0; autoShift(); updateSuggestion(); }
   bool isEmpty() const { return _len == 0; }
+  bool isEditing() const { return _edit; }
   void askSend();
 
   bool send() {
     // trailing spaces left by accepted words are not sent
     while (_len > 0 && _text[_len - 1] == ' ') _text[--_len] = 0;
-    if (_len == 0) return false;
-    uint32_t ts = rtc_clock.getCurrentTimeUnique();
-    bool ok = false;
-    if (_target.is_channel) {
-#ifdef MAX_GROUP_CHANNELS
-      ChannelDetails ch;
-      if (the_mesh.getChannel(_target.channel_idx, ch) && ch.name[0]) {
-        ok = the_mesh.sendGroupMessage(ts, ch.channel, _task->prefs()->node_name, _text, _len);
-      }
-#endif
-    } else {
-      ContactInfo* c = the_mesh.lookupContactByPubKey(_target.pub_key, PUB_KEY_SIZE);
-      uint32_t ack, timeout;
-      if (c) ok = the_mesh.sendMessage(*c, ts, 0, _text, ack, timeout) != MSG_SEND_FAILED;
-    }
-    if (ok) {
-      learnLastWord();
-      clear();
-    }
-    return ok;
+    if (!sendText(_task, _target, _text, _len)) return false;
+    learnLastWord();
+    clear();
+    _draft = false;
+    return true;
+  }
+
+  bool save() {
+    while (_len > 0 && _text[_len - 1] == ' ') _text[--_len] = 0;
+    return _task->setQuickReply(_slot, _text);
   }
 
   int render(DisplayDriver& d) override {
@@ -1009,7 +1039,8 @@ public:
     snprintf(left, sizeof(left), "%d", _max_len - _len);
     int lw = d.getTextWidth(left);
     char title[40];
-    snprintf(title, sizeof(title), "%s%s", _target.is_channel ? "#" : "", _target.name);
+    if (_edit) snprintf(title, sizeof(title), T(S_QUICK_N_FMT), _slot + 1);
+    else snprintf(title, sizeof(title), "%s%s", _target.is_channel ? "#" : "", _target.name);
     drawMarquee(d, 0, 0, title, (d.width() - lw - 4) / 6, 0, false);
     d.drawTextRightAlign(d.width() - 1, 0, left);
     d.fillRect(0, 9, d.width(), 1);
@@ -1061,7 +1092,7 @@ static ComposeScreen* compose_screen;
 
 static void doSend(UITask* task) {
   if (compose_screen->send()) {
-    if (task->current() == compose_screen) task->pop();
+    closeWriting(task);
     task->notify(UIEventType::ack);
     task->showAlert(T(S_SENT), 1000);
   } else {
@@ -1070,6 +1101,16 @@ static void doSend(UITask* task) {
 }
 
 void ComposeScreen::askSend() {
+  if (_edit) {   // quick reply: save straight away (an empty one removes it)
+    if (save()) {
+      if (_task->current() == this) _task->pop();
+      _task->haptic(UI_HAPTIC_ACK_MS);
+      _task->showAlert(T(S_SAVED), 800);
+    } else {
+      _task->showAlert(T(S_SEND_FAIL), 1500);
+    }
+    return;
+  }
   if (_len == 0) return;
   confirm_screen->setup(T(S_SEND_Q), doSend);
   _task->push(confirm_screen);
@@ -1080,13 +1121,15 @@ class ComposeMenuScreen : public ListScreen {
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, T(S_MENU)); }
   int count() override { return 3; }
-  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", T((StrId)(S_SEND + i))); }
+  void label(int i, char* buf, size_t n) override {
+    snprintf(buf, n, "%s", T(i == 0 && compose_screen->isEditing() ? S_SAVE : (StrId)(S_SEND + i)));
+  }
   bool onEnter(int i) override {
     _task->pop();   // close this pop-up
     if (i == 0) {
       compose_screen->askSend();
     } else {
-      compose_screen->clear();
+      if (i == 1 || !compose_screen->isEditing()) compose_screen->clear();   // discarding an edit keeps the saved text
       if (i == 2 && _task->current() == compose_screen) _task->pop();
       _task->haptic(UI_HAPTIC_ACK_MS);
     }
@@ -1104,16 +1147,92 @@ bool ComposeScreen::openComposeMenu() {
   return true;
 }
 
-// recipient for a new message: channels first, then chat / room contacts
+// recipient list: channels ("#") first, then chat / room contacts by name or by last heard.
+// Sorted by name it has a row of first letters on top: turn left from the first entry to reach
+// it, press to pick a letter, press again to jump to the first name with that letter.
 class RecipientsScreen : public ListScreen {
+  struct Entry { uint16_t idx; uint32_t lastmod; char key[14]; };
+  struct Group { char label[3]; uint16_t first; };
+  enum { BAR_OFF, BAR_FOCUS, BAR_ACTIVE };
   uint8_t _channels[64];
   int _num_channels = 0;
-  uint16_t _contacts[MAX_CONTACTS];
+  Entry* _contacts;
   int _num_contacts = 0;
+  Group _groups[48];
+  int _num_groups = 0;
+  uint8_t _bar = BAR_OFF;
+  int _bar_sel = 0;
+
+  bool byName() const { return _task->prefs()->ui_csort == 0; }
+
+  // upper-case UTF-8 copy of the start of a name, used for sorting and the letter row
+  static void foldName(const char* name, char* key, int key_size) {
+    const uint8_t* p = (const uint8_t*)name;
+    int j = 0;
+    while (*p && j < key_size - 2) {
+      if (*p >= 'a' && *p <= 'z') { key[j++] = *p++ - 32; continue; }
+      if (*p == 0xD0 && p[1] >= 0xB0 && p[1] <= 0xBF) { key[j++] = 0xD0; key[j++] = p[1] - 0x20; p += 2; continue; }   // а..п
+      if (*p == 0xD1 && p[1] >= 0x80 && p[1] <= 0x8F) { key[j++] = 0xD0; key[j++] = p[1] + 0x20; p += 2; continue; }   // р..я
+      key[j++] = *p++;
+    }
+    key[j] = 0;
+  }
+  // first letter group of a folded key: "A".."Z", "А".."Я", or "*" for anything else
+  static void groupLabel(const char* key, char* label) {
+    uint8_t c = key[0];
+    if (c >= 'A' && c <= 'Z') { label[0] = c; label[1] = 0; return; }
+    if (c == 0xD0 && (uint8_t)key[1] >= 0x90 && (uint8_t)key[1] <= 0xAF) { label[0] = key[0]; label[1] = key[1]; label[2] = 0; return; }
+    label[0] = '*'; label[1] = 0;
+  }
+  static bool isLetterKey(const char* key) {
+    char l[3];
+    groupLabel(key, l);
+    return l[0] != '*';
+  }
+  bool before(const Entry& a, const Entry& b) const {
+    if (!byName()) return a.lastmod > b.lastmod;
+    bool la = isLetterKey(a.key), lb = isLetterKey(b.key);
+    if (la != lb) return la;   // names starting with a symbol go last
+    return strcmp(a.key, b.key) < 0;
+  }
+  int groupOf(int item) const {
+    int g = 0;
+    for (int i = 0; i < _num_groups; i++) if (_groups[i].first <= item) g = i;
+    return g;
+  }
+
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, T(S_NEW_MSG)); }
   int count() override { return _num_channels + _num_contacts; }
   const char* emptyText() override { return T(S_NO_RECIPIENTS); }
+  bool listFocused() override { return _bar == BAR_OFF; }
+
+  bool renderHeader(DisplayDriver& d) override {
+    if (!byName() || _num_groups == 0) return false;
+    int cur = _bar == BAR_ACTIVE ? _bar_sel : groupOf(_sel);
+    const int CELL_W = 8, VISIBLE = 16;
+    int first = cur - VISIBLE / 2;
+    if (first > _num_groups - VISIBLE) first = _num_groups - VISIBLE;
+    if (first < 0) first = 0;
+    d.setColor(UIColor::title_txt);
+    for (int i = first; i < _num_groups && i < first + VISIBLE; i++) {
+      int x = (i - first) * CELL_W;
+      if (i == cur && _bar == BAR_ACTIVE) {
+        d.fillRect(x, 0, CELL_W - 1, 9);
+        d.setColor(COLOR_BLACK);
+      } else if (i == cur && _bar == BAR_FOCUS) {
+        d.drawRect(x, 0, CELL_W - 1, 9);
+      } else if (i == cur) {
+        d.fillRect(x + 1, 8, CELL_W - 3, 1);
+      }
+      d.setCursor(x + 1, 1);
+      d.print(_groups[i].label);
+      d.setColor(UIColor::title_txt);
+    }
+    d.fillRect(0, 9, d.width(), 1);
+    return true;
+  }
+
   bool target(int i, ComposeTarget& t) {
     memset(&t, 0, sizeof(t));
     if (i < _num_channels) {
@@ -1125,9 +1244,9 @@ protected:
       StrHelper::strncpy(t.name, ch.name, sizeof(t.name));
       return true;
 #endif
-    } else {
+    } else if (i - _num_channels < _num_contacts) {
       ContactInfo c;
-      if (!the_mesh.getContactByIdx(_contacts[i - _num_channels], c)) return false;
+      if (!the_mesh.getContactByIdx(_contacts[i - _num_channels].idx, c)) return false;
       memcpy(t.pub_key, c.id.pub_key, PUB_KEY_SIZE);
       StrHelper::strncpy(t.name, c.name, sizeof(t.name));
       return true;
@@ -1142,12 +1261,40 @@ protected:
   bool onEnter(int i) override {
     ComposeTarget t;
     if (!target(i, t)) return false;
-    compose_screen->open(t);
-    _task->push(compose_screen);
+    openReplyChoice(_task, t);
     return true;
   }
+
 public:
-  RecipientsScreen(UITask* task) : ListScreen(task) { }
+  RecipientsScreen(UITask* task) : ListScreen(task) {
+    _contacts = new Entry[MAX_CONTACTS];
+  }
+
+  bool handleInput(char c) override {
+    if (_bar == BAR_ACTIVE) {
+      if (c == KEY_NEXT) { _bar_sel = (_bar_sel + 1) % _num_groups; return true; }
+      if (c == KEY_PREV) { _bar_sel = (_bar_sel + _num_groups - 1) % _num_groups; return true; }
+      if (c == KEY_ENTER) {
+        int item = _groups[_bar_sel].first;
+        select(item);
+        int n = count();
+        _top = item > n - ROWS ? (n > ROWS ? n - ROWS : 0) : item;   // the letter's first name on top
+        _bar = BAR_OFF;
+        return true;
+      }
+      if (c == KEY_CANCEL) { _bar = BAR_FOCUS; return true; }
+      return true;
+    }
+    if (_bar == BAR_FOCUS) {
+      if (c == KEY_ENTER) { _bar = BAR_ACTIVE; _bar_sel = groupOf(_sel); return true; }
+      if (c == KEY_NEXT) { _bar = BAR_OFF; return true; }
+      if (c == KEY_CANCEL) return false;   // leave
+      return true;
+    }
+    if (c == KEY_PREV && _sel == 0 && byName() && _num_groups > 0) { _bar = BAR_FOCUS; return true; }
+    return ListScreen::handleInput(c);
+  }
+
   void open() {
     _num_channels = 0;
 #ifdef MAX_GROUP_CHANNELS
@@ -1161,14 +1308,139 @@ public:
     int total = the_mesh.getNumContacts();
     for (int i = 0; i < total && _num_contacts < MAX_CONTACTS; i++) {
       if (the_mesh.getContactByIdx(i, c) && (c.type == ADV_TYPE_CHAT || c.type == ADV_TYPE_ROOM)) {
-        _contacts[_num_contacts++] = i;
+        Entry& e = _contacts[_num_contacts++];
+        e.idx = i;
+        e.lastmod = c.lastmod;
+        foldName(c.name, e.key, sizeof(e.key));
       }
     }
+    // insertion sort: a few hundred entries, already mostly in order on the next open
+    for (int i = 1; i < _num_contacts; i++) {
+      Entry e = _contacts[i];
+      int j = i - 1;
+      while (j >= 0 && before(e, _contacts[j])) { _contacts[j + 1] = _contacts[j]; j--; }
+      _contacts[j + 1] = e;
+    }
+    _num_groups = 0;
+    if (_num_channels > 0) {
+      strcpy(_groups[0].label, "#");
+      _groups[0].first = 0;
+      _num_groups = 1;
+    }
+    for (int i = 0; i < _num_contacts && _num_groups < (int)(sizeof(_groups) / sizeof(_groups[0])); i++) {
+      char l[3];
+      groupLabel(_contacts[i].key, l);
+      if (_num_groups > 0 && strcmp(_groups[_num_groups - 1].label, l) == 0) continue;
+      strcpy(_groups[_num_groups].label, l);
+      _groups[_num_groups].first = _num_channels + i;
+      _num_groups++;
+    }
+    _bar = BAR_OFF;
     reset();
   }
 };
 
 static RecipientsScreen* recipients_screen;
+
+// after a contact or channel was picked: a quick reply or own text
+class ReplyChoiceScreen : public ListScreen {
+  ComposeTarget _target;
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s%s", _target.is_channel ? "#" : "", _target.name); }
+  int count() override { return 2; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", T(i == 0 ? S_QUICK_MSG : S_WRITE)); }
+  bool onEnter(int i) override;
+public:
+  ReplyChoiceScreen(UITask* task) : ListScreen(task) { memset(&_target, 0, sizeof(_target)); }
+  void open(const ComposeTarget& t) { _target = t; reset(); }
+};
+
+static ReplyChoiceScreen* reply_choice;
+
+// list of the non-empty quick replies; picking one asks send / edit
+class QuickPickScreen : public ListScreen {
+  ComposeTarget _target;
+  uint8_t _slots[UI_QUICK_COUNT];
+  int _n = 0;
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_QUICK_MSGS)); }
+  int count() override { return _n; }
+  const char* emptyText() override { return T(S_NO_QUICK); }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _task->quickReply(_slots[i])); }
+  bool onEnter(int i) override;
+public:
+  QuickPickScreen(UITask* task) : ListScreen(task) { memset(&_target, 0, sizeof(_target)); }
+  void open(const ComposeTarget& t) {
+    _target = t;
+    _n = 0;
+    for (int i = 0; i < UI_QUICK_COUNT; i++) if (_task->quickReply(i)[0]) _slots[_n++] = i;
+    reset();
+  }
+};
+
+static QuickPickScreen* quick_pick;
+
+class QuickActionScreen : public ListScreen {
+  ComposeTarget _target;
+  char _text[UI_QUICK_LEN];
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", _text); }
+  int count() override { return 2; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", T(i == 0 ? S_SEND : S_ADD_TEXT)); }
+  bool onEnter(int i) override {
+    _task->pop();   // close this pop-up
+    if (i == 0) {
+      if (sendText(_task, _target, _text, strlen(_text))) {
+        closeWriting(_task);
+        _task->notify(UIEventType::ack);
+        _task->showAlert(T(S_SENT), 1000);
+      } else {
+        _task->showAlert(T(S_SEND_FAIL), 1500);
+      }
+    } else {
+      compose_screen->openSend(_target, _text);
+      _task->push(compose_screen);
+    }
+    return true;
+  }
+public:
+  QuickActionScreen(UITask* task) : ListScreen(task) { memset(&_target, 0, sizeof(_target)); _text[0] = 0; }
+  void open(const ComposeTarget& t, const char* text) { _target = t; StrHelper::strncpy(_text, text, sizeof(_text)); reset(); }
+};
+
+static QuickActionScreen* quick_action;
+
+static void openReplyChoice(UITask* task, const ComposeTarget& t) {
+  reply_choice->open(t);
+  task->push(reply_choice);
+}
+
+bool ReplyChoiceScreen::onEnter(int i) {
+  if (i == 0) {
+    quick_pick->open(_target);
+    _task->push(quick_pick);
+  } else {
+    compose_screen->openSend(_target, NULL);
+    _task->push(compose_screen);
+  }
+  return true;
+}
+
+bool QuickPickScreen::onEnter(int i) {
+  quick_action->open(_target, _task->quickReply(_slots[i]));
+  _task->push(quick_action);
+  return true;
+}
+
+// back out of all writing screens after a message went out
+static void closeWriting(UITask* task) {
+  for (int guard = 0; guard < 8; guard++) {
+    UIScreen* s = task->current();
+    if (s != compose_screen && s != compose_menu && s != reply_choice && s != quick_pick &&
+        s != quick_action && s != recipients_screen) break;
+    task->pop();
+  }
+}
 
 static void replyTo(UITask* task, const char* from) {
   ComposeTarget t;
@@ -1176,9 +1448,87 @@ static void replyTo(UITask* task, const char* from) {
     task->showAlert(T(S_NO_TARGET), 1200);
     return;
   }
-  compose_screen->open(t);
-  task->push(compose_screen);
+  openReplyChoice(task, t);
 }
+
+// Settings > Quick replies: the slots, press to edit one on the keyboard
+class QuickEditScreen : public ListScreen {
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_QUICK_MSGS)); }
+  int count() override { return UI_QUICK_COUNT; }
+  void label(int i, char* buf, size_t n) override {
+    const char* q = _task->quickReply(i);
+    snprintf(buf, n, "%d. %s", i + 1, q[0] ? q : T(S_EMPTY_SLOT));
+  }
+  bool onEnter(int i) override {
+    compose_screen->openEdit(i);
+    _task->push(compose_screen);
+    return true;
+  }
+public:
+  QuickEditScreen(UITask* task) : ListScreen(task) { }
+};
+
+static QuickEditScreen* quick_edit;
+
+// ---- settings
+
+static uint8_t encoderSteps(const NodePrefs* p) {
+  // only 2 or 4 are valid; anything else (0, corrupt prefs) falls back to the build default
+  return (p->ui_enc_steps == 2 || p->ui_enc_steps == 4) ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
+}
+
+class SettingsScreen : public ListScreen {
+  bool _editing = false;
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, _editing ? T(S_SETTINGS_EDIT) : T(S_SETTINGS)); }
+  int count() override { return 9; }
+  void label(int i, char* buf, size_t n) override {
+    NodePrefs* p = _task->prefs();
+    switch (i) {
+      case 0: snprintf(buf, n, T(S_LANG_FMT), LANG_NAMES[p->ui_lang % LANG_COUNT]); break;
+      case 1: snprintf(buf, n, T(S_DOTS_FMT), T((StrId)(S_DOTS_BOTTOM + p->ui_dots % 3))); break;
+      case 2: snprintf(buf, n, T(S_VIBE_FMT), p->vibe_quiet ? T(S_OFF) : T(S_ON)); break;
+      case 3: snprintf(buf, n, _editing ? T(S_TZ_EDIT_FMT) : T(S_TZ_FMT), p->ui_tz); break;
+      case 4: snprintf(buf, n, T(S_SCREEN_FMT), T((StrId)(S_OFF_15S + p->ui_off % 4))); break;
+      case 5: snprintf(buf, n, T(S_ENC_FMT), T(p->ui_enc_rev ? S_ENC_REVERSED : S_ENC_NORMAL)); break;
+      case 6: snprintf(buf, n, T(S_STEPS_FMT), encoderSteps(p)); break;
+      case 7: snprintf(buf, n, T(S_CSORT_FMT), T(p->ui_csort ? S_CSORT_RECENT : S_CSORT_NAME)); break;
+      default: snprintf(buf, n, "%s", T(S_QUICK_MSGS)); break;
+    }
+  }
+  bool onEnter(int i) override {
+    NodePrefs* p = _task->prefs();
+    switch (i) {
+      case 0: p->ui_lang = (p->ui_lang + 1) % LANG_COUNT; break;
+      case 1: p->ui_dots = (p->ui_dots + 1) % 3; break;
+      case 2: p->vibe_quiet = !p->vibe_quiet; break;
+      case 3: _editing = !_editing; if (_editing) return true; break;   // save when leaving edit
+      case 4: p->ui_off = (p->ui_off + 1) % 4; break;
+      case 5: p->ui_enc_rev = !p->ui_enc_rev; _task->applyEncoderPrefs(); break;
+      case 6: p->ui_enc_steps = encoderSteps(p) == 4 ? 2 : 4; _task->applyEncoderPrefs(); break;
+      case 7: p->ui_csort = p->ui_csort ? 0 : 1; break;
+      default: quick_edit->reset(); _task->push(quick_edit); return true;
+    }
+    the_mesh.savePrefs();
+    _task->haptic(UI_HAPTIC_ACK_MS);
+    return true;
+  }
+public:
+  SettingsScreen(UITask* task) : ListScreen(task) { }
+  bool handleInput(char c) override {
+    if (_editing) {
+      NodePrefs* p = _task->prefs();
+      if (c == KEY_NEXT && p->ui_tz < 14) { p->ui_tz++; return true; }
+      if (c == KEY_PREV && p->ui_tz > -12) { p->ui_tz--; return true; }
+      if (c == KEY_CANCEL) { _editing = false; the_mesh.savePrefs(); return true; }
+      if (c == KEY_NEXT || c == KEY_PREV) return true;
+    }
+    return ListScreen::handleInput(c);
+  }
+};
+
+static SettingsScreen* settings_screen;
 
 // ---- menus
 
@@ -1486,8 +1836,56 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   compose_screen = new ComposeScreen(this);
   compose_menu = new ComposeMenuScreen(this);
   recipients_screen = new RecipientsScreen(this);
+  reply_choice = new ReplyChoiceScreen(this);
+  quick_pick = new QuickPickScreen(this);
+  quick_action = new QuickActionScreen(this);
+  quick_edit = new QuickEditScreen(this);
+  loadQuickReplies();
   _depth = 0;   // splash until home()
   _next_refresh = 100;
+}
+
+#define QUICK_FILE "/ui_quick"
+
+void UITask::loadQuickReplies() {
+  char buf[UI_QUICK_COUNT * UI_QUICK_LEN];
+  int n = the_mesh.loadUIFile(QUICK_FILE, (uint8_t*)buf, sizeof(buf) - 1);
+  memset(_quick, 0, sizeof(_quick));
+  _quick_custom = n >= 0;
+  if (n <= 0) return;
+  buf[n] = 0;
+  char* p = buf;
+  for (int i = 0; i < UI_QUICK_COUNT && p; i++) {   // one reply per line, empty lines are empty slots
+    char* nl = strchr(p, '\n');
+    if (nl) *nl = 0;
+    StrHelper::strncpy(_quick[i], p, UI_QUICK_LEN);
+    p = nl ? nl + 1 : NULL;
+  }
+}
+
+const char* UITask::quickReply(int i) const {
+  if (i < 0 || i >= UI_QUICK_COUNT) return "";
+  if (!_quick_custom) return QUICK_DEFAULTS[i][_node_prefs ? _node_prefs->ui_lang % LANG_COUNT : 0];
+  return _quick[i];
+}
+
+bool UITask::setQuickReply(int i, const char* text) {
+  if (i < 0 || i >= UI_QUICK_COUNT) return false;
+  if (!_quick_custom) {   // first edit: the defaults of the current language become the user's list
+    for (int k = 0; k < UI_QUICK_COUNT; k++) StrHelper::strncpy(_quick[k], quickReply(k), UI_QUICK_LEN);
+    _quick_custom = true;
+  }
+  StrHelper::strncpy(_quick[i], text, UI_QUICK_LEN);
+  for (char* c = _quick[i]; *c; c++) if (*c == '\n' || *c == '\r') *c = ' ';
+  char buf[UI_QUICK_COUNT * UI_QUICK_LEN];
+  int len = 0;
+  for (int k = 0; k < UI_QUICK_COUNT; k++) {
+    int l = strlen(_quick[k]);
+    memcpy(&buf[len], _quick[k], l);
+    len += l;
+    if (k < UI_QUICK_COUNT - 1) buf[len++] = '\n';
+  }
+  return the_mesh.saveUIFile(QUICK_FILE, (uint8_t*)buf, len);
 }
 
 void UITask::applyEncoderPrefs() {

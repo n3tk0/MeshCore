@@ -26,6 +26,9 @@
   #define UI_MSG_HISTORY  24
 #endif
 
+#define UI_QUICK_COUNT 10   // quick reply slots
+#define UI_QUICK_LEN   64   // bytes per quick reply, including the terminator
+
 struct UIMsgEntry {
   uint32_t timestamp;
   uint8_t  path_len;
@@ -60,6 +63,11 @@ class UITask : public AbstractUITask {
   int _depth;
   UIScreen* _splash;
 
+  // quick replies: built-in defaults (in the UI language) until the user edits one
+  char _quick[UI_QUICK_COUNT][UI_QUICK_LEN];
+  bool _quick_custom;
+  void loadQuickReplies();
+
   char checkDisplayOn(char c);
   void renderAlert();
 
@@ -73,6 +81,7 @@ public:
     _last_new_msg = 0;
     _msgcount = 0;
     _alert_expiry = 0;
+    _quick_custom = false;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
@@ -98,6 +107,8 @@ public:
   void clearHistory();
   void markAllRead();
   unsigned long lastNewMsgAt() const { return _last_new_msg; }
+  const char* quickReply(int i) const;           // "" for an empty slot
+  bool setQuickReply(int i, const char* text);   // saved to flash
 
   bool getGPSState();
   void toggleGPS();

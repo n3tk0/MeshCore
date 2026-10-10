@@ -187,6 +187,18 @@ File DataStore::openRead(FILESYSTEM* fs, const char* filename) {
 #endif
 }
 
+int DataStore::loadSmallFile(const char* filename, uint8_t* dest, int max_len) {
+  File file = openRead(_fs, filename);
+  if (!file) return -1;
+  int n = file.read(dest, max_len);
+  file.close();
+  return n < 0 ? 0 : n;
+}
+
+bool DataStore::saveSmallFile(const char* filename, const uint8_t* src, int len) {
+  return saveFileSafely(_fs, filename, [&](File& file) { return file.write(src, len) == (size_t)len; });
+}
+
 bool DataStore::removeFile(const char* filename) {
   return _fs->remove(filename);
 }
