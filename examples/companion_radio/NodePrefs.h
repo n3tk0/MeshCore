@@ -46,6 +46,7 @@ public:
   uint8_t ui_lang = 0;           // encoder UI: language 0=BG, 1=EN
   uint8_t ui_enc_rev = 0;        // encoder UI: 1 = turn direction flipped vs. the build default
   uint8_t ui_enc_steps = 0;      // encoder UI: transitions per detent (2 or 4), 0 = build default
+  uint8_t ui_csort = 0;          // encoder UI: recipients sorted 0=by name, 1=recently heard first
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -127,6 +128,7 @@ private:
       def("ui_lang", _parent->ui_lang);
       def("ui_enc_rev", _parent->ui_enc_rev);
       def("ui_enc_steps", _parent->ui_enc_steps);
+      def("ui_csort", _parent->ui_csort);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }

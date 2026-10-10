@@ -41,6 +41,8 @@ public:
   void disableBluetooth() { _interfaceManager->disableBluetooth(); }
   virtual void msgRead(int msgcount) = 0;
   virtual void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) = 0;
+  // called just before newMsg(): where the message came from, for UIs that can reply
+  virtual void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) { }
   virtual void notify(UIEventType t = UIEventType::none) = 0;
   virtual void loop() = 0;
 };
