@@ -3,6 +3,7 @@
 // Companion UI for a rotary encoder + Back button, modelled on the Sony Ericsson CMD-Z7 jog dial:
 //   turn = move / next status card, press = open / confirm, hold = quick or pop-up menu,
 //   Back = one level up (screen off on standby), hold Back = standby from anywhere.
+// Writing uses a jog-dial keyboard with word prediction: two quick presses accept the suggestion.
 
 #include <MeshCore.h>
 #include <helpers/ui/DisplayDriver.h>
@@ -55,7 +56,7 @@ class UITask : public AbstractUITask {
   unsigned long _last_new_msg;
 
   // screen stack, [0] is always the standby screen (after the splash)
-  UIScreen* _stack[6];
+  UIScreen* _stack[8];
   int _depth;
   UIScreen* _splash;
 
