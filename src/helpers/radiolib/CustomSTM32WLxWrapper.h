@@ -9,6 +9,10 @@ class CustomSTM32WLxWrapper : public RadioLibWrapper {
 public:
   CustomSTM32WLxWrapper(CustomSTM32WLx& radio, mesh::MainBoard& board) : RadioLibWrapper(radio, board) { }
 
+  bool paramsSupported(float freq, float bw, uint8_t sf, uint8_t cr) const override {
+    return freq >= 150.0f && freq <= 960.0f && isStandardLoRaBandwidth(bw) && sf >= 5 && sf <= 12;
+  }
+
   void setParams(float freq, float bw, uint8_t sf, uint8_t cr) override {
     ((CustomSTM32WLx *)_radio)->setFrequency(freq);
     ((CustomSTM32WLx *)_radio)->setSpreadingFactor(sf);

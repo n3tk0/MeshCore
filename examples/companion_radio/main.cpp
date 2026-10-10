@@ -103,7 +103,21 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
 /* END GLOBAL OBJECTS */
 
-void halt() {
+// fatal start-up error: say so, then power off instead of spinning (a stuck CPU drains a battery
+// with no protection circuit). The board starts again on reset or USB power.
+void halt(const char* reason) {
+  Serial.println(reason);
+#ifdef DISPLAY_CLASS
+  if (display.isOn() || display.begin()) {
+    display.startFrame();
+    display.setTextSize(1);
+    display.drawTextCentered(display.width() / 2, 20, reason);
+    display.drawTextCentered(display.width() / 2, 36, "Power off in 1 min");
+    display.endFrame();
+  }
+#endif
+  delay(60000);
+  board.powerOff();
   while (1) ;
 }
 
@@ -134,7 +148,7 @@ void setup() {
   }
 #endif
 
-  if (!radio_init()) { halt(); }
+  if (!radio_init()) { halt("Radio init failed"); }
 
   fast_rng.begin(radio_driver.getRngSeed());
 

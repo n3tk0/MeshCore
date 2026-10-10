@@ -4,6 +4,9 @@
 #include "target.h"
 #include "u8g2_icons.h"
 
+// millis() wraps after 49.7 days: compare by difference. 0 means "now" for the refresh/check times.
+static inline bool timeReached(unsigned long t) { return t == 0 || (long)(millis() - t) >= 0; }
+
 #ifdef WIFI_SSID
   #include <WiFi.h>
 #endif
@@ -54,7 +57,7 @@ public:
   }
 
   int render(DisplayDriver& display) override {
-    if (millis() < version_after) {
+    if (!timeReached(version_after)) {
     // meshcore logo
     display.setColor(UIColor::corp_blue);
     int logoWidth = 72;
@@ -81,7 +84,7 @@ public:
   }
 
   void poll() override {
-    if (millis() >= dismiss_after) {
+    if (timeReached(dismiss_after)) {
       _task->gotoHomeScreen();
     }
   }
@@ -119,7 +122,7 @@ class HomeScreen : public UIScreen {
   int next_sensors_refresh = 0;
 
   void refresh_sensors() {
-    if (millis() > next_sensors_refresh) {
+    if (timeReached(next_sensors_refresh)) {
       sensors_lpp.reset();
       sensors_nb = 0;
       sensors_lpp.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
@@ -642,7 +645,7 @@ void UITask::loop() {
   }
 #endif
 #if defined(BACKLIGHT_BTN)
-  if (millis() > next_backlight_btn_check) {
+  if (timeReached(next_backlight_btn_check)) {
     bool touch_state = digitalRead(PIN_BUTTON2);
 #if defined(DISP_BACKLIGHT)
     digitalWrite(DISP_BACKLIGHT, !touch_state);
@@ -685,7 +688,7 @@ void UITask::loop() {
         isBluetoothEnabled());
 
     bool status_dirty = _statusBar.needsRedraw();
-    bool content_dirty = (millis() >= _next_refresh && curr);
+    bool content_dirty = (timeReached(_next_refresh) && curr);
 
     if (status_dirty || content_dirty) {
       _display->startFrame();
@@ -698,7 +701,8 @@ void UITask::loop() {
         }
       }
 
-      if (millis() < _alert_expiry) {  // render alert popup
+      if (_alert_expiry != 0 && timeReached(_alert_expiry)) _alert_expiry = 0;
+      if (_alert_expiry != 0 && !timeReached(_alert_expiry)) {  // render alert popup
         _display->setTextSize(1);
         int y = _display->height() / 3;
         int p = _display->height() / 32;
@@ -722,7 +726,7 @@ void UITask::loop() {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
-    if (millis() > _auto_off) {
+    if (timeReached(_auto_off)) {
       _display->turnOff();
     }
 #endif
@@ -733,7 +737,7 @@ void UITask::loop() {
 #endif
 
 #ifdef AUTO_SHUTDOWN_MILLIVOLTS
-  if (millis() > next_batt_chck) {
+  if (timeReached(next_batt_chck)) {
     _cached_batt_mv = getBattMilliVolts();
     if (_cached_batt_mv > 0 && _cached_batt_mv < AUTO_SHUTDOWN_MILLIVOLTS) {
       if(!board.isExternalPowered()) {
@@ -752,7 +756,7 @@ void UITask::loop() {
     next_batt_chck = millis() + 8000;
   }
 #else
-  if (_display != NULL && _display->isOn() && millis() >= next_batt_chck) {
+  if (_display != NULL && _display->isOn() && timeReached(next_batt_chck)) {
     _cached_batt_mv = getBattMilliVolts();
     next_batt_chck = millis() + 8000;
   }

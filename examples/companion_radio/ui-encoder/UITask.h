@@ -38,6 +38,7 @@ struct UIMsgEntry {
   uint8_t  src;         // MSG_SRC_*: who to answer
   uint8_t  channel_idx;
   uint8_t  pub_prefix[6];
+  uint32_t seq;         // unique per message, so open screens follow it when the history shifts
 };
 
 #define MSG_SRC_UNKNOWN  0
@@ -54,7 +55,7 @@ class UITask : public AbstractUITask {
 #ifdef PIN_VIBRATION
   GenericVibration vibration;
 #endif
-  unsigned long _next_refresh, _auto_off;
+  unsigned long _next_refresh, _auto_off, _off_at;
   char _alert[48];
   unsigned long _alert_expiry;
   int _msgcount;
@@ -63,6 +64,7 @@ class UITask : public AbstractUITask {
   // message history (ring buffer, newest at _msg_head)
   UIMsgEntry _msgs[UI_MSG_HISTORY];
   int _msg_head, _msg_count;
+  uint32_t _msg_seq;
   unsigned long _last_new_msg;
   uint8_t _next_src, _next_channel, _next_prefix[6];   // from msgSource(), for the next newMsg()
 
@@ -78,15 +80,18 @@ class UITask : public AbstractUITask {
   bool _ask_antenna;   // antenna question still unanswered
 
   char checkDisplayOn(char c);
+  void wakeDisplay();   // turn on: back to the open screen after a short pause, else to standby
   void renderAlert();
 
 public:
   UITask(mesh::MainBoard* board, MultiSerialInterface* serial) : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
     next_batt_chck = _next_refresh = 0;
+    _auto_off = _off_at = 0;
     ui_started_at = 0;
     _depth = 0;
     _msg_head = -1;
     _msg_count = 0;
+    _msg_seq = 0;
     _last_new_msg = 0;
     _msgcount = 0;
     _alert_expiry = 0;
@@ -114,6 +119,7 @@ public:
   int unreadCount() const;
   int historyCount() const { return _msg_count; }
   UIMsgEntry* historyAt(int i);          // 0 = newest
+  int historyIndexOf(uint32_t seq);      // -1 once the message is gone
   void deleteHistory(int i);
   void clearHistory();
   void markAllRead();
