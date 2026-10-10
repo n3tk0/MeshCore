@@ -3,8 +3,22 @@
 
 void GenericVibration::drive(bool on) {
 #ifdef VIBRATION_PWM
-  if (on) analogWrite(PIN_VIBRATION, VIBRATION_PWM);
-  else { analogWrite(PIN_VIBRATION, 0); pinMode(PIN_VIBRATION, OUTPUT); digitalWrite(PIN_VIBRATION, LOW); }
+  if (on) {
+    analogWrite(PIN_VIBRATION, VIBRATION_PWM);
+  } else {
+    analogWrite(PIN_VIBRATION, 0);
+  #ifdef NRF52_PLATFORM
+    // detach the pin and stop the PWM peripheral: left running it keeps the 16 MHz clock on
+    for (int i = 0; i < HWPWM_MODULE_NUM; i++) {
+      if (HwPWMx[i]->checkPin(PIN_VIBRATION)) {
+        HwPWMx[i]->removePin(PIN_VIBRATION);
+        if (HwPWMx[i]->releaseOwnership(0x676f6c41)) HwPWMx[i]->stop();   // analogWrite()'s token
+      }
+    }
+  #endif
+    pinMode(PIN_VIBRATION, OUTPUT);
+    digitalWrite(PIN_VIBRATION, LOW);
+  }
 #else
   digitalWrite(PIN_VIBRATION, on ? HIGH : LOW);
 #endif

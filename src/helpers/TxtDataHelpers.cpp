@@ -130,7 +130,7 @@ static void _ftoa(float f, char *p, int *status)
 }
 
 const char* StrHelper::ftoa(float f) {
-  static char tmp[16];
+  static char tmp[24];   // worst case "-2147483520.1234567" plus NUL
   int status;
   _ftoa(f, tmp, &status);
   if (status) {
