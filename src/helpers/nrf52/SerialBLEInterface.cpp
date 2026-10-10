@@ -205,7 +205,11 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
 void SerialBLEInterface::clearBuffers() {
   _flush_req = false;
   send_queue_len = 0;
-  recv_head = recv_tail;   // consumer side: drop everything queued so far
+  // consumer side: drop what was queued before the request, never step back over consumed frames
+  uint8_t head = recv_head, upto = _flush_upto, tail = recv_tail;
+  if ((upto - head + FRAME_QUEUE_SIZE) % FRAME_QUEUE_SIZE <= (tail - head + FRAME_QUEUE_SIZE) % FRAME_QUEUE_SIZE) {
+    recv_head = upto;
+  }
   _last_retry_attempt = 0;
   bleuart.flush();
 }

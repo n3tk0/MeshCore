@@ -991,6 +991,13 @@ void MyMesh::begin(bool has_display) {
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
 
+  if (!radio_driver.paramsSupported(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr)) {
+    // stored settings this chip cannot use: start on the build defaults rather than half-applied ones
+    _prefs.freq = LORA_FREQ;
+    _prefs.bw = LORA_BW;
+    _prefs.sf = LORA_SF;
+    _prefs.cr = LORA_CR;
+  }
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.setTxPower(_prefs.tx_power_dbm);
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
@@ -1416,7 +1423,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (repeat && !isValidClientRepeatFreq(freq)) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else if (freq >= 150000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
-        bw <= 500000) {
+        bw <= 500000 && radio_driver.paramsSupported((float)freq / 1000.0, (float)bw / 1000.0, sf, cr)) {
       _prefs.sf = sf;
       _prefs.cr = cr;
       _prefs.freq = (float)freq / 1000.0;
@@ -1451,8 +1458,9 @@ void MyMesh::handleCmdFrame(size_t len) {
     i += 4;
     memcpy(&af, &cmd_frame[i], 4);
     i += 4;
-    _prefs.rx_delay_base = ((float)rx) / 1000.0f;
-    _prefs.airtime_factor = ((float)af) / 1000.0f;
+    // same limits as applied at boot: larger values would mute sending until the next reboot
+    _prefs.rx_delay_base = constrain(((float)rx) / 1000.0f, 0, 20.0f);
+    _prefs.airtime_factor = constrain(((float)af) / 1000.0f, 0, 9.0f);
     savePrefs();
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_GET_TUNING_PARAMS) {
@@ -2094,8 +2102,8 @@ void MyMesh::checkCLIRescueCmd() {
       }
     } else if (memcmp(cli_command, "ls", 2) == 0) {
 
-      // get path from command e.g: "ls /adafruit"
-      const char *path = &cli_command[3];
+      // get path from command e.g: "ls /adafruit"; plain "ls" lists the root
+      const char *path = cli_command[2] ? &cli_command[3] : "/";
 
       bool is_fs2 = false;
       if (memcmp(path, "UserData/", 9) == 0) {
@@ -2164,13 +2172,13 @@ void MyMesh::checkCLIRescueCmd() {
       }
       if(file){
 
-        // get file content
-        int file_size = file.available();
-        uint8_t buffer[file_size];
-        file.read(buffer, file_size);
-
-        // print hex
-        mesh::Utils::printHex(Serial, buffer, file_size);
+        // print the content as hex in small pieces: a stack buffer the size of the file
+        // (eg. 50KB of contacts) would overflow the stack
+        uint8_t buffer[64];
+        int n;
+        while ((n = file.read(buffer, sizeof(buffer))) > 0) {
+          mesh::Utils::printHex(Serial, buffer, n);
+        }
         Serial.print("\n");
 
         file.close();

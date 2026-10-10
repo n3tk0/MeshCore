@@ -2296,6 +2296,7 @@ void UITask::loop() {
   if (s) s->poll();
 
   if (_display != NULL && _display->isOn()) {
+    if (_alert_expiry != 0 && timeReached(_alert_expiry)) _alert_expiry = 0;   // expired: forget it
     if ((_next_refresh == 0 || timeReached(_next_refresh)) && current()) {
       _display->startFrame();
       int delay_millis = current()->render(*_display);
