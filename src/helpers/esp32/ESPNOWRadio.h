@@ -11,6 +11,7 @@ public:
 
   uint32_t getRngSeed();
 
+  bool paramsSupported(float freq, float bw, uint8_t sf, uint8_t cr) const { return true; }
   void setParams(float freq, float bw, uint8_t sf, uint8_t cr) {
     // no-op
   }
