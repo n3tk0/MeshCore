@@ -1928,6 +1928,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   confirm_screen = new ConfirmScreen(this);
   antenna_screen = new AntennaScreen(this);
 #ifdef UI_ASK_ANTENNA
+  if (_display == NULL) the_mesh.setTxAllowed(true);   // no OLED found: nobody could answer, keep the radio usable
   _ask_antenna = !the_mesh.isTxAllowed();
 #endif
   compose_screen = new ComposeScreen(this);
