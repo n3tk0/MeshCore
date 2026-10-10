@@ -882,6 +882,11 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
       _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui), _iter(0) {
   _iter_started = false;
   _cli_rescue = false;
+#ifdef UI_ASK_ANTENNA
+  _tx_allowed = false;   // the UI asks whether an antenna is fitted before the first transmit
+#else
+  _tx_allowed = true;
+#endif
   offline_queue_len = 0;
   app_target_ver = 0;
   clearPendingReqs();
