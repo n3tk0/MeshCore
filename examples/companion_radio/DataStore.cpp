@@ -318,6 +318,7 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 
         if (!success) break; // EOF
 
+        c.name[sizeof(c.name) - 1] = 0;   // corrupt entry must not leave an unterminated name
         if (c.out_path_len != OUT_PATH_UNKNOWN && !mesh::Packet::isValidPathLen(c.out_path_len)) {
           c.out_path_len = OUT_PATH_UNKNOWN;   // corrupt entry, fall back to flood
         }
@@ -375,6 +376,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
 
         if (!success) break; // EOF
 
+        ch.name[sizeof(ch.name) - 1] = 0;
         if (host->onChannelLoaded(channel_idx, ch)) {
           channel_idx++;
         } else {
@@ -544,7 +546,7 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
     BlobRec tmp;
     while (file.read((uint8_t *) &tmp, sizeof(tmp)) == sizeof(tmp)) {
       if (memcmp(key, tmp.key, sizeof(tmp.key)) == 0) {  // only match by 7 byte prefix
-        len = tmp.len;
+        len = tmp.len <= sizeof(tmp.data) ? tmp.len : 0;   // corrupt record: treat as not found
         memcpy(dest_buf, tmp.data, len);
         break;
       }

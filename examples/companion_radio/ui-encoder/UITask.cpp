@@ -20,7 +20,7 @@
 #define MARQUEE_PAUSE_MILLIS 1000
 #define MARQUEE_STEP_MILLIS  300
 #define NEW_MSG_HIGHLIGHT    3000
-#define VALID_EPOCH          1704067200UL   // 2024-01-01, anything earlier means "no clock yet"
+#define VALID_EPOCH          1735689600UL   // 2025-01-01; VolatileRTCClock boots in May 2024, so earlier means "no clock yet"
 
 // haptic dictionary (ms): key press, confirmed action, channel msg, direct msg, low battery / power off
 #ifndef UI_HAPTIC_CLICK_MS

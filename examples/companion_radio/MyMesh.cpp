@@ -200,6 +200,7 @@ void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, co
   memcpy(contact.out_path, &frame[i], MAX_PATH_SIZE);
   i += MAX_PATH_SIZE;
   memcpy(contact.name, &frame[i], 32);
+  contact.name[31] = 0;   // app may send 32 non-zero bytes
   i += 32;
   memcpy(&contact.last_advert_timestamp, &frame[i], 4);
   i += 4;
@@ -957,6 +958,7 @@ void MyMesh::begin(bool has_display) {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;   // sendFlood() accepts hash sizes 1..3
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -1178,6 +1180,10 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t path[MAX_PATH_SIZE];
     if (path_len != OUT_PATH_UNKNOWN) {
       i += mesh::Packet::writePath(path, &cmd_frame[i], path_len);
+    }
+    if (i + 2 > (int)len) {   // path and data_type must be inside the frame
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      return;
     }
 
     uint16_t data_type = ((uint16_t)cmd_frame[i]) | (((uint16_t)cmd_frame[i + 1]) << 8);
