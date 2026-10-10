@@ -46,13 +46,31 @@ static File openWrite(FILESYSTEM* fs, const char* filename) {
 // missing. On nRF52 (LittleFS) the new content goes to '<filename>.tmp' and is renamed over
 // the original, which LittleFS does atomically. If there is no room for a second copy (eg. a
 // full contacts list on the 100KB ExtraFS), fall back to the old in-place rewrite.
+#if defined(NRF52_PLATFORM)
+lfs_ssize_t _getLfsUsedBlockCount(FILESYSTEM* fs);
+
+// would a second copy of 'filename' (plus some growth) fit next to the current one?
+static bool roomForCopy(FILESYSTEM* fs, const char* filename) {
+  File cur = fs->open(filename, FILE_O_READ);
+  if (!cur) return true;   // first save: nothing to keep safe, the temp file costs nothing extra
+  uint32_t size = cur.size();
+  cur.close();
+  const lfs_config* cfg = fs->_getFS()->cfg;
+  lfs_ssize_t used = _getLfsUsedBlockCount(fs);
+  if (used <= 0) return true;   // unknown: just try
+  uint32_t need = (size + size / 8) / cfg->block_size + 2;   // +12% growth, partial blocks, metadata
+  return (uint32_t)(cfg->block_count - used) >= need;
+}
+#endif
+
 template <typename Writer>
 static bool saveFileSafely(FILESYSTEM* fs, const char* filename, Writer writer) {
 #if defined(NRF52_PLATFORM)
   char tmp_name[48];
   snprintf(tmp_name, sizeof(tmp_name), "%s.tmp", filename);
   fs->remove(tmp_name);
-  File tmp = fs->open(tmp_name, FILE_O_WRITE);
+  // a temp file that cannot fit would only cost a second full write before the fallback
+  File tmp = roomForCopy(fs, filename) ? fs->open(tmp_name, FILE_O_WRITE) : File(*fs);
   if (tmp) {
     bool ok = writer(tmp);
     uint32_t expected = tmp.size();
