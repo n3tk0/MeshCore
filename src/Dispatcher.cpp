@@ -274,7 +274,16 @@ void Dispatcher::processRecvPacket(Packet* pkt) {
 
 void Dispatcher::checkSend() {
   if (_mgr->getOutboundCount(_ms->getMillis()) == 0) return;
-  
+
+  if (!allowTransmit()) {   // e.g. antenna not confirmed: drop rather than fill the packet pool
+    Packet* pkt;
+    while ((pkt = _mgr->getNextOutbound(_ms->getMillis())) != NULL) {
+      logTxFail(pkt, pkt->getRawLength());
+      releasePacket(pkt);
+    }
+    return;
+  }
+
   updateTxBudget();
   
   uint32_t est_airtime = _radio->getEstAirtimeFor(MAX_TRANS_UNIT);

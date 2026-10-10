@@ -139,6 +139,11 @@ enum StrId {
   S_EMPTY_SLOT,
   S_NO_QUICK,
   S_SAVE_FAIL,
+  S_ANT_Q,
+  S_TX_FMT,
+  S_TX_IS_OFF,
+  S_BATT_OUT1,
+  S_BATT_OUT2,
   S_COUNT
 };
 
@@ -228,6 +233,11 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "(празно)", "(empty)" },
   { "Няма готови", "No quick replies" },
   { "Неуспешен запис", "Save failed" },
+  { "Има ли антена?", "Antenna fitted?" },
+  { "Предаване: %s", "Transmit: %s" },
+  { "Предаването е изкл.", "Transmit is off" },
+  { "Батерията може", "Battery can" },
+  { "да се извади", "be removed" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -248,6 +258,9 @@ static const char* T(StrId id) {
   uint8_t lang = lang_prefs ? lang_prefs->ui_lang % LANG_COUNT : 0;
   return STRINGS[id][lang];
 }
+
+// failure alert, or why nothing could be sent
+static const char* failText(StrId id) { return the_mesh.isTxAllowed() ? T(id) : T(S_TX_IS_OFF); }
 
 // ---------------------------------------------------------------- UTF-8 / text helpers
 
@@ -472,6 +485,31 @@ public:
 };
 
 static ConfirmScreen* confirm_screen;
+
+// Asked before the first transmit (UI_ASK_ANTENNA): sending into a missing antenna can damage the
+// SX1262 PA, and the chip cannot detect it. Enter = yes (transmit on), Back = no (receive only).
+class AntennaScreen : public UIScreen {
+  UITask* _task;
+public:
+  AntennaScreen(UITask* task) : _task(task) { }
+  int render(DisplayDriver& d) override {
+    d.setTextSize(1);
+    d.setColor(UIColor::warning_txt);
+    d.drawRect(0, 0, d.width(), d.height());
+    d.drawTextCentered(d.width() / 2, 14, T(S_ANT_Q));
+    d.setColor(UIColor::primary_txt);
+    d.drawTextCentered(d.width() / 2, 34, T(S_YES));
+    d.drawTextCentered(d.width() / 2, 46, T(S_NO));
+    return 1000;
+  }
+  bool handleInput(char c) override {
+    if (c != KEY_ENTER && c != KEY_CANCEL) return false;
+    _task->answerAntenna(c == KEY_ENTER);
+    return true;
+  }
+};
+
+static AntennaScreen* antenna_screen;
 
 // ---- message reading
 
@@ -725,7 +763,7 @@ static void closeWriting(UITask* task);
 static void openReplyChoice(UITask* task, const ComposeTarget& t);
 
 static bool sendText(UITask* task, const ComposeTarget& t, const char* text, int len) {
-  if (len <= 0) return false;
+  if (len <= 0 || !the_mesh.isTxAllowed()) return false;
   uint32_t ts = rtc_clock.getCurrentTimeUnique();
   if (t.is_channel) {
 #ifdef MAX_GROUP_CHANNELS
@@ -1137,7 +1175,7 @@ static void doSend(UITask* task) {
     task->notify(UIEventType::ack);
     task->showAlert(T(S_SENT), 1000);
   } else {
-    task->showAlert(T(S_SEND_FAIL), 1500);
+    task->showAlert(failText(S_SEND_FAIL), 1500);
   }
 }
 
@@ -1435,7 +1473,7 @@ protected:
         _task->notify(UIEventType::ack);
         _task->showAlert(T(S_SENT), 1000);
       } else {
-        _task->showAlert(T(S_SEND_FAIL), 1500);
+        _task->showAlert(failText(S_SEND_FAIL), 1500);
       }
     } else {
       compose_screen->openSend(_target, _text);
@@ -1603,7 +1641,7 @@ public:
 static void doHibernate(UITask* task) { task->hibernate(); }
 
 class QuickMenuScreen : public ListScreen {
-  enum { ADVERT, BLUETOOTH,
+  enum { ADVERT, TRANSMIT, BLUETOOTH,
 #if ENV_INCLUDE_GPS == 1
     GPS,
 #endif
@@ -1614,6 +1652,7 @@ protected:
   void label(int i, char* buf, size_t n) override {
     switch (i) {
       case ADVERT: snprintf(buf, n, T(S_SEND_ADV)); break;
+      case TRANSMIT: snprintf(buf, n, T(S_TX_FMT), the_mesh.isTxAllowed() ? T(S_ON) : T(S_OFF)); break;
       case BLUETOOTH: snprintf(buf, n, "Bluetooth: %s", _task->isBluetoothEnabled() ? T(S_ON) : T(S_OFF)); break;
 #if ENV_INCLUDE_GPS == 1
       case GPS: snprintf(buf, n, "GPS: %s", _task->getGPSState() ? T(S_ON) : T(S_OFF)); break;
@@ -1624,11 +1663,19 @@ protected:
   bool onEnter(int i) override {
     switch (i) {
       case ADVERT:
-        if (the_mesh.advert()) {
+        if (the_mesh.isTxAllowed() && the_mesh.advert()) {
           _task->notify(UIEventType::ack);
           _task->showAlert(T(S_ADV_SENT), 1000);
         } else {
-          _task->showAlert(T(S_ADV_FAIL), 1000);
+          _task->showAlert(failText(S_ADV_FAIL), 1000);
+        }
+        break;
+      case TRANSMIT:
+        if (the_mesh.isTxAllowed()) {
+          the_mesh.setTxAllowed(false);
+          _task->notify(UIEventType::ack);
+        } else {
+          _task->push(antenna_screen);   // turning it on asks about the antenna again
         }
         break;
       case BLUETOOTH:
@@ -1676,6 +1723,12 @@ class StandbyScreen : public UIScreen {
     drawBattery(d, x, 1, _task->getBattMilliVolts());
     if (_task->isBluetoothEnabled()) { x -= 10; d.drawXbm(x, 1, icon_bt, 8, 8); }
     if (_task->unreadCount() > 0) { x -= 10; d.drawXbm(x, 1, icon_mail, 8, 8); }
+    if (!the_mesh.isTxAllowed()) {   // crossed-out "TX": receive only
+      x -= 14;
+      d.setCursor(x, 1);
+      d.print("TX");
+      d.fillRect(x - 1, 4, 13, 1);
+    }
     x -= 7;
     d.fillRect(x, 6, 1, 1); d.fillRect(x + 2, 6, 1, 1); d.fillRect(x + 4, 6, 1, 1);   // "..." = hold for quick menu
     bool scrolling = drawMarquee(d, 0, 1, _prefs->node_name, (x - 3) / 6, _since, true);
@@ -1873,6 +1926,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   recent_screen = new RecentScreen(this);
   settings_screen = new SettingsScreen(this);
   confirm_screen = new ConfirmScreen(this);
+  antenna_screen = new AntennaScreen(this);
+#ifdef UI_ASK_ANTENNA
+  _ask_antenna = !the_mesh.isTxAllowed();
+#endif
   compose_screen = new ComposeScreen(this);
   compose_menu = new ComposeMenuScreen(this);
   recipients_screen = new RecipientsScreen(this);
@@ -1957,6 +2014,17 @@ void UITask::home() {
   _stack[0] = standby;
   _depth = 1;
   standby->showSummary();
+  if (_ask_antenna) _stack[_depth++] = antenna_screen;   // until answered, also after screen off
+  _next_refresh = 0;
+}
+
+void UITask::answerAntenna(bool fitted) {
+  _ask_antenna = false;
+  the_mesh.setTxAllowed(fitted);
+  if (current() == antenna_screen) pop();
+  notify(UIEventType::ack);
+  snprintf(_alert, sizeof(_alert), T(S_TX_FMT), fitted ? T(S_ON) : T(S_OFF));
+  _alert_expiry = millis() + 1200;
   _next_refresh = 0;
 }
 
@@ -2100,13 +2168,19 @@ void UITask::toggleGPS() {
 }
 
 void UITask::hibernate() {
+  the_mesh.flushPendingSaves();   // contacts are otherwise written a few seconds after a change
   if (_display != NULL) {
+    _display->turnOn();
     _display->startFrame();
     _display->setTextSize(1);
     _display->setColor(UIColor::warning_txt);
-    _display->drawTextCentered(_display->width() / 2, 28, T(S_POWER_OFF));
+    _display->drawTextCentered(_display->width() / 2, 12, T(S_POWER_OFF));
+    _display->setColor(UIColor::primary_txt);
+    _display->drawTextCentered(_display->width() / 2, 32, T(S_BATT_OUT1));
+    _display->drawTextCentered(_display->width() / 2, 44, T(S_BATT_OUT2));
     _display->endFrame();
   }
+  unsigned long shown = millis();
 #ifdef PIN_VIBRATION
   if (!_node_prefs->vibe_quiet) {
     vibration.pulse(UI_HAPTIC_LONG_MS);
@@ -2114,6 +2188,7 @@ void UITask::hibernate() {
     while (millis() - t < UI_HAPTIC_LONG_MS + 50) vibration.loop();
   }
 #endif
+  while (millis() - shown < 2500) delay(10);   // long enough to read
   if (_display != NULL) _display->turnOff();
   shutdown();
 }
