@@ -20,7 +20,7 @@
 #define MARQUEE_PAUSE_MILLIS 1000
 #define MARQUEE_STEP_MILLIS  300
 #define NEW_MSG_HIGHLIGHT    3000
-#define VALID_EPOCH          1704067200UL   // 2024-01-01, anything earlier means "no clock yet"
+#define VALID_EPOCH          1735689600UL   // 2025-01-01; VolatileRTCClock boots in May 2024, so earlier means "no clock yet"
 
 // haptic dictionary (ms): key press, confirmed action, channel msg, direct msg, low battery / power off
 #ifndef UI_HAPTIC_CLICK_MS
@@ -37,6 +37,9 @@ static const uint16_t HAPTIC_DIRECT[]  = { 150, 150, 150 };
 #define COLOR_BLACK  0
 
 #include "../ui-new/icons.h"
+
+// millis() wraps after 49.7 days: compare by difference, never by absolute value
+static inline bool timeReached(unsigned long t) { return (long)(millis() - t) >= 0; }
 
 // 8x8 status icons, MSB first rows (Adafruit drawBitmap format)
 static const uint8_t icon_mail[] = { 0xFF, 0xC3, 0xA5, 0x99, 0x81, 0x81, 0xFF, 0x00 };
@@ -363,7 +366,7 @@ public:
     return 500;
   }
   void poll() override {
-    if (millis() >= dismiss_after) _task->home();
+    if (timeReached(dismiss_after)) _task->home();
   }
 };
 
@@ -515,10 +518,10 @@ static AntennaScreen* antenna_screen;
 
 class MessageViewScreen : public UIScreen {
   UITask* _task;
-  int _idx = 0;
+  uint32_t _seq = 0;   // the message shown; new messages shift history indexes
   int _scroll = 0;
   static const int MAX_LINES = 12, LINE_CHARS = 21, VISIBLE = 5;
-  const char* _lines[MAX_LINES];   // start of each line within the entry text
+  uint8_t _lines[MAX_LINES];       // start of each line, as offset into the entry text (entries move)
   uint8_t _line_len[MAX_LINES];    // characters per line
   int _num_lines = 0;
   unsigned long _opened = 0;
@@ -539,11 +542,11 @@ class MessageViewScreen : public UIScreen {
         chars++;
       }
       if (*q && *q != ' ' && last_space) {   // break at the last space
-        _lines[_num_lines] = start;
+        _lines[_num_lines] = start - text;
         _line_len[_num_lines++] = chars_at_space;
         p = last_space + 1;
       } else {
-        _lines[_num_lines] = start;
+        _lines[_num_lines] = start - text;
         _line_len[_num_lines++] = chars;
         p = q;
       }
@@ -553,14 +556,15 @@ class MessageViewScreen : public UIScreen {
 public:
   MessageViewScreen(UITask* task) : _task(task) { }
   void open(int idx) {
-    _idx = idx;
     _scroll = 0;
     _opened = millis();
+    _num_lines = 0;
     UIMsgEntry* m = _task->historyAt(idx);
+    _seq = m ? m->seq : 0;
     if (m) { m->unread = false; wrap(m->text); }
   }
   int render(DisplayDriver& d) override {
-    UIMsgEntry* m = _task->historyAt(_idx);
+    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
     if (!m) { _task->pop(); return 100; }
     char age[12];
     formatAge(age, sizeof(age), rtc_clock.getCurrentTime() - m->timestamp);
@@ -573,7 +577,7 @@ public:
     d.setColor(UIColor::primary_txt);
     char line[100], filtered[100];
     for (int r = 0; r < VISIBLE && _scroll + r < _num_lines; r++) {
-      utf8Slice(line, sizeof(line), _lines[_scroll + r], 0, _line_len[_scroll + r]);
+      utf8Slice(line, sizeof(line), m->text + _lines[_scroll + r], 0, _line_len[_scroll + r]);
       d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
       d.setCursor(0, 12 + r * 10);
       d.print(filtered);
@@ -590,7 +594,7 @@ public:
 };
 
 class MessageActionsScreen : public ListScreen {
-  int _idx = 0;
+  uint32_t _seq = 0;   // the message acted on, independent of history shifts
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, T(S_MSG)); }
   int count() override { return 4; }
@@ -600,7 +604,11 @@ protected:
   bool onEnter(int i) override;
 public:
   MessageActionsScreen(UITask* task) : ListScreen(task) { }
-  void open(int idx) { _idx = idx; reset(); }
+  void open(int idx) {
+    UIMsgEntry* m = _task->historyAt(idx);
+    _seq = m ? m->seq : 0;
+    reset();
+  }
 };
 
 class MessagesScreen : public ListScreen {
@@ -638,7 +646,9 @@ bool MessageViewScreen::handleInput(char c) {
   if (c == KEY_NEXT) { if (_scroll + VISIBLE < _num_lines) _scroll++; return true; }
   if (c == KEY_PREV) { if (_scroll > 0) _scroll--; return true; }
   if (c == KEY_CONTEXT_MENU || c == KEY_ENTER) {
-    message_actions->open(_idx);
+    int idx = _task->historyIndexOf(_seq);
+    if (idx < 0) return false;
+    message_actions->open(idx);
     _task->push(message_actions);
     return true;
   }
@@ -649,8 +659,9 @@ static void replyTo(UITask* task, const UIMsgEntry* m);
 
 bool MessageActionsScreen::onEnter(int i) {
   _task->pop();   // close this pop-up
+  int idx = _task->historyIndexOf(_seq);
   if (i == 0) {
-    UIMsgEntry* m = _task->historyAt(_idx);
+    UIMsgEntry* m = _task->historyAt(idx);
     if (m) {
       m->unread = false;
       if (_task->current() == message_view) _task->pop();
@@ -661,7 +672,8 @@ bool MessageActionsScreen::onEnter(int i) {
   i--;
   if (i == 0) {
     if (_task->current() == message_view) _task->pop();
-    _task->deleteHistory(_idx);
+    if (idx < 0) return true;   // already gone (pushed out of the history)
+    _task->deleteHistory(idx);
     _task->showAlert(T(S_DELETED), 800);
   } else if (i == 1) {
     if (_task->current() == message_view) _task->pop();
@@ -703,6 +715,10 @@ static RecentScreen* recent_screen;
 
 // ---- writing: on-screen keyboard with word prediction
 
+#ifndef UI_DRAFTS
+  #define UI_DRAFTS 4   // unsent messages kept, each for a different recipient
+#endif
+
 #ifndef KB_DOUBLE_CLICK_MS
   #define KB_DOUBLE_CLICK_MS 350   // two presses this close = accept the suggested word
 #endif
@@ -728,12 +744,16 @@ static bool findTarget(const UIMsgEntry* m, ComposeTarget& t) {
   }
 #ifdef MAX_GROUP_CHANNELS
   if (m->src == MSG_SRC_CHANNEL) {
+    // the slot may have been reassigned from the phone since: it must still carry the same name
     ChannelDetails ch;
-    if (!the_mesh.getChannel(m->channel_idx, ch) || !ch.name[0]) return false;
-    t.is_channel = true;
-    t.channel_idx = m->channel_idx;
-    StrHelper::strncpy(t.name, ch.name, sizeof(t.name));
-    return true;
+    if (the_mesh.getChannel(m->channel_idx, ch) && ch.name[0] &&
+        strncmp(ch.name, m->from, sizeof(m->from) - 1) == 0) {
+      t.is_channel = true;
+      t.channel_idx = m->channel_idx;
+      StrHelper::strncpy(t.name, ch.name, sizeof(t.name));
+      return true;
+    }
+    // otherwise fall through to the search by name below
   }
 #endif
 #ifdef MAX_GROUP_CHANNELS
@@ -746,6 +766,7 @@ static bool findTarget(const UIMsgEntry* m, ComposeTarget& t) {
       return true;
     }
   }
+  if (m->src == MSG_SRC_CHANNEL) return false;   // never answer a channel message privately
 #endif
   ContactInfo c;
   // getContactByIdx() counts the reserved anonymous slots, getNumContacts() does not
@@ -819,8 +840,15 @@ class ComposeScreen : public UIScreen {
   bool _edit = false;                         // editing quick reply _slot instead of a message
   int _slot = 0;
   bool _draft = false;                        // _text is an unsent message for _target
-  char _stash[MAX_TEXT_LEN + 1];              // the unsent message while the keyboard is used for another one
-  ComposeTarget _stash_target;
+  // unsent messages while the keyboard is used for another one, one per recipient (least recently
+  // stashed is dropped when all are taken)
+  struct Draft {
+    ComposeTarget target;
+    char text[MAX_TEXT_LEN + 1];
+    uint32_t used;
+  };
+  Draft _drafts[UI_DRAFTS];
+  uint32_t _draft_clock = 0;
 
   const char* chars() const {
     static const char* const SETS[3] = {
@@ -901,8 +929,19 @@ class ComposeScreen : public UIScreen {
     autoShift();
   }
 
-  // the second of two quick presses: take back what the first typed and accept its suggestion
+  // the second of two quick presses: take back what the first typed and accept its suggestion.
+  // A real double letter ("will", "лененото") is typed as such: if the word with the letter
+  // doubled is known, the second press stays a letter.
   bool acceptSuggestion() {
+    if (_undo_len > 0 && _len + _undo_len <= MAX_TEXT_LEN) {
+      char doubled[MAX_TEXT_LEN + 1];
+      int ws = wordStart();
+      int n = _len - ws;
+      memcpy(doubled, &_text[ws], n);
+      memcpy(&doubled[n], &_text[_len - _undo_len], _undo_len);
+      doubled[n + _undo_len] = 0;
+      if (_predict.isKnownPrefix(doubled)) return false;
+    }
     int saved = _len;
     _len -= _undo_len;
     _text[_len] = 0;
@@ -1030,9 +1069,8 @@ class ComposeScreen : public UIScreen {
 public:
   ComposeScreen(UITask* task) : _task(task) {
     _text[0] = 0;
-    _stash[0] = 0;
     memset(&_target, 0, sizeof(_target));
-    memset(&_stash_target, 0, sizeof(_stash_target));
+    memset(_drafts, 0, sizeof(_drafts));
   }
 
   // write to t; 'prefill' (a quick reply to finish) replaces the text, otherwise an unsent draft
@@ -1042,12 +1080,25 @@ public:
            (a.is_channel ? a.channel_idx == b.channel_idx : memcmp(a.pub_key, b.pub_key, PUB_KEY_SIZE) == 0);
   }
 
-  // keep an unsent message aside (one draft, for the last recipient written to)
-  void stashDraft() {
-    if (_draft && !_edit && _len > 0) {
-      memcpy(_stash, _text, _len + 1);
-      _stash_target = _target;
+  Draft* findDraft(const ComposeTarget& t) {
+    for (int i = 0; i < UI_DRAFTS; i++) {
+      if (_drafts[i].text[0] && sameTarget(_drafts[i].target, t)) return &_drafts[i];
     }
+    return NULL;
+  }
+
+  // keep an unsent message aside, in its recipient's slot, a free one, or the oldest
+  void stashDraft() {
+    if (!_draft || _edit || _len == 0) return;
+    Draft* d = findDraft(_target);
+    for (int i = 0; !d && i < UI_DRAFTS; i++) if (!_drafts[i].text[0]) d = &_drafts[i];
+    if (!d) {
+      d = &_drafts[0];
+      for (int i = 1; i < UI_DRAFTS; i++) if (_drafts[i].used < d->used) d = &_drafts[i];
+    }
+    memcpy(d->text, _text, _len + 1);
+    d->target = _target;
+    d->used = ++_draft_clock;
   }
 
   void openSend(const ComposeTarget& t, const char* prefill) {
@@ -1058,9 +1109,13 @@ public:
     _max_len = MAX_TEXT_LEN;
     if (_target.is_channel) _max_len -= strlen(_task->prefs()->node_name) + 2;   // "<name>: " is prepended
     if (_max_len > MAX_TEXT_LEN || _max_len < 0) _max_len = MAX_TEXT_LEN;
-    if (prefill) setText(prefill);
-    else if (!same) setText(_stash[0] && sameTarget(t, _stash_target) ? _stash : "");
-    if (!prefill && !same && sameTarget(t, _stash_target)) _stash[0] = 0;
+    if (prefill) {
+      setText(prefill);
+    } else if (!same) {
+      Draft* d = findDraft(t);
+      setText(d ? d->text : "");
+      if (d) d->text[0] = 0;   // the draft is back in the editor
+    }
     _draft = true;
     start();
   }
@@ -1594,6 +1649,10 @@ protected:
   }
 public:
   SettingsScreen(UITask* task) : ListScreen(task) { }
+  // leave the time zone edit (and keep its value) when the screen is left another way than Back
+  void finishEdit() {
+    if (_editing) { _editing = false; the_mesh.savePrefs(); }
+  }
   bool handleInput(char c) override {
     if (_editing) {
       NodePrefs* p = _task->prefs();
@@ -1631,7 +1690,7 @@ protected:
     if (i == 0) { messages_screen->reset(); _task->push(messages_screen); }
     else if (i == 1) { recipients_screen->open(); _task->push(recipients_screen); }
     else if (i == 2) { recent_screen->open(); _task->push(recent_screen); }
-    else { settings_screen->reset(); _task->push(settings_screen); }
+    else { settings_screen->finishEdit(); settings_screen->reset(); _task->push(settings_screen); }
     return true;
   }
 public:
@@ -2012,6 +2071,7 @@ void UITask::pop() {
 }
 
 void UITask::home() {
+  if (settings_screen) settings_screen->finishEdit();
   _stack[0] = standby;
   _depth = 1;
   standby->showSummary();
@@ -2084,6 +2144,13 @@ UIMsgEntry* UITask::historyAt(int i) {
   return &_msgs[(_msg_head - i + UI_MSG_HISTORY) % UI_MSG_HISTORY];
 }
 
+int UITask::historyIndexOf(uint32_t seq) {
+  for (int i = 0; i < _msg_count; i++) {
+    if (historyAt(i)->seq == seq) return i;
+  }
+  return -1;
+}
+
 void UITask::deleteHistory(int i) {
   if (i < 0 || i >= _msg_count) return;
   // shift older entries one step towards the newer end
@@ -2124,15 +2191,16 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   StrHelper::strncpy(m->text, text, sizeof(m->text));
   m->src = _next_src;
   m->channel_idx = _next_channel;
+  m->seq = ++_msg_seq;
   memcpy(m->pub_prefix, _next_prefix, sizeof(m->pub_prefix));
   _next_src = MSG_SRC_UNKNOWN;
   _last_new_msg = millis();
 
   if (_display != NULL) {
     if (!_display->isOn() && !hasConnection()) {
-      _display->turnOn();
-      home();
-    } else if (_display->isOn() && current() != standby) {
+      wakeDisplay();
+    }
+    if (_display->isOn() && current() != standby) {
       char alert[48];
       snprintf(alert, sizeof(alert), T(S_NEW_FMT), from_name);
       showAlert(alert, 1500);
@@ -2203,15 +2271,33 @@ void UITask::shutdown(bool restart) {
 #ifdef PIN_VIBRATION
   vibration.stop();
 #endif
+  the_mesh.flushPendingWrites();   // contacts/paths learned in the last moments
   if (restart) _board->reboot();
   else _board->powerOff();
+}
+
+#ifndef UI_BATT_MIN_PLAUSIBLE_MV
+  #define UI_BATT_MIN_PLAUSIBLE_MV  2500
+#endif
+
+#ifndef UI_RESUME_MILLIS
+  #define UI_RESUME_MILLIS  (5 * 60 * 1000UL)   // screen off for less than this: wake where you left off
+#endif
+
+void UITask::wakeDisplay() {
+  _display->turnOn();
+  // writing or reading something when the screen timed out: keep it, otherwise standby
+  if (_depth <= 1 || current() == _splash || millis() - _off_at > UI_RESUME_MILLIS) home();
+  _auto_off = millis() + autoOffMillis();
+  _next_refresh = 0;
 }
 
 char UITask::checkDisplayOn(char c) {
   if (_display != NULL) {
     if (!_display->isOn()) {
-      _display->turnOn();   // wake only, consume the key
-      home();
+      wakeDisplay();   // wake only, consume the key
+      // turns made while the screen was off must not act on the woken screen
+      while (rotary_input.poll() != RotaryInputEvent::None) { }
       c = 0;
     }
     _auto_off = millis() + autoOffMillis();
@@ -2286,10 +2372,11 @@ void UITask::loop() {
   if (s) s->poll();
 
   if (_display != NULL && _display->isOn()) {
-    if (millis() >= _next_refresh && current()) {
+    if (_alert_expiry != 0 && timeReached(_alert_expiry)) _alert_expiry = 0;   // expired: forget it
+    if ((_next_refresh == 0 || timeReached(_next_refresh)) && current()) {
       _display->startFrame();
       int delay_millis = current()->render(*_display);
-      if (millis() < _alert_expiry) {
+      if (_alert_expiry != 0 && !timeReached(_alert_expiry)) {
         renderAlert();
         unsigned long alert_left = _alert_expiry - millis();
         if ((unsigned long)delay_millis > alert_left) delay_millis = alert_left;
@@ -2297,8 +2384,9 @@ void UITask::loop() {
       _next_refresh = millis() + delay_millis;
       _display->endFrame();
     }
-    if (millis() > _auto_off) {
+    if (timeReached(_auto_off)) {
       _display->turnOff();
+      _off_at = millis();
     }
   }
 
@@ -2307,9 +2395,12 @@ void UITask::loop() {
 #endif
 
 #ifdef AUTO_SHUTDOWN_MILLIVOLTS
-  if (millis() > next_batt_chck) {
+  if (next_batt_chck == 0 || timeReached(next_batt_chck)) {
     uint16_t milliVolts = getBattMilliVolts();
-    if (milliVolts > 0 && milliVolts < AUTO_SHUTDOWN_MILLIVOLTS && !board.isExternalPowered()) {
+    // below ~2.5 V no LiPo-powered nRF52 is still running: such a reading is a broken divider or
+    // ADC, and acting on it would switch the device off right after every boot
+    if (milliVolts >= UI_BATT_MIN_PLAUSIBLE_MV && milliVolts < AUTO_SHUTDOWN_MILLIVOLTS &&
+        !board.isExternalPowered()) {
       if (_display != NULL) {
         _display->turnOn();
         _display->startFrame();

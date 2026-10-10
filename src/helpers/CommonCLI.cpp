@@ -141,6 +141,24 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {  // Legacy 
 }
 
 bool CommonCLI::savePrefs(FILESYSTEM* fs) {
+#if defined(NRF52_PLATFORM)
+  // write a temp file and rename it over the old one (atomic in LittleFS), so a reset or
+  // brown-out mid-save cannot leave a repeater with truncated settings
+  fs->remove("/prefs.json.tmp");
+  File tmp = fs->open("/prefs.json.tmp", FILE_O_WRITE);
+  if (tmp) {
+    bool ok = _prefs->saveSerial(tmp);
+    uint32_t expected = tmp.size();
+    tmp.close();
+    if (ok) {
+      File check = fs->open("/prefs.json.tmp", FILE_O_READ);
+      ok = check && check.size() == expected;
+      if (check) check.close();
+    }
+    if (ok && fs->rename("/prefs.json.tmp", "/prefs.json")) return true;
+    fs->remove("/prefs.json.tmp");   // no room for a second copy: rewrite in place below
+  }
+#endif
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   fs->remove("/prefs.json");
   File file = fs->open("/prefs.json", FILE_O_WRITE);

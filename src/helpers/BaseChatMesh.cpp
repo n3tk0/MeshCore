@@ -151,6 +151,21 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
     from = NULL;  // do normal 'add' flow
   }
 
+  // A known contact re-adverts every few hours. Rewriting its stored advert each time wears the
+  // flash for nothing: an older signed advert shares just as well, so it is only replaced when
+  // what it says changed, or once it is a week old.
+  bool store_blob = true;
+  if (from != NULL) {
+    store_blob = strncmp(from->name, parser.getName(), sizeof(from->name) - 1) != 0 ||
+                 from->type != parser.getType() ||
+                 (parser.hasLatLon() && (from->gps_lat != parser.getIntLat() || from->gps_lon != parser.getIntLon())) ||
+                 timestamp - from->last_advert_timestamp > 7 * 24 * 3600UL;
+    if (!store_blob) {   // the blob store holds fewer adverts than there are contacts: still there?
+      uint8_t stored[MAX_TRANS_UNIT];
+      store_blob = getBlobByKey(id.pub_key, PUB_KEY_SIZE, stored) == 0;
+    }
+  }
+
   bool is_new = false; // true = not in contacts[], false = exists in contacts[]
   if (from == NULL) {
     if (!shouldAutoAddContactType(parser.getType())) {
@@ -185,7 +200,7 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   }
 
   // update
-  putBlobByKey(id.pub_key, PUB_KEY_SIZE, temp_buf, plen);
+  if (store_blob) putBlobByKey(id.pub_key, PUB_KEY_SIZE, temp_buf, plen);
   StrHelper::strncpy(from->name, parser.getName(), sizeof(from->name));
   from->type = parser.getType();
   if (parser.hasLatLon()) {
@@ -348,9 +363,10 @@ void BaseChatMesh::onAckRecv(mesh::Packet* packet, uint32_t ack_crc) {
   ContactInfo* from;
   if ((from = processAck((uint8_t *)&ack_crc)) != NULL) {
     txt_send_timeout = 0;   // matched one we're waiting for, cancel timeout timer
+    bool was_flood = packet->isRouteFlood();   // the marker below overwrites the header
     packet->markDoNotRetransmit();   // ACK was for this node, so don't retransmit
 
-    if (packet->isRouteFlood() && from->out_path_len != OUT_PATH_UNKNOWN) {
+    if (was_flood && from->out_path_len != OUT_PATH_UNKNOWN) {
       // we have direct path, but other node is still sending flood, so maybe they didn't receive reciprocal path properly(?)
       handleReturnPathRetry(*from, packet->path, packet->path_len);
     }
@@ -365,9 +381,15 @@ void BaseChatMesh::handleReturnPathRetry(const ContactInfo& contact, const uint8
 }
 
 #ifdef MAX_GROUP_CHANNELS
+static bool isZeroSecret(const uint8_t* secret) {
+  for (int k = 0; k < PUB_KEY_SIZE; k++) if (secret[k]) return false;
+  return true;
+}
+
 int BaseChatMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) {
   int n = 0;
   for (int i = 0; i < MAX_GROUP_CHANNELS && n < max_matches; i++) {
+    if (isZeroSecret(channels[i].channel.secret)) continue;   // unused slot: never accept the all-zero key
     if (channels[i].channel.hash[0] == hash[0]) {
       dest[n++] = channels[i].channel;
     }
@@ -558,7 +580,7 @@ bool BaseChatMesh::importContact(const uint8_t src_buf[], uint8_t len) {
   auto pkt = obtainNewPacket();
   if (pkt) {
     if (pkt->readFrom(src_buf, len) && pkt->getPayloadType() == PAYLOAD_TYPE_ADVERT) {
-      pkt->header |= ROUTE_TYPE_FLOOD;   // simulate it being received flood-mode
+      pkt->header = (pkt->header & ~PH_ROUTE_MASK) | ROUTE_TYPE_FLOOD;   // simulate it being received flood-mode
       getTables()->clear(pkt);  // remove packet hash from table, so we can receive/process it again
       _pendingLoopback = pkt;  // loop-back, as if received over radio
       return true;  // success

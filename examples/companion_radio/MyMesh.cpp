@@ -105,6 +105,11 @@
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+#ifndef LAZY_ADVERT_WRITE_DELAY
+  // a re-advert from a known contact only changes timestamps: rewriting the whole contacts file
+  // (tens of KB) for each one wears out the flash, so these wait and are batched
+  #define LAZY_ADVERT_WRITE_DELAY       (10 * 60 * 1000UL)
+#endif
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -200,6 +205,7 @@ void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, co
   memcpy(contact.out_path, &frame[i], MAX_PATH_SIZE);
   i += MAX_PATH_SIZE;
   memcpy(contact.name, &frame[i], 32);
+  contact.name[31] = 0;   // app may send 32 non-zero bytes
   i += 32;
   memcpy(&contact.last_advert_timestamp, &frame[i], 4);
   i += 4;
@@ -389,7 +395,8 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     p->path_len = mesh::Packet::copyPath(p->path, path, path_len);
   }
 
-  if (!is_new) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY); // only schedule lazy write for contacts that are in contacts[]
+  // only schedule lazy write for contacts that are in contacts[]; never postpone a sooner write
+  if (!is_new && dirty_contacts_expiry == 0) dirty_contacts_expiry = futureMillis(LAZY_ADVERT_WRITE_DELAY);
 }
 
 static int sort_by_recent(const void *a, const void *b) {
@@ -962,6 +969,7 @@ void MyMesh::begin(bool has_display) {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;   // sendFlood() accepts hash sizes 1..3
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -988,6 +996,13 @@ void MyMesh::begin(bool has_display) {
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
 
+  if (!radio_driver.paramsSupported(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr)) {
+    // stored settings this chip cannot use: start on the build defaults rather than half-applied ones
+    _prefs.freq = LORA_FREQ;
+    _prefs.bw = LORA_BW;
+    _prefs.sf = LORA_SF;
+    _prefs.cr = LORA_CR;
+  }
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.setTxPower(_prefs.tx_power_dbm);
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
@@ -1183,6 +1198,10 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t path[MAX_PATH_SIZE];
     if (path_len != OUT_PATH_UNKNOWN) {
       i += mesh::Packet::writePath(path, &cmd_frame[i], path_len);
+    }
+    if (i + 2 > (int)len) {   // path and data_type must be inside the frame
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      return;
     }
 
     uint16_t data_type = ((uint16_t)cmd_frame[i]) | (((uint16_t)cmd_frame[i + 1]) << 8);
@@ -1409,7 +1428,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (repeat && !isValidClientRepeatFreq(freq)) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else if (freq >= 150000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
-        bw <= 500000) {
+        bw <= 500000 && radio_driver.paramsSupported((float)freq / 1000.0, (float)bw / 1000.0, sf, cr)) {
       _prefs.sf = sf;
       _prefs.cr = cr;
       _prefs.freq = (float)freq / 1000.0;
@@ -1444,8 +1463,9 @@ void MyMesh::handleCmdFrame(size_t len) {
     i += 4;
     memcpy(&af, &cmd_frame[i], 4);
     i += 4;
-    _prefs.rx_delay_base = ((float)rx) / 1000.0f;
-    _prefs.airtime_factor = ((float)af) / 1000.0f;
+    // same limits as applied at boot: larger values would mute sending until the next reboot
+    _prefs.rx_delay_base = constrain(((float)rx) / 1000.0f, 0, 20.0f);
+    _prefs.airtime_factor = constrain(((float)af) / 1000.0f, 0, 9.0f);
     savePrefs();
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_GET_TUNING_PARAMS) {
@@ -1480,9 +1500,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_REBOOT && len >= 7 && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
-    if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
-      saveContacts();
-    }
+    flushPendingWrites();
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
@@ -2089,8 +2107,8 @@ void MyMesh::checkCLIRescueCmd() {
       }
     } else if (memcmp(cli_command, "ls", 2) == 0) {
 
-      // get path from command e.g: "ls /adafruit"
-      const char *path = &cli_command[3];
+      // get path from command e.g: "ls /adafruit"; plain "ls" lists the root
+      const char *path = cli_command[2] ? &cli_command[3] : "/";
 
       bool is_fs2 = false;
       if (memcmp(path, "UserData/", 9) == 0) {
@@ -2159,13 +2177,13 @@ void MyMesh::checkCLIRescueCmd() {
       }
       if(file){
 
-        // get file content
-        int file_size = file.available();
-        uint8_t buffer[file_size];
-        file.read(buffer, file_size);
-
-        // print hex
-        mesh::Utils::printHex(Serial, buffer, file_size);
+        // print the content as hex in small pieces: a stack buffer the size of the file
+        // (eg. 50KB of contacts) would overflow the stack
+        uint8_t buffer[64];
+        int n;
+        while ((n = file.read(buffer, sizeof(buffer))) > 0) {
+          mesh::Utils::printHex(Serial, buffer, n);
+        }
         Serial.print("\n");
 
         file.close();
@@ -2279,5 +2297,6 @@ bool MyMesh::advert() {
 
 // To check if there is pending work
 bool MyMesh::hasPendingWork() const {
-  return _mgr->getOutboundTotal() > 0 || dirty_contacts_expiry != 0;
+  // a contacts write that is not due yet must not keep the CPU from sleeping until then
+  return _mgr->getOutboundTotal() > 0 || (dirty_contacts_expiry != 0 && millisHasNowPassed(dirty_contacts_expiry));
 }

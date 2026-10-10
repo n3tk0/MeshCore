@@ -55,7 +55,8 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       uint16_t offset = (uint16_t)pkt->path_len << path_sz;
       if (offset >= len) {   // TRACE has reached end of given path
         onTraceRecv(pkt, trace_tag, auth_code, flags, pkt->path, &pkt->payload[i], len);
-      } else if (self_id.isHashMatch(&pkt->payload[i + offset], 1 << path_sz) && allowPacketForward(pkt) && !_tables->wasSeen(pkt)) {
+      } else if (offset + (1u << path_sz) <= len &&   // the whole hash must be inside the payload
+                 self_id.isHashMatch(&pkt->payload[i + offset], 1 << path_sz) && allowPacketForward(pkt) && !_tables->wasSeen(pkt)) {
         _tables->markSeen(pkt);
         // append SNR (Not hash!)
         pkt->path[pkt->path_len++] = (int8_t) (pkt->getSNR()*4);
@@ -83,6 +84,9 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       memcpy(&ack_crc, &pkt->payload[i], 4); i += 4;
       if (i <= pkt->payload_len) {
         onAckRecv(pkt, ack_crc);
+        // the ACK was for this node: the header is now the 'do not retransmit' marker, so nothing
+        // below may read it as a route/payload type
+        if (pkt->isMarkedDoNotRetransmit()) return ACTION_RELEASE;
       }
     }
 
@@ -270,11 +274,12 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
         _tables->markSeen(pkt);
         uint8_t* app_data = &pkt->payload[i];
         int app_data_len = pkt->payload_len - i;
-        if (app_data_len > MAX_ADVERT_DATA_SIZE) { app_data_len = MAX_ADVERT_DATA_SIZE; }
 
-        // check that signature is valid
-        bool is_ok;
-        {
+        // check that signature is valid. createAdvert() never makes more than MAX_ADVERT_DATA_SIZE,
+        // and the signature could not cover extra bytes: anyone could append some and get the
+        // copy re-flooded as a 'new' packet, so such adverts are dropped.
+        bool is_ok = app_data_len <= MAX_ADVERT_DATA_SIZE;
+        if (is_ok) {
           uint8_t message[PUB_KEY_SIZE + 4 + MAX_ADVERT_DATA_SIZE];
           int msg_len = 0;
           memcpy(&message[msg_len], id.pub_key, PUB_KEY_SIZE); msg_len += PUB_KEY_SIZE;
@@ -348,6 +353,7 @@ void Mesh::removeSelfFromPath(Packet* pkt) {
 DispatcherAction Mesh::routeRecvPacket(Packet* packet) {
   uint8_t n = packet->getPathHashCount();
   if (packet->isRouteFlood() && !packet->isMarkedDoNotRetransmit()
+    && n < 63   // the hop count is 6 bits: one more would spill into the hash size bits
     && (n + 1)*packet->getPathHashSize() <= MAX_PATH_SIZE && allowPacketForward(packet)) {
     // append this node's hash to 'path'
     self_id.copyHashTo(&packet->path[n * packet->getPathHashSize()], packet->getPathHashSize());
@@ -576,6 +582,7 @@ Packet* Mesh::createAck(const uint8_t* ack, uint8_t len) {
 }
 
 Packet* Mesh::createMultiAck(const uint8_t* ack, uint8_t len, uint8_t remaining) {
+  if (len > MAX_PACKET_PAYLOAD - 1) return NULL;   // must fit after the multipart header byte
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
     MESH_DEBUG_PRINTLN("%s Mesh::createMultiAck(): error, packet pool empty", getLogDateTime());
@@ -641,10 +648,12 @@ Packet* Mesh::createControlData(const uint8_t* data, size_t len) {
 void Mesh::sendFlood(Packet* packet, uint32_t delay_millis, uint8_t path_hash_size) {
   if (packet->getPayloadType() == PAYLOAD_TYPE_TRACE) {
     MESH_DEBUG_PRINTLN("%s Mesh::sendFlood(): TRACE type not suspported", getLogDateTime());
+    releasePacket(packet);
     return;
   }
   if (path_hash_size == 0 || path_hash_size > 3) {
     MESH_DEBUG_PRINTLN("%s Mesh::sendFlood(): invalid path_hash_size", getLogDateTime());
+    releasePacket(packet);   // return to pool, otherwise every bad send leaks a packet
     return;
   }
 
@@ -668,10 +677,12 @@ void Mesh::sendFlood(Packet* packet, uint32_t delay_millis, uint8_t path_hash_si
 void Mesh::sendFlood(Packet* packet, uint16_t* transport_codes, uint32_t delay_millis, uint8_t path_hash_size) {
   if (packet->getPayloadType() == PAYLOAD_TYPE_TRACE) {
     MESH_DEBUG_PRINTLN("%s Mesh::sendFlood(): TRACE type not suspported", getLogDateTime());
+    releasePacket(packet);
     return;
   }
   if (path_hash_size == 0 || path_hash_size > 3) {
     MESH_DEBUG_PRINTLN("%s Mesh::sendFlood(): invalid path_hash_size", getLogDateTime());
+    releasePacket(packet);   // return to pool, otherwise every bad send leaks a packet
     return;
   }
 

@@ -22,6 +22,9 @@ public:
   // (lowercase, or uppercase when the whole prefix is in capitals).
   bool suggest(const char* prefix, char* rest, size_t rest_size) const;
 
+  // true if 'word' is a dictionary (or recently typed) word, or the start of one
+  bool isKnownPrefix(const char* word) const;
+
   // remember a word the user typed or accepted (kept in RAM until reboot)
   void learn(const char* word);
 };
