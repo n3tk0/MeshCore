@@ -170,6 +170,9 @@ public:
     _prefs.node_lon = sensors.node_lon;
     _store->savePrefs(_prefs);
   }
+  // small UI-owned files (e.g. quick replies) on the primary filesystem
+  int loadUIFile(const char* filename, uint8_t* dest, int max_len) { return _store->loadSmallFile(filename, dest, max_len); }
+  bool saveUIFile(const char* filename, const uint8_t* src, int len) { return _store->saveSmallFile(filename, src, len); }
 
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
