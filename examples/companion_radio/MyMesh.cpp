@@ -105,6 +105,11 @@
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+#ifndef LAZY_ADVERT_WRITE_DELAY
+  // a re-advert from a known contact only changes timestamps: rewriting the whole contacts file
+  // (tens of KB) for each one wears out the flash, so these wait and are batched
+  #define LAZY_ADVERT_WRITE_DELAY       (10 * 60 * 1000UL)
+#endif
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -390,7 +395,8 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     p->path_len = mesh::Packet::copyPath(p->path, path, path_len);
   }
 
-  if (!is_new) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY); // only schedule lazy write for contacts that are in contacts[]
+  // only schedule lazy write for contacts that are in contacts[]; never postpone a sooner write
+  if (!is_new && dirty_contacts_expiry == 0) dirty_contacts_expiry = futureMillis(LAZY_ADVERT_WRITE_DELAY);
 }
 
 static int sort_by_recent(const void *a, const void *b) {
@@ -1481,9 +1487,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_REBOOT && len >= 7 && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
-    if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
-      saveContacts();
-    }
+    flushPendingWrites();
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
@@ -2280,5 +2284,6 @@ bool MyMesh::advert() {
 
 // To check if there is pending work
 bool MyMesh::hasPendingWork() const {
-  return _mgr->getOutboundTotal() > 0 || dirty_contacts_expiry != 0;
+  // a contacts write that is not due yet must not keep the CPU from sleeping until then
+  return _mgr->getOutboundTotal() > 0 || (dirty_contacts_expiry != 0 && millisHasNowPassed(dirty_contacts_expiry));
 }

@@ -187,6 +187,13 @@ public:
 
   // To check if there is pending work
   bool hasPendingWork() const;
+  // write contact changes still waiting for the lazy save (before reboot or power off)
+  void flushPendingWrites() {
+    if (dirty_contacts_expiry) {
+      saveContacts();
+      dirty_contacts_expiry = 0;
+    }
+  }
 
 private:
   void writeOKFrame();
