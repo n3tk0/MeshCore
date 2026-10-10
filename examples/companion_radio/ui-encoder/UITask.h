@@ -35,7 +35,14 @@ struct UIMsgEntry {
   bool     unread;
   char     from[32];
   char     text[161];   // MAX_TEXT_LEN + 1
+  uint8_t  src;         // MSG_SRC_*: who to answer
+  uint8_t  channel_idx;
+  uint8_t  pub_prefix[6];
 };
+
+#define MSG_SRC_UNKNOWN  0
+#define MSG_SRC_CONTACT  1
+#define MSG_SRC_CHANNEL  2
 
 class UITask : public AbstractUITask {
   DisplayDriver* _display;
@@ -57,6 +64,7 @@ class UITask : public AbstractUITask {
   UIMsgEntry _msgs[UI_MSG_HISTORY];
   int _msg_head, _msg_count;
   unsigned long _last_new_msg;
+  uint8_t _next_src, _next_channel, _next_prefix[6];   // from msgSource(), for the next newMsg()
 
   // screen stack, [0] is always the standby screen (after the splash)
   UIScreen* _stack[8];
@@ -82,6 +90,7 @@ public:
     _msgcount = 0;
     _alert_expiry = 0;
     _quick_custom = false;
+    _next_src = MSG_SRC_UNKNOWN;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
@@ -118,6 +127,7 @@ public:
   // from AbstractUITask
   void msgRead(int msgcount) override;
   void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
+  void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) override;
   void notify(UIEventType t = UIEventType::none) override;
   void loop() override;
 
