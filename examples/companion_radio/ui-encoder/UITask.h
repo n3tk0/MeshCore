@@ -77,6 +77,7 @@ class UITask : public AbstractUITask {
   char _quick[UI_QUICK_COUNT][UI_QUICK_LEN];
   bool _quick_custom;
   void loadQuickReplies();
+  bool _ask_antenna;   // antenna question still unanswered
 
   char checkDisplayOn(char c);
   void wakeDisplay();   // turn on: back to the open screen after a short pause, else to standby
@@ -95,6 +96,7 @@ public:
     _msgcount = 0;
     _alert_expiry = 0;
     _quick_custom = false;
+    _ask_antenna = false;
     _next_src = MSG_SRC_UNKNOWN;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
@@ -128,6 +130,7 @@ public:
   bool getGPSState();
   void toggleGPS();
   void hibernate();
+  void answerAntenna(bool fitted);   // true = transmit allowed
   void applyEncoderPrefs();   // turn direction and steps per detent from NodePrefs
 
   // from AbstractUITask

@@ -171,6 +171,7 @@ protected:
   virtual bool getCADEnabled() const { return false; }    // hardware CAD disabled by default
   virtual int getAGCResetInterval() const { return 0; }    // disabled by default
   virtual unsigned long getDutyCycleWindowMs() const { return 3600000; }
+  virtual bool allowTransmit() const { return true; }    // false = drop due packets instead of sending
 
 public:
   void begin();

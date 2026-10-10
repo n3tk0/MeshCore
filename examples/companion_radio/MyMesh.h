@@ -106,6 +106,7 @@ protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
   bool getCADEnabled() const override;
+  bool allowTransmit() const override { return _tx_allowed; }
   int calcRxDelay(float score, uint32_t air_time) const override;
   uint32_t getRetransmitDelay(const mesh::Packet *packet) override;
   uint32_t getDirectRetransmitDelay(const mesh::Packet *packet) override;
@@ -174,6 +175,18 @@ public:
   int loadUIFile(const char* filename, uint8_t* dest, int max_len) { return _store->loadSmallFile(filename, dest, max_len); }
   bool saveUIFile(const char* filename, const uint8_t* src, int len) { return _store->saveSmallFile(filename, src, len); }
 
+  // transmit gate (e.g. until the user confirms an antenna is fitted); receiving is unaffected
+  bool isTxAllowed() const { return _tx_allowed; }
+  void setTxAllowed(bool on) { _tx_allowed = on; }
+
+  // write pending lazy saves now, before power off
+  void flushPendingSaves() {
+    if (dirty_contacts_expiry) {
+      saveContacts();
+      dirty_contacts_expiry = 0;
+    }
+  }
+
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
     sensors.setSettingValue("gps", _prefs.gps_enabled ? "1" : "0");
@@ -233,6 +246,7 @@ private:
   uint32_t _active_ble_pin;
   bool _iter_started;
   bool _cli_rescue;
+  bool _tx_allowed;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   char cli_command[80];
   uint8_t app_target_ver;
