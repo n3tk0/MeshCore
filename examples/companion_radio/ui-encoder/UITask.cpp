@@ -138,6 +138,7 @@ enum StrId {
   S_CSORT_RECENT,
   S_EMPTY_SLOT,
   S_NO_QUICK,
+  S_SAVE_FAIL,
   S_COUNT
 };
 
@@ -226,6 +227,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "последни", "recent" },
   { "(празно)", "(empty)" },
   { "Няма готови", "No quick replies" },
+  { "Неуспешен запис", "Save failed" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -605,7 +607,7 @@ bool MessageViewScreen::handleInput(char c) {
   return false;
 }
 
-static void replyTo(UITask* task, const char* from);
+static void replyTo(UITask* task, const UIMsgEntry* m);
 
 bool MessageActionsScreen::onEnter(int i) {
   _task->pop();   // close this pop-up
@@ -614,7 +616,7 @@ bool MessageActionsScreen::onEnter(int i) {
     if (m) {
       m->unread = false;
       if (_task->current() == message_view) _task->pop();
-      replyTo(_task, m->from);
+      replyTo(_task, m);
     }
     return true;
   }
@@ -674,9 +676,28 @@ struct ComposeTarget {
   char name[32];
 };
 
-// the sender of a message in the history: a channel or a contact with that name
-static bool findTarget(const char* name, ComposeTarget& t) {
+// who to answer for a message in the history: its recorded source, or (older entries) a channel
+// or contact with the sender's name
+static bool findTarget(const UIMsgEntry* m, ComposeTarget& t) {
   memset(&t, 0, sizeof(t));
+  const char* name = m->from;
+  if (m->src == MSG_SRC_CONTACT) {
+    ContactInfo* c = the_mesh.lookupContactByPubKey(m->pub_prefix, sizeof(m->pub_prefix));
+    if (!c) return false;
+    memcpy(t.pub_key, c->id.pub_key, PUB_KEY_SIZE);
+    StrHelper::strncpy(t.name, c->name, sizeof(t.name));
+    return true;
+  }
+#ifdef MAX_GROUP_CHANNELS
+  if (m->src == MSG_SRC_CHANNEL) {
+    ChannelDetails ch;
+    if (!the_mesh.getChannel(m->channel_idx, ch) || !ch.name[0]) return false;
+    t.is_channel = true;
+    t.channel_idx = m->channel_idx;
+    StrHelper::strncpy(t.name, ch.name, sizeof(t.name));
+    return true;
+  }
+#endif
 #ifdef MAX_GROUP_CHANNELS
   ChannelDetails ch;
   for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
@@ -689,8 +710,9 @@ static bool findTarget(const char* name, ComposeTarget& t) {
   }
 #endif
   ContactInfo c;
-  for (int i = 0; i < the_mesh.getNumContacts(); i++) {
-    if (the_mesh.getContactByIdx(i, c) && strcmp(c.name, name) == 0) {
+  // getContactByIdx() counts the reserved anonymous slots, getNumContacts() does not
+  for (int i = MAX_ANON_CONTACTS; i < the_mesh.getNumContacts() + MAX_ANON_CONTACTS; i++) {
+    if (the_mesh.getContactByIdx(i, c) && c.type != ADV_TYPE_NONE && strcmp(c.name, name) == 0) {
       memcpy(t.pub_key, c.id.pub_key, PUB_KEY_SIZE);
       StrHelper::strncpy(t.name, c.name, sizeof(t.name));
       return true;
@@ -759,6 +781,8 @@ class ComposeScreen : public UIScreen {
   bool _edit = false;                         // editing quick reply _slot instead of a message
   int _slot = 0;
   bool _draft = false;                        // _text is an unsent message for _target
+  char _stash[MAX_TEXT_LEN + 1];              // the unsent message while the keyboard is used for another one
+  ComposeTarget _stash_target;
 
   const char* chars() const {
     static const char* const SETS[3] = {
@@ -870,7 +894,7 @@ class ComposeScreen : public UIScreen {
       else { memcpy(ch, p, bytes); ch[bytes] = 0; }
       _undo_shift = _shift;
       if (append(ch)) {
-        _undo_len = bytes;
+        if (bytes == 2 || isalpha((unsigned char)ch[0])) _undo_len = bytes;   // only a letter can be taken back
         if (_set != SET_SYM) _shift = false;
         if (bytes == 1 && strchr(".!?", ch[0])) _shift = false;   // takes effect after the space
       }
@@ -880,8 +904,7 @@ class ComposeScreen : public UIScreen {
       case K_SHIFT: _shift = !_shift; break;
       case K_SPACE:
         learnLastWord();
-        _undo_shift = _shift;
-        if (append(" ")) { _undo_len = 1; autoShift(); }
+        if (append(" ")) autoShift();
         break;
       case K_SYM:
         _set = (_set == SET_SYM) ? _letters : SET_SYM;
@@ -969,26 +992,43 @@ class ComposeScreen : public UIScreen {
 public:
   ComposeScreen(UITask* task) : _task(task) {
     _text[0] = 0;
+    _stash[0] = 0;
     memset(&_target, 0, sizeof(_target));
+    memset(&_stash_target, 0, sizeof(_stash_target));
   }
 
   // write to t; 'prefill' (a quick reply to finish) replaces the text, otherwise an unsent draft
   // to the same recipient is kept
+  static bool sameTarget(const ComposeTarget& a, const ComposeTarget& b) {
+    return a.is_channel == b.is_channel &&
+           (a.is_channel ? a.channel_idx == b.channel_idx : memcmp(a.pub_key, b.pub_key, PUB_KEY_SIZE) == 0);
+  }
+
+  // keep an unsent message aside (one draft, for the last recipient written to)
+  void stashDraft() {
+    if (_draft && !_edit && _len > 0) {
+      memcpy(_stash, _text, _len + 1);
+      _stash_target = _target;
+    }
+  }
+
   void openSend(const ComposeTarget& t, const char* prefill) {
-    bool same = _draft && t.is_channel == _target.is_channel &&
-                (t.is_channel ? t.channel_idx == _target.channel_idx : memcmp(t.pub_key, _target.pub_key, PUB_KEY_SIZE) == 0);
+    bool same = _draft && !_edit && sameTarget(t, _target);
+    if (!same) stashDraft();
     _target = t;
     _edit = false;
     _max_len = MAX_TEXT_LEN;
     if (_target.is_channel) _max_len -= strlen(_task->prefs()->node_name) + 2;   // "<name>: " is prepended
     if (_max_len > MAX_TEXT_LEN || _max_len < 0) _max_len = MAX_TEXT_LEN;
     if (prefill) setText(prefill);
-    else if (!same) setText("");
+    else if (!same) setText(_stash[0] && sameTarget(t, _stash_target) ? _stash : "");
+    if (!prefill && !same && sameTarget(t, _stash_target)) _stash[0] = 0;
     _draft = true;
     start();
   }
 
   void openEdit(int slot) {
+    stashDraft();
     _edit = true;
     _draft = false;
     _slot = slot;
@@ -1036,7 +1076,8 @@ public:
     d.setTextSize(1);
     d.setColor(UIColor::title_txt);
     char left[8];
-    snprintf(left, sizeof(left), "%d", _max_len - _len);
+    // room left in letters of the current layout (a Cyrillic letter takes 2 bytes)
+    snprintf(left, sizeof(left), "%d", (_max_len - _len) / (_set == SET_BG ? 2 : 1));
     int lw = d.getTextWidth(left);
     char title[40];
     if (_edit) snprintf(title, sizeof(title), T(S_QUICK_N_FMT), _slot + 1);
@@ -1107,7 +1148,7 @@ void ComposeScreen::askSend() {
       _task->haptic(UI_HAPTIC_ACK_MS);
       _task->showAlert(T(S_SAVED), 800);
     } else {
-      _task->showAlert(T(S_SEND_FAIL), 1500);
+      _task->showAlert(T(S_SAVE_FAIL), 1500);
     }
     return;
   }
@@ -1151,14 +1192,14 @@ bool ComposeScreen::openComposeMenu() {
 // Sorted by name it has a row of first letters on top: turn left from the first entry to reach
 // it, press to pick a letter, press again to jump to the first name with that letter.
 class RecipientsScreen : public ListScreen {
-  struct Entry { uint16_t idx; uint32_t lastmod; char key[14]; };
+  struct Entry { uint8_t pub_prefix[6]; uint32_t lastmod; char key[14]; };   // by key: the table can change while open
   struct Group { char label[3]; uint16_t first; };
   enum { BAR_OFF, BAR_FOCUS, BAR_ACTIVE };
   uint8_t _channels[64];
   int _num_channels = 0;
   Entry* _contacts;
   int _num_contacts = 0;
-  Group _groups[48];
+  Group _groups[64];   // '#', A..Z, А..Я, '*'
   int _num_groups = 0;
   uint8_t _bar = BAR_OFF;
   int _bar_sel = 0;
@@ -1238,17 +1279,17 @@ protected:
     if (i < _num_channels) {
 #ifdef MAX_GROUP_CHANNELS
       ChannelDetails ch;
-      if (!the_mesh.getChannel(_channels[i], ch)) return false;
+      if (!the_mesh.getChannel(_channels[i], ch) || !ch.name[0]) return false;
       t.is_channel = true;
       t.channel_idx = _channels[i];
       StrHelper::strncpy(t.name, ch.name, sizeof(t.name));
       return true;
 #endif
     } else if (i - _num_channels < _num_contacts) {
-      ContactInfo c;
-      if (!the_mesh.getContactByIdx(_contacts[i - _num_channels].idx, c)) return false;
-      memcpy(t.pub_key, c.id.pub_key, PUB_KEY_SIZE);
-      StrHelper::strncpy(t.name, c.name, sizeof(t.name));
+      ContactInfo* c = the_mesh.lookupContactByPubKey(_contacts[i - _num_channels].pub_prefix, 6);
+      if (!c) return false;
+      memcpy(t.pub_key, c->id.pub_key, PUB_KEY_SIZE);
+      StrHelper::strncpy(t.name, c->name, sizeof(t.name));
       return true;
     }
     return false;
@@ -1266,9 +1307,7 @@ protected:
   }
 
 public:
-  RecipientsScreen(UITask* task) : ListScreen(task) {
-    _contacts = new Entry[MAX_CONTACTS];
-  }
+  RecipientsScreen(UITask* task) : ListScreen(task), _contacts(NULL) { }
 
   bool handleInput(char c) override {
     if (_bar == BAR_ACTIVE) {
@@ -1304,12 +1343,13 @@ public:
     }
 #endif
     _num_contacts = 0;
+    if (_contacts == NULL) _contacts = new Entry[MAX_CONTACTS];   // kept once the list was used
     ContactInfo c;
-    int total = the_mesh.getNumContacts();
-    for (int i = 0; i < total && _num_contacts < MAX_CONTACTS; i++) {
+    int total = the_mesh.getNumContacts() + MAX_ANON_CONTACTS;   // indices include the anonymous slots
+    for (int i = MAX_ANON_CONTACTS; i < total && _num_contacts < MAX_CONTACTS; i++) {
       if (the_mesh.getContactByIdx(i, c) && (c.type == ADV_TYPE_CHAT || c.type == ADV_TYPE_ROOM)) {
         Entry& e = _contacts[_num_contacts++];
-        e.idx = i;
+        memcpy(e.pub_prefix, c.id.pub_key, sizeof(e.pub_prefix));
         e.lastmod = c.lastmod;
         foldName(c.name, e.key, sizeof(e.key));
       }
@@ -1442,9 +1482,9 @@ static void closeWriting(UITask* task) {
   }
 }
 
-static void replyTo(UITask* task, const char* from) {
+static void replyTo(UITask* task, const UIMsgEntry* m) {
   ComposeTarget t;
-  if (!findTarget(from, t)) {
+  if (!findTarget(m, t)) {
     task->showAlert(T(S_NO_TARGET), 1200);
     return;
   }
@@ -1871,6 +1911,9 @@ const char* UITask::quickReply(int i) const {
 
 bool UITask::setQuickReply(int i, const char* text) {
   if (i < 0 || i >= UI_QUICK_COUNT) return false;
+  bool was_custom = _quick_custom;
+  char old[UI_QUICK_LEN];
+  StrHelper::strncpy(old, _quick[i], sizeof(old));
   if (!_quick_custom) {   // first edit: the defaults of the current language become the user's list
     for (int k = 0; k < UI_QUICK_COUNT; k++) StrHelper::strncpy(_quick[k], quickReply(k), UI_QUICK_LEN);
     _quick_custom = true;
@@ -1885,7 +1928,10 @@ bool UITask::setQuickReply(int i, const char* text) {
     len += l;
     if (k < UI_QUICK_COUNT - 1) buf[len++] = '\n';
   }
-  return the_mesh.saveUIFile(QUICK_FILE, (uint8_t*)buf, len);
+  if (the_mesh.saveUIFile(QUICK_FILE, (uint8_t*)buf, len)) return true;
+  StrHelper::strncpy(_quick[i], old, UI_QUICK_LEN);   // not saved: show what is on flash
+  _quick_custom = was_custom;
+  return false;
 }
 
 void UITask::applyEncoderPrefs() {
@@ -1990,6 +2036,13 @@ void UITask::msgRead(int msgcount) {
   _next_refresh = 0;
 }
 
+void UITask::msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) {
+  _next_src = is_channel ? MSG_SRC_CHANNEL : MSG_SRC_CONTACT;
+  _next_channel = channel_idx;
+  memset(_next_prefix, 0, sizeof(_next_prefix));
+  if (pub_key) memcpy(_next_prefix, pub_key, sizeof(_next_prefix));
+}
+
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
   _msgcount = msgcount;
   _msg_head = (_msg_head + 1) % UI_MSG_HISTORY;
@@ -2000,6 +2053,10 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   m->unread = true;
   StrHelper::strncpy(m->from, from_name, sizeof(m->from));
   StrHelper::strncpy(m->text, text, sizeof(m->text));
+  m->src = _next_src;
+  m->channel_idx = _next_channel;
+  memcpy(m->pub_prefix, _next_prefix, sizeof(m->pub_prefix));
+  _next_src = MSG_SRC_UNKNOWN;
   _last_new_msg = millis();
 
   if (_display != NULL) {
