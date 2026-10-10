@@ -365,9 +365,15 @@ void BaseChatMesh::handleReturnPathRetry(const ContactInfo& contact, const uint8
 }
 
 #ifdef MAX_GROUP_CHANNELS
+static bool isZeroSecret(const uint8_t* secret) {
+  for (int k = 0; k < PUB_KEY_SIZE; k++) if (secret[k]) return false;
+  return true;
+}
+
 int BaseChatMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) {
   int n = 0;
   for (int i = 0; i < MAX_GROUP_CHANNELS && n < max_matches; i++) {
+    if (isZeroSecret(channels[i].channel.secret)) continue;   // unused slot: never accept the all-zero key
     if (channels[i].channel.hash[0] == hash[0]) {
       dest[n++] = channels[i].channel;
     }
