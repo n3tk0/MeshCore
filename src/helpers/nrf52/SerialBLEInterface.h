@@ -34,9 +34,12 @@ class SerialBLEInterface : public BaseSerialInterface {
   volatile uint8_t recv_tail;
   Frame recv_queue[FRAME_QUEUE_SIZE];
   volatile bool _flush_req;
+  volatile uint8_t _flush_upto;   // recv_tail when the flush was requested
 
   void clearBuffers();
-  void requestFlush() { _flush_req = true; }
+  // called from the BLE task: only frames queued until now are dropped, so the app's first
+  // commands after connecting survive a loop() that is late to process the flush
+  void requestFlush() { _flush_upto = recv_tail; __DMB(); _flush_req = true; }
   void shiftSendQueueLeft();
   bool isValidConnection(uint16_t handle, bool requireWaitingForSecurity = false) const;
   bool isAdvertising() const;
@@ -58,6 +61,7 @@ public:
     send_queue_len = 0;
     recv_head = recv_tail = 0;
     _flush_req = false;
+    _flush_upto = 0;
   }
 
   /**

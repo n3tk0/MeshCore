@@ -48,6 +48,14 @@ public:
   }
 
   virtual void setParams(float freq, float bw, uint8_t sf, uint8_t cr) = 0;
+  // false when the chip cannot use these settings (setParams() would silently keep the old ones)
+  virtual bool paramsSupported(float freq, float bw, uint8_t sf, uint8_t cr) const { return true; }
+  // the LoRa bandwidths of the SX126x/SX127x families, in kHz
+  static bool isStandardLoRaBandwidth(float bw) {
+    static const float BWS[] = { 7.8f, 10.4f, 15.6f, 20.8f, 31.25f, 41.7f, 62.5f, 125.0f, 250.0f, 500.0f };
+    for (float b : BWS) if (bw > b - 0.05f && bw < b + 0.05f) return true;
+    return false;
+  }
   uint32_t getRngSeed();
   void setTxPower(int8_t dbm);
 

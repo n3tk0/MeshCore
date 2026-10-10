@@ -81,6 +81,23 @@ bool WordPredictor::suggest(const char* prefix, char* rest, size_t rest_size) co
   return false;
 }
 
+bool WordPredictor::isKnownPrefix(const char* word) const {
+  uint8_t key[PREDICT_MAX_WORD];
+  int n = encodeWord(word, key, sizeof(key), NULL);
+  if (n <= 0) return false;
+  for (int i = 0; i < PREDICT_RECENT_WORDS; i++) {
+    const uint8_t* w = _recent[i];
+    if ((int)strlen((const char*)w) >= n && memcmp(w, key, n) == 0) return true;
+  }
+  const uint8_t* w = (const uint8_t*)(key[0] >= 0xE0 ? DICT_BG : DICT_EN);
+  while (*w) {
+    int len = strlen((const char*)w);
+    if (len >= n && memcmp(w, key, n) == 0) return true;
+    w += len + 1;
+  }
+  return false;
+}
+
 void WordPredictor::learn(const char* word) {
   uint8_t key[PREDICT_MAX_WORD + 1];
   int n = encodeWord(word, key, PREDICT_MAX_WORD, NULL);

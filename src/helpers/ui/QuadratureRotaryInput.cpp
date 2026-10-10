@@ -80,8 +80,14 @@ void QuadratureRotaryInput::end() {
   if (!_ready) return;
   detachInterrupt(digitalPinToInterrupt(_pin_a));
   detachInterrupt(digitalPinToInterrupt(_pin_b));
+#ifdef NRF52_PLATFORM
+  // disconnect the input buffers: a floating input with the buffer on can draw current in system off
+  nrf_gpio_cfg_default(g_ADigitalPinMap[_pin_a]);
+  nrf_gpio_cfg_default(g_ADigitalPinMap[_pin_b]);
+#else
   pinMode(_pin_a, INPUT);
   pinMode(_pin_b, INPUT);
+#endif
   _ready = false;
 }
 

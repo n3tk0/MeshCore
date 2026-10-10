@@ -12,6 +12,10 @@ class CustomSX1268Wrapper : public RadioLibWrapper {
 public:
   CustomSX1268Wrapper(CustomSX1268& radio, mesh::MainBoard& board) : RadioLibWrapper(radio, board) { }
 
+  bool paramsSupported(float freq, float bw, uint8_t sf, uint8_t cr) const override {
+    return freq >= 150.0f && freq <= 960.0f && isStandardLoRaBandwidth(bw) && sf >= 5 && sf <= 12;
+  }
+
   void setParams(float freq, float bw, uint8_t sf, uint8_t cr) override {
     ((CustomSX1268 *)_radio)->setFrequency(freq);
     ((CustomSX1268 *)_radio)->setSpreadingFactor(sf);
