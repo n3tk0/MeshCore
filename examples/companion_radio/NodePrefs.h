@@ -53,6 +53,8 @@ public:
   uint8_t ui_skip = 0;           // encoder UI: keyboard jumps to the likely next letter 0=on, 1=off
   uint8_t ui_dst = 0;            // encoder UI: 0 = no summer time, 1 = EU summer time rule
   uint8_t ui_ant = 0;            // encoder UI: antenna question 0=every boot, 1=after power loss, 2=never
+  uint8_t ui_menu_sz = 0;        // encoder UI: menu text size 0=large, 1=medium, 2=small, 3=tiny
+  uint8_t ui_text_sz = 0;        // encoder UI: lists and messages, same values
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -141,6 +143,8 @@ private:
       def("ui_skip", _parent->ui_skip);
       def("ui_dst", _parent->ui_dst);
       def("ui_ant", _parent->ui_ant);
+      def("ui_menu_sz", _parent->ui_menu_sz);
+      def("ui_text_sz", _parent->ui_text_sz);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }

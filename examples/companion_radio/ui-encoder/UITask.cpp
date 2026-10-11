@@ -1,4 +1,5 @@
 #include "UITask.h"
+#include <helpers/ui/TextFonts.h>
 #include <helpers/TxtDataHelpers.h>
 #ifdef UI_SIM
   #include "UISim.h"          // desktop screen simulator (tools/ui-sim): stand-ins for the mesh
@@ -136,10 +137,10 @@ enum StrId {
   S_ANT_Q, S_TX_FMT, S_TX_IS_OFF, S_ANT_NEVER_Q,
   // settings
   S_SETTINGS, S_GRP_DISPLAY, S_GRP_INPUT, S_GRP_MSGS, S_GRP_RADIO, S_GRP_SYSTEM, S_SET_OFF,
-  S_SET_BRIGHT, S_SET_DOTS, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_NOTIFY,
+  S_SET_BRIGHT, S_SET_DOTS, S_SET_MENU_SZ, S_SET_TEXT_SZ, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_NOTIFY,
   S_SET_DELCONF, S_SET_CSORT, S_SET_TXPOW, S_SET_ANT, S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST,
   S_ABOUT, S_RESCUE, S_RESCUE_Q, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_HIGH,
-  S_MEDIUM, S_LOW, S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_ENC_NORMAL, S_ENC_REVERSED,
+  S_MEDIUM, S_LOW, S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_SIZE_LARGE, S_SIZE_MEDIUM, S_SIZE_SMALL, S_SIZE_TINY, S_ENC_NORMAL, S_ENC_REVERSED,
   S_STEPS_FMT, S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER, S_CSORT_NAME, S_CSORT_RECENT,
   S_ANT_ALWAYS, S_ANT_POWER_LOSS, S_ANT_NEVER, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
@@ -251,6 +252,8 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Изгасване", "Screen off" },
   { "Яркост", "Brightness" },
   { "Точки", "Page dots" },
+  { "Меню", "Menu size" },
+  { "Текст", "Text size" },
   { "Вибрация", "Vibration" },
   { "Посока", "Direction" },
   { "Щрак", "Detent" },
@@ -278,6 +281,10 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "отдолу", "bottom" },
   { "вдясно", "right" },
   { "скрити", "hidden" },
+  { "голям", "large" },
+  { "среден", "medium" },
+  { "малък", "small" },
+  { "мини", "tiny" },
   { "нормална", "normal" },
   { "обърната", "reversed" },
   { "%d стъпки", "%d steps" },
@@ -365,17 +372,58 @@ static bool drawMarquee(DisplayDriver& d, int x, int y, const char* text, int ma
   return active;
 }
 
-// Layout: everything is drawn with the 2x font (12x16 px cells), so the 128x64 screen is a grid of
-// 10 characters by 4 rows. Icons are the 8x8 bitmaps drawn at 2x (16x16).
-#define CW  12   // character cell width
-#define LH  16   // row height
-#define TEXT_DY 1   // glyphs sit one pixel below the top of their row
+// Layout: four text sizes, each a grid of fixed character cells on the 128x64 screen. Icons are
+// the 8x8 bitmaps, drawn at 2x next to the larger fonts. Dialogs, standby and the keyboard always
+// use the large size; menus and content (lists of names or text, messages) follow Settings.
+struct UISize {
+  uint8_t cw, lh;           // character cell width, row height
+  uint8_t dy;               // glyph offset from the top of its row
+  uint8_t top;              // y of the first row below the title
+  int8_t rule;              // y of the dotted rule under the title (clear of its descenders)
+  uint8_t icon_scale;
+  uint8_t gfx_size;         // built-in 5x8 font at this scale, when font is NULL
+  const TextFont* font;
+};
+enum { SIZE_TINY, SIZE_SMALL, SIZE_MEDIUM, SIZE_LARGE };
+static const UISize UI_SIZES[4] = {
+  {  6,  8, 0,  9,  8, 1, 1, NULL },         // 21 chars, title + 6 rows, built-in font
+  {  6, 12, 0, 13, 12, 1, 0, &font_6x12 },   // 21 chars, title + 4 rows
+  {  8, 16, 1, 16, 15, 2, 0, &font_8x14 },   // 16 chars, title + 3 rows
+  { 12, 16, 1, 16, 15, 2, 2, NULL },         // 10 chars, title + 3 rows, built-in font at 2x
+};
+static const UISize* ui_sz = &UI_SIZES[SIZE_LARGE];   // size of the screen being drawn
+static int ui_width = 128, ui_height = 64;
+#define CW      (ui_sz->cw)
+#define LH      (ui_sz->lh)
+#define TEXT_DY (ui_sz->dy)
+#define ICON_W  (8 * ui_sz->icon_scale)
+#define ROW_TOP (ui_sz->top)
 
-static void big(DisplayDriver& d) { d.setTextSize(2); }
+static int rowsFor(int level) { return (ui_height - UI_SIZES[level].top) / UI_SIZES[level].lh; }   // below the title
+static int colsFor(int level) { return ui_width / UI_SIZES[level].cw; }
+
+static void drawTitleRule(DisplayDriver& d) {
+  for (int x = 0; x < d.width(); x += 2) d.fillRect(x, ui_sz->rule, 1, 1);
+}
+
+static void useSize(DisplayDriver& d, int level) {
+  ui_sz = &UI_SIZES[level];
+  if (ui_sz->font) d.setTextFont(ui_sz->font);
+  else d.setTextSize(ui_sz->gfx_size);
+}
+static void big(DisplayDriver& d) { useSize(d, SIZE_LARGE); }
+
+// size of a list or of the message view. The prefs store 0 = large, so zeroed prefs keep today's look.
+static int sizeLevel(bool content) {
+  uint8_t v = lang_prefs ? (content ? lang_prefs->ui_text_sz : lang_prefs->ui_menu_sz) % 4 : 0;
+  return SIZE_LARGE - v;
+}
 
 static void drawIcon2(DisplayDriver& d, int x, int y, const uint8_t* bits) {
+  int s = ui_sz->icon_scale;
+  y += (LH - 8 * s) / 2;   // centered in its row
   for (int r = 0; r < 8; r++) {
-    for (int c = 0; c < 8; c++) if (bits[r] & (0x80 >> c)) d.fillRect(x + c * 2, y + r * 2, 2, 2);
+    for (int c = 0; c < 8; c++) if (bits[r] & (0x80 >> c)) d.fillRect(x + c * s, y + r * s, s, s);
   }
 }
 
@@ -502,7 +550,7 @@ public:
 
 static RescueScreen* rescue_screen;
 
-// Generic scrolling list: title row and 3 item rows (2x font), inverted selection, scrollbar,
+// Generic scrolling list: title row and 3 to 7 item rows (by the text size), inverted selection, scrollbar,
 // marquee on the selected row, optional 16x16 icon on the left and short text on the right of each
 // row (only where it fits next to the label). Short lists wrap around, long ones stop at the ends.
 class ListScreen : public UIScreen {
@@ -510,7 +558,17 @@ protected:
   UITask* _task;
   int _sel = 0, _top = 0;
   unsigned long _sel_since = 0;
-  static const int ROWS = 3, ROW_H = LH, TOP = LH;
+  virtual bool isContent() { return false; }   // lists of names or text: Settings > Text, else > Menu
+  int level() { return sizeLevel(isContent()); }
+  int rows() { return rowsFor(level()); }
+
+  // keeps the selection in view and the window filled; the row count follows the text size
+  void clampTop(int n) {
+    int rows_n = rows();
+    if (_top > _sel) _top = _sel;
+    if (_sel >= _top + rows_n) _top = _sel - rows_n + 1;
+    if (_top > n - rows_n) _top = n > rows_n ? n - rows_n : 0;
+  }
 
   virtual void title(char* buf, size_t n) = 0;
   virtual int count() = 0;
@@ -531,8 +589,7 @@ protected:
     if (i >= n) i = (n <= 8) ? 0 : n - 1;
     if (i != _sel) _sel_since = millis();
     _sel = i;
-    if (_sel < _top) _top = _sel;
-    if (_sel >= _top + ROWS) _top = _sel - ROWS + 1;
+    clampTop(n);
   }
 
 public:
@@ -544,14 +601,16 @@ public:
     char buf[200], right[16];
     int n = count();
     if (_sel >= n) select(n - 1);
-    if (_top > _sel) _top = _sel;
-    big(d);
+    clampTop(n);   // the text size may have changed
+    const int ROWS = rows();
+    useSize(d, level());
+    const int ROW_H = LH, TOP = ROW_TOP;
     d.setColor(UIColor::title_txt);
     bool scrolling = false;
     if (!renderHeader(d)) {
       title(buf, sizeof(buf));
       scrolling = drawMarquee(d, 0, TEXT_DY, buf, d.width() / CW, _sel_since, true);
-      for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);   // dotted rule under the title
+      drawTitleRule(d);
     }
     d.setColor(UIColor::primary_txt);
 
@@ -560,7 +619,7 @@ public:
       return scrolling ? MARQUEE_STEP_MILLIS : 1000;
     }
     int text_w = (n > ROWS) ? d.width() - 4 : d.width();
-    int x0 = hasIcons() ? 18 : 0;
+    int x0 = hasIcons() ? ICON_W + 2 : 0;
     for (int r = 0; r < ROWS && _top + r < n; r++) {
       int i = _top + r;
       int y = TOP + r * ROW_H;
@@ -867,7 +926,7 @@ private:
   enum Special { K_SHIFT = 1, K_SPACE, K_SYM, K_LANG, K_SEND };
   // rows 0-1: the text, row 2: the keys as a strip with the selected key in the middle,
   // row 3: recipient and characters left
-  static const int LINE_CHARS = 10, TEXT_LINES = 2, KB_TOP = 2 * LH;
+  static const int LINE_CHARS = 10, TEXT_LINES = 2, KB_TOP = 32;   // the keyboard is always 2x
 
   UITask* _task;
   WordPredictor _predict;
@@ -1362,6 +1421,7 @@ class ReplyPickScreen : public ListScreen {
   uint8_t _slots[UI_QUICK_COUNT];
   int _n = 0;
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s%s", _target.is_channel ? "#" : "", _target.name); }
   int count() override { return 1 + _n; }
   void label(int i, char* buf, size_t n) override {
@@ -1464,6 +1524,7 @@ class ConversationsScreen : public ListScreen {
     return u;
   }
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override {
     int u = _task->unreadCount();
     if (u > 0) snprintf(buf, n, T(S_MSGS_N), u);
@@ -1574,6 +1635,7 @@ class ThreadScreen : public ListScreen {
     }
   }
 protected:
+  bool isContent() override { return true; }
   UIMsgEntry* entry(int i) { return (i >= 0 && i < _n) ? _task->historyAt(_task->historyIndexOf(_items[i])) : NULL; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s%s", _key.src == MSG_SRC_CHANNEL ? "#" : "", _key.from); }
   int count() override { rebuild(); return _n; }
@@ -1600,7 +1662,9 @@ public:
   int render(DisplayDriver& d) override {
     if (count() == 0) { _task->pop(); return 100; }   // the whole conversation was deleted
     // what is on screen counts as read
-    for (int r = 0; r < ROWS && _top + r < _n; r++) {
+    if (_sel >= _n) select(_n - 1);
+    clampTop(_n);
+    for (int r = 0; r < rows() && _top + r < _n; r++) {
       UIMsgEntry* m = entry(_top + r);
       if (m && m->state == MSG_IN) m->unread = false;
     }
@@ -1627,11 +1691,23 @@ class MessageViewScreen : public UIScreen {
   UITask* _task;
   uint32_t _seq = 0;   // the message shown; new messages shift history indexes
   int _scroll = 0;
-  static const int MAX_LINES = 24, LINE_CHARS = 10, VISIBLE = 3;
+  static const int MAX_LINES = 24;
   uint8_t _lines[MAX_LINES];       // start of each line, as offset into the entry text (entries move)
   uint8_t _line_len[MAX_LINES];    // characters per line
   int _num_lines = 0;
+  int _wrap_chars = 0;             // line width the lines were broken for
   unsigned long _opened = 0;
+
+  static int lineChars() { return colsFor(sizeLevel(true)); }
+  static int visible() { return rowsFor(sizeLevel(true)); }
+  void wrap(UIMsgEntry* m) {
+    _wrap_chars = lineChars();
+    _num_lines = ui::wrapLines(m->text, _wrap_chars, _lines, _line_len, MAX_LINES);
+  }
+  void clampScroll() {   // no empty rows at the end, also after the text size changed
+    int v = visible();
+    if (_scroll + v > _num_lines) _scroll = _num_lines > v ? _num_lines - v : 0;
+  }
 
 public:
   MessageViewScreen(UITask* task) : _task(task) { }
@@ -1641,42 +1717,45 @@ public:
     _num_lines = 0;
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(seq));
     _seq = m ? m->seq : 0;
-    if (m) { m->unread = false; _num_lines = ui::wrapLines(m->text, LINE_CHARS, _lines, _line_len, MAX_LINES); }
+    if (m) { m->unread = false; wrap(m); }
   }
   int render(DisplayDriver& d) override {
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
     if (!m) { _task->pop(); return 100; }
+    if (_wrap_chars != lineChars()) wrap(m);   // the text size changed
+    clampScroll();
+    const int VISIBLE = visible();
     char age[12];
     ageOf(age, sizeof(age), m->timestamp);
-    big(d);
+    useSize(d, sizeLevel(true));
     d.setColor(UIColor::title_txt);
     int right_x = d.width();
     if (age[0]) { d.drawTextRightAlign(right_x, TEXT_DY, age); right_x -= d.getTextWidth(age) + 2; }
     const uint8_t* st = m->state != MSG_IN ? stateIcon(m) : NULL;
-    if (st) { right_x -= 16; drawIcon2(d, right_x, 0, st); right_x -= 2; }
+    if (st) { right_x -= ICON_W; drawIcon2(d, right_x, 0, st); right_x -= 2; }
     char who[48];
     if (m->state == MSG_IN) snprintf(who, sizeof(who), "%s", m->from);
     else snprintf(who, sizeof(who), "%s > %s", T(S_ME), m->from);
     bool scrolling = drawMarquee(d, 0, TEXT_DY, who, right_x / CW, _opened, true);
-    for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);
+    drawTitleRule(d);
     d.setColor(UIColor::primary_txt);
     char line[100], filtered[100];
     for (int r = 0; r < VISIBLE && _scroll + r < _num_lines; r++) {
       utf8Slice(line, sizeof(line), m->text + _lines[_scroll + r], 0, _line_len[_scroll + r]);
       d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
-      d.setCursor(0, LH + r * LH + TEXT_DY);
+      d.setCursor(0, ROW_TOP + r * LH + TEXT_DY);
       d.print(filtered);
     }
     if (_num_lines > VISIBLE) {
       int track = VISIBLE * LH;
       int h = track * VISIBLE / _num_lines; if (h < 6) h = 6;
-      int y = LH + (track - h) * _scroll / (_num_lines - VISIBLE);
+      int y = ROW_TOP + (track - h) * _scroll / (_num_lines - VISIBLE);
       d.fillRect(d.width() - 3, y, 3, h);
     }
     return scrolling ? MARQUEE_STEP_MILLIS : 5000;
   }
   bool handleInput(char c) override {
-    if (c == KEY_NEXT) { if (_scroll + VISIBLE < _num_lines) _scroll++; return true; }
+    if (c == KEY_NEXT) { if (_scroll + visible() < _num_lines) _scroll++; return true; }
     if (c == KEY_PREV) { if (_scroll > 0) _scroll--; return true; }
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
     if (!m) return false;
@@ -1803,6 +1882,7 @@ class ContactInfoScreen : public ListScreen {
   int _n = 0;
   char _name[32];
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", _name); }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
@@ -1930,6 +2010,7 @@ class ContactsScreen : public ListScreen {
   }
 
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_CONTACTS)); }
   int count() override { return _num_contacts; }
   const char* emptyText() override { return T(S_NO_CONTACTS); }
@@ -1948,7 +2029,7 @@ protected:
   bool renderHeader(DisplayDriver& d) override {
     if (!byName() || _num_groups == 0) return false;
     int cur = _bar == BAR_ACTIVE ? _bar_sel : groupOf(_sel);
-    const int CELL_W = CW + 2, VISIBLE = 9;
+    const int CELL_W = CW + 2, VISIBLE = d.width() / CELL_W;
     int first = cur - VISIBLE / 2;
     if (first > _num_groups - VISIBLE) first = _num_groups - VISIBLE;
     if (first < 0) first = 0;
@@ -1956,12 +2037,12 @@ protected:
     for (int i = first; i < _num_groups && i < first + VISIBLE; i++) {
       int x = (i - first) * CELL_W;
       if (i == cur && _bar == BAR_ACTIVE) {
-        d.fillRect(x, 0, CELL_W, LH - 1);
+        d.fillRect(x, 0, CELL_W, ROW_TOP - 1);
         d.setColor(COLOR_BLACK);
       } else if (i == cur && _bar == BAR_FOCUS) {
-        d.drawRect(x, 0, CELL_W, LH - 1);
+        d.drawRect(x, 0, CELL_W, ROW_TOP - 1);
       } else if (i == cur) {
-        d.fillRect(x + 1, LH - 2, CELL_W - 2, 2);
+        d.fillRect(x + 1, ROW_TOP - 2, CELL_W - 2, 2);
       }
       d.setCursor(x + 1, TEXT_DY);
       d.print(_groups[i].label);
@@ -1997,7 +2078,7 @@ public:
         int item = _groups[_bar_sel].first;
         select(item);
         int n = count();
-        _top = item > n - ROWS ? (n > ROWS ? n - ROWS : 0) : item;   // the letter's first name on top
+        _top = item > n - rows() ? (n > rows() ? n - rows() : 0) : item;   // the letter's first name on top
         _bar = BAR_OFF;
         return true;
       }
@@ -2054,6 +2135,7 @@ class ChannelsScreen : public ListScreen {
   uint8_t _channels[64];
   int _n = 0;
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_CHANNELS)); }
   int count() override { return _n; }
   const char* emptyText() override { return T(S_NO_CHANNELS); }
@@ -2090,6 +2172,7 @@ static ChannelsScreen* channels_screen;
 
 class QuickEditScreen : public ListScreen {
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_QUICK_MSGS)); }
   int count() override { return UI_QUICK_COUNT; }
   void label(int i, char* buf, size_t n) override {
@@ -2113,7 +2196,7 @@ static uint8_t encoderSteps(const NodePrefs* p) {
 }
 
 enum SettingId : uint8_t {
-  ST_OFF, ST_BRIGHT, ST_DOTS,
+  ST_OFF, ST_BRIGHT, ST_DOTS, ST_MENU_SZ, ST_TEXT_SZ,
   ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP,
   ST_NOTIFY, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT,
@@ -2126,7 +2209,7 @@ enum SettingId : uint8_t {
 
 static StrId settingName(uint8_t id) {
   static const StrId N[] = {
-    S_SET_OFF, S_SET_BRIGHT, S_SET_DOTS,
+    S_SET_OFF, S_SET_BRIGHT, S_SET_DOTS, S_SET_MENU_SZ, S_SET_TEXT_SZ,
     S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP,
     S_SET_NOTIFY, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT,
@@ -2140,6 +2223,7 @@ static int optCount(uint8_t id) {
   switch (id) {
     case ST_OFF: return 4;
     case ST_BRIGHT: case ST_DOTS: case ST_NOTIFY: case ST_ANT: return 3;
+    case ST_MENU_SZ: case ST_TEXT_SZ: return 4;
     case ST_VIBE: case ST_ENC: case ST_STEPS: case ST_SKIP: case ST_DELCONF: case ST_CSORT:
     case ST_TX: case ST_LANG: case ST_DST: return 2;
     case ST_TXPOW: return MAX_LORA_TX_POWER - TXPOW_MIN + 1;
@@ -2154,6 +2238,8 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_OFF: return p->ui_off % 4;
     case ST_BRIGHT: return p->ui_bright % 3;
     case ST_DOTS: return p->ui_dots % 3;
+    case ST_MENU_SZ: return p->ui_menu_sz % 4;
+    case ST_TEXT_SZ: return p->ui_text_sz % 4;
     case ST_VIBE: return p->vibe_quiet ? 0 : 1;
     case ST_ENC: return p->ui_enc_rev ? 1 : 0;
     case ST_STEPS: return encoderSteps(p) == 2 ? 0 : 1;
@@ -2176,6 +2262,7 @@ static void optText(uint8_t id, int v, char* buf, size_t n) {
     case ST_OFF: snprintf(buf, n, "%s", T((StrId)(S_OFF_15S + v))); break;
     case ST_BRIGHT: snprintf(buf, n, "%s", T((StrId)(S_HIGH + v))); break;
     case ST_DOTS: snprintf(buf, n, "%s", T((StrId)(S_DOTS_BOTTOM + v))); break;
+    case ST_MENU_SZ: case ST_TEXT_SZ: snprintf(buf, n, "%s", T((StrId)(S_SIZE_LARGE + v))); break;
     case ST_ENC: snprintf(buf, n, "%s", T(v ? S_ENC_REVERSED : S_ENC_NORMAL)); break;
     case ST_STEPS: snprintf(buf, n, T(S_STEPS_FMT), v ? 4 : 2); break;
     case ST_NOTIFY: snprintf(buf, n, "%s", T((StrId)(S_NOTIFY_NO_PHONE + v))); break;
@@ -2196,6 +2283,8 @@ static void setOpt(UITask* task, uint8_t id, int v) {
     case ST_OFF: p->ui_off = v; break;
     case ST_BRIGHT: p->ui_bright = v; task->applyContrast(); break;
     case ST_DOTS: p->ui_dots = v; break;
+    case ST_MENU_SZ: p->ui_menu_sz = v; break;
+    case ST_TEXT_SZ: p->ui_text_sz = v; break;
     case ST_VIBE: p->vibe_quiet = v ? 0 : 1; break;
     case ST_ENC: p->ui_enc_rev = v; task->applyEncoderPrefs(); break;
     case ST_STEPS: p->ui_enc_steps = v ? 4 : 2; task->applyEncoderPrefs(); break;
@@ -2244,7 +2333,13 @@ public:
     d.setColor(UIColor::primary_txt);
     char val[24];
     optText(_id, _val, val, sizeof(val));
-    if (utf8Len(val) <= 8) {   // one row between arrows
+    if (_id == ST_MENU_SZ || _id == ST_TEXT_SZ) {   // the value in its own size
+      d.setCursor(0, LH + 8 + TEXT_DY); d.print("<");
+      d.drawTextRightAlign(d.width(), LH + 8 + TEXT_DY, ">");
+      useSize(d, SIZE_LARGE - _val);
+      d.drawTextCentered(d.width() / 2, 32 - LH / 2 + TEXT_DY, val);
+      big(d);
+    } else if (utf8Len(val) <= 8) {   // one row between arrows
       d.drawTextCentered(d.width() / 2, LH + 8 + TEXT_DY, val);
       d.setCursor(0, LH + 8 + TEXT_DY); d.print("<");
       d.drawTextRightAlign(d.width(), LH + 8 + TEXT_DY, ">");
@@ -2294,6 +2389,7 @@ class AboutScreen : public ListScreen {
   char _lines[8][40];
   int _n = 0;
 protected:
+  bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_ABOUT)); }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
@@ -2369,7 +2465,7 @@ public:
 
 static SettingsGroupScreen* settings_group;
 
-static const uint8_t GROUP_DISPLAY[] = { ST_OFF, ST_BRIGHT, ST_DOTS };
+static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
 static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP };
 static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_DELCONF, ST_CSORT, ST_QUICK };
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT };
@@ -2760,13 +2856,18 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   rx_any = false;
 
   user_btn.begin();
-  user_btn.setDebounce(15);
+  // the loop sleeps until an interrupt: a pin change wakes it, and the first edge counts
+  user_btn.setDebounce(15, true);
+  user_btn.wakeOnChange();
   encoder_btn.begin();
-  encoder_btn.setDebounce(15);
+  encoder_btn.setDebounce(15, true);
+  encoder_btn.wakeOnChange();
   rotary_input.begin();
   applyEncoderPrefs();
 
   if (_display != NULL) {
+    ui_width = _display->width();
+    ui_height = _display->height();
     _display->turnOn();
     applyContrast();
   }
