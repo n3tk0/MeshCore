@@ -47,6 +47,12 @@ public:
   uint8_t ui_enc_rev = 0;        // encoder UI: 1 = turn direction flipped vs. the build default
   uint8_t ui_enc_steps = 0;      // encoder UI: transitions per detent (2 or 4), 0 = build default
   uint8_t ui_csort = 0;          // encoder UI: recipients sorted 0=by name, 1=recently heard first
+  uint8_t ui_bright = 0;         // encoder UI: OLED contrast 0=high, 1=medium, 2=low
+  uint8_t ui_notify = 0;         // encoder UI: message vibration 0=without phone only, 1=always, 2=never
+  uint8_t ui_delconf = 0;        // encoder UI: 0 = confirm deleting one message, 1 = delete at once
+  uint8_t ui_skip = 0;           // encoder UI: keyboard jumps to the likely next letter 0=on, 1=off
+  uint8_t ui_dst = 0;            // encoder UI: 0 = no summer time, 1 = EU summer time rule
+  uint8_t ui_ant = 0;            // encoder UI: antenna question 0=every boot, 1=after power loss, 2=never
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -129,6 +135,12 @@ private:
       def("ui_enc_rev", _parent->ui_enc_rev);
       def("ui_enc_steps", _parent->ui_enc_steps);
       def("ui_csort", _parent->ui_csort);
+      def("ui_bright", _parent->ui_bright);
+      def("ui_notify", _parent->ui_notify);
+      def("ui_delconf", _parent->ui_delconf);
+      def("ui_skip", _parent->ui_skip);
+      def("ui_dst", _parent->ui_dst);
+      def("ui_ant", _parent->ui_ant);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }
