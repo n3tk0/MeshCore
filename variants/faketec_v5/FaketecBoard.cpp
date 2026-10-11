@@ -75,6 +75,12 @@ void FaketecBoard::begin() {
 void FaketecBoard::powerOff() {
 #if defined(UI_HAS_ROTARY_INPUT)
   rotary_input.end();   // no pull-up current through a closed encoder contact
+  #if defined(PIN_ENCODER_BTN)
+    encoder_btn.end();  // the push becomes the system-off wake pin below
+  #endif
+#endif
+#ifdef DISPLAY_CLASS
+  user_btn.end();
 #endif
 #ifdef PIN_VIBRATION
   pinMode(PIN_VIBRATION, OUTPUT);
