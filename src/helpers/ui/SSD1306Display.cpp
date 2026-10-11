@@ -98,7 +98,17 @@ bool SSD1306Display::begin() {
   #ifdef DISPLAY_ROTATION
   display.setRotation(DISPLAY_ROTATION);
   #endif
+#ifdef DISPLAY_ADDRESS_ALT
+  // modules are strapped for 0x3C or 0x3D (SA0 / D/C pin): use whichever one answers
+  uint8_t addr = DISPLAY_ADDRESS;
+  if (!i2c_probe(Wire, addr)) {
+    if (!i2c_probe(Wire, DISPLAY_ADDRESS_ALT)) return false;
+    addr = DISPLAY_ADDRESS_ALT;
+  }
+  return display.begin(SSD1306_SWITCHCAPVCC, addr, true, false);
+#else
   return display.begin(SSD1306_SWITCHCAPVCC, DISPLAY_ADDRESS, true, false) && i2c_probe(Wire, DISPLAY_ADDRESS);
+#endif
 }
 
 void SSD1306Display::turnOn() {
