@@ -455,7 +455,10 @@ static void scenario(uint8_t lang) {
     static const char* GB[] = { "Настройки: екран", "Настройки: управление", "Настройки: съобщения", "Настройки: радио", "Настройки: система" };
     static const char* GE[] = { "Settings: display", "Settings: controls", "Settings: messages", "Settings: radio", "Settings: system" };
     shot(name, bg ? GB[g] : GE[g]);
-    if (g == 0) { turn(1); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back(); }
+    if (g == 0) {
+      press(); turn(1); shot("edit_text", bg ? "Размер на текста: голям, смесен или малък" : "Text size: large, mixed or small"); back();
+      turn(2); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back();
+    }
     if (g == 3) { turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back(); }
     if (g == 4) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();
@@ -483,6 +486,40 @@ static void scenario(uint8_t lang) {
   shotFrame("low_battery", bg ? "Батерия под 10%: известие и дълга вибрация" : "Battery below 10%: alert and a long buzz");
   board.mv = 3920;
   run(3000);
+
+  // the other text sizes: menus, lists and messages
+  for (int t = 1; t <= 2; t++) {
+    prefs.ui_text = t;
+    const char* tag = t == 1 ? "mixed" : "small";
+    const char* tb = t == 1 ? "смесен текст" : "малък текст";
+    const char* te = t == 1 ? "mixed text" : "small text";
+    char name[32], cap[96];
+    holdBack();
+    press();
+    snprintf(name, sizeof(name), "main_menu_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Главно меню" : "Main menu", bg ? tb : te); shot(name, cap);
+    press();
+    snprintf(name, sizeof(name), "conversations_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Разговори" : "Conversations", bg ? tb : te); shot(name, cap);
+    turn(2); press();
+    snprintf(name, sizeof(name), "thread_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Разговор" : "Thread", bg ? tb : te); shot(name, cap);
+    turn(-9); press();
+    snprintf(name, sizeof(name), "message_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Съобщение" : "Message", bg ? tb : te); shot(name, cap);
+    hold();
+    snprintf(name, sizeof(name), "msg_actions_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Действия" : "Actions", bg ? tb : te); shot(name, cap);
+    holdBack();
+    press(); turn(1); press();
+    snprintf(name, sizeof(name), "contacts_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Контакти" : "Contacts", bg ? tb : te); shot(name, cap);
+    turn(-1);
+    snprintf(name, sizeof(name), "contacts_letters_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Ред с букви" : "Letter row", bg ? tb : te); shot(name, cap);
+  }
+  prefs.ui_text = 0;
+  holdBack();
 
   // rescue screen
   ui->enterRescue();
