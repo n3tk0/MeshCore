@@ -44,5 +44,9 @@ public:
   // called just before newMsg(): where the message came from, for UIs that can reply
   virtual void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) { }
   virtual void notify(UIEventType t = UIEventType::none) = 0;
+  // a message alert; by default only when no app is connected (the app shows it then)
+  virtual void notifyMsg(UIEventType t, bool connected) { if (!connected) notify(t); }
+  // an ACK hash (4 bytes) arrived, for UIs that track their own sent messages
+  virtual void ackReceived(const uint8_t* ack) { }
   virtual void loop() = 0;
 };

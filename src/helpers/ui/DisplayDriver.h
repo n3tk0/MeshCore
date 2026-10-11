@@ -25,6 +25,7 @@ public:
   virtual bool isEink() { return false; } // default to non-eink, override in eink drivers
   virtual void turnOn() = 0;
   virtual void turnOff() = 0;
+  virtual void setContrast(uint8_t level) { }   // 0..255, where the panel supports it
   virtual void clear() = 0;
   virtual void startFrame(ColorVal bkg = UIColor::window_bkg) = 0;
   virtual void setTextSize(int sz) = 0;

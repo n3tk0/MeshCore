@@ -76,6 +76,11 @@
 #define REQ_TYPE_KEEP_ALIVE             0x02
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
 
+#ifndef CLOCK_VALID_EPOCH
+  #define CLOCK_VALID_EPOCH  1735689600UL   // 2025-01-01: anything earlier means "no clock yet"
+#endif
+#define CLOCK_MAX_EPOCH      2082758400UL   // 2036-01-01: an advert claiming later is ignored
+
 struct AdvertPath {
   uint8_t pubkey_prefix[7];
   uint8_t path_len;
@@ -126,6 +131,7 @@ protected:
   void onContactsFull() override;
   void onContactOverwrite(const uint8_t* pub_key) override;
   bool onContactPathRecv(ContactInfo& from, uint8_t* in_path, uint8_t in_path_len, uint8_t* out_path, uint8_t out_path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
+  void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;
   void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) override;
   void onContactPathUpdated(const ContactInfo &contact) override;
   ContactInfo* processAck(const uint8_t *data) override;
@@ -176,6 +182,9 @@ public:
   bool saveUIFile(const char* filename, const uint8_t* src, int len) { return _store->saveSmallFile(filename, src, len); }
 
   // transmit gate (e.g. until the user confirms an antenna is fitted); receiving is unaffected
+  void resetContactPath(ContactInfo& contact);   // next message floods and learns a new path
+  void setTxPower(int8_t dbm);                    // applied at once and saved
+  bool isClockApprox() const { return _clock_approx; }   // time taken from an advert, not the phone
   bool isTxAllowed() const { return _tx_allowed; }
   void setTxAllowed(bool on) { _tx_allowed = on; }
 
@@ -246,6 +255,7 @@ private:
   uint32_t _active_ble_pin;
   bool _iter_started;
   bool _cli_rescue;
+  bool _clock_approx;
   bool _tx_allowed;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   char cli_command[80];
