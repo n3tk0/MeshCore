@@ -32,6 +32,25 @@ MomentaryButton::MomentaryButton(int8_t pin, int long_press_millis, int analog_t
   _pending_click = false;
 }
 
+#ifdef NRF52_PLATFORM
+static void buttonWakeIsr() { }   // only wakes the CPU; check() reads the pin
+#endif
+
+void MomentaryButton::wakeOnChange() {
+#ifdef NRF52_PLATFORM
+  if (_pin < 0 || _threshold > 0 || _wake) return;
+  attachInterrupt(digitalPinToInterrupt(_pin), buttonWakeIsr, CHANGE);
+  _wake = true;
+#endif
+}
+
+void MomentaryButton::end() {
+#ifdef NRF52_PLATFORM
+  if (_wake) detachInterrupt(digitalPinToInterrupt(_pin));
+  _wake = false;
+#endif
+}
+
 void MomentaryButton::begin() {
   if (_pin >= 0 && _threshold == 0) {
     pinMode(_pin, _pull ? (_reverse ? INPUT_PULLUP : INPUT_PULLDOWN) : INPUT);
@@ -67,7 +86,10 @@ int MomentaryButton::check(bool repeat_click) {
 
   int event = BUTTON_EVENT_NONE;
   int btn = _threshold > 0 ? (analogRead(_pin) < _threshold) : digitalRead(_pin);
-  if (_debounce_ms > 0) {   // a glitch shorter than the debounce time is never seen as a press
+  if (_debounce_ms > 0 && _first_edge) {   // lockout after an accepted change
+    if ((unsigned long)(millis() - _last_change) < _debounce_ms) btn = prev;
+    else if (btn != prev) _last_change = millis();
+  } else if (_debounce_ms > 0) {   // a glitch shorter than the debounce time is never seen as a press
     if (btn != _raw) { _raw = btn; _last_change = millis(); }
     if ((unsigned long)(millis() - _last_change) < _debounce_ms) btn = prev;
   }

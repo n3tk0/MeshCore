@@ -11,6 +11,7 @@
 #include "UITask.h"
 #include "glcdfont.h"
 #include <helpers/ui/CyrillicFont5x8.h>
+#include <helpers/ui/TextFont.h>
 
 // ---------------------------------------------------------------- hardware stand-ins
 
@@ -46,6 +47,7 @@ class SimDisplay : public DisplayDriver {
   int _cx = 0, _cy = 0, _size = 1;
   uint8_t _color = 1;
   uint8_t _lead = 0, _skip = 0;
+  const TextFont* _font = NULL;
 public:
   int contrast = 0xFF;
   SimDisplay() : DisplayDriver(128, 64) { memset(_fb, 0, sizeof(_fb)); memset(_shown, 0, sizeof(_shown)); }
@@ -54,8 +56,9 @@ public:
   void turnOff() override { _on = false; }
   void setContrast(uint8_t level) override { contrast = level; }
   void clear() override { memset(_fb, 0, sizeof(_fb)); }
-  void startFrame(ColorVal) override { memset(_fb, 0, sizeof(_fb)); _color = 1; _size = 1; }
-  void setTextSize(int sz) override { _size = sz; }
+  void startFrame(ColorVal) override { memset(_fb, 0, sizeof(_fb)); _color = 1; _size = 1; _font = NULL; }
+  void setTextSize(int sz) override { _size = sz; _font = NULL; }
+  void setTextFont(const TextFont* f) override { _size = 1; _font = f; }
   void setColor(ColorVal c) override { _color = c ? 1 : 0; }
   void setCursor(int x, int y) override { _cx = x; _cy = y; }
   void pixel(int x, int y, uint8_t c) { if (x >= 0 && x < 128 && y >= 0 && y < 64) _fb[y][x] = c; }
@@ -72,7 +75,15 @@ public:
       if (bits[j * bw + i / 8] & (0x80 >> (i & 7))) pixel(x + i, y + j, _color);
     }
   }
+  void fontGlyph(uint16_t cp) {   // SSD1306Utf8::drawCodepoint / drawBlock
+    if (_cx + _font->w > 128) { _cx = 0; _cy += _font->h; }
+    int idx = textFontIndex(cp);
+    if (idx < 0) fillRect(_cx, _cy + 1, _font->w - 1, _font->h - 2);
+    else drawXbm(_cx, _cy, textFontGlyph(_font, idx), _font->w, _font->h);
+    _cx += _font->w;
+  }
   void glyph(const uint8_t* cols) {
+    if (_font) { fontGlyph(0xFFFF); return; }   // with a custom font glyph() only draws blocks
     if (_cx + _size * 6 > 128) { _cx = 0; _cy += _size * 8; }   // Adafruit wraps at the right edge
     for (int i = 0; i < 5; i++) {
       uint8_t line = cols[i];
@@ -88,6 +99,7 @@ public:
       if ((c & 0xC0) == 0x80) {
         uint16_t cp = ((uint16_t)(_lead & 0x1F) << 6) | (c & 0x3F);
         _lead = 0;
+        if (_font) { fontGlyph(cp); return; }
         int idx = cyrillicGlyphIndex(cp);
         if (idx >= 0) glyph(cyrillic_font_5x8[idx]); else glyph(&font[0xDB * 5]);
         return;
@@ -95,9 +107,9 @@ public:
       _lead = 0;
       glyph(&font[0xDB * 5]);
     }
-    if (c == '\n') { _cx = 0; _cy += _size * 8; return; }
+    if (c == '\n') { _cx = 0; _cy += _font ? _font->h : _size * 8; return; }
     if (c == '\r') return;
-    if (c < 0x80) { glyph(&font[c * 5]); return; }
+    if (c < 0x80) { if (_font) fontGlyph(c); else glyph(&font[c * 5]); return; }
     if ((c & 0xE0) == 0xC0) { _lead = c; return; }
     if ((c & 0xF0) == 0xE0) { _skip = 2; glyph(&font[0xDB * 5]); return; }
     if ((c & 0xF8) == 0xF0) { _skip = 3; glyph(&font[0xDB * 5]); return; }
@@ -111,7 +123,7 @@ public:
   uint16_t getTextWidth(const char* str) override {
     uint16_t n = 0;
     for (const unsigned char* p = (const unsigned char*)str; *p; p++) if ((*p & 0xC0) != 0x80) n++;
-    return n * 6 * _size;
+    return n * (_font ? _font->w : 6 * _size);
   }
   void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override {
     size_t j = 0;
@@ -455,7 +467,10 @@ static void scenario(uint8_t lang) {
     static const char* GB[] = { "Настройки: екран", "Настройки: управление", "Настройки: съобщения", "Настройки: радио", "Настройки: система" };
     static const char* GE[] = { "Settings: display", "Settings: controls", "Settings: messages", "Settings: radio", "Settings: system" };
     shot(name, bg ? GB[g] : GE[g]);
-    if (g == 0) { turn(1); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back(); }
+    if (g == 0) {
+      press(); turn(2); shot("edit_menu_size", bg ? "Размер на менютата (стойността е в този размер)" : "Menu size (the value is shown in that size)"); back();
+      turn(3); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back();
+    }
     if (g == 3) { turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back(); }
     if (g == 4) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();
@@ -483,6 +498,52 @@ static void scenario(uint8_t lang) {
   shotFrame("low_battery", bg ? "Батерия под 10%: известие и дълга вибрация" : "Battery below 10%: alert and a long buzz");
   board.mv = 3920;
   run(3000);
+
+  // the other text sizes: menus, lists and messages
+  for (int t = 1; t <= 3; t++) {
+    prefs.ui_menu_sz = t;
+    prefs.ui_text_sz = t;
+    static const char* TAGS[] = { "", "medium", "small", "tiny" };
+    static const char* TB[] = { "", "среден размер", "малък размер", "мини размер" };
+    static const char* TE[] = { "", "medium size", "small size", "tiny size" };
+    const char* tag = TAGS[t];
+    const char* tb = TB[t];
+    const char* te = TE[t];
+    char name[32], cap[96];
+    holdBack();
+    press();
+    snprintf(name, sizeof(name), "main_menu_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Главно меню" : "Main menu", bg ? tb : te); shot(name, cap);
+    press();
+    snprintf(name, sizeof(name), "conversations_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Разговори" : "Conversations", bg ? tb : te); shot(name, cap);
+    turn(2); press();
+    snprintf(name, sizeof(name), "thread_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Разговор" : "Thread", bg ? tb : te); shot(name, cap);
+    turn(-9); press();
+    snprintf(name, sizeof(name), "message_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Съобщение" : "Message", bg ? tb : te); shot(name, cap);
+    hold();
+    snprintf(name, sizeof(name), "msg_actions_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Действия" : "Actions", bg ? tb : te); shot(name, cap);
+    holdBack();
+    press(); turn(1); press();
+    snprintf(name, sizeof(name), "contacts_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Контакти" : "Contacts", bg ? tb : te); shot(name, cap);
+    turn(-1);
+    snprintf(name, sizeof(name), "contacts_letters_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Ред с букви" : "Letter row", bg ? tb : te); shot(name, cap);
+  }
+  // menus large, content small (the old "mixed" choice)
+  prefs.ui_menu_sz = 0;
+  prefs.ui_text_sz = 2;
+  holdBack();
+  press();
+  shot("main_menu_mixed", bg ? "Меню голям, текст малък: главно меню" : "Menu large, text small: main menu");
+  press();
+  shot("conversations_mixed", bg ? "Меню голям, текст малък: разговори" : "Menu large, text small: conversations");
+  prefs.ui_text_sz = 0;
+  holdBack();
 
   // rescue screen
   ui->enterRescue();

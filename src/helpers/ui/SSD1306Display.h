@@ -6,6 +6,7 @@
 #define SSD1306_NO_SPLASH
 #include <Adafruit_SSD1306.h>
 #include <helpers/RefCountedDigitalPin.h>
+#include "TextFont.h"
 
 #ifndef PIN_OLED_RESET
   #define PIN_OLED_RESET        21 // Reset pin # (or -1 if sharing Arduino reset pin)
@@ -21,12 +22,16 @@
 class SSD1306Utf8 : public Adafruit_SSD1306 {
   uint8_t _lead = 0;       // pending UTF-8 lead byte
   uint8_t _skip = 0;       // continuation bytes still to skip (3/4-byte sequences)
+  const TextFont* _font = NULL;   // NULL: the built-in 5x8 font (scaled by the text size)
   void drawGlyph(const uint8_t* cols);
-  void drawBlock() { Adafruit_SSD1306::write(0xDB); }
+  void drawBlock();
+  void drawCodepoint(uint16_t cp);
 public:
   SSD1306Utf8(uint8_t w, uint8_t h, TwoWire* twi, int8_t rst) : Adafruit_SSD1306(w, h, twi, rst) { }
   size_t write(uint8_t c) override;
   void flushUtf8() { if (_lead) { _lead = 0; drawBlock(); } _skip = 0; }
+  void setTextFont(const TextFont* f) { _font = f; }
+  const TextFont* textFont() const { return _font; }
 };
 #endif
 
@@ -58,6 +63,9 @@ public:
   void clear() override;
   void startFrame(ColorVal bkg = UIColor::window_bkg) override;
   void setTextSize(int sz) override;
+#ifdef DISPLAY_CYRILLIC
+  void setTextFont(const TextFont* font) override;
+#endif
   void setColor(ColorVal c) override;
   void setCursor(int x, int y) override;
   void print(const char* str) override;
