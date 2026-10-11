@@ -23,6 +23,24 @@ void SSD1306Utf8::drawGlyph(const uint8_t* cols) {
   cursor_x += textsize_x * 6;
 }
 
+void SSD1306Utf8::drawBlock() {
+  if (!_font) { Adafruit_SSD1306::write(0xDB); return; }
+  if (wrap && cursor_x + _font->w > _width) { cursor_x = 0; cursor_y += _font->h; }
+  fillRect(cursor_x, cursor_y + 1, _font->w - 1, _font->h - 2, textcolor);
+  cursor_x += _font->w;
+}
+
+// one code point in the custom font
+void SSD1306Utf8::drawCodepoint(uint16_t cp) {
+  int idx = textFontIndex(cp);
+  if (idx < 0) { drawBlock(); return; }
+  if (wrap && cursor_x + _font->w > _width) { cursor_x = 0; cursor_y += _font->h; }
+  const uint8_t* bits = textFontGlyph(_font, idx);
+  if (textbgcolor != textcolor) drawBitmap(cursor_x, cursor_y, bits, _font->w, _font->h, textcolor, textbgcolor);
+  else drawBitmap(cursor_x, cursor_y, bits, _font->w, _font->h, textcolor);
+  cursor_x += _font->w;
+}
+
 size_t SSD1306Utf8::write(uint8_t c) {
   if (_skip) {
     if ((c & 0xC0) == 0x80) { _skip--; return 1; }
@@ -32,6 +50,7 @@ size_t SSD1306Utf8::write(uint8_t c) {
     if ((c & 0xC0) == 0x80) {
       uint16_t cp = ((uint16_t)(_lead & 0x1F) << 6) | (c & 0x3F);
       _lead = 0;
+      if (_font) { drawCodepoint(cp); return 1; }
       int idx = cyrillicGlyphIndex(cp);
       if (idx >= 0) drawGlyph(cyrillic_font_5x8[idx]);
       else drawBlock();
@@ -40,7 +59,12 @@ size_t SSD1306Utf8::write(uint8_t c) {
     _lead = 0;
     drawBlock();   // lone lead byte (e.g. the CP437 block from translateUTF8ToBlocks)
   }
-  if (c < 0x80) return Adafruit_SSD1306::write(c);
+  if (c < 0x80) {
+    if (!_font) return Adafruit_SSD1306::write(c);
+    if (c == '\n') { cursor_x = 0; cursor_y += _font->h; }
+    else if (c != '\r') drawCodepoint(c);
+    return 1;
+  }
   if ((c & 0xE0) == 0xC0) { _lead = c; return 1; }
   if ((c & 0xF0) == 0xE0) { _skip = 2; drawBlock(); return 1; }
   if ((c & 0xF8) == 0xF0) { _skip = 3; drawBlock(); return 1; }
@@ -150,6 +174,7 @@ void SSD1306Display::startFrame(ColorVal bkg) {
   display.setTextSize(1);
 #ifdef DISPLAY_CYRILLIC
   _text_size = 1;
+  display.setTextFont(NULL);
 #endif
   display.cp437(true);         // Use full 256 char 'Code Page 437' font
 }
@@ -158,8 +183,17 @@ void SSD1306Display::setTextSize(int sz) {
   display.setTextSize(sz);
 #ifdef DISPLAY_CYRILLIC
   _text_size = sz;
+  display.setTextFont(NULL);
 #endif
 }
+
+#ifdef DISPLAY_CYRILLIC
+void SSD1306Display::setTextFont(const TextFont* font) {
+  display.setTextSize(1);
+  _text_size = 1;
+  display.setTextFont(font);
+}
+#endif
 
 void SSD1306Display::setColor(ColorVal c) {
   _color = c;
@@ -196,7 +230,8 @@ uint16_t SSD1306Display::getTextWidth(const char* str) {
   for (const unsigned char* p = (const unsigned char*)str; *p; p++) {
     if ((*p & 0xC0) != 0x80) n++;
   }
-  return n * 6 * _text_size;
+  const TextFont* f = display.textFont();
+  return n * (f ? f->w : 6 * _text_size);
 #endif
   int16_t x1, y1;
   uint16_t w, h;
