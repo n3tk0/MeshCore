@@ -413,6 +413,33 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
   return max_num;
 }
 
+void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
+                          const uint8_t* app_data, size_t app_data_len) {
+#ifdef CLOCK_FROM_ADVERT
+  // No clock yet (no RTC, no phone since boot): take the time of a signed advert. It is off by the
+  // flood delay at most; the phone's time replaces it on the next sync.
+  if (getRTCClock()->getCurrentTime() < CLOCK_VALID_EPOCH && timestamp >= CLOCK_VALID_EPOCH &&
+      timestamp < CLOCK_MAX_EPOCH) {
+    getRTCClock()->setCurrentTime(timestamp);
+    _clock_approx = true;
+  }
+#endif
+  BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
+}
+
+void MyMesh::resetContactPath(ContactInfo& contact) {
+  contact.out_path_len = OUT_PATH_UNKNOWN;
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+}
+
+void MyMesh::setTxPower(int8_t dbm) {
+  if (dbm < -9) dbm = -9;
+  if (dbm > MAX_LORA_TX_POWER) dbm = MAX_LORA_TX_POWER;
+  _prefs.tx_power_dbm = dbm;
+  radio_driver.setTxPower(dbm);
+  savePrefs();
+}
+
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   out_frame[0] = PUSH_CODE_PATH_UPDATED;
   memcpy(&out_frame[1], contact.id.pub_key, PUB_KEY_SIZE);
@@ -422,6 +449,9 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
 }
 
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
+#ifdef DISPLAY_CLASS
+  if (_ui) _ui->ackReceived(data);   // messages sent from the device's own UI
+#endif
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
     if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
@@ -480,9 +510,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   if (should_display && _ui) {
     _ui->msgSource(false, 0, from.id.pub_key);
     _ui->newMsg(path_len, from.name, text, offline_queue_len);
-    if (!_serial->isConnected()) {
-      _ui->notify(UIEventType::contactMessage);
-    }
+    _ui->notifyMsg(UIEventType::contactMessage, _serial->isConnected());
   }
 #endif
 }
@@ -584,11 +612,10 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     uint8_t frame[1];
     frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
     _serial->writeFrame(frame, 1);
-  } else {
-#ifdef DISPLAY_CLASS
-    if (_ui) _ui->notify(UIEventType::channelMessage);
-#endif
   }
+#ifdef DISPLAY_CLASS
+  if (_ui) _ui->notifyMsg(UIEventType::channelMessage, _serial->isConnected());
+#endif
 #ifdef DISPLAY_CLASS
   // Get the channel name from the channel index
   const char *channel_name = "Unknown";
@@ -882,6 +909,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
       _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui), _iter(0) {
   _iter_started = false;
   _cli_rescue = false;
+  _clock_approx = false;
 #ifdef UI_ASK_ANTENNA
   _tx_allowed = false;   // the UI asks whether an antenna is fitted before the first transmit
 #else
@@ -1275,8 +1303,9 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint32_t secs;
     memcpy(&secs, &cmd_frame[1], 4);
     uint32_t curr = getRTCClock()->getCurrentTime();
-    if (secs >= curr) {
+    if (secs >= curr || _clock_approx) {   // a clock taken from an advert may run ahead
       getRTCClock()->setCurrentTime(secs);
+      _clock_approx = false;
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
