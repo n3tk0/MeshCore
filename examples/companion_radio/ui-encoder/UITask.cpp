@@ -69,6 +69,7 @@ static const uint8_t icon_radio[]   = { 0x92, 0x54, 0x38, 0x10, 0x10, 0x10, 0x10
 static const uint8_t icon_batt[]    = { 0x18, 0x7E, 0x42, 0x5A, 0x5A, 0x42, 0x7E, 0x00 };
 static const uint8_t icon_pin[]     = { 0x38, 0x44, 0x54, 0x44, 0x38, 0x10, 0x10, 0x00 };
 static const uint8_t icon_knob[]    = { 0x3C, 0x42, 0x99, 0xBD, 0xBD, 0x99, 0x42, 0x3C };
+static const uint8_t icon_back[]    = { 0x10, 0x30, 0x7F, 0xFF, 0x7F, 0x30, 0x10, 0x00 };
 
 static const unsigned long AUTO_OFF_TABLE[] = { 15000, 30000, 60000, 300000 };
 static const uint8_t CONTRAST_TABLE[] = { 0xFF, 0x60, 0x08 };
@@ -113,76 +114,67 @@ static const char* LANG_NAMES[LANG_COUNT] = { "BG", "EN" };
 static NodePrefs* lang_prefs = NULL;
 
 enum StrId {
-  S_AGE_S, S_AGE_M, S_AGE_H, S_AGE_D,
-  S_EMPTY, S_YES, S_NO, S_ON, S_OFF,
+  S_AGE_S, S_AGE_M, S_AGE_H, S_AGE_D, S_EMPTY, S_YES, S_NO, S_ON, S_OFF,
   // messages
   S_MSGS, S_MSGS_N, S_NO_MSGS, S_ME, S_REPLY, S_RETRY, S_DEL, S_DEL_CONV, S_DEL_ALL, S_MARK_READ,
   S_DEL_Q, S_DEL_CONV_Q, S_DEL_ALL_Q, S_DELETED, S_ALL_DELETED, S_READ, S_NEW_FMT,
   S_NOT_DELIVERED_FMT,
   // writing
-  S_WRITE, S_SEND, S_CLEAR, S_DISCARD, S_SENDING_TO, S_BACK_CANCEL, S_CANCELLED, S_SENT, S_SEND_FAIL,
+  S_WRITE, S_SEND, S_CLEAR, S_DISCARD, S_BACK_CANCEL, S_CANCELLED, S_SENT, S_SEND_FAIL,
   S_NO_TARGET, S_QUICK_MSGS, S_QUICK_N_FMT, S_EMPTY_SLOT, S_SAVE, S_SAVED, S_SAVE_FAIL,
   S_NAME_TITLE,
   // contacts / channels
   S_CONTACTS, S_CHANNELS, S_NO_CONTACTS, S_NO_CHANNELS, S_INFO, S_RESET_PATH, S_PATH_RESET,
-  S_TYPE_FMT, S_TYPE_CHAT, S_TYPE_RPT, S_TYPE_ROOM, S_TYPE_SENSOR, S_HOPS_FMT, S_DIRECT, S_FLOOD,
+  S_TYPE_CHAT, S_TYPE_RPT, S_TYPE_ROOM, S_TYPE_SENSOR, S_HOPS_FMT, S_DIRECT, S_FLOOD,
   S_HEARD_AGO_FMT, S_ID_FMT,
   // menus
   S_MENU, S_QUICK, S_SEND_ADV, S_ADV_SENT, S_ADV_FAIL, S_HIBERNATE, S_HIB_Q,
   // standby
-  S_MORE_FMT, S_PHONE, S_HEARD_FMT, S_NOBODY, S_NOISE_FMT, S_NO_GPS, S_FIX, S_NOFIX, S_SAT_FMT, S_ALT_FMT,
-  S_CARD_RECENT, S_CARD_RADIO, S_CARD_BATT, S_CHARGING, S_ON_BATT, S_OFF_AT_FMT,
-  S_POWER_OFF, S_BATT_EMPTY, S_BATT_LOW, S_BATT_OUT1, S_BATT_OUT2, S_WAKE_HINT,
-  S_GPS_ON, S_GPS_OFF,
+  S_PHONE, S_HEARD_FMT, S_NOBODY, S_NOISE_FMT, S_NO_GPS, S_FIX, S_NOFIX, S_SAT_FMT, S_ALT_FMT,
+  S_POWER_OFF, S_BATT_EMPTY, S_BATT_LOW, S_BATT_OUT, S_WAKE_HINT, S_GPS_ON, S_GPS_OFF,
   // antenna / transmit
   S_ANT_Q, S_TX_FMT, S_TX_IS_OFF, S_ANT_NEVER_Q,
   // settings
-  S_SETTINGS, S_GRP_DISPLAY, S_GRP_INPUT, S_GRP_MSGS, S_GRP_RADIO, S_GRP_SYSTEM,
-  S_SET_OFF, S_SET_BRIGHT, S_SET_DOTS, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP,
-  S_SET_NOTIFY, S_SET_DELCONF, S_SET_CSORT, S_SET_TXPOW, S_SET_ANT, S_SET_NAME, S_SET_LANG,
-  S_SET_TZ, S_SET_DST, S_ABOUT, S_RESCUE, S_RESCUE_Q, S_EDIT_HINT,
-  S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M,
-  S_HIGH, S_MEDIUM, S_LOW,
-  S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE,
-  S_ENC_NORMAL, S_ENC_REVERSED, S_STEPS_FMT,
-  S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER,
-  S_CSORT_NAME, S_CSORT_RECENT,
-  S_ANT_ALWAYS, S_ANT_POWER_LOSS, S_ANT_NEVER,
-  S_DST_EU,
-  S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT, S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK,
-  S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
+  S_SETTINGS, S_GRP_DISPLAY, S_GRP_INPUT, S_GRP_MSGS, S_GRP_RADIO, S_GRP_SYSTEM, S_SET_OFF,
+  S_SET_BRIGHT, S_SET_DOTS, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_NOTIFY,
+  S_SET_DELCONF, S_SET_CSORT, S_SET_TXPOW, S_SET_ANT, S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST,
+  S_ABOUT, S_RESCUE, S_RESCUE_Q, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_HIGH,
+  S_MEDIUM, S_LOW, S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_ENC_NORMAL, S_ENC_REVERSED,
+  S_STEPS_FMT, S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER, S_CSORT_NAME, S_CSORT_RECENT,
+  S_ANT_ALWAYS, S_ANT_POWER_LOSS, S_ANT_NEVER, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
+  S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   S_COUNT
 };
 
-// Copy rules: at most 21 characters per row (19 with an icon), the sentence case of the app,
-// "advert" stays as in the MeshCore app, Bulgarian without abbreviations where it fits.
+// Copy rules: the UI uses the 2x font, so a row holds 10 characters (8 next to an icon). Menu
+// items and questions are written to fit that; longer content (names, messages) scrolls when selected.
 static const char* const STRINGS[S_COUNT][2] = {
   { "%luс", "%lus" },
   { "%luм", "%lum" },
   { "%luч", "%luh" },
   { "%luд", "%lud" },
-  { "Няма записи", "No entries" },
-  { "Натисни = да", "Press = yes" },
-  { "Back = не", "Back = no" },
+  { "Празно", "Empty" },
+  { "Да", "Yes" },
+  { "Не", "No" },
   { "вкл", "on" },
   { "изкл", "off" },
   // messages
   { "Съобщения", "Messages" },
-  { "Съобщения (%d)", "Messages (%d)" },
+  { "%d нови", "%d new" },
   { "Няма съобщения", "No messages" },
   { "Аз", "Me" },
   { "Отговори", "Reply" },
-  { "Изпрати пак", "Send again" },
+  { "Повтори", "Resend" },
   { "Изтрий", "Delete" },
-  { "Изтрий разговора", "Delete conversation" },
-  { "Изтрий всички", "Delete all" },
-  { "Всички прочетени", "Mark all read" },
-  { "Да се изтрие ли съобщението?", "Delete this message?" },
-  { "Изтриване на разговора с %s?", "Delete conversation with %s?" },
-  { "Изтриване на всички съобщения?", "Delete all messages?" },
+  { "Изтрий чат", "Clear chat" },
+  { "Изчисти", "Clear all" },
+  { "Прочетени", "Mark read" },
+  { "Изтрий това?", "Delete this?" },
+  { "Изтрий чата с %s?", "Clear chat with %s?" },
+  { "Изтрий всичко?", "Delete all?" },
   { "Изтрито", "Deleted" },
-  { "Всички са изтрити", "All deleted" },
-  { "Отбелязани", "Marked as read" },
+  { "Всичко изтрито", "All deleted" },
+  { "Прочетени", "Marked read" },
   { "Ново: %s", "New: %s" },
   { "Не е доставено: %s", "Not delivered: %s" },
   // writing
@@ -190,75 +182,65 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Изпрати", "Send" },
   { "Изчисти", "Clear" },
   { "Откажи", "Discard" },
-  { "Изпращане до", "Sending to" },
-  { "Back = отказ", "Back = cancel" },
+  { "Отказ", "Cancel" },
   { "Отказано", "Cancelled" },
   { "Изпратено", "Sent" },
   { "Не е изпратено", "Send failed" },
   { "Няма такъв получател", "Unknown recipient" },
-  { "Готови съобщения", "Quick replies" },
-  { "Готово съобщение %d", "Quick reply %d" },
+  { "Шаблони", "Templates" },
+  { "Шаблон %d", "Quick %d" },
   { "(празно)", "(empty)" },
   { "Запази", "Save" },
   { "Запазено", "Saved" },
   { "Не е запазено", "Save failed" },
-  { "Име на устройството", "Device name" },
+  { "Име", "Name" },
   // contacts / channels
   { "Контакти", "Contacts" },
   { "Канали", "Channels" },
   { "Няма контакти", "No contacts" },
   { "Няма канали", "No channels" },
-  { "Информация", "Details" },
-  { "Нулирай пътя", "Reset path" },
+  { "Инфо", "Details" },
+  { "Нов път", "Reset path" },
   { "Пътят е нулиран", "Path reset" },
-  { "Тип: %s", "Type: %s" },
   { "чат", "chat" },
   { "репийтър", "repeater" },
   { "стая", "room" },
   { "сензор", "sensor" },
-  { "Хопове: %d", "Hops: %d" },
-  { "Път: директно", "Path: direct" },
-  { "Път: flood", "Path: flood" },
-  { "Чут преди %s", "Heard %s ago" },
-  { "ID: %s", "ID: %s" },
+  { "%d хопа", "%d hops" },
+  { "Директно", "Direct" },
+  { "Flood", "Flood" },
+  { "Чут %s", "Heard %s" },
+  { "#%s", "#%s" },
   // menus
   { "Меню", "Menu" },
   { "Бързо меню", "Quick menu" },
-  { "Изпрати advert", "Send advert" },
-  { "Advert-ът е изпратен", "Advert sent" },
+  { "Advert", "Advert" },
+  { "Advert изпратен", "Advert sent" },
   { "Advert не е изпратен", "Advert failed" },
-  { "Хибернация", "Hibernate" },
-  { "Хибернация?", "Hibernate?" },
+  { "Изключи", "Power off" },
+  { "Изключи?", "Power off?" },
   // standby
-  { "+%d още", "+%d more" },
-  { "Телефон: свързан", "Phone: connected" },
-  { "Чут: %s %s", "Heard: %s %s" },
-  { "Никой не е чут", "Nobody heard yet" },
+  { "Телефон", "Phone" },
+  { "%s %s", "%s %s" },
+  { "Никой не е чут", "Nobody heard" },
   { "Шум %d", "Noise %d" },
-  { "Няма GPS модул", "No GPS module" },
+  { "Няма GPS", "No GPS" },
   { "fix", "fix" },
   { "без fix", "no fix" },
-  { "%s %d сат.", "%s %d sat" },
+  { "%d сат.", "%d sat" },
   { "%.0f м", "%.0f m" },
-  { "Чути наскоро", "Recently heard" },
-  { "Радио", "Radio" },
-  { "Батерия", "Battery" },
-  { "Зарежда (USB)", "Charging (USB)" },
-  { "На батерия", "On battery" },
-  { "Изкл. под %d.%02d V", "Off below %d.%02d V" },
-  { "Изключване...", "Powering off..." },
+  { "Изключване", "Power off" },
   { "Батерията е изтощена", "Battery empty" },
   { "Батерия под 10%", "Battery below 10%" },
-  { "Батерията може", "Battery can" },
-  { "да се извади", "be removed" },
-  { "Включване: задръж", "To wake: hold" },
+  { "Батерията може да се извади", "Battery can be removed" },
+  { "Задръж", "Hold" },
   { "GPS: вкл", "GPS: on" },
   { "GPS: изкл", "GPS: off" },
   // antenna / transmit
   { "Има ли антена?", "Antenna fitted?" },
-  { "Предаване: %s", "Transmit: %s" },
-  { "Предаването е изкл.", "Transmit is off" },
-  { "Без антена PA изгаря. Да не питам?", "No antenna burns the PA. Never ask?" },
+  { "TX: %s", "TX: %s" },
+  { "TX е изключен", "TX is off" },
+  { "Без антена PA изгаря! Не питай?", "No antenna burns PA! Never ask?" },
   // settings
   { "Настройки", "Settings" },
   { "Екран", "Display" },
@@ -272,20 +254,20 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Вибрация", "Vibration" },
   { "Посока", "Direction" },
   { "Щрак", "Detent" },
-  { "Скок към буква", "Letter jump" },
+  { "Скок букви", "Auto jump" },
   { "Известия", "Alerts" },
-  { "Потвърди триене", "Confirm delete" },
-  { "Контакти", "Contacts" },
+  { "Потвърди", "Confirm" },
+  { "Подредба", "Sort" },
   { "Мощност", "TX power" },
   { "Антена", "Antenna" },
   { "Име", "Name" },
   { "Език", "Language" },
-  { "Часова зона", "Time zone" },
-  { "Лятно време", "Summer time" },
-  { "За устройството", "About" },
+  { "Час. пояс", "Time zone" },
+  { "Лятно", "Summer" },
+  { "Инфо", "About" },
   { "CLI rescue", "CLI rescue" },
-  { "CLI rescue? Приложението спира.", "CLI rescue? The app stops." },
-  { "Натисни = запази", "Press = save" },
+  { "Rescue? Без app до рестарт", "Rescue? No app until restart" },
+  { "Запази", "Save" },
   { "15 с", "15 s" },
   { "30 с", "30 s" },
   { "1 мин", "1 min" },
@@ -308,15 +290,15 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "нова батерия", "new battery" },
   { "никога", "never" },
   { "ЕС", "EU" },
-  { "Версия %s", "Version %s" },
-  { "Батерия %d.%02d V %d%%", "Battery %d.%02d V %d%%" },
-  { "Контакти %d/%d", "Contacts %d/%d" },
-  { "Работи от %s", "Up for %s" },
-  { "Час %02lu:%02lu%s", "Time %02lu:%02lu%s" },
-  { "Час: няма", "Time: not set" },
+  { "%s", "%s" },
+  { "%d.%02dV %d%%", "%d.%02dV %d%%" },
+  { "%d контакта", "%d contacts" },
+  { "Работи %s", "Up %s" },
+  { "Час %02lu:%02lu%s", "Now %02lu:%02lu%s" },
+  { "Няма час", "No clock" },
   { "CLI rescue", "CLI rescue" },
-  { "USB сериен порт", "USB serial port" },
-  { "Back = рестарт", "Back = restart" },
+  { "USB порт", "USB port" },
+  { "Рестарт", "Restart" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -383,30 +365,64 @@ static bool drawMarquee(DisplayDriver& d, int x, int y, const char* text, int ma
   return active;
 }
 
-// up to two centered lines, broken at a space
-static void drawTwoLines(DisplayDriver& d, int y, const char* text, int line_chars) {
-  uint8_t starts[2], lens[2];
-  int n = ui::wrapLines(text, line_chars, starts, lens, 2);
-  char line[100];
-  for (int i = 0; i < n; i++) {
-    utf8Slice(line, sizeof(line), text + starts[i], 0, lens[i]);
-    d.drawTextCentered(d.width() / 2, n == 1 ? y + 5 : y + i * 10, line);
+// Layout: everything is drawn with the 2x font (12x16 px cells), so the 128x64 screen is a grid of
+// 10 characters by 4 rows. Icons are the 8x8 bitmaps drawn at 2x (16x16).
+#define CW  12   // character cell width
+#define LH  16   // row height
+#define TEXT_DY 1   // glyphs sit one pixel below the top of their row
+
+static void big(DisplayDriver& d) { d.setTextSize(2); }
+
+static void drawIcon2(DisplayDriver& d, int x, int y, const uint8_t* bits) {
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 8; c++) if (bits[r] & (0x80 >> c)) d.fillRect(x + c * 2, y + r * 2, 2, 2);
   }
 }
 
-static void drawBattery(DisplayDriver& d, int x, int y, int pct) {
-  d.drawRect(x, y, 12, 7);
-  d.fillRect(x + 12, y + 2, 2, 3);
-  d.fillRect(x + 2, y + 2, (pct * 8) / 100, 3);
+// up to max_lines centered lines broken at spaces, vertically centered in rows [y, y + rows * LH)
+static void drawLines(DisplayDriver& d, int y, int rows, const char* text, int max_lines) {
+  uint8_t starts[4], lens[4];
+  if (max_lines > 4) max_lines = 4;
+  int n = ui::wrapLines(text, d.width() / CW, starts, lens, max_lines);
+  char line[100], filtered[100];
+  int top = y + (rows - n) * LH / 2;
+  for (int i = 0; i < n; i++) {
+    utf8Slice(line, sizeof(line), text + starts[i], 0, lens[i]);
+    d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
+    d.drawTextCentered(d.width() / 2, top + i * LH + TEXT_DY, filtered);
+  }
 }
 
-// 4 bars by the SNR of the last packet received
+// bottom row of a dialog: [knob] yes  [back] no   (no == NULL: only the first)
+static void drawHint(DisplayDriver& d, int y, const char* yes, const char* no) {
+  int wy = 18 + d.getTextWidth(yes);
+  int wn = no ? 12 + 18 + d.getTextWidth(no) : 0;
+  int x = (d.width() - wy - wn) / 2;
+  drawIcon2(d, x, y, icon_knob);
+  d.setCursor(x + 18, y + TEXT_DY);
+  d.print(yes);
+  if (no) {
+    x += wy + 12;
+    drawIcon2(d, x, y, icon_back);
+    d.setCursor(x + 18, y + TEXT_DY);
+    d.print(no);
+  }
+}
+
+static void drawBattery(DisplayDriver& d, int x, int y, int pct) {   // 24x12
+  d.drawRect(x, y, 21, 12);
+  d.drawRect(x + 1, y + 1, 19, 10);
+  d.fillRect(x + 21, y + 3, 3, 6);
+  d.fillRect(x + 3, y + 3, (pct * 15) / 100, 6);
+}
+
+// 4 bars by the SNR of the last packet received, 16x14
 static void drawSignal(DisplayDriver& d, int x, int y, float snr) {
   int bars = snr > 5 ? 4 : snr > 0 ? 3 : snr > -7 ? 2 : 1;
   for (int i = 0; i < 4; i++) {
-    int h = 2 + i * 2;
-    if (i < bars) d.fillRect(x + i * 2, y + 8 - h, 1, h);
-    else d.fillRect(x + i * 2, y + 7, 1, 1);
+    int h = 5 + i * 3;
+    if (i < bars) d.fillRect(x + i * 4, y + 14 - h, 3, h);
+    else d.fillRect(x + i * 4, y + 12, 3, 2);
   }
 }
 
@@ -450,9 +466,8 @@ public:
     display.setColor(UIColor::corp_blue);
     display.drawXbm((display.width() - 128) / 2, 3, meshcore_logo, 128, 13);
     display.setColor(UIColor::primary_txt);
-    display.setTextSize(1);
-    display.drawTextCentered(display.width() / 2, 24, _version_info);
-    display.drawTextCentered(display.width() / 2, 42, FIRMWARE_BUILD_DATE);
+    big(display);
+    display.drawTextCentered(display.width() / 2, 32 + TEXT_DY, _version_info);
     return 500;
   }
   void poll() override {
@@ -466,13 +481,17 @@ class RescueScreen : public UIScreen {
 public:
   RescueScreen(UITask* task) : _task(task) { }
   int render(DisplayDriver& d) override {
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::warning_txt);
-    d.drawRect(0, 0, d.width(), d.height());
-    d.drawTextCentered(d.width() / 2, 8, T(S_RESCUE_L1));
+    d.drawTextCentered(d.width() / 2, TEXT_DY, T(S_RESCUE_L1));
     d.setColor(UIColor::primary_txt);
-    d.drawTextCentered(d.width() / 2, 26, T(S_RESCUE_L2));
-    d.drawTextCentered(d.width() / 2, 44, T(S_RESCUE_L3));
+    d.drawTextCentered(d.width() / 2, LH + 8 + TEXT_DY, T(S_RESCUE_L2));
+    // Back restarts
+    int w = 18 + d.getTextWidth(T(S_RESCUE_L3));
+    int x = (d.width() - w) / 2;
+    drawIcon2(d, x, 3 * LH, icon_back);
+    d.setCursor(x + 18, 3 * LH + TEXT_DY);
+    d.print(T(S_RESCUE_L3));
     return 5000;
   }
   bool handleInput(char c) override {
@@ -483,15 +502,15 @@ public:
 
 static RescueScreen* rescue_screen;
 
-// Generic scrolling list: title row, up to 5 rows, inverted selection, scrollbar, marquee on the
-// selected row, optional 8x8 icon on the left and short text on the right of each row.
-// Short lists wrap around, long ones stop at the ends.
+// Generic scrolling list: title row and 3 item rows (2x font), inverted selection, scrollbar,
+// marquee on the selected row, optional 16x16 icon on the left and short text on the right of each
+// row (only where it fits next to the label). Short lists wrap around, long ones stop at the ends.
 class ListScreen : public UIScreen {
 protected:
   UITask* _task;
   int _sel = 0, _top = 0;
   unsigned long _sel_since = 0;
-  static const int ROWS = 5, ROW_H = 10, TOP = 12;
+  static const int ROWS = 3, ROW_H = LH, TOP = LH;
 
   virtual void title(char* buf, size_t n) = 0;
   virtual int count() = 0;
@@ -526,51 +545,48 @@ public:
     int n = count();
     if (_sel >= n) select(n - 1);
     if (_top > _sel) _top = _sel;
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::title_txt);
     bool scrolling = false;
     if (!renderHeader(d)) {
       title(buf, sizeof(buf));
-      scrolling = drawMarquee(d, 0, 0, buf, n > ROWS ? 15 : 21, _sel_since, true);
-      if (n > ROWS) {
-        char pos[24];
-        snprintf(pos, sizeof(pos), "%d/%d", _sel + 1, n);
-        d.drawTextRightAlign(d.width() - 1, 0, pos);
-      }
-      d.fillRect(0, 9, d.width(), 1);
+      scrolling = drawMarquee(d, 0, TEXT_DY, buf, d.width() / CW, _sel_since, true);
+      for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);   // dotted rule under the title
     }
     d.setColor(UIColor::primary_txt);
 
     if (n == 0) {
-      drawTwoLines(d, 27, emptyText(), 21);
+      drawLines(d, TOP, ROWS, emptyText(), ROWS);
       return scrolling ? MARQUEE_STEP_MILLIS : 1000;
     }
     int text_w = (n > ROWS) ? d.width() - 4 : d.width();
-    int x0 = hasIcons() ? 11 : 1;
+    int x0 = hasIcons() ? 18 : 0;
     for (int r = 0; r < ROWS && _top + r < n; r++) {
       int i = _top + r;
       int y = TOP + r * ROW_H;
       label(i, buf, sizeof(buf));
+      int max_chars = (text_w - x0) / CW;
       rightText(i, right, sizeof(right));
-      int right_w = right[0] ? d.getTextWidth(right) + 3 : 0;
-      int max_chars = (text_w - x0 - right_w - 1) / 6;
+      int rlen = utf8Len(right);
+      if (rlen > 0 && utf8Len(buf) + 1 + rlen <= max_chars) max_chars -= rlen + 1;
+      else right[0] = 0;   // no room: the label wins
       const uint8_t* ic = icon(i);
       bool selected = i == _sel && listFocused();
       if (selected) {
         d.setColor(UIColor::primary_txt);
-        d.fillRect(0, y - 1, text_w, ROW_H);
+        d.fillRect(0, y, text_w, ROW_H);
         d.setColor(COLOR_BLACK);
       }
-      if (ic) d.drawXbm(1, y, ic, 8, 8);
-      if (drawMarquee(d, x0, y, buf, max_chars, selected ? _sel_since : 0, selected)) scrolling = true;
-      if (right[0]) d.drawTextRightAlign(text_w - 2, y, right);
+      if (ic) drawIcon2(d, 0, y, ic);
+      if (drawMarquee(d, x0, y + TEXT_DY, buf, max_chars, selected ? _sel_since : 0, selected)) scrolling = true;
+      if (right[0]) d.drawTextRightAlign(text_w, y + TEXT_DY, right);
       d.setColor(UIColor::primary_txt);
     }
     if (n > ROWS) {   // scrollbar
       int track = ROWS * ROW_H;
-      int h = track * ROWS / n; if (h < 4) h = 4;
-      int y = TOP - 1 + (track - h) * _top / (n - ROWS);
-      d.fillRect(d.width() - 2, y, 2, h);
+      int h = track * ROWS / n; if (h < 6) h = 6;
+      int y = TOP + (track - h) * _top / (n - ROWS);
+      d.fillRect(d.width() - 3, y, 3, h);
     }
     return scrolling ? MARQUEE_STEP_MILLIS : 1000;
   }
@@ -597,13 +613,10 @@ public:
     _action = action;
   }
   int render(DisplayDriver& d) override {
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::primary_txt);
-    d.drawRect(0, 0, d.width(), d.height());
-    drawTwoLines(d, 8, _question, 20);
-    d.fillRect(8, 31, d.width() - 16, 1);
-    d.drawTextCentered(d.width() / 2, 37, T(S_YES));
-    d.drawTextCentered(d.width() / 2, 49, T(S_NO));
+    drawLines(d, 0, 3, _question, 3);
+    drawHint(d, 3 * LH, T(S_YES), T(S_NO));
     return 1000;
   }
   bool handleInput(char c) override {
@@ -630,13 +643,11 @@ class AntennaScreen : public UIScreen {
 public:
   AntennaScreen(UITask* task) : _task(task) { }
   int render(DisplayDriver& d) override {
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::warning_txt);
-    d.drawRect(0, 0, d.width(), d.height());
-    d.drawTextCentered(d.width() / 2, 14, T(S_ANT_Q));
+    drawLines(d, 0, 3, T(S_ANT_Q), 3);
     d.setColor(UIColor::primary_txt);
-    d.drawTextCentered(d.width() / 2, 34, T(S_YES));
-    d.drawTextCentered(d.width() / 2, 46, T(S_NO));
+    drawHint(d, 3 * LH, T(S_YES), T(S_NO));
     return 1000;
   }
   bool handleInput(char c) override {
@@ -758,27 +769,35 @@ public:
     _started = millis();
   }
   int render(DisplayDriver& d) override {
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::title_txt);
     char buf[48];
-    snprintf(buf, sizeof(buf), "%s %s%s", T(S_SENDING_TO), _target.is_channel ? "#" : "", _target.name);
-    drawMarquee(d, 0, 0, buf, 21, _started, true);
-    d.fillRect(0, 9, d.width(), 1);
+    drawIcon2(d, 0, 0, icon_sent);
+    snprintf(buf, sizeof(buf), "%s%s", _target.is_channel ? "#" : "", _target.name);
+    drawMarquee(d, 18, TEXT_DY, buf, (d.width() - 18) / CW, _started, true);
     d.setColor(UIColor::primary_txt);
-    uint8_t starts[3], lens[3];
-    int n = ui::wrapLines(_text, 21, starts, lens, 3);
+    uint8_t starts[2], lens[2];
+    int n = ui::wrapLines(_text, d.width() / CW, starts, lens, 2);
     char line[100], filtered[100];
     for (int i = 0; i < n; i++) {
       utf8Slice(line, sizeof(line), _text + starts[i], 0, lens[i]);
       d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
-      d.setCursor(0, 13 + i * 9);
+      d.setCursor(0, LH + i * LH + TEXT_DY);
       d.print(filtered);
     }
+    // Back cancels; the bar runs out when the message goes
+    int y = 3 * LH;
+    drawIcon2(d, 0, y, icon_back);
+    d.setCursor(18, y + TEXT_DY);
+    d.print(T(S_BACK_CANCEL));
+    int x = 18 + d.getTextWidth(T(S_BACK_CANCEL)) + 6;
     unsigned long el = millis() - _started;
     if (el > SEND_UNDO_MILLIS) el = SEND_UNDO_MILLIS;
-    int w = (int)((SEND_UNDO_MILLIS - el) * (unsigned long)d.width() / SEND_UNDO_MILLIS);
-    d.fillRect(0, 43, w, 3);
-    d.drawTextCentered(d.width() / 2, 52, T(S_BACK_CANCEL));
+    int full = d.width() - x;
+    if (full > 0) {
+      d.drawRect(x, y + 4, full, 8);
+      d.fillRect(x + 2, y + 6, (int)((SEND_UNDO_MILLIS - el) * (unsigned long)(full - 4) / SEND_UNDO_MILLIS), 4);
+    }
     return 100;
   }
   void poll() override;
@@ -846,7 +865,9 @@ public:
 private:
   enum Set { SET_BG, SET_EN, SET_SYM };
   enum Special { K_SHIFT = 1, K_SPACE, K_SYM, K_LANG, K_SEND };
-  static const int COLS = 16, CELL = 8, KB_TOP = 40, LINE_CHARS = 21, TEXT_LINES = 3;
+  // rows 0-1: the text, row 2: the keys as a strip with the selected key in the middle,
+  // row 3: recipient and characters left
+  static const int LINE_CHARS = 10, TEXT_LINES = 2, KB_TOP = 2 * LH;
 
   UITask* _task;
   WordPredictor _predict;
@@ -890,12 +911,16 @@ private:
     return k < 5 ? LETTERS[k] : 0;
   }
   int numKeys() const { return numChars() + (_set == SET_SYM ? 3 : 5); }
-  static int keyWidth(int special) {
-    switch (special) {
-      case K_SPACE: return 4;
-      case K_SYM: return 3;
-      case K_LANG: case K_SEND: return 2;
-      default: return 1;
+  // width of key i on the strip, in pixels
+  int keyWidth(int i) const {
+    int nc = numChars();
+    if (i < nc) return CW + 2;
+    switch (specialAt(i - nc)) {
+      case K_SPACE: return 3 * CW + 2;
+      case K_SYM: return 3 * CW + 4;
+      case K_LANG: return 2 * CW + 4;
+      case K_SEND: return _mode != MODE_SEND ? 2 * CW + 4 : 20;
+      default: return 20;   // shift
     }
   }
   int findSpecial(int special) const {
@@ -1020,10 +1045,12 @@ private:
     }
   }
 
-  void drawKey(DisplayDriver& d, int i, int x, int y, int w) {
-    bool sel = i == _sel && !_on_word;
+  void drawKey(DisplayDriver& d, int i, int x, int y) {
+    int w = keyWidth(i);
+    bool sel = i == _sel;
     d.setColor(UIColor::primary_txt);
-    if (sel) { d.fillRect(x, y, w * CELL, CELL); d.setColor(COLOR_BLACK); }
+    if (sel && !_on_word) { d.fillRect(x, y, w, LH); d.setColor(COLOR_BLACK); }
+    else if (sel) d.drawRect(x, y, w, LH);   // the cursor is on the suggestion: key outlined
     int nc = numChars();
     if (i < nc) {
       const char* p = utf8Skip(chars(), i);
@@ -1031,33 +1058,54 @@ private:
       char ch[4];
       if (_shift && _set != SET_SYM) utf8Upper(ch, p, bytes);
       else { memcpy(ch, p, bytes); ch[bytes] = 0; }
-      d.setCursor(x + 1, y);
+      d.setCursor(x + 2, y + TEXT_DY);
       d.print(ch);
     } else {
-      int sp = specialAt(i - nc);
-      int cw = w * CELL;
-      switch (sp) {
-        case K_SHIFT: d.drawXbm(x, y, _shift ? icon_shift : icon_shift_o, 8, 8); break;
+      switch (specialAt(i - nc)) {
+        case K_SHIFT: drawIcon2(d, x + 2, y, _shift ? icon_shift : icon_shift_o); break;
         case K_SPACE:
-          d.fillRect(x + 2, y + 6, cw - 4, 1);
-          d.fillRect(x + 2, y + 3, 1, 3);
-          d.fillRect(x + cw - 3, y + 3, 1, 3);
+          d.fillRect(x + 4, y + 11, w - 8, 2);
+          d.fillRect(x + 4, y + 6, 2, 5);
+          d.fillRect(x + w - 6, y + 6, 2, 5);
           break;
         case K_SYM:
-          d.setCursor(x + 3, y);
+          d.setCursor(x + 3, y + TEXT_DY);
           d.print(_set != SET_SYM ? "123" : (_letters == SET_BG ? "абв" : "abc"));
           break;
         case K_LANG:
-          d.setCursor(x + 2, y);
+          d.setCursor(x + 2, y + TEXT_DY);
           d.print(_set == SET_BG ? "EN" : "БГ");
           break;
         case K_SEND:
-          if (_mode != MODE_SEND) { d.setCursor(x + 2, y); d.print("OK"); }
-          else d.drawXbm(x + 4, y, icon_mail, 8, 8);
+          if (_mode != MODE_SEND) { d.setCursor(x + 2, y + TEXT_DY); d.print("OK"); }
+          else drawIcon2(d, x + 2, y, icon_mail);
           break;
       }
     }
     d.setColor(UIColor::primary_txt);
+  }
+
+  // the key strip: the selected key centered, its neighbours (wrapping around) as far as they fit
+  void renderKeys(DisplayDriver& d) {
+    int n = numKeys();
+    int w = keyWidth(_sel);
+    int x = (d.width() - w) / 2;
+    drawKey(d, _sel, x, KB_TOP);
+    int left = x, right = x + w;
+    for (int k = 1; k < n; k++) {   // to the left
+      int i = (_sel - k + n) % n;
+      int kw = keyWidth(i);
+      if (left - kw < 0) break;
+      left -= kw;
+      drawKey(d, i, left, KB_TOP);
+    }
+    for (int k = 1; k < n; k++) {   // to the right
+      int i = (_sel + k) % n;
+      int kw = keyWidth(i);
+      if (right + kw > d.width()) break;
+      drawKey(d, i, right, KB_TOP);
+      right += kw;
+    }
   }
 
   void renderText(DisplayDriver& d) {
@@ -1069,27 +1117,27 @@ private:
     char part[100];
     for (int r = 0; r < TEXT_LINES; r++) {
       int a = (first + r) * LINE_CHARS, b = a + LINE_CHARS;
-      int y = 11 + r * 9;
+      int y = r * LH;
       if (a < tlen) {
         utf8Slice(part, sizeof(part), _text, a, (b < tlen ? b : tlen) - a);
-        d.setCursor(0, y);
+        d.setCursor(0, y + TEXT_DY);
         d.print(part);
       }
       int ga = a > tlen ? a : tlen, gb = b < tlen + glen ? b : tlen + glen;
       if (gb > ga) {   // suggestion: inverted while the cursor is on it, underlined otherwise
         utf8Slice(part, sizeof(part), _rest, ga - tlen, gb - ga);
-        int x = (ga - a) * 6;
+        int x = (ga - a) * CW;
         if (_on_word) {
-          d.fillRect(x, y - 1, (gb - ga) * 6, 9);
+          d.fillRect(x, y, (gb - ga) * CW, LH);
           d.setColor(COLOR_BLACK);
         } else {
-          for (int u = x; u < x + (gb - ga) * 6; u += 2) d.fillRect(u, y + 8, 1, 1);
+          for (int u = x; u < x + (gb - ga) * CW; u += 2) d.fillRect(u, y + LH - 1, 1, 1);
         }
-        d.setCursor(x, y);
+        d.setCursor(x, y + TEXT_DY);
         d.print(part);
         d.setColor(UIColor::primary_txt);
       }
-      if (tlen >= a && tlen < b && glen == 0) d.fillRect((tlen - a) * 6, y - 1, 1, 9);   // cursor
+      if (tlen >= a && tlen < b && glen == 0) d.fillRect((tlen - a) * CW, y, 2, LH);   // cursor
     }
   }
 
@@ -1187,7 +1235,11 @@ public:
   void finish();
 
   int render(DisplayDriver& d) override {
-    d.setTextSize(1);
+    big(d);
+    d.setColor(UIColor::primary_txt);
+    renderText(d);
+    renderKeys(d);
+
     d.setColor(UIColor::title_txt);
     char left[8];
     // room left in letters of the current layout (a Cyrillic letter takes 2 bytes)
@@ -1197,21 +1249,11 @@ public:
     if (_mode == MODE_QUICK) snprintf(title, sizeof(title), T(S_QUICK_N_FMT), _slot + 1);
     else if (_mode == MODE_NAME) snprintf(title, sizeof(title), "%s", T(S_NAME_TITLE));
     else snprintf(title, sizeof(title), "%s%s", _target.is_channel ? "#" : "", _target.name);
-    drawMarquee(d, 0, 0, title, (d.width() - lw - 4) / 6, 0, false);
-    d.drawTextRightAlign(d.width() - 1, 0, left);
-    d.fillRect(0, 9, d.width(), 1);
-
+    int y = 3 * LH;
+    for (int x = 0; x < d.width(); x += 2) d.fillRect(x, y, 1, 1);   // dotted rule over the bottom row
+    drawMarquee(d, 0, y + TEXT_DY, title, (d.width() - lw - 4) / CW, 0, false);
+    d.drawTextRightAlign(d.width(), y + TEXT_DY, left);
     d.setColor(UIColor::primary_txt);
-    renderText(d);
-    for (int x = 0; x < d.width(); x += 2) d.fillRect(x, KB_TOP - 2, 1, 1);
-
-    int nc = numChars(), n = numKeys(), col = 0, row = 0;
-    for (int i = 0; i < n; i++) {
-      int w = i < nc ? 1 : keyWidth(specialAt(i - nc));
-      if (col + w > COLS) { col = 0; row++; }
-      drawKey(d, i, col * CELL, KB_TOP + row * CELL, w);
-      col += w;
-    }
     return 5000;
   }
 
@@ -1585,7 +1627,7 @@ class MessageViewScreen : public UIScreen {
   UITask* _task;
   uint32_t _seq = 0;   // the message shown; new messages shift history indexes
   int _scroll = 0;
-  static const int MAX_LINES = 12, LINE_CHARS = 21, VISIBLE = 5;
+  static const int MAX_LINES = 24, LINE_CHARS = 10, VISIBLE = 3;
   uint8_t _lines[MAX_LINES];       // start of each line, as offset into the entry text (entries move)
   uint8_t _line_len[MAX_LINES];    // characters per line
   int _num_lines = 0;
@@ -1606,30 +1648,30 @@ public:
     if (!m) { _task->pop(); return 100; }
     char age[12];
     ageOf(age, sizeof(age), m->timestamp);
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::title_txt);
-    int right_x = d.width() - 1;
-    if (age[0]) { d.drawTextRightAlign(right_x, 0, age); right_x -= d.getTextWidth(age) + 2; }
+    int right_x = d.width();
+    if (age[0]) { d.drawTextRightAlign(right_x, TEXT_DY, age); right_x -= d.getTextWidth(age) + 2; }
     const uint8_t* st = m->state != MSG_IN ? stateIcon(m) : NULL;
-    if (st) { right_x -= 8; d.drawXbm(right_x, 0, st, 8, 8); right_x -= 2; }
+    if (st) { right_x -= 16; drawIcon2(d, right_x, 0, st); right_x -= 2; }
     char who[48];
     if (m->state == MSG_IN) snprintf(who, sizeof(who), "%s", m->from);
     else snprintf(who, sizeof(who), "%s > %s", T(S_ME), m->from);
-    bool scrolling = drawMarquee(d, 0, 0, who, (right_x - 2) / 6, _opened, true);
-    d.fillRect(0, 9, d.width(), 1);
+    bool scrolling = drawMarquee(d, 0, TEXT_DY, who, right_x / CW, _opened, true);
+    for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);
     d.setColor(UIColor::primary_txt);
     char line[100], filtered[100];
     for (int r = 0; r < VISIBLE && _scroll + r < _num_lines; r++) {
       utf8Slice(line, sizeof(line), m->text + _lines[_scroll + r], 0, _line_len[_scroll + r]);
       d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
-      d.setCursor(0, 12 + r * 10);
+      d.setCursor(0, LH + r * LH + TEXT_DY);
       d.print(filtered);
     }
     if (_num_lines > VISIBLE) {
-      int track = VISIBLE * 10;
-      int h = track * VISIBLE / _num_lines;
-      int y = 11 + (track - h) * _scroll / (_num_lines - VISIBLE);
-      d.fillRect(d.width() - 2, y, 2, h);
+      int track = VISIBLE * LH;
+      int h = track * VISIBLE / _num_lines; if (h < 6) h = 6;
+      int y = LH + (track - h) * _scroll / (_num_lines - VISIBLE);
+      d.fillRect(d.width() - 3, y, 3, h);
     }
     return scrolling ? MARQUEE_STEP_MILLIS : 5000;
   }
@@ -1757,7 +1799,7 @@ static const char* contactTypeName(uint8_t type) {
 // read-only details of one contact
 class ContactInfoScreen : public ListScreen {
   uint8_t _prefix[6];
-  char _lines[6][40];
+  char _lines[7][40];
   int _n = 0;
   char _name[32];
 protected:
@@ -1772,7 +1814,7 @@ public:
     ContactInfo* c = the_mesh.lookupContactByPubKey(_prefix, sizeof(_prefix));
     if (!c) return;
     StrHelper::strncpy(_name, c->name, sizeof(_name));
-    snprintf(_lines[_n++], 40, T(S_TYPE_FMT), contactTypeName(c->type));
+    snprintf(_lines[_n++], 40, "%s", contactTypeName(c->type));
     if (c->out_path_len == OUT_PATH_UNKNOWN) snprintf(_lines[_n++], 40, "%s", T(S_FLOOD));
     else if ((c->out_path_len & 63) == 0) snprintf(_lines[_n++], 40, "%s", T(S_DIRECT));
     else snprintf(_lines[_n++], 40, T(S_HOPS_FMT), c->out_path_len & 63);
@@ -1783,7 +1825,8 @@ public:
     snprintf(hex, sizeof(hex), "%02X%02X%02X%02X", c->id.pub_key[0], c->id.pub_key[1], c->id.pub_key[2], c->id.pub_key[3]);
     snprintf(_lines[_n++], 40, T(S_ID_FMT), hex);
     if (c->gps_lat != 0 || c->gps_lon != 0) {
-      snprintf(_lines[_n++], 40, "%.4f %.4f", c->gps_lat / 1000000.0, c->gps_lon / 1000000.0);
+      snprintf(_lines[_n++], 40, "%.4f", c->gps_lat / 1000000.0);
+      snprintf(_lines[_n++], 40, "%.4f", c->gps_lon / 1000000.0);
     }
     reset();
   }
@@ -1905,7 +1948,7 @@ protected:
   bool renderHeader(DisplayDriver& d) override {
     if (!byName() || _num_groups == 0) return false;
     int cur = _bar == BAR_ACTIVE ? _bar_sel : groupOf(_sel);
-    const int CELL_W = 8, VISIBLE = 16;
+    const int CELL_W = CW + 2, VISIBLE = 9;
     int first = cur - VISIBLE / 2;
     if (first > _num_groups - VISIBLE) first = _num_groups - VISIBLE;
     if (first < 0) first = 0;
@@ -1913,18 +1956,17 @@ protected:
     for (int i = first; i < _num_groups && i < first + VISIBLE; i++) {
       int x = (i - first) * CELL_W;
       if (i == cur && _bar == BAR_ACTIVE) {
-        d.fillRect(x, 0, CELL_W - 1, 9);
+        d.fillRect(x, 0, CELL_W, LH - 1);
         d.setColor(COLOR_BLACK);
       } else if (i == cur && _bar == BAR_FOCUS) {
-        d.drawRect(x, 0, CELL_W - 1, 9);
+        d.drawRect(x, 0, CELL_W, LH - 1);
       } else if (i == cur) {
-        d.fillRect(x + 1, 8, CELL_W - 3, 1);
+        d.fillRect(x + 1, LH - 2, CELL_W - 2, 2);
       }
-      d.setCursor(x + 1, 1);
+      d.setCursor(x + 1, TEXT_DY);
       d.print(_groups[i].label);
       d.setColor(UIColor::title_txt);
     }
-    d.fillRect(0, 9, d.width(), 1);
     return true;
   }
 
@@ -2192,25 +2234,24 @@ public:
   ValueEditScreen(UITask* task) : _task(task) { }
   void open(uint8_t id) { _id = id; _val = _orig = getOpt(_task, id); }
   int render(DisplayDriver& d) override {
-    d.setTextSize(1);
+    big(d);
     d.setColor(UIColor::title_txt);
     char buf[40];
     snprintf(buf, sizeof(buf), "%s", T(settingName(_id)));
-    drawMarquee(d, 0, 0, buf, 21, 0, false);
-    d.fillRect(0, 9, d.width(), 1);
+    if (_id == ST_TX) snprintf(buf, sizeof(buf), "TX");
+    drawMarquee(d, 0, TEXT_DY, buf, d.width() / CW, 0, false);
+    for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);
     d.setColor(UIColor::primary_txt);
     char val[24];
     optText(_id, _val, val, sizeof(val));
-    snprintf(buf, sizeof(buf), "< %s >", val);
-    if (utf8Len(buf) <= 10) {
-      d.setTextSize(2);
-      d.drawTextCentered(d.width() / 2, 22, buf);
-      d.setTextSize(1);
+    if (utf8Len(val) <= 8) {   // one row between arrows
+      d.drawTextCentered(d.width() / 2, LH + 8 + TEXT_DY, val);
+      d.setCursor(0, LH + 8 + TEXT_DY); d.print("<");
+      d.drawTextRightAlign(d.width(), LH + 8 + TEXT_DY, ">");
     } else {
-      d.drawTextCentered(d.width() / 2, 26, buf);
+      drawLines(d, LH, 2, val, 2);
     }
-    d.drawTextCentered(d.width() / 2, 44, T(S_EDIT_HINT));
-    d.drawTextCentered(d.width() / 2, 54, T(S_BACK_CANCEL));
+    drawHint(d, 3 * LH, T(S_EDIT_HINT), NULL);
     return 1000;
   }
   bool handleInput(char c) override {
@@ -2221,6 +2262,12 @@ public:
       else if (v < 0 || v >= n) return true;  // ranges stop at the ends
       _val = v;
       if (_id == ST_BRIGHT) { _task->prefs()->ui_bright = _val; _task->applyContrast(); }   // preview
+      return true;
+    }
+    if (c == KEY_ENTER && _id == ST_TX) {
+      _task->pop();
+      if (_val == 0 && the_mesh.isTxAllowed()) { the_mesh.setTxAllowed(false); _task->haptic(UI_HAPTIC_ACK_MS); }
+      else if (_val == 1 && !the_mesh.isTxAllowed()) turnTransmitOn(_task);
       return true;
     }
     if (c == KEY_ENTER) {
@@ -2290,27 +2337,15 @@ class SettingsGroupScreen : public ListScreen {
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(_title)); }
   int count() override { return _n; }
+  // names only (a value does not fit beside them at this font size); press opens the value
   void label(int i, char* buf, size_t n) override {
     uint8_t id = _items[i];
-    if (optCount(id) == 0) {
-      if (id == ST_NAME) snprintf(buf, n, "%s: %s", T(S_SET_NAME), _task->prefs()->node_name);
-      else snprintf(buf, n, "%s", T(settingName(id)));
-      return;
-    }
-    char val[24];
-    optText(id, getOpt(_task, id), val, sizeof(val));
-    if (id == ST_TX) snprintf(buf, n, T(S_TX_FMT), val);
-    else snprintf(buf, n, "%s: %s", T(settingName(id)), val);
+    snprintf(buf, n, "%s", id == ST_TX ? "TX" : T(settingName(id)));
   }
   bool onEnter(int i) override {
     uint8_t id = _items[i];
     int n = optCount(id);
-    if (id == ST_TX) {
-      if (the_mesh.isTxAllowed()) { the_mesh.setTxAllowed(false); _task->haptic(UI_HAPTIC_ACK_MS); }
-      else turnTransmitOn(_task);
-    } else if (n == 2) {
-      saveOpt(_task, id, 1 - getOpt(_task, id));
-    } else if (n > 2) {
+    if (n >= 2) {
       value_edit->open(id);
       _task->push(value_edit);
     } else if (id == ST_QUICK) {
@@ -2370,9 +2405,7 @@ protected:
   int count() override { return 4; }
   void label(int i, char* buf, size_t n) override {
     if (i == 0) {
-      int u = _task->unreadCount();
-      if (u > 0) snprintf(buf, n, T(S_MSGS_N), u);
-      else snprintf(buf, n, "%s", T(S_MSGS));
+      snprintf(buf, n, "%s", T(S_MSGS));
     } else {
       static const StrId L[] = { S_CONTACTS, S_CHANNELS, S_SETTINGS };
       snprintf(buf, n, "%s", T(L[i - 1]));
@@ -2407,9 +2440,9 @@ protected:
       case BLUETOOTH:
         // the pairing PIN is shown while Bluetooth waits for a phone
         if (_task->isBluetoothEnabled() && !_task->hasConnection() && the_mesh.getBLEPin() != 0) {
-          snprintf(buf, n, "BT: %s PIN %06lu", T(S_ON), (unsigned long)the_mesh.getBLEPin());
+          snprintf(buf, n, "PIN %06lu", (unsigned long)the_mesh.getBLEPin());
         } else {
-          snprintf(buf, n, "Bluetooth: %s", _task->isBluetoothEnabled() ? T(S_ON) : T(S_OFF));
+          snprintf(buf, n, "BT: %s", _task->isBluetoothEnabled() ? T(S_ON) : T(S_OFF));
         }
         break;
 #if ENV_INCLUDE_GPS == 1
@@ -2491,52 +2524,63 @@ class StandbyScreen : public UIScreen {
 #endif
     CARDS };
 
-  bool renderHeader(DisplayDriver& d, int w) {
-    d.setTextSize(1);
+  // status row: card icon or unread count on the left; signal, Bluetooth, charging, battery on the right
+  void renderHeader(DisplayDriver& d) {
     d.setColor(UIColor::title_txt);
-    int x = w - 15;
-    drawBattery(d, x, 1, battPercent(_task->getBattMilliVolts()));
-    if (isCharging()) { x -= 7; d.drawXbm(x, 0, icon_bolt, 8, 8); }
-    if (_task->isBluetoothEnabled()) { x -= 9; d.drawXbm(x, 1, icon_bt, 8, 8); }
-    if (_task->unreadCount() > 0) { x -= 10; d.drawXbm(x, 1, icon_mail, 8, 8); }
+    int x = d.width() - 24;
+    drawBattery(d, x, 2, battPercent(_task->getBattMilliVolts()));
+    if (isCharging()) { x -= 16; drawIcon2(d, x, 0, icon_bolt); }
+    if (_task->isBluetoothEnabled()) { x -= 16; drawIcon2(d, x, 0, icon_bt); }
+    if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 18; drawSignal(d, x, 0, rx_snr); }
     if (!the_mesh.isTxAllowed()) {   // crossed-out "TX": receive only
-      x -= 14;
-      d.setCursor(x, 1);
+      x -= 2 * CW + 4;
+      d.setCursor(x, TEXT_DY);
       d.print("TX");
-      d.fillRect(x - 1, 4, 13, 1);
+      d.fillRect(x - 1, 7, 2 * CW + 1, 2);
     }
-    if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 10; drawSignal(d, x, 0, rx_snr); }
-    x -= 7;
-    d.fillRect(x, 6, 1, 1); d.fillRect(x + 2, 6, 1, 1); d.fillRect(x + 4, 6, 1, 1);   // "..." = hold for quick menu
-    bool scrolling = drawMarquee(d, 0, 1, _prefs->node_name, (x - 3) / 6, _since, true);
-    d.fillRect(0, 10, w, 1);
-    return scrolling;
+    int unread = _task->unreadCount();
+    if (_card == SUMMARY) {
+      if (unread > 0) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), unread > 99 ? "99+" : "%d", unread);
+        drawIcon2(d, 0, 0, icon_mail);
+        if (18 + d.getTextWidth(buf) <= x - 2) { d.setCursor(18, TEXT_DY); d.print(buf); }
+      }
+    } else {
+      static const uint8_t* const ICONS[] = { NULL, icon_person, icon_radio, icon_batt,
+#if ENV_INCLUDE_GPS == 1
+        icon_pin,
+#endif
+      };
+      drawIcon2(d, 0, 0, ICONS[_card]);
+    }
   }
 
   void renderDots(DisplayDriver& d) {
     if (_prefs->ui_dots == DOTS_NONE) return;
     for (int i = 0; i < CARDS; i++) {
-      int x, y;
-      if (_prefs->ui_dots == DOTS_RIGHT) { x = d.width() - 3; y = 12 + (52 - CARDS * 8) / 2 + i * 8; }
-      else { x = d.width() / 2 - CARDS * 4 + i * 8; y = 59; }
-      if (i == _card) d.fillRect(x - 1, y - 1, 3, 3);
-      else d.fillRect(x, y, 1, 1);
+      if (_prefs->ui_dots == DOTS_RIGHT) {
+        int x = d.width() - 3, y = LH + (3 * LH - CARDS * 8) / 2 + i * 8;
+        if (i == _card) d.fillRect(x, y, 3, 5); else d.fillRect(x + 1, y + 1, 1, 3);
+      } else {
+        int x = d.width() / 2 - CARDS * 5 + i * 10;
+        if (i == _card) d.fillRect(x, 62, 6, 2); else d.fillRect(x + 2, 62, 2, 2);
+      }
     }
   }
 
-  void cardTitle(DisplayDriver& d, const uint8_t* icon, const char* text) {
-    d.drawXbm(0, 13, icon, 8, 8);
-    d.setCursor(11, 13);
-    d.print(text);
-  }
+  // the bottom row, above the page dots
+  int bottomY() const { return _prefs->ui_dots == DOTS_BOTTOM ? 3 * LH - 4 : 3 * LH; }
+  int cols(DisplayDriver& d) const { return (_prefs->ui_dots == DOTS_RIGHT ? d.width() - 5 : d.width()) / CW; }
 
-  bool renderSummary(DisplayDriver& d, int w) {
+  bool renderSummary(DisplayDriver& d) {
     bool scrolling = false;
     char buf[200];
     int unread = _task->unreadCount();
-    int max_chars = w / 6;
+    int w = cols(d) * CW;
+    int by = bottomY();
 
-    // row A, size 2: unread count and clock ("~" = time taken from an advert)
+    // the clock, 4x ("~" in the bottom row = time taken from an advert)
     uint32_t now = rtc_clock.getCurrentTime();
     if (now >= VALID_EPOCH) {
       uint32_t local = ui::localTime(now, _prefs->ui_tz, _prefs->ui_dst);
@@ -2544,125 +2588,106 @@ class StandbyScreen : public UIScreen {
     } else {
       snprintf(buf, sizeof(buf), "--:--");
     }
-    d.setTextSize(2);
-    d.drawTextRightAlign(w - 1, 15, buf);
-    d.setTextSize(1);
-    if (now >= VALID_EPOCH && the_mesh.isClockApprox()) d.drawTextRightAlign(w - 62, 15, "~");
-    if (unread > 0) {
-      d.drawXbm(0, 19, icon_mail, 8, 8);
-      snprintf(buf, sizeof(buf), unread > 99 ? "99+" : "%d", unread);
-      d.setTextSize(2);
-      d.setCursor(11, 15);
-      d.print(buf);
-      d.setTextSize(1);
+    d.setTextSize(4);
+    d.drawTextCentered(w / 2, LH, buf);
+    big(d);
+    int max_chars = w / CW;
+    if (now >= VALID_EPOCH && the_mesh.isClockApprox()) {
+      d.drawTextRightAlign(w, by + TEXT_DY, "~");
+      max_chars--;
     }
 
-    if (unread > 0) {
-      // last unread message; inverted for a few seconds after it arrives
-      UIMsgEntry* m = NULL;
-      for (int i = 0; i < _task->historyCount(); i++) {
-        UIMsgEntry* e = _task->historyAt(i);
-        if (e->unread) { m = e; break; }
-      }
-      if (m) {
-        snprintf(buf, sizeof(buf), "%s: %s", m->from, m->text);
-        bool fresh = millis() - _task->lastNewMsgAt() < NEW_MSG_HIGHLIGHT;
-        if (fresh) {
-          d.fillRect(0, 35, w, 10);
-          d.setColor(COLOR_BLACK);
-        }
-        scrolling = drawMarquee(d, 1, 36, buf, max_chars, _task->lastNewMsgAt(), true);
-        d.setColor(UIColor::primary_txt);
-        if (fresh) scrolling = true;
-      }
-      if (unread > 1) {
-        snprintf(buf, sizeof(buf), T(S_MORE_FMT), unread - 1);
-        d.setCursor(1, 47);
-        d.print(buf);
-      }
-    } else {
-      // empty state: phone connection and last heard node
-      if (_task->hasConnection()) snprintf(buf, sizeof(buf), "%s", T(S_PHONE));
-      else if (!_task->isBluetoothEnabled()) snprintf(buf, sizeof(buf), "Bluetooth: %s", T(S_OFF));
-      else if (the_mesh.getBLEPin() != 0) snprintf(buf, sizeof(buf), "BT PIN: %06lu", (unsigned long)the_mesh.getBLEPin());
-      else snprintf(buf, sizeof(buf), "Bluetooth: %s", T(S_ON));
-      drawMarquee(d, 1, 36, buf, max_chars, 0, false);
-      int n = the_mesh.getRecentlyHeard(_recent, 1);
-      if (n > 0 && _recent[0].name[0]) {
-        char age[12];
-        ageOf(age, sizeof(age), _recent[0].recv_timestamp);
-        snprintf(buf, sizeof(buf), T(S_HEARD_FMT), _recent[0].name, age);
-        if (drawMarquee(d, 1, 47, buf, max_chars, _since, true)) scrolling = true;
-      }
+    // bottom row: the newest unread message (inverted for a few seconds after it arrives), else
+    // the pairing PIN, the phone, or the last node heard
+    UIMsgEntry* m = NULL;
+    for (int i = 0; unread > 0 && i < _task->historyCount(); i++) {
+      UIMsgEntry* e = _task->historyAt(i);
+      if (e->unread) { m = e; break; }
     }
+    if (m) {
+      snprintf(buf, sizeof(buf), "%s: %s", m->from, m->text);
+      bool fresh = millis() - _task->lastNewMsgAt() < NEW_MSG_HIGHLIGHT;
+      if (fresh) {
+        d.fillRect(0, by, w, LH);
+        d.setColor(COLOR_BLACK);
+        scrolling = true;
+      }
+      if (drawMarquee(d, 0, by + TEXT_DY, buf, max_chars, _task->lastNewMsgAt(), true)) scrolling = true;
+      d.setColor(UIColor::primary_txt);
+      return scrolling;
+    }
+    if (_task->isBluetoothEnabled() && !_task->hasConnection() && the_mesh.getBLEPin() != 0) {
+      snprintf(buf, sizeof(buf), "PIN %06lu", (unsigned long)the_mesh.getBLEPin());
+    } else if (_task->hasConnection()) {
+      snprintf(buf, sizeof(buf), "%s", T(S_PHONE));
+    } else if (the_mesh.getRecentlyHeard(_recent, 1) > 0 && _recent[0].name[0]) {
+      char age[12];
+      ageOf(age, sizeof(age), _recent[0].recv_timestamp);
+      snprintf(buf, sizeof(buf), T(S_HEARD_FMT), _recent[0].name, age);
+    } else {
+      buf[0] = 0;
+    }
+    if (drawMarquee(d, 0, by + TEXT_DY, buf, max_chars, _since, true)) scrolling = true;
     return scrolling;
   }
 
-  void renderRecent(DisplayDriver& d, int w) {
-    cardTitle(d, icon_person, T(S_CARD_RECENT));
+  // three rows below the status row
+  int rowY(int r) const { return LH + r * (bottomY() - LH) / 2; }
+
+  void renderRecent(DisplayDriver& d) {
+    int w = cols(d) * CW;
     int n = the_mesh.getRecentlyHeard(_recent, 3);
     char age[12];
-    int y = 24;
+    int row = 0;
     for (int i = 0; i < n; i++) {
       if (_recent[i].name[0] == 0) continue;
       ageOf(age, sizeof(age), _recent[i].recv_timestamp);
-      int age_w = d.getTextWidth(age);
-      drawMarquee(d, 0, y, _recent[i].name, (w - age_w - 4) / 6, 0, false);
-      d.drawTextRightAlign(w - 1, y, age);
-      y += 10;
+      int y = rowY(row++) + TEXT_DY;
+      int age_chars = utf8Len(age);
+      drawMarquee(d, 0, y, _recent[i].name, w / CW - (age_chars ? age_chars + 1 : 0), 0, false);
+      d.drawTextRightAlign(w, y, age);
     }
-    if (y == 24) d.drawTextCentered(w / 2, 34, T(S_NOBODY));
+    if (row == 0) drawLines(d, LH, 3, T(S_NOBODY), 2);
   }
 
-  void renderRadio(DisplayDriver& d, int w) {
+  void renderRadio(DisplayDriver& d) {
     char buf[40];
-    cardTitle(d, icon_radio, T(S_CARD_RADIO));
-    d.setCursor(0, 24); snprintf(buf, sizeof(buf), "%.3f SF%d CR%d", _prefs->freq, _prefs->sf, _prefs->cr); d.print(buf);
-    d.setCursor(0, 34); snprintf(buf, sizeof(buf), "BW %.1f  TX %ddBm", _prefs->bw, _prefs->tx_power_dbm); d.print(buf);
-    snprintf(buf, sizeof(buf), T(S_NOISE_FMT), radio_driver.getNoiseFloor());
-    d.setCursor(0, 44); d.print(buf);
-    if (rx_any) {
-      snprintf(buf, sizeof(buf), "SNR %.1f", rx_snr);
-      d.drawTextRightAlign(w - 1, 44, buf);
-    }
+    snprintf(buf, sizeof(buf), "%.3f", _prefs->freq);
+    d.setCursor(0, rowY(0) + TEXT_DY); d.print(buf);
+    snprintf(buf, sizeof(buf), "SF%d BW%d", _prefs->sf, (int)(_prefs->bw + 0.5f));
+    d.setCursor(0, rowY(1) + TEXT_DY); d.print(buf);
+    if (rx_any) snprintf(buf, sizeof(buf), "SNR %.1f", rx_snr);
+    else snprintf(buf, sizeof(buf), "TX %ddBm", _prefs->tx_power_dbm);
+    d.setCursor(0, rowY(2) + TEXT_DY); d.print(buf);
   }
 
-  void renderBattery(DisplayDriver& d, int w) {
+  void renderBattery(DisplayDriver& d) {
     char buf[40];
-    cardTitle(d, icon_batt, T(S_CARD_BATT));
+    int w = cols(d) * CW;
     uint16_t mv = _task->getBattMilliVolts();
-    snprintf(buf, sizeof(buf), "%d.%02d V", mv / 1000, (mv % 1000) / 10);
-    d.setTextSize(2);
-    d.setCursor(0, 24);
-    d.print(buf);
     snprintf(buf, sizeof(buf), "%d%%", battPercent(mv));
-    d.drawTextRightAlign(w - 1, 24, buf);
-    d.setTextSize(1);
-    d.setCursor(0, 44);
-    d.print(isCharging() ? T(S_CHARGING) : T(S_ON_BATT));
-#ifdef AUTO_SHUTDOWN_MILLIVOLTS
-    if (_prefs->ui_dots != DOTS_BOTTOM) {
-      snprintf(buf, sizeof(buf), T(S_OFF_AT_FMT), AUTO_SHUTDOWN_MILLIVOLTS / 1000, (AUTO_SHUTDOWN_MILLIVOLTS % 1000) / 10);
-      d.setCursor(0, 54);
-      d.print(buf);
-    }
-#endif
+    d.setTextSize(4);
+    d.drawTextCentered(w / 2, LH, buf);
+    big(d);
+    snprintf(buf, sizeof(buf), "%d.%02d V", mv / 1000, (mv % 1000) / 10);
+    d.drawTextCentered(w / 2, bottomY() + TEXT_DY, buf);
   }
 
 #if ENV_INCLUDE_GPS == 1
-  void renderGPS(DisplayDriver& d, int w) {
+  void renderGPS(DisplayDriver& d) {
     char buf[40];
-    cardTitle(d, icon_pin, _task->getGPSState() ? T(S_GPS_ON) : T(S_GPS_OFF));
     LocationProvider* nmea = sensors.getLocationProvider();
-    if (nmea == NULL) {
-      d.setCursor(0, 24);
-      d.print(T(S_NO_GPS));
+    if (nmea == NULL || !_task->getGPSState()) {
+      drawLines(d, LH, 3, nmea == NULL ? T(S_NO_GPS) : T(S_GPS_OFF), 2);
       return;
     }
-    snprintf(buf, sizeof(buf), T(S_SAT_FMT), nmea->isValid() ? T(S_FIX) : T(S_NOFIX), (int)nmea->satellitesCount());
-    d.drawTextRightAlign(w - 1, 13, buf);
-    d.setCursor(0, 24); snprintf(buf, sizeof(buf), "%.5f %.5f", nmea->getLatitude() / 1000000., nmea->getLongitude() / 1000000.); d.print(buf);
-    d.setCursor(0, 34); snprintf(buf, sizeof(buf), T(S_ALT_FMT), nmea->getAltitude() / 1000.); d.print(buf);
+    snprintf(buf, sizeof(buf), T(S_SAT_FMT), (int)nmea->satellitesCount());
+    if (!nmea->isValid()) snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " %s", T(S_NOFIX));
+    d.setCursor(0, rowY(0) + TEXT_DY); d.print(buf);
+    snprintf(buf, sizeof(buf), "%.5f", nmea->getLatitude() / 1000000.);
+    d.setCursor(0, rowY(1) + TEXT_DY); d.print(buf);
+    snprintf(buf, sizeof(buf), "%.5f", nmea->getLongitude() / 1000000.);
+    d.setCursor(0, rowY(2) + TEXT_DY); d.print(buf);
   }
 #endif
 
@@ -2672,16 +2697,17 @@ public:
   void showSummary() { _card = SUMMARY; _since = millis(); }
 
   int render(DisplayDriver& d) override {
-    int w = (_prefs->ui_dots == DOTS_RIGHT) ? d.width() - 6 : d.width();
-    bool scrolling = renderHeader(d, w);
+    big(d);
+    renderHeader(d);
     d.setColor(UIColor::primary_txt);
+    bool scrolling = false;
     switch (_card) {
-      case SUMMARY: if (renderSummary(d, w)) scrolling = true; break;
-      case RECENT: renderRecent(d, w); break;
-      case RADIO: renderRadio(d, w); break;
-      case BATTERY: renderBattery(d, w); break;
+      case SUMMARY: scrolling = renderSummary(d); break;
+      case RECENT: renderRecent(d); break;
+      case RADIO: renderRadio(d); break;
+      case BATTERY: renderBattery(d); break;
 #if ENV_INCLUDE_GPS == 1
-      case GPS: renderGPS(d, w); break;
+      case GPS: renderGPS(d); break;
 #endif
     }
     renderDots(d);
@@ -3109,18 +3135,11 @@ void UITask::hibernate() {
   if (_display != NULL) {
     _display->turnOn();
     _display->startFrame();
-    _display->setTextSize(1);
-    _display->setColor(UIColor::warning_txt);
-    _display->drawTextCentered(_display->width() / 2, 4, T(S_POWER_OFF));
+    big(*_display);
     _display->setColor(UIColor::primary_txt);
-    _display->drawTextCentered(_display->width() / 2, 22, T(S_BATT_OUT1));
-    _display->drawTextCentered(_display->width() / 2, 32, T(S_BATT_OUT2));
+    drawLines(*_display, 0, 3, T(S_BATT_OUT), 3);
     // how to switch on again: hold the encoder (Back held at power-up starts the bootloader's DFU)
-    int w = _display->getTextWidth(T(S_WAKE_HINT)) + 10;
-    int x = (_display->width() - w) / 2;
-    _display->setCursor(x, 50);
-    _display->print(T(S_WAKE_HINT));
-    _display->drawXbm(x + w - 8, 50, icon_knob, 8, 8);
+    drawHint(*_display, 3 * LH, T(S_WAKE_HINT), NULL);
     _display->endFrame();
   }
   unsigned long shown = millis();
@@ -3181,15 +3200,18 @@ char UITask::checkDisplayOn(char c) {
   return c;
 }
 
-// centered box, up to two lines
+// box over the screen, up to three lines
 void UITask::renderAlert() {
-  _display->setTextSize(1);
-  int y = 14, h = 34, p = 2;
+  big(*_display);
+  uint8_t starts[3], lens[3];
+  int n = ui::wrapLines(_alert, _display->width() / CW, starts, lens, 3);
+  if (n < 1) n = 1;
+  int h = n * LH + 6, y = (_display->height() - h) / 2;
   _display->setColor(UIColor::popup_bkg);
-  _display->fillRect(p, y, _display->width() - p * 2, h);
+  _display->fillRect(0, y - 2, _display->width(), h + 4);
   _display->setColor(UIColor::popup_txt);
-  _display->drawRect(p, y, _display->width() - p * 2, h);
-  drawTwoLines(*_display, y + 7, _alert, 20);
+  _display->drawRect(0, y, _display->width(), h);
+  drawLines(*_display, y + 3, n, _alert, 3);
 }
 
 // low battery: one warning below 10% (again after charging above 20%), power off below the limit
@@ -3211,10 +3233,10 @@ void UITask::checkBattery() {
     if (_display != NULL) {
       _display->turnOn();
       _display->startFrame();
-      _display->setTextSize(1);
+      big(*_display);
       _display->setColor(UIColor::warning_txt);
-      _display->drawTextCentered(_display->width() / 2, 20, T(S_BATT_EMPTY));
-      _display->drawTextCentered(_display->width() / 2, 36, T(S_POWER_OFF));
+      drawLines(*_display, 0, 2, T(S_BATT_EMPTY), 2);
+      _display->drawTextCentered(_display->width() / 2, 3 * LH + TEXT_DY, T(S_POWER_OFF));
       _display->endFrame();
       delay(2000);
     }
