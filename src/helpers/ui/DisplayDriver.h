@@ -31,7 +31,8 @@ public:
   virtual void clear() = 0;
   virtual void startFrame(ColorVal bkg = UIColor::window_bkg) = 0;
   virtual void setTextSize(int sz) = 0;
-  virtual void setTextFont(const TextFont* font) { }   // NULL = the built-in font; setTextSize() also resets it
+  // NULL = the built-in font; setTextSize() also resets it. Drivers without custom fonts stay at size 1.
+  virtual void setTextFont(const TextFont* font) { setTextSize(1); }
   virtual void setColor(ColorVal c) = 0;
   virtual void setCursor(int x, int y) = 0;
   virtual void print(const char* str) = 0;

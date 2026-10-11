@@ -20,7 +20,9 @@ class MomentaryButton {
   int _multi_click_window;
   bool _pending_click;
   uint8_t _debounce_ms = 0;
-  unsigned long _last_change = 0; // when the debounced level last changed
+  bool _first_edge = false;       // debounce mode, see setDebounce()
+  int8_t _raw = -1;               // last level read, before debouncing
+  unsigned long _last_change = 0; // when _raw (or, first-edge mode, the debounced level) last changed
   bool _wake = false;
 
   bool isPressed(int level) const;
@@ -31,8 +33,11 @@ public:
   void begin();
   int check(bool repeat_click=false);  // returns one of BUTTON_EVENT_*
   void cancelClick();  // suppress next BUTTON_EVENT_CLICK (if already in DOWN state)
-  // a change counts at once, then further changes are ignored for ms (contact bounce)
-  void setDebounce(uint8_t ms) { _debounce_ms = ms; }
+  // Default: a level counts once it has been stable for ms, so a glitch shorter than that is never
+  // a press, but a press must still be down at a poll ms after it began. first_edge: a change counts
+  // at once and the bounce after it is ignored for ms, so even a press seen by one poll counts
+  // (for a loop that sleeps between events, together with wakeOnChange()).
+  void setDebounce(uint8_t ms, bool first_edge = false) { _debounce_ms = ms; _first_edge = first_edge; }
   // nRF52: an edge on the pin wakes the CPU from board.sleep(), so a short press is not missed
   // while the main loop sleeps between radio and BLE events. end() undoes it (before system off).
   void wakeOnChange();

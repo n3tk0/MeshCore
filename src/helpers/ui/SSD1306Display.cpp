@@ -122,17 +122,14 @@ bool SSD1306Display::begin() {
   #ifdef DISPLAY_ROTATION
   display.setRotation(DISPLAY_ROTATION);
   #endif
-#ifdef DISPLAY_ADDRESS_ALT
-  // modules are strapped for 0x3C or 0x3D (SA0 / D/C pin): use whichever one answers
-  uint8_t addr = DISPLAY_ADDRESS;
-  if (!i2c_probe(Wire, addr)) {
-    if (!i2c_probe(Wire, DISPLAY_ADDRESS_ALT)) return false;
-    addr = DISPLAY_ADDRESS_ALT;
-  }
-  return display.begin(SSD1306_SWITCHCAPVCC, addr, true, false);
-#else
-  return display.begin(SSD1306_SWITCHCAPVCC, DISPLAY_ADDRESS, true, false) && i2c_probe(Wire, DISPLAY_ADDRESS);
-#endif
+  // The SA0 strap selects 0x3C or 0x3D and differs between modules: fall back to the other address
+  // of the pair (as SH1106Display does). The Adafruit init runs even when nothing answered, because
+  // it allocates the frame buffer that halt() and turnOn() use regardless.
+  uint8_t addr = 0;
+  if (i2c_probe(Wire, DISPLAY_ADDRESS)) addr = DISPLAY_ADDRESS;
+  else if (i2c_probe(Wire, DISPLAY_ADDRESS ^ 1)) addr = DISPLAY_ADDRESS ^ 1;
+  bool ok = display.begin(SSD1306_SWITCHCAPVCC, addr ? addr : DISPLAY_ADDRESS, true, false);
+  return addr != 0 && ok;
 }
 
 void SSD1306Display::turnOn() {

@@ -16,7 +16,7 @@ class SimButton {
   int _n = 0;
 public:
   void begin() { }
-  void setDebounce(int) { }
+  void setDebounce(int, bool = false) { }
   void wakeOnChange() { }
   void end() { }
   void push(int ev) { if (_n < 16) _queue[_n++] = ev; }

@@ -86,12 +86,12 @@ int MomentaryButton::check(bool repeat_click) {
 
   int event = BUTTON_EVENT_NONE;
   int btn = _threshold > 0 ? (analogRead(_pin) < _threshold) : digitalRead(_pin);
-  if (_debounce_ms > 0) {
-    // Lockout: the first edge counts at once (even a press seen by a single poll), and the
-    // contact bounce right after an accepted change is ignored. Waiting for the level to be
-    // stable instead lost short presses whenever the loop slept or a frame took longer.
+  if (_debounce_ms > 0 && _first_edge) {   // lockout after an accepted change
     if ((unsigned long)(millis() - _last_change) < _debounce_ms) btn = prev;
     else if (btn != prev) _last_change = millis();
+  } else if (_debounce_ms > 0) {   // a glitch shorter than the debounce time is never seen as a press
+    if (btn != _raw) { _raw = btn; _last_change = millis(); }
+    if ((unsigned long)(millis() - _last_change) < _debounce_ms) btn = prev;
   }
   if (btn != prev) {
     if (isPressed(btn)) {
