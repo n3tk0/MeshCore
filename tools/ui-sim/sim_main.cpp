@@ -479,7 +479,7 @@ static void scenario(uint8_t lang) {
   // low battery
   holdBack();
   board.mv = 3540;
-  for (int t = 0; t < 90 && !(display.shown(64, 14) && display.shown(2, 30)); t++) run(100);   // until the alert box shows
+  for (int t = 0; t < 90 && !(display.shown(0, 32) && display.shown(127, 32)); t++) run(100);   // until the alert box shows
   shotFrame("low_battery", bg ? "Батерия под 10%: известие и дълга вибрация" : "Battery below 10%: alert and a long buzz");
   board.mv = 3920;
   run(3000);
