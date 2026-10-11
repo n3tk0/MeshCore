@@ -378,16 +378,18 @@ static bool drawMarquee(DisplayDriver& d, int x, int y, const char* text, int ma
 struct UISize {
   uint8_t cw, lh;           // character cell width, row height
   uint8_t dy;               // glyph offset from the top of its row
+  uint8_t top;              // y of the first row below the title
+  int8_t rule;              // y of the dotted rule under the title (clear of its descenders)
   uint8_t icon_scale;
   uint8_t gfx_size;         // built-in 5x8 font at this scale, when font is NULL
   const TextFont* font;
 };
 enum { SIZE_TINY, SIZE_SMALL, SIZE_MEDIUM, SIZE_LARGE };
 static const UISize UI_SIZES[4] = {
-  {  6,  8, 0, 1, 1, NULL },         // 21 x 8 (title + 7 rows), built-in font
-  {  6, 12, 0, 1, 0, &font_6x12 },   // 21 x 5
-  {  8, 16, 1, 2, 0, &font_8x14 },   // 16 x 4
-  { 12, 16, 1, 2, 2, NULL },         // 10 x 4, built-in font at 2x
+  {  6,  8, 0,  9,  8, 1, 1, NULL },         // 21 chars, title + 6 rows, built-in font
+  {  6, 12, 0, 13, 12, 1, 0, &font_6x12 },   // 21 chars, title + 4 rows
+  {  8, 16, 1, 16, 15, 2, 0, &font_8x14 },   // 16 chars, title + 3 rows
+  { 12, 16, 1, 16, 15, 2, 2, NULL },         // 10 chars, title + 3 rows, built-in font at 2x
 };
 static const UISize* ui_sz = &UI_SIZES[SIZE_LARGE];   // size of the screen being drawn
 static int ui_width = 128, ui_height = 64;
@@ -395,6 +397,14 @@ static int ui_width = 128, ui_height = 64;
 #define LH      (ui_sz->lh)
 #define TEXT_DY (ui_sz->dy)
 #define ICON_W  (8 * ui_sz->icon_scale)
+#define ROW_TOP (ui_sz->top)
+
+static int rowsFor(int level) { return (ui_height - UI_SIZES[level].top) / UI_SIZES[level].lh; }   // below the title
+static int colsFor(int level) { return ui_width / UI_SIZES[level].cw; }
+
+static void drawTitleRule(DisplayDriver& d) {
+  for (int x = 0; x < d.width(); x += 2) d.fillRect(x, ui_sz->rule, 1, 1);
+}
 
 static void useSize(DisplayDriver& d, int level) {
   ui_sz = &UI_SIZES[level];
@@ -550,10 +560,15 @@ protected:
   unsigned long _sel_since = 0;
   virtual bool isContent() { return false; }   // lists of names or text: Settings > Text, else > Menu
   int level() { return sizeLevel(isContent()); }
-  int rows() { return ui_height / UI_SIZES[level()].lh - 1; }
-#define ROWS rows()
-#define ROW_H LH
-#define TOP LH
+  int rows() { return rowsFor(level()); }
+
+  // keeps the selection in view and the window filled; the row count follows the text size
+  void clampTop(int n) {
+    int rows_n = rows();
+    if (_top > _sel) _top = _sel;
+    if (_sel >= _top + rows_n) _top = _sel - rows_n + 1;
+    if (_top > n - rows_n) _top = n > rows_n ? n - rows_n : 0;
+  }
 
   virtual void title(char* buf, size_t n) = 0;
   virtual int count() = 0;
@@ -574,8 +589,7 @@ protected:
     if (i >= n) i = (n <= 8) ? 0 : n - 1;
     if (i != _sel) _sel_since = millis();
     _sel = i;
-    if (_sel < _top) _top = _sel;
-    if (_sel >= _top + ROWS) _top = _sel - ROWS + 1;
+    clampTop(n);
   }
 
 public:
@@ -587,15 +601,16 @@ public:
     char buf[200], right[16];
     int n = count();
     if (_sel >= n) select(n - 1);
-    if (_top > _sel) _top = _sel;
-    if (_sel >= _top + ROWS) _top = _sel - ROWS + 1;   // the text size may have changed
+    clampTop(n);   // the text size may have changed
+    const int ROWS = rows();
     useSize(d, level());
+    const int ROW_H = LH, TOP = ROW_TOP;
     d.setColor(UIColor::title_txt);
     bool scrolling = false;
     if (!renderHeader(d)) {
       title(buf, sizeof(buf));
       scrolling = drawMarquee(d, 0, TEXT_DY, buf, d.width() / CW, _sel_since, true);
-      for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);   // dotted rule under the title
+      drawTitleRule(d);
     }
     d.setColor(UIColor::primary_txt);
 
@@ -1647,7 +1662,9 @@ public:
   int render(DisplayDriver& d) override {
     if (count() == 0) { _task->pop(); return 100; }   // the whole conversation was deleted
     // what is on screen counts as read
-    for (int r = 0; r < ROWS && _top + r < _n; r++) {
+    if (_sel >= _n) select(_n - 1);
+    clampTop(_n);
+    for (int r = 0; r < rows() && _top + r < _n; r++) {
       UIMsgEntry* m = entry(_top + r);
       if (m && m->state == MSG_IN) m->unread = false;
     }
@@ -1681,12 +1698,15 @@ class MessageViewScreen : public UIScreen {
   int _wrap_chars = 0;             // line width the lines were broken for
   unsigned long _opened = 0;
 
-  static int lineChars() { return ui_width / UI_SIZES[sizeLevel(true)].cw; }
-  static int visible() { return ui_height / UI_SIZES[sizeLevel(true)].lh - 1; }
+  static int lineChars() { return colsFor(sizeLevel(true)); }
+  static int visible() { return rowsFor(sizeLevel(true)); }
   void wrap(UIMsgEntry* m) {
     _wrap_chars = lineChars();
     _num_lines = ui::wrapLines(m->text, _wrap_chars, _lines, _line_len, MAX_LINES);
-    if (_scroll > 0 && _scroll + visible() > _num_lines) _scroll = _num_lines > visible() ? _num_lines - visible() : 0;
+  }
+  void clampScroll() {   // no empty rows at the end, also after the text size changed
+    int v = visible();
+    if (_scroll + v > _num_lines) _scroll = _num_lines > v ? _num_lines - v : 0;
   }
 
 public:
@@ -1703,6 +1723,7 @@ public:
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
     if (!m) { _task->pop(); return 100; }
     if (_wrap_chars != lineChars()) wrap(m);   // the text size changed
+    clampScroll();
     const int VISIBLE = visible();
     char age[12];
     ageOf(age, sizeof(age), m->timestamp);
@@ -1716,19 +1737,19 @@ public:
     if (m->state == MSG_IN) snprintf(who, sizeof(who), "%s", m->from);
     else snprintf(who, sizeof(who), "%s > %s", T(S_ME), m->from);
     bool scrolling = drawMarquee(d, 0, TEXT_DY, who, right_x / CW, _opened, true);
-    for (int x = 0; x < d.width(); x += 2) d.fillRect(x, LH - 1, 1, 1);
+    drawTitleRule(d);
     d.setColor(UIColor::primary_txt);
     char line[100], filtered[100];
     for (int r = 0; r < VISIBLE && _scroll + r < _num_lines; r++) {
       utf8Slice(line, sizeof(line), m->text + _lines[_scroll + r], 0, _line_len[_scroll + r]);
       d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
-      d.setCursor(0, LH + r * LH + TEXT_DY);
+      d.setCursor(0, ROW_TOP + r * LH + TEXT_DY);
       d.print(filtered);
     }
     if (_num_lines > VISIBLE) {
       int track = VISIBLE * LH;
       int h = track * VISIBLE / _num_lines; if (h < 6) h = 6;
-      int y = LH + (track - h) * _scroll / (_num_lines - VISIBLE);
+      int y = ROW_TOP + (track - h) * _scroll / (_num_lines - VISIBLE);
       d.fillRect(d.width() - 3, y, 3, h);
     }
     return scrolling ? MARQUEE_STEP_MILLIS : 5000;
@@ -2016,12 +2037,12 @@ protected:
     for (int i = first; i < _num_groups && i < first + VISIBLE; i++) {
       int x = (i - first) * CELL_W;
       if (i == cur && _bar == BAR_ACTIVE) {
-        d.fillRect(x, 0, CELL_W, LH - 1);
+        d.fillRect(x, 0, CELL_W, ROW_TOP - 1);
         d.setColor(COLOR_BLACK);
       } else if (i == cur && _bar == BAR_FOCUS) {
-        d.drawRect(x, 0, CELL_W, LH - 1);
+        d.drawRect(x, 0, CELL_W, ROW_TOP - 1);
       } else if (i == cur) {
-        d.fillRect(x + 1, LH - 2, CELL_W - 2, 2);
+        d.fillRect(x + 1, ROW_TOP - 2, CELL_W - 2, 2);
       }
       d.setCursor(x + 1, TEXT_DY);
       d.print(_groups[i].label);
@@ -2057,7 +2078,7 @@ public:
         int item = _groups[_bar_sel].first;
         select(item);
         int n = count();
-        _top = item > n - ROWS ? (n > ROWS ? n - ROWS : 0) : item;   // the letter's first name on top
+        _top = item > n - rows() ? (n > rows() ? n - rows() : 0) : item;   // the letter's first name on top
         _bar = BAR_OFF;
         return true;
       }
@@ -2835,10 +2856,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   rx_any = false;
 
   user_btn.begin();
-  user_btn.setDebounce(15);
+  // the loop sleeps until an interrupt: a pin change wakes it, and the first edge counts
+  user_btn.setDebounce(15, true);
   user_btn.wakeOnChange();
   encoder_btn.begin();
-  encoder_btn.setDebounce(15);
+  encoder_btn.setDebounce(15, true);
   encoder_btn.wakeOnChange();
   rotary_input.begin();
   applyEncoderPrefs();
