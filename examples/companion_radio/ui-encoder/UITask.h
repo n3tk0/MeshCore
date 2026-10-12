@@ -180,6 +180,7 @@ public:
   void hibernate(bool low_battery = false);
   void answerAntenna(bool fitted);   // true = transmit allowed
   void setTransmit(bool on);         // Quick menu / Settings: on or off, remembered over resets
+  void enterBootloader(bool usb);   // Settings > System > Update USB / BLE
   uint16_t battMilliVolts();         // smoothed, for display
   void resetBattery() { _batt_mv = 0; }
   void lock();                       // key lock on, screen off

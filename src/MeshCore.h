@@ -66,6 +66,9 @@ public:
   virtual uint8_t getStartupReason() const = 0;
   virtual bool getBootloaderVersion(char* version, size_t max_len) { return false; }
   virtual bool startOTAUpdate(const char* id, char reply[]) { return false; }   // not supported
+  // restart into the bootloader's firmware update mode: USB drive for a UF2 (usb) or BLE DFU;
+  // returns only when the board cannot do it
+  virtual bool rebootToBootloader(bool usb) { return false; }
   virtual bool setLoRaFemLnaEnabled(bool enable) { return false; }
   virtual bool canControlLoRaFemLna() const { return false; }
   virtual bool isLoRaFemLnaEnabled() const { return false; }
