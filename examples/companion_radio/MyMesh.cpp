@@ -237,6 +237,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
         MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
         offline_queue[offline_queue_len - 1].len = len;
         memcpy(offline_queue[offline_queue_len - 1].buf, frame, len);
+        logOfflineAdd(pos);
         return;
       }
       pos++;
@@ -246,6 +247,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
     offline_queue[offline_queue_len].len = len;
     memcpy(offline_queue[offline_queue_len].buf, frame, len);
     offline_queue_len++;
+    logOfflineAdd(-1);
   }
 }
 
@@ -258,6 +260,7 @@ int MyMesh::getFromOfflineQueue(uint8_t frame[]) {
     for (int i = 0; i < offline_queue_len; i++) { // delete top item from queue
       offline_queue[i] = offline_queue[i + 1];
     }
+    logOfflineTake();
     return len;
   }
   return 0; // queue is empty
@@ -948,6 +951,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _clock_approx = false;
   _clock_cand_ts = 0;
   _clock_cand_at = 0;
+  _offline_taken = 0;
+  _offline_flush_at = 0;
   memset(_clock_cand_key, 0, sizeof(_clock_cand_key));
 #ifdef UI_ASK_ANTENNA
   _tx_allowed = false;   // the UI asks whether an antenna is fitted before the first transmit
@@ -1064,7 +1069,7 @@ void MyMesh::begin(bool has_display) {
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
-  loadOfflineQueue();   // messages kept over the last hibernate
+  loadOfflineQueue();   // messages the app had not fetched before the last power off or reset
 
   if (!radio_driver.paramsSupported(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr)) {
     // stored settings this chip cannot use: start on the build defaults rather than half-applied ones
@@ -2353,6 +2358,10 @@ void MyMesh::loop() {
     checkSerialInterface();
   }
 
+#ifdef OFFLINE_QUEUE_PERSIST
+  if (_offline_flush_at && millisHasNowPassed(_offline_flush_at)) flushOfflineTakes();
+#endif
+
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     saveContacts();
@@ -2365,15 +2374,29 @@ void MyMesh::loop() {
 }
 
 #define OFFLINE_QUEUE_FILE  "/offline_q"
-#define OFFLINE_QUEUE_MAGIC 0x3151464FUL   // "OFQ1"
 
-bool MyMesh::saveUIData(const char* filename, const uint8_t* head, int head_len, const uint8_t* body, int body_len) {
-  File f = _store->openDataWrite(filename);
+static bool writeUIFile(DataStore* store, const char* filename, const uint8_t* head, int head_len,
+                        const uint8_t* body, int body_len) {
+  File f = store->openDataWrite(filename);
   if (!f) return false;
   bool ok = f.write(head, head_len) == (size_t)head_len && (body_len == 0 || f.write(body, body_len) == (size_t)body_len);
   f.close();
-  if (!ok) removeUIData(filename);
   return ok;
+}
+
+// through a temp file, so a reset while writing keeps the previous version
+bool MyMesh::saveUIData(const char* filename, const uint8_t* head, int head_len, const uint8_t* body, int body_len) {
+  FILESYSTEM* fs = _store->getDataFS();
+  char tmp[40];
+  snprintf(tmp, sizeof(tmp), "%s.tmp", filename);
+  if (writeUIFile(_store, tmp, head, head_len, body, body_len)) {
+    fs->remove(filename);
+    if (fs->rename(tmp, filename)) return true;
+  }
+  fs->remove(tmp);
+  if (writeUIFile(_store, filename, head, head_len, body, body_len)) return true;   // no room for a copy
+  removeUIData(filename);
+  return false;
 }
 
 int MyMesh::loadUIData(const char* filename, uint8_t* dest, int max_len, int offset) {
@@ -2388,40 +2411,155 @@ void MyMesh::removeUIData(const char* filename) {
   _store->removeFile(_store->getDataFS(), filename);
 }
 
-// The queue lives in RAM; before a power off (hibernate, battery swap) it goes to a file, so the
-// app still gets these messages afterwards. Format: magic, count, then each frame as len + bytes.
-bool MyMesh::saveOfflineQueue() {
-  removeUIData(OFFLINE_QUEUE_FILE);
-  if (offline_queue_len == 0) return true;
-  File f = _store->openDataWrite(OFFLINE_QUEUE_FILE);
+// Messages the app has not fetched yet. The queue lives in RAM; its file keeps it over a power
+// off. With OFFLINE_QUEUE_PERSIST the file is a log written as the queue changes (one small append
+// per message, the fetches in batches), so not even a reset, a crash or a flat battery loses a
+// message before the app has it; the file goes once the app has fetched everything. Without the
+// flag it is a snapshot written at hibernate.
+// Format: magic, then records: ADD len bytes | TAKE n (from the head) | DROP pos (overflow).
+#define OFFLINE_LOG_MAGIC  0x324C514FUL   // "OQL2"
+#define OQ_ADD   1
+#define OQ_TAKE  2
+#define OQ_DROP  3
+#ifndef OFFLINE_TAKE_FLUSH_MILLIS
+  #define OFFLINE_TAKE_FLUSH_MILLIS  3000   // fetches are written this long after the last one
+#endif
+
+bool MyMesh::appendOfflineLog(const uint8_t* rec, int len, const uint8_t* body, int body_len) {
+  FILESYSTEM* fs = _store->getDataFS();
+  bool fresh = !fs->exists(OFFLINE_QUEUE_FILE);
+  File f = _store->openDataAppend(OFFLINE_QUEUE_FILE);
   if (!f) return false;
-  uint32_t magic = OFFLINE_QUEUE_MAGIC;
-  uint16_t n = offline_queue_len;
-  bool ok = f.write((uint8_t*)&magic, 4) == 4 && f.write((uint8_t*)&n, 2) == 2;
-  for (int i = 0; ok && i < offline_queue_len; i++) {
-    ok = f.write(&offline_queue[i].len, 1) == 1 &&
-         f.write(offline_queue[i].buf, offline_queue[i].len) == offline_queue[i].len;
-  }
+  uint32_t magic = OFFLINE_LOG_MAGIC;
+  bool ok = (!fresh || f.write((uint8_t*)&magic, 4) == 4) && f.write(rec, len) == (size_t)len &&
+            (body_len == 0 || f.write(body, body_len) == (size_t)body_len);
   f.close();
-  if (!ok) removeUIData(OFFLINE_QUEUE_FILE);   // a cut-off file is worse than none
+  // a cut-off record would end the replay there: write the queue as it is in RAM instead
+  if (!ok) ok = writeOfflineSnapshot();
   return ok;
 }
 
-void MyMesh::loadOfflineQueue() {
+bool MyMesh::writeOfflineQueueTo(const char* filename) {
+  File f = _store->openDataWrite(filename);
+  if (!f) return false;
+  uint32_t magic = OFFLINE_LOG_MAGIC;
+  bool ok = f.write((uint8_t*)&magic, 4) == 4;
+  for (int i = 0; ok && i < offline_queue_len; i++) {
+    uint8_t rec[2] = { OQ_ADD, offline_queue[i].len };
+    ok = f.write(rec, 2) == 2 && f.write(offline_queue[i].buf, rec[1]) == rec[1];
+  }
+  f.close();
+  return ok;
+}
+
+// the whole queue as ADD records, through a temp file so a reset never leaves half a queue; with
+// no room for the copy (the filesystem also holds the contacts) it is rewritten in place
+bool MyMesh::writeOfflineSnapshot() {
+  FILESYSTEM* fs = _store->getDataFS();
+  if (offline_queue_len == 0) { fs->remove(OFFLINE_QUEUE_FILE); return true; }
+  const char* tmp = OFFLINE_QUEUE_FILE ".tmp";
+  if (writeOfflineQueueTo(tmp)) {
+    fs->remove(OFFLINE_QUEUE_FILE);
+    if (fs->rename(tmp, OFFLINE_QUEUE_FILE)) return true;
+  }
+  fs->remove(tmp);
+  return writeOfflineQueueTo(OFFLINE_QUEUE_FILE);
+}
+
+void MyMesh::logOfflineAdd(int dropped_pos) {
+#ifdef OFFLINE_QUEUE_PERSIST
+  flushOfflineTakes();   // the log keeps the order of operations
+  if (dropped_pos >= 0) {
+    uint8_t rec[3] = { OQ_DROP, (uint8_t)(dropped_pos & 0xFF), (uint8_t)(dropped_pos >> 8) };
+    appendOfflineLog(rec, 3, NULL, 0);
+  }
+  Frame& fr = offline_queue[offline_queue_len - 1];
+  uint8_t rec[2] = { OQ_ADD, fr.len };
+  appendOfflineLog(rec, 2, fr.buf, fr.len);
+#endif
+}
+
+void MyMesh::logOfflineTake() {
+#ifdef OFFLINE_QUEUE_PERSIST
+  _offline_taken++;
+  if (offline_queue_len == 0) {   // all fetched: nothing left to keep
+    _store->getDataFS()->remove(OFFLINE_QUEUE_FILE);
+    _offline_taken = 0;
+    _offline_flush_at = 0;
+  } else {
+    _offline_flush_at = futureMillis(OFFLINE_TAKE_FLUSH_MILLIS);
+  }
+#endif
+}
+
+void MyMesh::flushOfflineTakes() {
+#ifdef OFFLINE_QUEUE_PERSIST
+  _offline_flush_at = 0;
+  if (_offline_taken == 0) return;
+  uint8_t rec[3] = { OQ_TAKE, (uint8_t)(_offline_taken & 0xFF), (uint8_t)(_offline_taken >> 8) };
+  _offline_taken = 0;
   File f = _store->openRead(_store->getDataFS(), OFFLINE_QUEUE_FILE);
+  uint32_t log_size = f ? f.size() : 0;
+  if (f) f.close();
+  // the log grows with every message; rewrite it as the queue alone once fetched ones take 8 KB
+  uint32_t live = 4;
+  for (int i = 0; i < offline_queue_len; i++) live += 2 + offline_queue[i].len;
+  if (log_size > live + 8192) writeOfflineSnapshot();
+  else appendOfflineLog(rec, 3, NULL, 0);
+#endif
+}
+
+// before a power off (hibernate, firmware update)
+bool MyMesh::saveOfflineQueue() {
+#ifdef OFFLINE_QUEUE_PERSIST
+  flushOfflineTakes();   // the adds are on file already
+  return true;
+#else
+  return writeOfflineSnapshot();
+#endif
+}
+
+void MyMesh::loadOfflineQueue() {
+  FILESYSTEM* fs = _store->getDataFS();
+  File f = _store->openRead(fs, OFFLINE_QUEUE_FILE);
   if (!f) return;
   uint32_t magic = 0;
-  uint16_t n = 0;
-  if (f.read((uint8_t*)&magic, 4) == 4 && magic == OFFLINE_QUEUE_MAGIC && f.read((uint8_t*)&n, 2) == 2) {
-    for (int i = 0; i < n && offline_queue_len < OFFLINE_QUEUE_SIZE; i++) {
-      Frame& fr = offline_queue[offline_queue_len];
-      if (f.read(&fr.len, 1) != 1 || fr.len == 0 || fr.len > MAX_FRAME_SIZE) break;
-      if (f.read(fr.buf, fr.len) != fr.len) break;
-      offline_queue_len++;
+  if (f.read((uint8_t*)&magic, 4) == 4 && magic == OFFLINE_LOG_MAGIC) {
+    uint8_t rec[3];
+    while (f.read(rec, 1) == 1) {   // a cut-off record (reset while writing) ends the replay
+      if (rec[0] == OQ_ADD) {
+        uint8_t len;
+        if (f.read(&len, 1) != 1 || len == 0 || len > MAX_FRAME_SIZE) break;
+        if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {   // cannot happen with a matching build
+          if (!f.seek(f.position() + len)) break;
+          continue;
+        }
+        Frame& fr = offline_queue[offline_queue_len];
+        if (f.read(fr.buf, len) != len) break;
+        fr.len = len;
+        offline_queue_len++;
+      } else if (rec[0] == OQ_TAKE || rec[0] == OQ_DROP) {
+        if (f.read(&rec[1], 2) != 2) break;
+        int v = rec[1] | (rec[2] << 8);
+        if (rec[0] == OQ_TAKE) {
+          int n = v < offline_queue_len ? v : offline_queue_len;
+          for (int i = 0; i + n < offline_queue_len; i++) offline_queue[i] = offline_queue[i + n];
+          offline_queue_len -= n;
+        } else if (v < offline_queue_len) {
+          for (int i = v; i < offline_queue_len - 1; i++) offline_queue[i] = offline_queue[i + 1];
+          offline_queue_len--;
+        }
+      } else {
+        break;   // unknown record
+      }
     }
   }
   f.close();
-  removeUIData(OFFLINE_QUEUE_FILE);   // once only: a later crash must not bring them back again
+#ifdef OFFLINE_QUEUE_PERSIST
+  writeOfflineSnapshot();   // start this session from a compact file (or none)
+#else
+  fs->remove(OFFLINE_QUEUE_FILE);   // once only: a later crash must not bring them back again
+#endif
 }
 
 bool MyMesh::advert(bool flood) {

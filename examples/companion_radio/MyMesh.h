@@ -199,7 +199,7 @@ public:
   int loadUIData(const char* filename, uint8_t* dest, int max_len, int offset = 0);   // -1 = missing
   void removeUIData(const char* filename);
   // messages the app has not fetched yet: kept over a power off, restored at start-up
-  bool saveOfflineQueue();
+  bool saveOfflineQueue();   // before a power off
   void loadOfflineQueue();
   int getOfflineQueueLen() const { return offline_queue_len; }
 
@@ -266,6 +266,14 @@ private:
   uint32_t _clock_cand_ts;            // CLOCK_FROM_ADVERT: an advert's time waiting for a second one
   unsigned long _clock_cand_at;
   uint8_t _clock_cand_key[4];
+  uint16_t _offline_taken;            // fetched by the app, not yet written to the queue file
+  unsigned long _offline_flush_at;
+  bool appendOfflineLog(const uint8_t* rec, int len, const uint8_t* body, int body_len);
+  bool writeOfflineQueueTo(const char* filename);
+  bool writeOfflineSnapshot();
+  void logOfflineAdd(int dropped_pos);
+  void logOfflineTake();
+  void flushOfflineTakes();
   bool _tx_allowed;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   char cli_command[80];

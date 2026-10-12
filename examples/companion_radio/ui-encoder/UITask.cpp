@@ -3048,7 +3048,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
 #endif
   loadQuickReplies();
-  loadHistory();   // messages from before the last hibernate
+  loadHistory();   // messages from before the last power off or reset
   _depth = 0;   // splash until home()
   _next_refresh = 100;
 }
@@ -3500,7 +3500,12 @@ void UITask::hibernate(bool low_battery) {
   shutdown();
 }
 
-// ---- history kept over a power off: written at hibernate, read (once) at the next start
+// ---- history kept over a power off or reset: written when it changed (at most every
+// UI_HIST_SAVE_MILLIS, to spare the flash), at hibernate and before a firmware update; read at start
+
+#ifndef UI_HIST_SAVE_MILLIS
+  #define UI_HIST_SAVE_MILLIS  (10 * 60 * 1000UL)
+#endif
 
 #define HISTORY_FILE  "/ui_hist"
 #define HISTORY_MAGIC 0x31484955UL   // "UIH1"
@@ -3513,11 +3518,23 @@ struct HistoryHeader {
 };
 // the file is the header plus the ring buffer as it is in RAM (no copy, no extra buffer)
 
+uint32_t UITask::historyHash() const {
+  uint32_t h = 2166136261UL;   // FNV-1a over the count, the head and the ring
+  const uint8_t* p = (const uint8_t*)_msgs;
+  for (size_t i = 0; i < sizeof(_msgs); i++) h = (h ^ p[i]) * 16777619UL;
+  return (h ^ (uint32_t)_msg_count ^ ((uint32_t)(uint16_t)_msg_head << 8)) * 16777619UL;
+}
+
 void UITask::saveHistory() {
-  the_mesh.removeUIData(HISTORY_FILE);
-  if (_msg_count == 0) return;
-  HistoryHeader h = { HISTORY_MAGIC, (uint16_t)sizeof(UIMsgEntry), UI_MSG_HISTORY, (uint8_t)_msg_count, (int16_t)_msg_head };
-  the_mesh.saveUIData(HISTORY_FILE, (const uint8_t*)&h, sizeof(h), (const uint8_t*)_msgs, sizeof(_msgs));
+  uint32_t hash = historyHash();
+  if (hash == _hist_hash) return;   // as on flash already
+  if (_msg_count == 0) {
+    the_mesh.removeUIData(HISTORY_FILE);
+  } else {
+    HistoryHeader h = { HISTORY_MAGIC, (uint16_t)sizeof(UIMsgEntry), UI_MSG_HISTORY, (uint8_t)_msg_count, (int16_t)_msg_head };
+    if (!the_mesh.saveUIData(HISTORY_FILE, (const uint8_t*)&h, sizeof(h), (const uint8_t*)_msgs, sizeof(_msgs))) return;
+  }
+  _hist_hash = hash;
 }
 
 void UITask::loadHistory() {
@@ -3527,8 +3544,12 @@ void UITask::loadHistory() {
   bool ok = n == (int)sizeof(h) && h.magic == HISTORY_MAGIC && h.entry_size == sizeof(UIMsgEntry) &&
             h.slots == UI_MSG_HISTORY && h.count <= UI_MSG_HISTORY && h.head >= 0 && h.head < UI_MSG_HISTORY &&
             the_mesh.loadUIData(HISTORY_FILE, (uint8_t*)_msgs, sizeof(_msgs), sizeof(h)) == (int)sizeof(_msgs);
-  the_mesh.removeUIData(HISTORY_FILE);   // once only
-  if (!ok) { memset(_msgs, 0, sizeof(_msgs)); _msg_count = 0; _msg_head = -1; return; }
+  if (!ok) {
+    memset(_msgs, 0, sizeof(_msgs)); _msg_count = 0; _msg_head = -1;
+    the_mesh.removeUIData(HISTORY_FILE);   // another layout: of no use
+    _hist_hash = historyHash();
+    return;
+  }
   _msg_count = h.count;
   _msg_head = h.head;
   for (int i = _msg_count - 1; i >= 0; i--) {   // oldest first: fresh ids in this session
@@ -3539,6 +3560,7 @@ void UITask::loadHistory() {
     if (m->state == MSG_OUT_PENDING) m->state = MSG_OUT_FAILED;   // its timer did not survive
     m->tries_left = 0;
   }
+  _hist_hash = 0;   // the file has the old ids and states: written again at the next check
 }
 
 void UITask::shutdown(bool restart) {
@@ -3777,5 +3799,12 @@ void UITask::loop() {
   if (next_batt_chck == 0 || timeReached(next_batt_chck)) {
     checkBattery();
     next_batt_chck = millis() + 8000;
+  }
+
+  // history changed since it was last written: keep it over a reset as well
+  if (_hist_check == 0) _hist_check = millis() + UI_HIST_SAVE_MILLIS;
+  if (timeReached(_hist_check)) {
+    _hist_check = millis() + UI_HIST_SAVE_MILLIS;
+    saveHistory();
   }
 }
