@@ -976,6 +976,36 @@ uint32_t MyMesh::calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t
 
 void MyMesh::onSendTimeout() {}
 
+bool MyMesh::setChannelAndSave(int idx, const ChannelDetails& ch) {
+  if (!setChannel(idx, ch)) return false;
+  saveChannels();
+  return true;
+}
+
+bool MyMesh::sendTrace(const uint8_t* hashes, uint8_t n, uint32_t& tag, uint32_t& est_timeout) {
+  if (!_tx_allowed || n == 0 || n > MAX_PATH_SIZE) return false;
+  getRNG()->random((uint8_t*)&tag, sizeof(tag));
+  auto pkt = createTrace(tag, 0, 0);   // flags 0: 1-byte path hashes
+  if (pkt == NULL) return false;
+  sendDirect(pkt, hashes, n);
+  uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + 2);
+  est_timeout = calcDirectTimeoutMillisFor(t, n);
+  return true;
+}
+
+bool MyMesh::sendNodeDiscover(uint32_t& tag) {
+  if (!_tx_allowed) return false;
+  getRNG()->random((uint8_t*)&tag, sizeof(tag));
+  uint8_t data[6];
+  data[0] = CTL_TYPE_NODE_DISCOVER_REQ | 1;   // answers carry an 8-byte key prefix
+  data[1] = 1 << ADV_TYPE_REPEATER;
+  memcpy(&data[2], &tag, 4);
+  auto pkt = createControlData(data, sizeof(data));
+  if (pkt == NULL) return false;
+  sendZeroHop(pkt);
+  return true;
+}
+
 MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store)
     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
       _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _listener(NULL), _iter(0) {
