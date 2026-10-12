@@ -83,6 +83,7 @@ public:
   int sendMessage(const ContactInfo& c, uint32_t ts, uint8_t attempt, const char* text, uint32_t& ack, uint32_t& timeout);
   int getRecentlyHeard(AdvertPath dest[], int max_num);
   bool advert(bool flood = false) { return tx_allowed; }
+  void expectAck(uint32_t ack, ContactInfo* c) { }
   bool setRadioParams(float f, float bw, uint8_t sf, uint8_t cr) {
     if (prefs) { prefs->freq = f; prefs->bw = bw; prefs->sf = sf; prefs->cr = cr; }
     return true;

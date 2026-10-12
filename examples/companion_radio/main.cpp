@@ -116,7 +116,8 @@ void halt(const char* reason) {
     display.endFrame();
   }
 #endif
-  delay(60000);
+  // a watchdog left running by a soft reset keeps counting: feed it while the message shows
+  for (int i = 0; i < 600; i++) { board.loop(); delay(100); }
   board.powerOff();
   while (1) ;
 }

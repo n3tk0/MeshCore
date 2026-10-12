@@ -832,6 +832,7 @@ static UIMsgEntry* sendNow(UITask* task, const ComposeTarget& t, const char* tex
   ContactInfo* c = the_mesh.lookupContactByPubKey(t.pub_key, PUB_KEY_SIZE);
   uint32_t ack = 0, timeout = 0;
   if (!c || the_mesh.sendMessage(*c, ts, 0, text, ack, timeout) == MSG_SEND_FAILED) return NULL;
+  if (ack) the_mesh.expectAck(ack, c);
   return task->addSent(t.name, MSG_SRC_CONTACT, 0, t.pub_key, text, ts, ack, timeout);
 }
 
@@ -3372,6 +3373,7 @@ bool UITask::sendAttempt(UIMsgEntry* m) {
   uint8_t attempt = m->attempt + 1;
   uint32_t ack = 0, timeout = 0;
   if (the_mesh.sendMessage(*c, m->sent_ts, attempt, m->text, ack, timeout) == MSG_SEND_FAILED) return false;
+  if (ack) the_mesh.expectAck(ack, c);
   m->attempt = attempt;
   m->acks[attempt & 3] = ack;
   m->state = MSG_OUT_PENDING;
@@ -3680,9 +3682,9 @@ void UITask::loop() {
   }
 
   // rotation: all detents queued since the last loop, faster turns move further
-  if (c == 0 && !_locked) {
+  if (c == 0) {
     int net = 0;
-    for (int guard = 0; guard < 16; guard++) {
+    for (int guard = 0; guard < 16 && !_locked; guard++) {   // locked: drained above, turning does nothing
       RotaryInputEvent r = rotary_input.poll();
       if (r == RotaryInputEvent::None) break;
       net += (r == RotaryInputEvent::Next) ? 1 : -1;

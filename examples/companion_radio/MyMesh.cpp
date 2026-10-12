@@ -448,8 +448,17 @@ void MyMesh::resetContactPath(ContactInfo& contact) {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
+void MyMesh::expectAck(uint32_t ack, ContactInfo* contact) {
+  expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
+  expected_ack_table[next_ack_idx].ack = ack;
+  expected_ack_table[next_ack_idx].contact = contact;
+  next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+}
+
 bool MyMesh::setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr) {
   if (!radio_driver.paramsSupported(freq, bw, sf, cr)) return false;
+  // same rule as CMD_SET_RADIO_PARAMS: client repeat only on the frequencies that allow it
+  if (_prefs.isRepeatEn() && !isValidClientRepeatFreq((uint32_t)(freq * 1000.0f + 0.5f))) return false;
   _prefs.freq = freq;
   _prefs.bw = bw;
   _prefs.sf = sf;
@@ -1219,12 +1228,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       if (result == MSG_SEND_FAILED) {
         writeErrFrame(ERR_CODE_TABLE_FULL);
       } else {
-        if (expected_ack) {
-          expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
-          expected_ack_table[next_ack_idx].ack = expected_ack;
-          expected_ack_table[next_ack_idx].contact = recipient;
-          next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
-        }
+        if (expected_ack) expectAck(expected_ack, recipient);
 
         out_frame[0] = RESP_CODE_SENT;
         out_frame[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
