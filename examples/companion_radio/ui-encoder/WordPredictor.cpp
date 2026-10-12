@@ -141,10 +141,10 @@ void WordPredictor::learnText(const char* text) {
     if (found < 0) {
       if (_num_user < PREDICT_USER_WORDS) _num_user++;
       found = _num_user - 1;   // a new word: the least recently used one drops out when full
+      _user_dirty = true;      // a known word only moves to the front: saved with the next new one
     }
     memmove(_user[1], _user[0], found * sizeof(_user[0]));
     memcpy(_user[0], key, n + 1);
-    _user_dirty = true;
   }
 }
 

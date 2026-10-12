@@ -186,6 +186,7 @@ public:
   bool alertShowing() const { return _alert_expiry && (long)(millis() - _alert_expiry) < 0; }
   void haptic(uint16_t millis_on);
   void hapticPattern(const uint16_t* pattern, int n);
+  bool hapticBusy();   // a pattern or pulse is running (a message alert must not be cut short)
   unsigned long autoOffMillis() const;
   void applyContrast();
 

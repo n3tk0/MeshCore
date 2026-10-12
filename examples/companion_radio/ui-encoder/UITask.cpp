@@ -1472,8 +1472,7 @@ static bool saveLearnedWords() {
 
 void ComposeScreen::sent() {
   learnLastWord();
-  _predict.learnText(_text);
-  saveLearnedWords();
+  _predict.learnText(_text);   // written to flash with the history (saveHistory), not per message
   clear();
   _draft = false;
 }
@@ -3388,11 +3387,10 @@ static void rangeRecord(UITask* task, bool ok, int8_t out4, int8_t back4) {
   r.ok = ok;
   r.out4 = out4;
   r.back4 = back4;
-  if (ok) {
-    range_test.ok++;
-    task->haptic(UI_HAPTIC_ACK_MS);
-  } else {
-    task->hapticPattern(HAPTIC_RANGE_MISS, sizeof(HAPTIC_RANGE_MISS) / sizeof(HAPTIC_RANGE_MISS[0]));
+  if (ok) range_test.ok++;
+  if (!task->hapticBusy()) {   // a message alert that is playing wins
+    if (ok) task->haptic(UI_HAPTIC_ACK_MS);
+    else task->hapticPattern(HAPTIC_RANGE_MISS, sizeof(HAPTIC_RANGE_MISS) / sizeof(HAPTIC_RANGE_MISS[0]));
   }
   task->refresh();
 }
@@ -3407,6 +3405,12 @@ static void rangeStart() {
 
 static void rangePoll(UITask* task) {
   if (!range_test.running) return;
+  if (!the_mesh.isTxAllowed()) {   // TX switched off (Settings, antenna): nothing would go out
+    range_test.running = range_test.waiting = false;
+    task->showAlert(T(S_TX_IS_OFF), 1500);
+    task->refresh();
+    return;
+  }
   if (range_test.waiting && timeReached(range_test.deadline)) rangeRecord(task, false, 0, 0);
   if (!range_test.waiting && timeReached(range_test.next_at)) {
     unsigned long every = RANGE_INTERVALS[range_test.interval_idx % 4] * 1000UL;
@@ -3431,8 +3435,9 @@ static void rangePoll(UITask* task) {
 struct NearbyNode { uint8_t prefix[8]; int8_t snr_in4, snr_out4; char name[32]; };
 
 static struct {
-  NearbyNode nodes[NEARBY_MAX];   // strongest first
+  NearbyNode nodes[NEARBY_MAX];   // in arrival order while listening (rows stay put), then strongest first
   int n;
+  bool sorted;
   uint32_t tag;
   unsigned long until;
   bool sent;
@@ -3440,11 +3445,23 @@ static struct {
 
 static void nearbySearch() {
   nearby.n = 0;
+  nearby.sorted = false;
   nearby.sent = the_mesh.sendNodeDiscover(nearby.tag);
   nearby.until = millis() + NEARBY_LISTEN_MILLIS;
 }
 
 static bool nearbyListening() { return nearby.sent && !timeReached(nearby.until); }
+
+static void nearbySortWhenDone() {   // strongest first, once no more answers come
+  if (nearby.sorted || nearbyListening()) return;
+  for (int i = 1; i < nearby.n; i++) {
+    NearbyNode t = nearby.nodes[i];
+    int j = i;
+    while (j > 0 && nearby.nodes[j - 1].snr_in4 < t.snr_in4) { nearby.nodes[j] = nearby.nodes[j - 1]; j--; }
+    nearby.nodes[j] = t;
+  }
+  nearby.sorted = true;
+}
 
 void UITask::onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
                          const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) {
@@ -3478,9 +3495,14 @@ void UITask::onControlDataRecv(const mesh::Packet* pkt) {
   ContactInfo* c = the_mesh.lookupContactByPubKey(prefix, 8);
   if (c) StrHelper::strncpy(node.name, c->name, sizeof(node.name));
   else snprintf(node.name, sizeof(node.name), "%02X%02X%02X%02X", prefix[0], prefix[1], prefix[2], prefix[3]);
-  if (nearby.n == NEARBY_MAX && nearby.nodes[NEARBY_MAX - 1].snr_in4 >= node.snr_in4) return;   // full, weaker
-  int at = nearby.n < NEARBY_MAX ? nearby.n++ : NEARBY_MAX - 1;   // full: the weakest goes
-  while (at > 0 && nearby.nodes[at - 1].snr_in4 < node.snr_in4) { nearby.nodes[at] = nearby.nodes[at - 1]; at--; }
+  int at = nearby.n;
+  if (at == NEARBY_MAX) {   // full: the weakest goes, unless this one is weaker still
+    at = 0;
+    for (int i = 1; i < NEARBY_MAX; i++) if (nearby.nodes[i].snr_in4 < nearby.nodes[at].snr_in4) at = i;
+    if (nearby.nodes[at].snr_in4 >= node.snr_in4) return;
+  } else {
+    nearby.n++;
+  }
   nearby.nodes[at] = node;
   _next_refresh = 0;
 }
@@ -3526,16 +3548,18 @@ public:
     int next = ListScreen::render(d);
     return trace_run.waiting && next > 1000 ? 1000 : next;
   }
-  void poll() override {
-    if (trace_run.waiting && timeReached(trace_run.deadline)) {
-      trace_run.waiting = false;
-      trace_run.done = true;
-      _task->refresh();
-    }
-  }
 };
 
 static TraceScreen* trace_screen;
+
+// the deadline also passes with the trace screen closed: a late answer then buzzes no more
+static void tracePoll(UITask* task) {
+  if (trace_run.waiting && timeReached(trace_run.deadline)) {
+    trace_run.waiting = false;
+    trace_run.done = true;
+    task->refresh();
+  }
+}
 
 static void openTrace(UITask* task, const TraceTarget& t) {
   if (!startTrace(t)) {
@@ -3714,6 +3738,7 @@ public:
     reset();
   }
   int render(DisplayDriver& d) override {
+    nearbySortWhenDone();
     int next = ListScreen::render(d);
     return nearbyListening() && next > 500 ? 500 : next;
   }
@@ -4140,6 +4165,15 @@ bool UITask::setChannelMuted(int idx, bool muted) {
   uint32_t k = channelKey(idx);
   if (k == 0 || isChannelMuted(idx) == muted) return true;
   if (muted) {
+    // keys of channels deleted or replaced from the phone stay behind: drop them first
+    for (int i = 0; i < _num_muted; ) {
+      bool used = false;
+#ifdef MAX_GROUP_CHANNELS
+      for (int c = 0; c < MAX_GROUP_CHANNELS && !used; c++) used = channelKey(c) == _muted[i];
+#endif
+      if (used) i++;
+      else _muted[i] = _muted[--_num_muted];
+    }
     if (_num_muted >= (int)(sizeof(_muted) / sizeof(_muted[0]))) return false;
     _muted[_num_muted++] = k;
   } else {
@@ -4252,6 +4286,14 @@ void UITask::showAlert(const char* text, int duration_millis) {
 void UITask::haptic(uint16_t millis_on) {
 #ifdef PIN_VIBRATION
   if (millis_on > 0 && !_node_prefs->vibe_quiet) vibration.pulse(millis_on);
+#endif
+}
+
+bool UITask::hapticBusy() {
+#ifdef PIN_VIBRATION
+  return vibration.isBusy();
+#else
+  return false;
 #endif
 }
 
@@ -4390,8 +4432,9 @@ void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_det
   _next_muted = muted;
   _next_snr4 = pkt->_snr;
   _next_rssi = (int16_t)radio_driver.getLastRSSI();
+  bool mention = isMention(text);   // newMsg() gives a mention the direct message buzz: keep it
   newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, channel_details.name, text, _msgcount);
-  if (!muted) notifyMsg(UIEventType::channelMessage, hasConnection());
+  if (!muted && !mention) notifyMsg(UIEventType::channelMessage, hasConnection());
 }
 
 void UITask::msgRead(int msgcount) {
@@ -4606,6 +4649,7 @@ uint32_t UITask::historyHash() const {
 }
 
 void UITask::saveHistory() {
+  saveLearnedWords();   // only when a new word was learned
   uint32_t hash = historyHash();
   if (hash == _hist_hash) return;   // as on flash already
   if (_msg_count == 0) {
@@ -4653,6 +4697,7 @@ void UITask::shutdown(bool restart) {
   vibration.stop();
 #endif
   the_mesh.flushPendingWrites();   // contacts/paths learned in the last moments
+  saveLearnedWords();
   if (restart) _board->reboot();
   else _board->powerOff();
 }
@@ -4842,6 +4887,7 @@ void UITask::loop() {
   trackReception();
   checkAckTimeouts();
   rangePoll(this);
+  tracePoll(this);
   if (_air_next == 0 || timeReached(_air_next)) {   // the airtime of the last hour, a sample a minute
     _air_next = millis() + 60000UL;
     sampleAirtime();
