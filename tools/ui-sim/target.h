@@ -59,6 +59,9 @@ public:
   float snr = 6.5f;
   uint32_t getPacketsRecv() const { return recv; }
   float getLastSNR() const { return snr; }
+  float getLastRSSI() const { return -92; }
+  uint32_t getPacketsSent() const { return 37; }
+  uint32_t getPacketsRecvErrors() const { return 4; }
   int getNoiseFloor() const { return -112; }
 };
 

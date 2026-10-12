@@ -237,6 +237,8 @@ ContactInfo* SimMesh::addContact(const char* name, uint8_t type, uint8_t key0, u
   c.type = type;
   c.lastmod = lastmod;
   c.out_path_len = path_len;
+  // the path goes through Repeater Lozen (0x80), then repeaters without a contact
+  if (path_len != OUT_PATH_UNKNOWN) for (int i = 0; i < (path_len & 63); i++) c.out_path[i] = i == 0 ? 0x80 : 0xC0 + i;
   return &c;
 }
 void SimMesh::addChannel(int idx, const char* name) { StrHelper::strncpy(channels[idx].name, name, 32); }
@@ -315,6 +317,14 @@ static void shot(const char* name, const char* caption) {
 }
 
 static void receive(UITask& ui, bool channel, int ch_idx, const ContactInfo* from, const char* chan_name, const char* text) {
+  if (!channel) {   // as the mesh delivers it: with the signal of the packet
+    mesh::Packet pkt;
+    pkt._snr = 27;   // +6.75 dB
+    pkt.path_len = 2;
+    ui.onMessageRecv(&pkt, *from, TXT_TYPE_PLAIN, 0, text);
+    radio_driver.recv++;
+    return;
+  }
   ui.msgSource(channel, ch_idx, from ? from->id.pub_key : NULL);
   ui.newMsg(1, channel ? chan_name : from->name, text, 1);
   ui.notifyMsg(channel ? UIEventType::channelMessage : UIEventType::contactMessage, false);
@@ -403,6 +413,9 @@ static void scenario(uint8_t lang) {
   // reply: conversation -> thread, press = what to send
   turn(2); press();
   shot("thread_ivan", bg ? "Разговорът с Иван: съобщението се вижда цялото" : "The conversation with Ivan: the whole message shows");
+  hold(); turn(1); press();
+  shot("msg_info_in", bg ? "Задържане > Инфо: час, маршрут, сигнал" : "Hold > Details: time, route, signal");
+  back();
   press();
   shot("reply_pick", bg ? "Натискане = отговор: Напиши... и готовите" : "Press = reply: Write... and quick replies");
   turn(2); press();
@@ -426,6 +439,9 @@ static void scenario(uint8_t lang) {
   turn(12); hold();
   shot("msg_actions_retry", bg ? "Задържане на недоставено: Изпрати пак" : "Hold on an undelivered one: Send again");
   turn(2); press();
+  shot("msg_info_out", bg ? "Инфо за изпратено: опити и състояние" : "Details of a sent one: attempts and state");
+  back();
+  hold(); turn(3); press();
   shot("confirm_delete_one", bg ? "Изтриване на едно съобщение (потвърждението се изключва от настройките)" : "Deleting one message (confirmation can be turned off)");
   back();
   holdBack();
@@ -440,8 +456,21 @@ static void scenario(uint8_t lang) {
   turn(1);
   hold();
   shot("contact_actions", bg ? "Задържане на контакт" : "Hold on a contact");
-  turn(1); press();
+  turn(2); press();
   shot("contact_info", bg ? "Информация за контакт" : "Contact details");
+  back();
+  hold(); turn(1); press();
+  shot("trace_wait", bg ? "Трасиране: чака отговор" : "Trace: waiting for the answer");
+  {
+    mesh::Packet pkt;
+    pkt._snr = 22;
+    uint8_t snrs[1] = { (uint8_t)(int8_t)34 };
+    uint8_t hashes[1] = { 0x80 };
+    run(1400);
+    ui->onTraceRecv(&pkt, the_mesh.last_tag, 0, 0, snrs, hashes, 1);
+    run(100);
+  }
+  shot("trace_done", bg ? "Трасиране: SNR на всеки скок и времето" : "Trace: SNR at each hop and the round trip");
   back();
   press();               // contacts: press = write
   press();               // Write...
@@ -467,7 +496,65 @@ static void scenario(uint8_t lang) {
   turn(1); press();
   shot("channel_thread", bg ? "Натискане на канал: неговият разговор" : "Press on a channel: its conversation");
   back();
+  hold();
+  shot("channel_actions", bg ? "Задържане на канал: пиши, заглуши, изтрий" : "Hold on a channel: write, mute, delete");
+  turn(1); press(); run(900);
+  shot("channels_muted", bg ? "Заглушен канал: без вибрация и светване" : "Muted channel: no buzz, screen stays off");
+  turn(1); press();
+  shot("channel_new", bg ? "+ Нов канал: име на #канал с клавиатурата" : "+ New channel: a #channel name on the keyboard");
   back();
+  back();
+
+  // network tools
+  turn(1); press();
+  shot("network_menu", bg ? "Мрежа" : "Network");
+  press();
+  shot("nearby_wait", bg ? "Наблизо: търси ретранслатори" : "Nearby: looking for repeaters");
+  {
+    static const struct { uint8_t key0; int8_t in4, out4; } R[] = { { 0x80, 38, 30 }, { 0xC1, -14, -6 }, { 0xD7, 9, 18 } };
+    for (auto& r : R) {
+      mesh::Packet pkt;
+      pkt._snr = r.in4;
+      pkt.payload[0] = CTL_TYPE_NODE_DISCOVER_RESP | ADV_TYPE_REPEATER;
+      pkt.payload[1] = (uint8_t)r.out4;
+      memcpy(&pkt.payload[2], &the_mesh.last_tag, 4);
+      for (int i = 0; i < 8; i++) pkt.payload[6 + i] = r.key0 + i;
+      pkt.payload_len = 14;
+      run(700);
+      ui->onControlDataRecv(&pkt);
+    }
+    run(200);
+  }
+  shot("nearby", bg ? "Наблизо: по сила на сигнала (SNR)" : "Nearby: by signal strength (SNR)");
+  press();
+  shot("nearby_node", bg ? "Ретранслатор: как ни чува и как го чуваме" : "A repeater: how it hears us and how we hear it");
+  back(); back();
+  the_mesh.air_total = 3100;
+  turn(1); press();
+  shot("airtime", bg ? "Ефирно време: последния час срещу лимита 10%" : "Airtime: the last hour against the 10% limit");
+  back();
+  turn(1); press();
+  shot("range_empty", bg ? "Тест на обхвата" : "Range test");
+  press();
+  shot("range_pick", bg ? "Цел: ретранслатори, после контакти през тях" : "Target: repeaters, then contacts reached through them");
+  press();
+  turn(1); press();   // start
+  for (int i = 0; i < 4; i++) {   // three answers, one miss
+    run(1500);
+    if (i != 2) {
+      mesh::Packet pkt;
+      pkt._snr = 20 - 6 * i;
+      uint8_t snrs[1] = { (uint8_t)(int8_t)(28 - 5 * i) };
+      uint8_t hashes[1] = { 0x80 };
+      ui->onTraceRecv(&pkt, the_mesh.last_tag, 0, 0, snrs, hashes, 1);
+    }
+    run(28500);
+  }
+  turn(3);
+  shot("range_running", bg ? "Тест на обхвата: SNR натам/обратно, -- = без отговор" : "Range test: SNR there/back, -- = no answer");
+  turn(-2); press();   // stop
+  back(); back();
+
   turn(1); press();
   shot("settings", bg ? "Настройки: групи" : "Settings: groups");
   for (int g = 0; g < 5; g++) {
@@ -481,7 +568,10 @@ static void scenario(uint8_t lang) {
       turn(3); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back();
     }
     if (g == 1) { turn(4); press(); shot("edit_lock", bg ? "Заключване: ръчно или при изгасване" : "Key lock: by hand or when the screen goes off"); back(); }
-    if (g == 2) { turn(1); press(); shot("edit_wake", bg ? "Кога светва екранът за съобщение" : "When a message turns the screen on"); back(); }
+    if (g == 2) {
+      turn(1); press(); shot("edit_wake", bg ? "Кога светва екранът за съобщение" : "When a message turns the screen on"); back();
+      turn(4); press(); shot("words", bg ? "Научени думи: изтриване (още няма)" : "Learned words: clear (none yet)"); run(2000);
+    }
     if (g == 3) {
       turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back();
       turn(1); press(); turn(1); shot("edit_preset", bg ? "Радио пресет" : "Radio preset"); back();
@@ -490,6 +580,12 @@ static void scenario(uint8_t lang) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();
       turn(2); press(); turn(3); shot("edit_battery", bg ? "Калибрация: въведи волтажа от мултиметъра" : "Calibration: enter the multimeter reading"); back();
       turn(1); press(); shot("about", bg ? "За устройството" : "About"); back();
+      turn(1); press(); shot("hardware", bg ? "Хардуер: тестове и измервания" : "Hardware: tests and readings");
+      press(); turn(3); press(); hold(); turn(-1);
+      shot("encoder_test", bg ? "Тест на енкодера: завъртания, натискания, задържания" : "Encoder test: turns, presses, holds");
+      back(); turn(2); press();
+      shot("display_test", bg ? "Тест на дисплея: завъртане сменя образа" : "Display test: turn for the next pattern");
+      back(); back();
       turn(2); shot("settings_update", bg ? "Ъпдейт на фърмуера от менюто" : "Firmware update from the menu");
       press(); shot("update_usb_q", bg ? "Рестарт в bootloader-а (USB диск за UF2)" : "Restart into the bootloader (USB drive for a UF2)"); back();
     }

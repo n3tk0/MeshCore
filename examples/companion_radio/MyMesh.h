@@ -232,6 +232,13 @@ public:
   void loadOfflineQueue();
   int getOfflineQueueLen() const { return offline_queue_len; }
 
+  // encoder UI tools
+  bool setChannelAndSave(int idx, const ChannelDetails& ch);   // a channel added or removed on the device
+  // TRACE along 1-byte repeater hashes (direct route); the result comes to Listener::onTraceRecv
+  bool sendTrace(const uint8_t* hashes, uint8_t n, uint32_t& tag, uint32_t& est_timeout);
+  // zero-hop request: repeaters in range answer (Listener::onControlDataRecv) with how well they heard it
+  bool sendNodeDiscover(uint32_t& tag);
+
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
     sensors.setSettingValue("gps", _prefs.gps_enabled ? "1" : "0");
