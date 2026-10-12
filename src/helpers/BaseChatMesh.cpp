@@ -9,6 +9,8 @@
   #define TXT_ACK_DELAY     200
 #endif
 
+#define CLI_REPLY_DELAY_MILLIS      600
+
 void BaseChatMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
   sendFlood(pkt, delay_millis);
 }
@@ -158,11 +160,22 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   if (from != NULL) {
     store_blob = strncmp(from->name, parser.getName(), sizeof(from->name) - 1) != 0 ||
                  from->type != parser.getType() ||
-                 (parser.hasLatLon() && (from->gps_lat != parser.getIntLat() || from->gps_lon != parser.getIntLon())) ||
-                 timestamp - from->last_advert_timestamp > 7 * 24 * 3600UL;
-    if (!store_blob) {   // the blob store holds fewer adverts than there are contacts: still there?
+                 (parser.hasLatLon() && (from->gps_lat != parser.getIntLat() || from->gps_lon != parser.getIntLon()));
+    if (!store_blob) {
+      // the blob store holds fewer adverts than there are contacts: still there, and how old is it?
       uint8_t stored[MAX_TRANS_UNIT];
-      store_blob = getBlobByKey(id.pub_key, PUB_KEY_SIZE, stored) == 0;
+      // read its timestamp straight from the bytes (a Packet here would cost ~260 bytes of stack):
+      // stored flood-routed without transport codes = header, path_len, path, then the payload
+      // (public key, timestamp, ...)
+      int len = getBlobByKey(id.pub_key, PUB_KEY_SIZE, stored);
+      int at = len >= 2 ? 2 + (stored[1] & 63) * ((stored[1] >> 6) + 1) + PUB_KEY_SIZE : 0;
+      if (len < 2 || (stored[0] & PH_ROUTE_MASK) != ROUTE_TYPE_FLOOD || at + 4 > len) {
+        store_blob = true;
+      } else {
+        uint32_t stored_ts;
+        memcpy(&stored_ts, &stored[at], 4);
+        store_blob = timestamp - stored_ts > 7 * 24 * 3600UL;
+      }
     }
   }
 
@@ -242,8 +255,8 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
   ContactInfo& from = contacts[i];
 
   if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
-    uint32_t timestamp;
-    memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
+    uint32_t sender_timestamp;
+    memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
     uint8_t flags = data[4] >> 2;   // message attempt number, and other flags
 
     // len can be > original length, but 'text' will be padded with zeroes
@@ -251,7 +264,7 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
 
     if (flags == TXT_TYPE_PLAIN) {
       from.lastmod = getRTCClock()->getCurrentTime(); // update last heard time
-      onMessageRecv(from, packet, timestamp, (const char *) &data[5]);  // let UI know
+      onMessageRecv(from, packet, sender_timestamp, (const char *) &data[5]);  // let UI know
 
       int text_len = strlen((char *)&data[5]);
       uint8_t ack_hash[6];    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
@@ -269,20 +282,43 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
         sendAckTo(from, ack_hash, 6);
       }
     } else if (flags == TXT_TYPE_CLI_DATA) {
-      onCommandDataRecv(from, packet, timestamp, (const char *) &data[5]);  // let UI know
+      char *text = (char *)&data[5];
+      onCommandDataRecv(from, packet, sender_timestamp, text);  // let UI know
       // NOTE: no ack expected for CLI_DATA replies
+    } else if (flags == TXT_TYPE_CLI_COMMAND) {
+      uint8_t temp[166];
+      char *command = (char *)&data[5];
+      char *reply = (char *)&temp[5];
+      *reply = 0;
 
-      if (packet->isRouteFlood()) {
-        // let this sender know path TO here, so they can use sendDirect() (NOTE: no ACK as extra)
-        mesh::Packet* path = createPathReturn(from.id, secret, packet->path, packet->path_len, 0, NULL, 0);
-        if (path) sendFloodScoped(from, path);
+      onCLICommandRecv(from, packet, sender_timestamp, command, reply);  // let UI know
+      // NOTE: no ack expected for CLI_COMMAND replies
+
+      int text_len = strlen(reply);
+      if (text_len > 0) {
+        uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+        if (timestamp == sender_timestamp) {
+          // WORKAROUND: the two timestamps need to be different, in the CLI view
+          timestamp++;
+        }
+        memcpy(temp, &timestamp, 4);
+        temp[4] = (TXT_TYPE_CLI_DATA << 2);
+
+        auto reply_pkt = createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, secret, temp, 5 + text_len);
+        if (reply_pkt) {
+          if (from.out_path_len == OUT_PATH_UNKNOWN) {
+            sendFloodScoped(from, reply_pkt, CLI_REPLY_DELAY_MILLIS);
+          } else {
+            sendDirect(reply_pkt, from.out_path, from.out_path_len, CLI_REPLY_DELAY_MILLIS);
+          }
+        }
       }
     } else if (flags == TXT_TYPE_SIGNED_PLAIN) {
-      if (timestamp > from.sync_since) {  // make sure 'sync_since' is up-to-date
-        from.sync_since = timestamp;
+      if (sender_timestamp > from.sync_since) {  // make sure 'sync_since' is up-to-date
+        from.sync_since = sender_timestamp;
       }
       from.lastmod = getRTCClock()->getCurrentTime(); // update last heard time
-      onSignedMessageRecv(from, packet, timestamp, &data[5], (const char *) &data[9]);  // let UI know
+      onSignedMessageRecv(from, packet, sender_timestamp, &data[5], (const char *) &data[9]);  // let UI know
 
       uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + OUR pub_key, to prove to sender that we got it
       mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 9 + strlen((char *)&data[9]), self_id.pub_key, PUB_KEY_SIZE);
@@ -389,7 +425,12 @@ static bool isZeroSecret(const uint8_t* secret) {
 int BaseChatMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) {
   int n = 0;
   for (int i = 0; i < MAX_GROUP_CHANNELS && n < max_matches; i++) {
-    if (isZeroSecret(channels[i].channel.secret)) continue;   // unused slot: never accept the all-zero key
+    // Skip empty/unconfigured slots. An empty slot has an all-zero secret and
+    // therefore matches null-key group traffic (a node transmitting with an
+    // unset PSK): the zero-key MAC validates against the empty slot and the
+    // foreign message is delivered as if it belonged to that channel. Any node
+    // with a free channel slot would otherwise act as a null-key sink.
+    if (channels[i].name[0] == 0 || isZeroSecret(channels[i].channel.secret)) continue;
     if (channels[i].channel.hash[0] == hash[0]) {
       dest[n++] = channels[i].channel;
     }
@@ -480,13 +521,13 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
   return rc;
 }
 
-int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& est_timeout) {
+int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, uint8_t txt_type, const char* text, uint32_t& est_timeout) {
   int text_len = strlen(text);
   if (text_len > MAX_TEXT_LEN) return MSG_SEND_FAILED;
 
   uint8_t temp[5+MAX_TEXT_LEN+1];
   memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-  temp[4] = (attempt & 3) | (TXT_TYPE_CLI_DATA << 2);
+  temp[4] = (attempt & 3) | (txt_type << 2);
   memcpy(&temp[5], text, text_len + 1);
 
   auto pkt = createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.getSharedSecret(self_id), temp, 5 + text_len);

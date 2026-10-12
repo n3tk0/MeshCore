@@ -3,6 +3,7 @@
 class MultiSerialInterface {
   bool _bt = true;
 public:
+  bool isConnected() const { return false; }
   bool isBluetoothEnabled() const { return _bt; }
   void enableBluetooth() { _bt = true; }
   void disableBluetooth() { _bt = false; }

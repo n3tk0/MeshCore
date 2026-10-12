@@ -13,5 +13,6 @@ c++ -std=c++17 -O1 -funsigned-char -Wall -Wextra -Wno-unused-parameter -Wno-unus
   sim_main.cpp \
   $ROOT/examples/companion_radio/ui-encoder/UITask.cpp \
   $ROOT/examples/companion_radio/ui-encoder/WordPredictor.cpp \
+  $ROOT/src/helpers/ConfigSerializer.cpp $ROOT/src/helpers/DynamicConfigSerializer.cpp $ROOT/src/Utils.cpp \
   -o ui-sim
 ./ui-sim "$OUT"

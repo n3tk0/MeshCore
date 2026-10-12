@@ -12,6 +12,11 @@
 #endif
 
 #include "NodePrefs.h"
+#ifdef UI_SIM
+  #include "UISim.h"   // tools/ui-sim: a scripted stand-in for MyMesh
+#else
+  #include "MyMesh.h"
+#endif
 
 enum class UIEventType {
     none,
@@ -22,27 +27,21 @@ enum class UIEventType {
     ack
 };
 
-class AbstractUITask {
+class AbstractUITask : public MyMesh::Listener {
 protected:
   mesh::MainBoard* _board;
   MultiSerialInterface* _interfaceManager;
-  bool _connected;
 
   AbstractUITask(mesh::MainBoard* board, MultiSerialInterface* interfaceManager) : _board(board), _interfaceManager(interfaceManager) {
-    _connected = false;
   }
 
 public:
-  void setHasConnection(bool connected) { _connected = connected; }
-  bool hasConnection() const { return _connected; }
+  bool hasConnection() const { return _interfaceManager->isConnected(); }
   uint16_t getBattMilliVolts() const { return _board->getBattMilliVolts(); }
   bool isBluetoothEnabled() const { return _interfaceManager->isBluetoothEnabled(); }
   void enableBluetooth() { _interfaceManager->enableBluetooth(); }
   void disableBluetooth() { _interfaceManager->disableBluetooth(); }
-  virtual void msgRead(int msgcount) = 0;
-  virtual void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) = 0;
-  // called just before newMsg(): where the message came from, for UIs that can reply
-  virtual void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) { }
+
   virtual void notify(UIEventType t = UIEventType::none) = 0;
   // a message alert; by default only when no app is connected (the app shows it then)
   virtual void notifyMsg(UIEventType t, bool connected) { if (!connected) notify(t); }

@@ -48,6 +48,8 @@ struct UIMsgEntry {
   uint8_t  channel_idx;
   uint8_t  pub_prefix[6];
   bool     mention;     // a channel message that names this node (@name)
+  int8_t   snr4;        // received: SNR x 4 (in the padding before seq: the file layout is unchanged)
+  int16_t  rssi;        // received: RSSI in dBm, 0 = not known (older entries)
   uint32_t seq;         // unique per message, so open screens follow it when the history shifts
   uint32_t sent_ts;     // timestamp the message was sent with: a retry repeats it
   uint8_t  attempt;     // attempt number of the last send of a direct message
@@ -97,6 +99,24 @@ class UITask : public AbstractUITask {
   uint32_t _msg_seq;
   unsigned long _last_new_msg;
   uint8_t _next_src, _next_channel, _next_prefix[6];   // from msgSource(), for the next newMsg()
+  bool _next_muted;                                    // the next newMsg() is from a muted channel
+  int8_t _next_snr4;                                   // ... and its signal
+  int16_t _next_rssi;
+
+  // channels muted on the device: first 4 bytes of their key (a slot may be reused from the phone)
+  uint32_t _muted[16];
+  int _num_muted;
+  void loadMuted();
+  bool saveMuted();
+
+  // radio airtime: total TX milliseconds sampled once a minute, for the last hour
+  uint32_t _air_total[61];   // the radio's TX airtime total (ms) ...
+  uint32_t _air_at[61];      // ... at this millis()
+  uint8_t _air_head, _air_count;
+  unsigned long _air_next;
+  void sampleAirtime();
+
+  int32_t _raw_detents;      // encoder detents, net, for the hardware test
 
   // screen stack, [0] is always the standby screen (after the splash)
   UIScreen* _stack[10];
@@ -145,6 +165,13 @@ public:
     _quick_custom = false;
     _ask_antenna = false;
     _next_src = MSG_SRC_UNKNOWN;
+    _next_muted = false;
+    _next_snr4 = 0;
+    _next_rssi = 0;
+    _num_muted = 0;
+    _air_head = _air_count = 0;
+    _air_next = 0;
+    _raw_detents = 0;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
@@ -158,6 +185,8 @@ public:
   void showAlert(const char* text, int duration_millis);
   bool alertShowing() const { return _alert_expiry && (long)(millis() - _alert_expiry) < 0; }
   void haptic(uint16_t millis_on);
+  void hapticPattern(const uint16_t* pattern, int n);
+  bool hapticBusy();   // a pattern or pulse is running (a message alert must not be cut short)
   unsigned long autoOffMillis() const;
   void applyContrast();
 
@@ -193,14 +222,32 @@ public:
   void applyEncoderPrefs();   // turn direction and steps per detent from NodePrefs
   void enterRescue();         // CLI rescue on the USB serial port, until restart
 
-  // from AbstractUITask
-  void msgRead(int msgcount) override;
-  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
-  void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) override;
+  // channels
+  bool isChannelMuted(int idx);
+  bool setChannelMuted(int idx, bool muted);   // saved to flash
+
+  // Network / Hardware tools
+  int32_t rawDetents() const { return _raw_detents; }
+  void testVibration();                  // the direct message pattern, also with vibration off
+  uint32_t txAirtimeLastHour();           // milliseconds of transmitting in the last hour (or since start)
+  uint32_t airtimeWindowSecs();           // ... the window it covers
+
+  void msgRead(int msgcount);
+  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount);
+  void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key);
+  void notifyMsg(UIEventType t, bool connected);
+  void ackReceived(const uint8_t* ack);
+
+  // from AbstractUITask / MyMesh::Listener
   void notify(UIEventType t = UIEventType::none) override;
-  void notifyMsg(UIEventType t, bool connected) override;
-  void ackReceived(const uint8_t* ack) override;
   void loop() override;
+  void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) override;
+  void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) override;
+  void onQueueSizeChanged(int msgcount) override { msgRead(msgcount); }
+  void onACKRecv(uint32_t ack_crc) override { ackReceived((const uint8_t*)&ack_crc); }
+  void onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
+                   const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) override;
+  void onControlDataRecv(const mesh::Packet* pkt) override;
 
   void shutdown(bool restart = false);
 };

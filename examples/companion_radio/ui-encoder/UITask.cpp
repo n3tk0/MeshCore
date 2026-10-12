@@ -1,6 +1,7 @@
 #include "UITask.h"
 #include <math.h>
 #include <ctype.h>
+#include <stdlib.h>
 #include <helpers/ui/TextFonts.h>
 #include <helpers/TxtDataHelpers.h>
 #ifdef UI_SIM
@@ -76,6 +77,11 @@ static const uint8_t icon_batt[]    = { 0x18, 0x7E, 0x42, 0x5A, 0x5A, 0x42, 0x7E
 static const uint8_t icon_pin[]     = { 0x38, 0x44, 0x54, 0x44, 0x38, 0x10, 0x10, 0x00 };
 static const uint8_t icon_knob[]    = { 0x3C, 0x42, 0x99, 0xBD, 0xBD, 0x99, 0x42, 0x3C };
 static const uint8_t icon_back[]    = { 0x10, 0x30, 0x7F, 0xFF, 0x7F, 0x30, 0x10, 0x00 };
+static const uint8_t icon_mute[]    = { 0x10, 0x35, 0xF2, 0xF5, 0xF0, 0x30, 0x10, 0x00 };
+static const uint8_t icon_up[]     = { 0x10, 0x38, 0x7C, 0xFE, 0x38, 0x38, 0x38, 0x00 };   // they hear us
+static const uint8_t icon_down[]   = { 0x38, 0x38, 0x38, 0xFE, 0x7C, 0x38, 0x10, 0x00 };   // we hear them
+static const uint8_t icon_range[]  = { 0x00, 0x42, 0x99, 0xA5, 0xA5, 0x99, 0x42, 0x00 };   // range test runs
+static const uint8_t icon_tower[]   = { 0x10, 0x38, 0x10, 0x28, 0x28, 0x44, 0x44, 0x00 };
 
 static const unsigned long AUTO_OFF_TABLE[] = { 15000, 30000, 60000, 300000 };
 static const uint8_t CONTRAST_TABLE[] = { 0xFF, 0x60, 0x08 };
@@ -147,6 +153,8 @@ enum StrId {
   S_ANT_POWER_LOSS, S_ANT_ALWAYS, S_ANT_NEVER, S_WAKE_DIRECT, S_WAKE_ALL, S_WAKE_NEVER, S_LOCK_HAND,
   S_LOCK_AUTO, S_PRESET_CUSTOM, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
+  // tools
+  S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
   S_COUNT
 };
 
@@ -332,6 +340,60 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "CLI rescue", "CLI rescue" },
   { "USB порт", "USB port" },
   { "Рестарт", "Restart" },
+  // tools
+  { "Мрежа", "Network" },
+  { "Наоколо", "Nearby" },
+  { "Ефир", "Airtime" },
+  { "Обхват", "Range test" },
+  { "Проследи", "Trace" },
+  { "Търся...", "Searching..." },
+  { "Никой не отговори", "Nobody answered" },
+  { "Няма отговор", "No answer" },
+  { "Няма ретранслатор по пътя", "No repeater on the path" },
+  { "Време %lu.%luс", "Time %lu.%lus" },
+  { "Старт", "Start" },
+  { "Стоп", "Stop" },
+  { "През %d с", "Every %d s" },
+  { "Успех %d/%d", "OK %d/%d" },
+  { "Избери цел", "Pick target" },
+  { "Няма цели. Виж Наоколо", "No targets. See Nearby" },
+  { "1ч %d.%d/10%%", "1h %d.%d/10%%" },
+  { "RX %lu", "RX %lu" },
+  { "TX %lu", "TX %lu" },
+  { "Грешки %lu", "Errors %lu" },
+  { "RSSI %d", "RSSI %d" },
+  { "SNR %.1f", "SNR %.1f" },
+  { "TX общо %s", "TX total %s" },
+  { "Опит %d", "Try %d" },
+  { "Стигна", "Delivered" },
+  { "Не стигна", "Failed" },
+  { "Чака", "Waiting" },
+  { "+ Добави", "+ Add" },
+  { "#канал", "#channel" },
+  { "Каналът е добавен", "Channel added" },
+  { "Вече го има", "Already there" },
+  { "Няма свободно място", "No free slot" },
+  { "Само a-z 0-9 и -", "Only a-z 0-9 and -" },
+  { "Заглуши", "Mute" },
+  { "Звук", "Unmute" },
+  { "Заглушен", "Muted" },
+  { "Със звук", "Sound on" },
+  { "Изтрий %s?", "Delete %s?" },
+  { "Хардуер", "Hardware" },
+  { "Енкодер", "Encoder" },
+  { "Стъпки %+d", "Steps %+d" },
+  { "Натиск %d", "Presses %d" },
+  { "Задърж. %d", "Holds %d" },
+  { "Сурово %d.%02dV", "Raw %d.%02dV" },
+  { "ADC x%.3f", "ADC x%.3f" },
+  { "USB: %s", "USB: %s" },
+  { "Рестарт: %s", "Reset: %s" },
+  { "Думи", "Words" },
+  { "Изтрий %d научени думи?", "Delete %d learned words?" },
+  { "Няма научени думи", "No learned words" },
+  { "Днес", "Today" },
+  { "Завърти", "Turn" },
+  { "Чакам %luс", "Waiting %lus" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -602,6 +664,7 @@ protected:
   virtual const uint8_t* icon(int i) { return NULL; }
   virtual bool hasIcons() { return false; }                         // reserve the icon column
   virtual void rightText(int i, char* buf, size_t n) { buf[0] = 0; }
+  virtual bool rightFirst() { return false; }   // true: the right text (a number) is never dropped
   virtual bool onEnter(int i) { return false; }
   virtual bool onContext(int i) { return false; }
   virtual const char* emptyText() { return T(S_EMPTY); }
@@ -653,7 +716,7 @@ public:
       int max_chars = (text_w - x0) / CW;
       rightText(i, right, sizeof(right));
       int rlen = utf8Len(right);
-      if (rlen > 0 && utf8Len(buf) + 1 + rlen <= max_chars) max_chars -= rlen + 1;
+      if (rlen > 0 && (utf8Len(buf) + 1 + rlen <= max_chars || (rightFirst() && rlen + 2 <= max_chars))) max_chars -= rlen + 1;
       else right[0] = 0;   // no room: the label wins
       const uint8_t* ic = icon(i);
       bool selected = i == _sel && listFocused();
@@ -942,13 +1005,15 @@ static void utf8Lower(char* dest, const char* ch, int bytes) {
 static const uint8_t icon_shift[]   = { 0x10, 0x38, 0x7C, 0xFE, 0x38, 0x38, 0x38, 0x00 };
 static const uint8_t icon_shift_o[] = { 0x10, 0x28, 0x44, 0xEE, 0x28, 0x28, 0x38, 0x00 };
 
+static bool addHashtagChannel(UITask* task, const char* typed);
+
 // Jog-dial keyboard: turn = move over the keys, press = type, Back = delete, hold = menu.
 // While a word is being typed the dictionary suggests its completion; the cursor then sits on the
 // suggestion (shown inverted), so a press takes it plus a space. Turning leaves the suggestion and
 // lands on its next letter ("letter jump", Settings) or back on the last letter typed.
 class ComposeScreen : public UIScreen {
 public:
-  enum Mode { MODE_SEND, MODE_QUICK, MODE_NAME };
+  enum Mode { MODE_SEND, MODE_QUICK, MODE_NAME, MODE_CHANNEL };
 private:
   enum Set { SET_BG, SET_EN, SET_SYM };
   enum Special { K_SHIFT = 1, K_SPACE, K_SYM, K_LANG, K_SEND };
@@ -1043,13 +1108,13 @@ private:
   // after every edit: a suggestion, if any, takes the cursor
   void updateSuggestion() {
     int ws = wordStart();
-    _has_rest = _mode != MODE_NAME && ws < _len && _predict.suggest(&_text[ws], _rest, sizeof(_rest)) &&
+    _has_rest = _mode != MODE_NAME && _mode != MODE_CHANNEL && ws < _len && _predict.suggest(&_text[ws], _rest, sizeof(_rest)) &&
                 _len + (int)strlen(_rest) + 1 <= _max_len;
     _on_word = _has_rest;
   }
 
   void autoShift() {   // capital letter at the start and after . ! ?
-    if (_mode == MODE_NAME) { _shift = false; return; }
+    if (_mode == MODE_NAME || _mode == MODE_CHANNEL) { _shift = false; return; }
     if (_len == 0) { _shift = true; return; }
     if (_text[_len - 1] == ' ') {
       int i = _len - 1;
@@ -1070,6 +1135,7 @@ private:
   }
 
   void learnLastWord() {
+    if (_mode == MODE_CHANNEL) return;   // a channel name is no word to suggest in messages
     int ws = wordStart();
     if (ws < _len) _predict.learn(&_text[ws]);
   }
@@ -1301,9 +1367,19 @@ public:
     start();
   }
 
+  // a hashtag channel: its name in Latin letters, digits and '-' (the key is derived from it)
+  void openChannel() {
+    stashDraft();
+    _mode = MODE_CHANNEL;
+    _draft = false;
+    _max_len = 31;   // "#" + 30 letters fit the 32-byte channel name
+    setText("#");
+    start();
+  }
+
   void start() {
     while (_len > _max_len) backspace();
-    _set = _letters = (_task->prefs()->ui_lang % LANG_COUNT) == 0 ? SET_BG : SET_EN;
+    _set = _letters = (_task->prefs()->ui_lang % LANG_COUNT) == 0 && _mode != MODE_CHANNEL ? SET_BG : SET_EN;
     _sel = 0;
     autoShift();
     if (_len > 0 && _text[_len - 1] != ' ') _shift = false;
@@ -1318,7 +1394,8 @@ public:
   void clear() { _len = 0; _text[0] = 0; autoShift(); updateSuggestion(); }
   bool isEmpty() const { return _len == 0; }
   uint8_t mode() const { return _mode; }
-  void sent() { learnLastWord(); clear(); _draft = false; }   // the message went out
+  void sent();   // the message went out
+  WordPredictor& predictor() { return _predict; }
   void finish();
 
   int render(DisplayDriver& d) override {
@@ -1335,6 +1412,7 @@ public:
     char title[40];
     if (_mode == MODE_QUICK) snprintf(title, sizeof(title), T(S_QUICK_N_FMT), _slot + 1);
     else if (_mode == MODE_NAME) snprintf(title, sizeof(title), "%s", T(S_NAME_TITLE));
+    else if (_mode == MODE_CHANNEL) snprintf(title, sizeof(title), "%s", T(S_CH_TITLE));
     else snprintf(title, sizeof(title), "%s%s", _target.is_channel ? "#" : "", _target.name);
     int y = 3 * LH;
     for (int x = 0; x < d.width(); x += 2) d.fillRect(x, y, 1, 1);   // dotted rule over the bottom row
@@ -1359,6 +1437,7 @@ public:
     }
     if (c == KEY_CANCEL) {
       if (_len == 0) return false;   // empty: leave
+      if (_mode == MODE_CHANNEL && _len == 1) { setText(""); return false; }   // only the "#": leave
       backspace();
       updateSuggestion();
       return true;
@@ -1370,6 +1449,38 @@ public:
 };
 
 static ComposeScreen* compose_screen;
+
+// ---- learned words: names and words the dictionary lacks, from sent messages, in /ui_words
+
+#define WORDS_FILE "/ui_words"
+#define WORDS_FILE_MAX (PREDICT_USER_WORDS * (PREDICT_MAX_WORD + 1))
+
+static void loadLearnedWords() {
+  uint8_t* buf = (uint8_t*)malloc(WORDS_FILE_MAX);
+  if (!buf) return;
+  int n = the_mesh.loadUIFile(WORDS_FILE, buf, WORDS_FILE_MAX);
+  if (n > 0) compose_screen->predictor().importUser(buf, n);
+  free(buf);
+}
+
+static bool saveLearnedWords() {
+  WordPredictor& p = compose_screen->predictor();
+  if (!p.userDirty()) return true;
+  uint8_t* buf = (uint8_t*)malloc(WORDS_FILE_MAX);
+  if (!buf) return false;
+  int n = p.exportUser(buf, WORDS_FILE_MAX);
+  bool ok = the_mesh.saveUIFile(WORDS_FILE, buf, n);
+  free(buf);
+  if (ok) p.markUserSaved();   // a failed write is tried again with the next history save
+  return ok;
+}
+
+void ComposeScreen::sent() {
+  learnLastWord();
+  _predict.learnText(_text);   // written to flash with the history (saveHistory), not per message
+  clear();
+  _draft = false;
+}
 
 void SendUndoScreen::poll() {
   if (!timeReached(_started + SEND_UNDO_MILLIS)) return;
@@ -1404,6 +1515,14 @@ void ComposeScreen::finish() {
       _task->showAlert(T(S_SAVED), 800);
     } else {
       _task->showAlert(T(S_SAVE_FAIL), 1500);
+    }
+    return;
+  }
+  if (_mode == MODE_CHANNEL) {
+    if (_len == 0) return;
+    if (addHashtagChannel(_task, _text)) {
+      if (_task->current() == this) _task->pop();
+      clear();
     }
     return;
   }
@@ -1826,11 +1945,81 @@ bool ConversationsScreen::onEnter(int i) {
   return true;
 }
 
+// day and time of a timestamp in the local zone, as two rows for the 10 columns of the large font:
+// "Today" or "11.10", and "12:20"; both "" without a clock
+static void formatDateTime(char* day, char* hm, size_t n, uint32_t ts, const NodePrefs* p) {
+  day[0] = hm[0] = 0;
+  if (ts < VALID_EPOCH) return;
+  uint32_t local = ui::localTime(ts, p->tz_offset, p->ui_dst);
+  snprintf(hm, n, "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
+  uint32_t now = rtc_clock.getCurrentTime();
+  if (now >= VALID_EPOCH && ui::localTime(now, p->tz_offset, p->ui_dst) / 86400 == local / 86400) {
+    snprintf(day, n, "%s", T(S_TODAY));
+    return;
+  }
+  int32_t y; uint32_t mo, d;
+  ui::civilFromDays((int32_t)(local / 86400), y, mo, d);
+  snprintf(day, n, "%02lu.%02lu", (unsigned long)d, (unsigned long)mo);
+}
+
+// how a received message travelled: direct route, or flooded over N hops
+static void formatRoute(char* buf, size_t n, uint8_t path_len) {
+  if (path_len == 0xFF) snprintf(buf, n, "%s", T(S_DIRECT));
+  else if ((path_len & 63) == 0) snprintf(buf, n, "%s", T(S_FLOOD));
+  else snprintf(buf, n, T(S_HOPS_FMT), path_len & 63);
+}
+
+// read-only facts of one message: when, how it came (route, signal) or how its sending went
+class MessageInfoScreen : public ListScreen {
+  uint32_t _seq = 0;
+  char _lines[6][40];
+  int _n = 0;
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override {   // whose message: the contact or channel
+    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
+    snprintf(buf, n, "%s", m ? m->from : T(S_INFO));
+  }
+  int count() override { return _n; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
+  int render(DisplayDriver& d) override { build(); return ListScreen::render(d); }   // a delivery report may come in
+public:
+  MessageInfoScreen(UITask* task) : ListScreen(task) { }
+  void build() {
+    _n = 0;
+    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
+    if (!m) return;
+    formatDateTime(_lines[_n], _lines[_n + 1], 40, m->timestamp, _task->prefs());
+    if (_lines[_n][0]) _n += 2;
+    if (m->state == MSG_IN) {
+      formatRoute(_lines[_n++], 40, m->path_len);
+      if (m->rssi != 0) {
+        snprintf(_lines[_n++], 40, T(S_SNR_FMT), m->snr4 / 4.0f);
+        snprintf(_lines[_n++], 40, T(S_RSSI_FMT), (int)m->rssi);
+      }
+    } else if (m->state == MSG_OUT_SENT) {
+      snprintf(_lines[_n++], 40, "%s", T(S_SENT));
+    } else {
+      StrId st = m->state == MSG_OUT_ACKED ? S_DELIVERED : m->state == MSG_OUT_FAILED ? S_NOT_DELIVERED : S_WAITING;
+      snprintf(_lines[_n++], 40, "%s", T(st));
+      snprintf(_lines[_n++], 40, T(S_ATTEMPT_FMT), m->attempt + 1);
+    }
+  }
+  void open(uint32_t seq) { _seq = seq; build(); reset(); }
+};
+
+static MessageInfoScreen* message_info;
+
+static void openMessageInfo(UITask* task, uint32_t seq) {
+  message_info->open(seq);
+  task->push(message_info);
+}
+
 // pop-up for one message: reply, send again (when not delivered), delete, delete conversation
 class MessageActionsScreen : public ListScreen {
   uint32_t _seq = 0;   // the message acted on, independent of history shifts
-  enum { A_REPLY, A_RETRY, A_DEL, A_DEL_CONV };
-  uint8_t _acts[4];
+  enum { A_REPLY, A_RETRY, A_INFO, A_DEL, A_DEL_CONV };
+  uint8_t _acts[5];
   int _n = 0;
 protected:
   void title(char* buf, size_t n) override {
@@ -1839,7 +2028,7 @@ protected:
   }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override {
-    static const StrId L[] = { S_REPLY, S_RETRY, S_DEL, S_DEL_CONV };
+    static const StrId L[] = { S_REPLY, S_RETRY, S_INFO, S_DEL, S_DEL_CONV };
     snprintf(buf, n, "%s", T(L[_acts[i]]));
   }
   bool onEnter(int i) override;
@@ -1851,6 +2040,7 @@ public:
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(seq));
     _acts[_n++] = A_REPLY;
     if (m && m->state == MSG_OUT_FAILED) _acts[_n++] = A_RETRY;
+    _acts[_n++] = A_INFO;
     _acts[_n++] = A_DEL;
     _acts[_n++] = A_DEL_CONV;
     reset();
@@ -1886,6 +2076,9 @@ bool MessageActionsScreen::onEnter(int i) {
       } else {
         _task->showAlert(failText(S_SEND_FAIL), 1500);
       }
+      break;
+    case A_INFO:
+      openMessageInfo(_task, _seq);
       break;
     case A_DEL:
       confirm_seq = _seq;
@@ -1949,15 +2142,17 @@ public:
 
 static ContactInfoScreen* contact_info;
 
-// pop-up on a contact: write, details, reset path
+static void traceContact(UITask* task, const ContactInfo& c);
+
+// pop-up on a contact: write, trace, details, reset path
 class ContactActionsScreen : public ListScreen {
   uint8_t _key[PUB_KEY_SIZE];
   char _name[32];
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", _name); }
-  int count() override { return 3; }
+  int count() override { return 4; }
   void label(int i, char* buf, size_t n) override {
-    static const StrId L[] = { S_WRITE, S_INFO, S_RESET_PATH };
+    static const StrId L[] = { S_WRITE, S_TRACE, S_INFO, S_RESET_PATH };
     snprintf(buf, n, "%s", T(L[i]));
   }
   bool onEnter(int i) override {
@@ -1969,6 +2164,8 @@ protected:
       targetForContact(*c, t);
       openReplyPick(_task, t);
     } else if (i == 1) {
+      traceContact(_task, *c);
+    } else if (i == 2) {
       contact_info->open(c->id.pub_key);
       _task->push(contact_info);
     } else {
@@ -2166,19 +2363,24 @@ public:
 
 static ContactsScreen* contacts_screen;
 
+// Channels: press = the channel's conversation, hold = write / mute / delete. The last row adds a
+// hashtag channel (its key comes from its name, like in the app).
 class ChannelsScreen : public ListScreen {
   uint8_t _channels[64];
   int _n = 0;
 protected:
   bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_CHANNELS)); }
-  int count() override { return _n; }
-  const char* emptyText() override { return T(S_NO_CHANNELS); }
+  int count() override { return _n + 1; }
   bool hasIcons() override { return true; }
-  const uint8_t* icon(int i) override { return icon_hash; }
+  const uint8_t* icon(int i) override {
+    if (i >= _n) return NULL;
+    return _task->isChannelMuted(_channels[i]) ? icon_mute : icon_hash;
+  }
   void label(int i, char* buf, size_t n) override {
     ComposeTarget t;
-    if (targetForChannel(_channels[i], t)) snprintf(buf, n, "%s", t.name);
+    if (i >= _n) snprintf(buf, n, "%s", T(S_NEW_CHANNEL));
+    else if (targetForChannel(_channels[i], t)) snprintf(buf, n, "%s", t.name);
     else buf[0] = 0;
   }
   // the newest message of the channel in the history, or NULL
@@ -2191,29 +2393,13 @@ protected:
   }
   void rightText(int i, char* buf, size_t n) override {
     ComposeTarget t;
-    UIMsgEntry* m = targetForChannel(_channels[i], t) ? lastMessage(t) : NULL;
+    UIMsgEntry* m = i < _n && targetForChannel(_channels[i], t) ? lastMessage(t) : NULL;
     if (m) ageOf(buf, n, m->timestamp);
     else buf[0] = 0;
   }
   // press: the channel's conversation (press there to write), or straight to writing when it has none
-  bool onEnter(int i) override {
-    ComposeTarget t;
-    if (!targetForChannel(_channels[i], t)) return false;
-    UIMsgEntry* m = lastMessage(t);
-    if (m) {
-      thread_screen->open(m->seq);
-      _task->push(thread_screen);
-    } else {
-      openReplyPick(_task, t);
-    }
-    return true;
-  }
-  bool onContext(int i) override {   // hold: write at once
-    ComposeTarget t;
-    if (!targetForChannel(_channels[i], t)) return false;
-    openReplyPick(_task, t);
-    return true;
-  }
+  bool onEnter(int i) override;
+  bool onContext(int i) override;
 public:
   ChannelsScreen(UITask* task) : ListScreen(task) { }
   void open() {
@@ -2224,11 +2410,143 @@ public:
       if (the_mesh.getChannel(i, ch) && ch.name[0]) _channels[_n++] = i;
     }
 #endif
-    reset();
+    if (_sel > _n) _sel = _n;
   }
 };
 
 static ChannelsScreen* channels_screen;
+
+static int confirm_channel = -1;
+
+static void doDeleteChannel(UITask* task) {
+#ifdef MAX_GROUP_CHANNELS
+  ChannelDetails empty;
+  memset(&empty, 0, sizeof(empty));
+  int idx = confirm_channel;
+  task->setChannelMuted(idx, false);
+  if (idx >= 0 && the_mesh.setChannelAndSave(idx, empty)) {
+    task->haptic(UI_HAPTIC_ACK_MS);
+    task->showAlert(T(S_DELETED), 800);
+  } else {
+    task->showAlert(T(S_SAVE_FAIL), 1500);
+  }
+  channels_screen->open();
+#endif
+}
+
+// pop-up on a channel: write, mute or unmute, delete
+class ChannelActionsScreen : public ListScreen {
+  int _idx = 0;
+  char _name[32];
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", _name); }
+  int count() override { return 3; }
+  void label(int i, char* buf, size_t n) override {
+    if (i == 0) snprintf(buf, n, "%s", T(S_WRITE));
+    else if (i == 1) snprintf(buf, n, "%s", T(_task->isChannelMuted(_idx) ? S_UNMUTE : S_MUTE));
+    else snprintf(buf, n, "%s", T(S_DEL));
+  }
+  bool onEnter(int i) override {
+    _task->pop();
+    ComposeTarget t;
+    if (!targetForChannel(_idx, t)) { _task->showAlert(T(S_NO_TARGET), 1200); return true; }
+    if (i == 0) {
+      openReplyPick(_task, t);
+    } else if (i == 1) {
+      bool mute = !_task->isChannelMuted(_idx);
+      if (_task->setChannelMuted(_idx, mute)) {
+        _task->haptic(UI_HAPTIC_ACK_MS);
+        _task->showAlert(T(mute ? S_MUTED : S_UNMUTED), 800);
+      } else {
+        _task->showAlert(T(S_SAVE_FAIL), 1500);
+      }
+    } else {
+      confirm_channel = _idx;
+      char q[64];
+      snprintf(q, sizeof(q), T(S_DEL_X_Q), t.name);
+      askConfirm(_task, q, doDeleteChannel);
+    }
+    return true;
+  }
+public:
+  ChannelActionsScreen(UITask* task) : ListScreen(task) { _name[0] = 0; }
+  void open(int idx) {
+    _idx = idx;
+    ComposeTarget t;
+    StrHelper::strncpy(_name, targetForChannel(idx, t) ? t.name : "", sizeof(_name));
+    reset();
+  }
+};
+
+static ChannelActionsScreen* channel_actions;
+
+bool ChannelsScreen::onEnter(int i) {
+  if (i >= _n) {   // + new channel
+    compose_screen->openChannel();
+    _task->push(compose_screen);
+    return true;
+  }
+  ComposeTarget t;
+  if (!targetForChannel(_channels[i], t)) return false;
+  UIMsgEntry* m = lastMessage(t);
+  if (m) {
+    thread_screen->open(m->seq);
+    _task->push(thread_screen);
+  } else {
+    openReplyPick(_task, t);
+  }
+  return true;
+}
+
+bool ChannelsScreen::onContext(int i) {
+  if (i >= _n) return onEnter(i);
+  channel_actions->open(_channels[i]);
+  _task->push(channel_actions);
+  return true;
+}
+
+// "#name" from what was typed: lower case a-z, digits and '-'; the key is the first 16 bytes of
+// sha256("#name") (docs/companion_protocol.md), so everyone who types the name joins the same channel
+static bool addHashtagChannel(UITask* task, const char* typed) {
+#ifdef MAX_GROUP_CHANNELS
+  char name[32];
+  int j = 0;
+  name[j++] = '#';
+  for (const char* p = typed; *p; p++) {
+    char c = *p;
+    if (c == '#' && j == 1) continue;   // typed by hand: added anyway
+    if (c >= 'A' && c <= 'Z') c += 32;
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+      task->showAlert(T(S_CH_BAD), 1500);
+      return false;
+    }
+    if (j >= (int)sizeof(name) - 1) break;
+    name[j++] = c;
+  }
+  name[j] = 0;
+  if (j < 2) { task->showAlert(T(S_CH_BAD), 1500); return false; }
+  ChannelDetails ch;
+  int free_slot = -1;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    if (!the_mesh.getChannel(i, ch) || !ch.name[0]) { if (free_slot < 0) free_slot = i; continue; }
+    if (strcmp(ch.name, name) == 0) { task->showAlert(T(S_CH_EXISTS), 1200); return false; }
+  }
+  if (free_slot < 0) { task->showAlert(T(S_CH_FULL), 1500); return false; }
+  memset(&ch, 0, sizeof(ch));
+  StrHelper::strncpy(ch.name, name, sizeof(ch.name));
+  uint8_t hash[32];
+  mesh::Utils::sha256(hash, sizeof(hash), (const uint8_t*)name, strlen(name));
+  memcpy(ch.channel.secret, hash, 16);   // 128-bit key, the rest stays zero
+  task->setChannelMuted(free_slot, false);   // a muted channel that was in this slot before
+  if (!the_mesh.setChannelAndSave(free_slot, ch)) { task->showAlert(T(S_SAVE_FAIL), 1500); return false; }
+  task->haptic(UI_HAPTIC_ACK_MS);
+  task->showAlert(T(S_CH_ADDED), 1000);
+  channels_screen->open();
+  return true;
+#else
+  return false;
+#endif
+}
 
 // ---------------------------------------------------------------- settings
 
@@ -2263,6 +2581,7 @@ enum SettingId : uint8_t {
   ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
+  ST_WORDS, ST_HW,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2299,6 +2618,7 @@ static StrId settingName(uint8_t id) {
     S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
+    S_WORDS, S_HARDWARE,
   };
   return N[id];
 }
@@ -2346,7 +2666,7 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_TXPOW: return p->tx_power_dbm - TXPOW_MIN;
     case ST_ANT: return p->ui_ant % 3;
     case ST_LANG: return p->ui_lang % LANG_COUNT;
-    case ST_TZ: return p->ui_tz - TZ_MIN;
+    case ST_TZ: return p->tz_offset - TZ_MIN;
     case ST_DST: return p->ui_dst ? 1 : 0;
     default: return 0;
   }
@@ -2406,7 +2726,7 @@ static void setOpt(UITask* task, uint8_t id, int v) {
     case ST_CSORT: p->ui_csort = v; break;
     case ST_ANT: p->ui_ant = v; break;
     case ST_LANG: p->ui_lang = v; break;
-    case ST_TZ: p->ui_tz = v + TZ_MIN; break;
+    case ST_TZ: p->tz_offset = v + TZ_MIN; break;
     case ST_DST: p->ui_dst = v; break;
   }
 }
@@ -2529,7 +2849,7 @@ public:
     snprintf(_lines[_n++], 40, T(S_UPTIME_FMT), age);
     uint32_t now = rtc_clock.getCurrentTime();
     if (now >= VALID_EPOCH) {
-      uint32_t local = ui::localTime(now, _task->prefs()->ui_tz, _task->prefs()->ui_dst);
+      uint32_t local = ui::localTime(now, _task->prefs()->tz_offset, _task->prefs()->ui_dst);
       snprintf(_lines[_n++], 40, T(S_CLOCK_FMT), (unsigned long)((local / 3600) % 24),
                (unsigned long)((local / 60) % 60), the_mesh.isClockApprox() ? " ~" : "");
     } else {
@@ -2542,6 +2862,12 @@ public:
 static AboutScreen* about_screen;
 
 static void doRescue(UITask* task) { task->enterRescue(); }
+static void doClearWords(UITask* task) {
+  compose_screen->predictor().clearUser();
+  if (saveLearnedWords()) { task->haptic(UI_HAPTIC_ACK_MS); task->showAlert(T(S_DELETED), 800); }
+  else task->showAlert(T(S_SAVE_FAIL), 1500);
+}
+static void openHardware(UITask* task);
 static void doDfuUsb(UITask* task) { task->enterBootloader(true); }
 static void doDfuBle(UITask* task) { task->enterBootloader(false); }
 
@@ -2572,6 +2898,14 @@ protected:
     } else if (id == ST_ABOUT) {
       about_screen->open();
       _task->push(about_screen);
+    } else if (id == ST_WORDS) {
+      int n = compose_screen->predictor().userCount();
+      if (n == 0) { _task->showAlert(T(S_WORDS_NONE), 1200); return true; }
+      char q[64];
+      snprintf(q, sizeof(q), T(S_WORDS_Q_FMT), n);
+      askConfirm(_task, q, doClearWords);
+    } else if (id == ST_HW) {
+      openHardware(_task);
     } else if (id == ST_RESCUE) {
       askConfirm(_task, T(S_RESCUE_Q), doRescue);
     } else if (id == ST_DFU_USB) {
@@ -2590,9 +2924,9 @@ static SettingsGroupScreen* settings_group;
 
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
 static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK };
-static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK };
+static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET };
-static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
+static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_HW, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
 class SettingsScreen : public ListScreen {
 protected:
@@ -2618,22 +2952,21 @@ static SettingsScreen* settings_screen;
 
 // ---------------------------------------------------------------- menus
 
+static ListScreen* network_menu;   // Network: nearby, airtime, range test (defined with the tools)
+
 class MainMenuScreen : public ListScreen {
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_MENU)); }
-  int count() override { return 4; }
+  int count() override { return 5; }
   void label(int i, char* buf, size_t n) override {
-    if (i == 0) {
-      snprintf(buf, n, "%s", T(S_MSGS));
-    } else {
-      static const StrId L[] = { S_CONTACTS, S_CHANNELS, S_SETTINGS };
-      snprintf(buf, n, "%s", T(L[i - 1]));
-    }
+    static const StrId L[] = { S_MSGS, S_CONTACTS, S_CHANNELS, S_NETWORK, S_SETTINGS };
+    snprintf(buf, n, "%s", T(L[i]));
   }
   bool onEnter(int i) override {
     if (i == 0) { conversations->reset(); _task->push(conversations); }
     else if (i == 1) { contacts_screen->open(); _task->push(contacts_screen); }
-    else if (i == 2) { channels_screen->open(); _task->push(channels_screen); }
+    else if (i == 2) { channels_screen->open(); channels_screen->reset(); _task->push(channels_screen); }
+    else if (i == 3) { network_menu->reset(); _task->push(network_menu); }
     else { settings_screen->reset(); _task->push(settings_screen); }
     return true;
   }
@@ -2733,6 +3066,8 @@ static void trackReception() {
 
 static bool isCharging() { return board.isExternalPowered(); }
 
+static bool rangeRunning();   // the range test (Network) is on: an icon in the status row
+
 class StandbyScreen : public UIScreen {
   UITask* _task;
   NodePrefs* _prefs;
@@ -2753,6 +3088,7 @@ class StandbyScreen : public UIScreen {
     if (isCharging()) { x -= 16; drawIcon2(d, x, 0, icon_bolt); }
     if (_task->isBluetoothEnabled()) { x -= 16; drawIcon2(d, x, 0, icon_bt); }
     if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 18; drawSignal(d, x, 0, rx_snr); }
+    if (rangeRunning()) { x -= 16; drawIcon2(d, x, 0, icon_range); }
     if (!the_mesh.isTxAllowed()) {   // crossed-out "TX": receive only
       x -= 2 * CW + 4;
       d.setCursor(x, TEXT_DY);
@@ -2804,7 +3140,7 @@ class StandbyScreen : public UIScreen {
     // the clock, 4x ("~" in the bottom row = time taken from an advert)
     uint32_t now = rtc_clock.getCurrentTime();
     if (now >= VALID_EPOCH) {
-      uint32_t local = ui::localTime(now, _prefs->ui_tz, _prefs->ui_dst);
+      uint32_t local = ui::localTime(now, _prefs->tz_offset, _prefs->ui_dst);
       snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
     } else {
       snprintf(buf, sizeof(buf), "--:--");
@@ -2964,6 +3300,727 @@ bool StandbyScreen::handleInput(char c) {
   return false;   // Back: UITask turns the screen off
 }
 
+// ---------------------------------------------------------------- network tools: trace, nearby, airtime, range test
+
+// a short name for a 1-byte repeater hash: the one repeater contact whose key starts with it, else hex
+static void hopName(uint8_t hash, char* buf, size_t n) {
+  ContactInfo c;
+  char name[32];
+  int hits = 0;
+  int total = the_mesh.getNumContacts() + MAX_ANON_CONTACTS;   // indices include the anonymous slots
+  for (int i = MAX_ANON_CONTACTS; i < total && hits < 2; i++) {
+    if (the_mesh.getContactByIdx(i, c) && c.type == ADV_TYPE_REPEATER && c.id.pub_key[0] == hash) {
+      if (++hits == 1) StrHelper::strncpy(name, c.name, sizeof(name));
+    }
+  }
+  if (hits == 1) snprintf(buf, n, "%s", name);
+  else snprintf(buf, n, "%02X", hash);
+}
+
+struct TraceTarget {
+  char name[32];
+  uint8_t hashes[MAX_PATH_SIZE];   // 1-byte repeater hashes, there and back
+  uint8_t n;
+};
+
+// The round trip to a contact through the repeaters on its path. A TRACE is only passed on by
+// repeaters, so it goes to the repeater itself (or the last repeater before a chat contact) and
+// back the same way. false = nothing to trace: a chat contact heard directly, or no path known.
+static bool traceTargetFor(const ContactInfo& c, TraceTarget& t) {
+  memset(&t, 0, sizeof(t));
+  StrHelper::strncpy(t.name, c.name, sizeof(t.name));
+  bool known = c.out_path_len != OUT_PATH_UNKNOWN;
+  int k = known ? (c.out_path_len & 63) : 0;
+  int sz = known ? (c.out_path_len >> 6) + 1 : 1;
+  int n = 0;
+  if (c.type == ADV_TYPE_REPEATER) {   // no known path: try it as a neighbour
+    if (2 * k + 1 > MAX_PATH_SIZE) return false;
+    for (int i = 0; i < k; i++) t.hashes[n++] = c.out_path[i * sz];
+    t.hashes[n++] = c.id.pub_key[0];
+    for (int i = k - 1; i >= 0; i--) t.hashes[n++] = c.out_path[i * sz];
+  } else {
+    if (k == 0 || 2 * k - 1 > MAX_PATH_SIZE) return false;
+    for (int i = 0; i < k; i++) t.hashes[n++] = c.out_path[i * sz];
+    for (int i = k - 2; i >= 0; i--) t.hashes[n++] = c.out_path[i * sz];
+  }
+  t.n = n;
+  return true;
+}
+
+static void traceTargetForNode(const uint8_t* prefix, const char* name, TraceTarget& t) {   // a neighbour
+  memset(&t, 0, sizeof(t));
+  StrHelper::strncpy(t.name, name, sizeof(t.name));
+  t.hashes[0] = prefix[0];
+  t.n = 1;
+}
+
+#define TRACE_MIN_WAIT_MILLIS 4000
+
+// one trace at a time, shown by TraceScreen
+static struct {
+  TraceTarget target;
+  uint32_t tag;
+  unsigned long sent_at, deadline, rtt;
+  bool waiting, done, ok;
+  int8_t snrs[MAX_PATH_SIZE];   // x 4, as each hop heard the one before
+  int8_t final_snr;             // x 4, as this device heard the last hop
+  uint8_t n;
+} trace_run;
+
+static bool startTrace(const TraceTarget& t) {
+  trace_run.target = t;
+  trace_run.waiting = trace_run.done = trace_run.ok = false;
+  uint32_t timeout = 0;
+  if (!the_mesh.sendTrace(t.hashes, t.n, trace_run.tag, timeout)) return false;
+  trace_run.sent_at = millis();
+  trace_run.deadline = millis() + (timeout < TRACE_MIN_WAIT_MILLIS ? TRACE_MIN_WAIT_MILLIS : timeout) + 2000;
+  trace_run.waiting = true;
+  return true;
+}
+
+// range test: a trace every few seconds, a buzz for each answer; it runs on with the screen off
+#define RANGE_RESULTS 8
+static const uint16_t RANGE_INTERVALS[] = { 15, 30, 60, 120 };
+static const uint16_t HAPTIC_RANGE_MISS[] = { 60, 120, 60 };
+
+struct RangeResult { uint32_t ts; bool ok; int8_t out4, back4; };
+
+static struct {
+  TraceTarget target;
+  bool has_target, running, waiting;
+  uint8_t interval_idx;
+  unsigned long next_at, deadline;
+  uint32_t tag;
+  RangeResult res[RANGE_RESULTS];   // newest at head
+  uint8_t head, count;
+  uint16_t sent, ok;
+} range_test;
+
+static void rangeRecord(UITask* task, bool ok, int8_t out4, int8_t back4) {
+  range_test.waiting = false;
+  range_test.head = (range_test.head + 1) % RANGE_RESULTS;
+  if (range_test.count < RANGE_RESULTS) range_test.count++;
+  RangeResult& r = range_test.res[range_test.head];
+  r.ts = rtc_clock.getCurrentTime();
+  r.ok = ok;
+  r.out4 = out4;
+  r.back4 = back4;
+  if (ok) range_test.ok++;
+  if (!task->hapticBusy()) {   // a message alert that is playing wins
+    if (ok) task->haptic(UI_HAPTIC_ACK_MS);
+    else task->hapticPattern(HAPTIC_RANGE_MISS, sizeof(HAPTIC_RANGE_MISS) / sizeof(HAPTIC_RANGE_MISS[0]));
+  }
+  task->refresh();
+}
+
+static bool rangeRunning() { return range_test.running; }
+
+static void rangeStart() {
+  range_test.running = true;
+  range_test.waiting = false;
+  range_test.head = range_test.count = 0;
+  range_test.sent = range_test.ok = 0;
+  range_test.next_at = millis();
+}
+
+static void rangePoll(UITask* task) {
+  if (!range_test.running) return;
+  if (!the_mesh.isTxAllowed()) {   // TX switched off (Settings, antenna): nothing would go out
+    range_test.running = range_test.waiting = false;
+    task->showAlert(T(S_TX_IS_OFF), 1500);
+    task->refresh();
+    return;
+  }
+  if (range_test.waiting && timeReached(range_test.deadline)) rangeRecord(task, false, 0, 0);
+  if (!range_test.waiting && timeReached(range_test.next_at)) {
+    unsigned long every = RANGE_INTERVALS[range_test.interval_idx % 4] * 1000UL;
+    range_test.next_at = millis() + every;
+    range_test.sent++;
+    uint32_t timeout = 0;
+    if (the_mesh.sendTrace(range_test.target.hashes, range_test.target.n, range_test.tag, timeout)) {
+      unsigned long wait = (timeout < TRACE_MIN_WAIT_MILLIS ? TRACE_MIN_WAIT_MILLIS : timeout) + 2000;
+      if (wait > every - 500) wait = every - 500;
+      range_test.deadline = millis() + wait;
+      range_test.waiting = true;
+    } else {
+      rangeRecord(task, false, 0, 0);   // nothing went out (TX off)
+    }
+  }
+}
+
+// nearby repeaters: a zero-hop discover request, the answers of the next seconds
+#define NEARBY_MAX 16
+#define NEARBY_LISTEN_MILLIS 10000
+
+struct NearbyNode { uint8_t prefix[8]; int8_t snr_in4, snr_out4; char name[32]; };
+
+static struct {
+  NearbyNode nodes[NEARBY_MAX];   // in arrival order while listening (rows stay put), then strongest first
+  int n;
+  bool sorted;
+  uint32_t tag;
+  unsigned long until;
+  bool sent;
+} nearby;
+
+static void nearbySearch() {
+  nearby.n = 0;
+  nearby.sorted = false;
+  nearby.sent = the_mesh.sendNodeDiscover(nearby.tag);
+  nearby.until = millis() + NEARBY_LISTEN_MILLIS;
+}
+
+static bool nearbyListening() { return nearby.sent && !timeReached(nearby.until); }
+
+static void nearbySortWhenDone() {   // strongest first, once no more answers come
+  if (nearby.sorted || nearbyListening()) return;
+  for (int i = 1; i < nearby.n; i++) {
+    NearbyNode t = nearby.nodes[i];
+    int j = i;
+    while (j > 0 && nearby.nodes[j - 1].snr_in4 < t.snr_in4) { nearby.nodes[j] = nearby.nodes[j - 1]; j--; }
+    nearby.nodes[j] = t;
+  }
+  nearby.sorted = true;
+}
+
+void UITask::onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
+                         const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) {
+  int hops = path_len >> (flags & 3);
+  if (trace_run.waiting && tag == trace_run.tag) {
+    trace_run.waiting = false;
+    trace_run.done = trace_run.ok = true;
+    trace_run.rtt = millis() - trace_run.sent_at;
+    trace_run.n = hops < MAX_PATH_SIZE ? hops : MAX_PATH_SIZE;
+    memcpy(trace_run.snrs, path_snrs, trace_run.n);
+    trace_run.final_snr = pkt->_snr;
+    haptic(UI_HAPTIC_ACK_MS);
+    _next_refresh = 0;
+  }
+  if (range_test.running && range_test.waiting && tag == range_test.tag) {
+    rangeRecord(this, true, hops > 0 ? (int8_t)path_snrs[0] : 0, pkt->_snr);
+  }
+}
+
+void UITask::onControlDataRecv(const mesh::Packet* pkt) {
+  if (pkt->payload_len < 14 || (pkt->payload[0] & 0xF0) != CTL_TYPE_NODE_DISCOVER_RESP) return;
+  uint32_t tag;
+  memcpy(&tag, &pkt->payload[2], 4);
+  if (!nearbyListening() || tag != nearby.tag) return;
+  const uint8_t* prefix = &pkt->payload[6];
+  for (int i = 0; i < nearby.n; i++) if (memcmp(nearby.nodes[i].prefix, prefix, 8) == 0) return;   // twice
+  NearbyNode node;
+  memcpy(node.prefix, prefix, 8);
+  node.snr_in4 = pkt->_snr;
+  node.snr_out4 = (int8_t)pkt->payload[1];
+  ContactInfo* c = the_mesh.lookupContactByPubKey(prefix, 8);
+  if (c) StrHelper::strncpy(node.name, c->name, sizeof(node.name));
+  else snprintf(node.name, sizeof(node.name), "%02X%02X", prefix[0], prefix[1]);   // short: the SNR must fit
+  int at = nearby.n;
+  if (at == NEARBY_MAX) {   // full: the weakest goes, unless this one is weaker still
+    at = 0;
+    for (int i = 1; i < NEARBY_MAX; i++) if (nearby.nodes[i].snr_in4 < nearby.nodes[at].snr_in4) at = i;
+    if (nearby.nodes[at].snr_in4 >= node.snr_in4) return;
+  } else {
+    nearby.n++;
+  }
+  nearby.nodes[at] = node;
+  _next_refresh = 0;
+}
+
+// ---- trace result: each hop and how well it heard the one before, then this device
+
+class TraceScreen : public ListScreen {
+  char _lines[MAX_PATH_SIZE + 2][40];
+  char _right[MAX_PATH_SIZE + 2][8];   // SNR of a hop, on the right so a long name cannot hide it
+  int _n = 0;
+  void build() {
+    _n = 0;
+    memset(_right, 0, sizeof(_right));
+    if (trace_run.waiting) {
+      snprintf(_lines[_n++], 40, T(S_TRACE_WAIT_FMT), (millis() - trace_run.sent_at) / 1000);
+      snprintf(_lines[_n++], 40, T(S_HOPS_FMT), trace_run.target.n);
+      return;
+    }
+    if (!trace_run.ok) {
+      snprintf(_lines[_n++], 40, "%s", trace_run.done ? T(S_TRACE_NONE) : failText(S_SEND_FAIL));
+      return;
+    }
+    char name[32];
+    for (int i = 0; i < trace_run.n && i < trace_run.target.n && _n < MAX_PATH_SIZE; i++) {
+      hopName(trace_run.target.hashes[i], name, sizeof(name));
+      snprintf(_right[_n], 8, "%+.1f", trace_run.snrs[i] / 4.0f);
+      snprintf(_lines[_n++], 40, "%s", name);
+    }
+    snprintf(_right[_n], 8, "%+.1f", trace_run.final_snr / 4.0f);
+    snprintf(_lines[_n++], 40, "%s", T(S_ME));
+    unsigned long tenths = (trace_run.rtt + 50) / 100;
+    snprintf(_lines[_n++], 40, T(S_MS_FMT), tenths / 10, tenths % 10);
+  }
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", trace_run.target.name); }
+  int count() override { return _n; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
+  void rightText(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _right[i]); }
+  bool rightFirst() override { return true; }
+  bool onEnter(int i) override {   // again
+    if (trace_run.waiting) return true;
+    if (!startTrace(trace_run.target)) _task->showAlert(failText(S_SEND_FAIL), 1500);
+    reset();
+    return true;
+  }
+public:
+  TraceScreen(UITask* task) : ListScreen(task) { }
+  int render(DisplayDriver& d) override {
+    build();
+    int next = ListScreen::render(d);
+    return trace_run.waiting && next > 1000 ? 1000 : next;
+  }
+};
+
+static TraceScreen* trace_screen;
+
+// the deadline also passes with the trace screen closed: a late answer then buzzes no more
+static void tracePoll(UITask* task) {
+  if (trace_run.waiting && timeReached(trace_run.deadline)) {
+    trace_run.waiting = false;
+    trace_run.done = true;
+    task->refresh();
+  }
+}
+
+static void openTrace(UITask* task, const TraceTarget& t) {
+  if (!startTrace(t)) {
+    task->showAlert(failText(S_SEND_FAIL), 1500);
+    return;
+  }
+  trace_screen->reset();
+  task->push(trace_screen);
+}
+
+static void traceContact(UITask* task, const ContactInfo& c) {
+  TraceTarget t;
+  if (!traceTargetFor(c, t)) { task->showAlert(T(S_TRACE_NO_PATH), 1500); return; }
+  openTrace(task, t);
+}
+
+// ---- range test
+
+class RangeScreen;
+static RangeScreen* range_screen;
+static void openTargetPick(UITask* task);
+
+class RangeScreen : public ListScreen {
+  enum { R_TARGET, R_RUN, R_EVERY, R_STATS, R_FIRST_RESULT };
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_RANGE)); }
+  int count() override { return R_FIRST_RESULT + range_test.count; }
+  void label(int i, char* buf, size_t n) override {
+    switch (i) {
+      case R_TARGET:
+        snprintf(buf, n, "%s", range_test.has_target ? range_test.target.name : T(S_PICK_TARGET));
+        break;
+      case R_RUN: snprintf(buf, n, "%s", T(range_test.running ? S_STOP : S_START)); break;
+      case R_EVERY: snprintf(buf, n, T(S_EVERY_FMT), RANGE_INTERVALS[range_test.interval_idx % 4]); break;
+      case R_STATS: snprintf(buf, n, T(S_OK_OF_FMT), range_test.ok, range_test.sent); break;
+      default: {
+        const RangeResult& r = range_test.res[(range_test.head - (i - R_FIRST_RESULT) + RANGE_RESULTS) % RANGE_RESULTS];
+        char when[8] = "";
+        if (r.ts >= VALID_EPOCH) {
+          uint32_t local = ui::localTime(r.ts, _task->prefs()->tz_offset, _task->prefs()->ui_dst);
+          snprintf(when, sizeof(when), "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
+        }
+        if (r.ok) snprintf(buf, n, "%s %+d/%+d", when, (r.out4 + (r.out4 >= 0 ? 2 : -2)) / 4, (r.back4 + (r.back4 >= 0 ? 2 : -2)) / 4);
+        else snprintf(buf, n, "%s --", when);
+      }
+    }
+  }
+  bool onEnter(int i) override {
+    switch (i) {
+      case R_TARGET: openTargetPick(_task); break;
+      case R_RUN:
+        if (range_test.running) { range_test.running = false; range_test.waiting = false; }
+        else if (!range_test.has_target) openTargetPick(_task);
+        else if (!the_mesh.isTxAllowed()) _task->showAlert(T(S_TX_IS_OFF), 1500);
+        else rangeStart();
+        _task->haptic(UI_HAPTIC_ACK_MS);
+        break;
+      case R_EVERY: range_test.interval_idx = (range_test.interval_idx + 1) % 4; break;
+      default: break;
+    }
+    return true;
+  }
+public:
+  RangeScreen(UITask* task) : ListScreen(task) { }
+  int render(DisplayDriver& d) override {
+    int next = ListScreen::render(d);
+    return range_test.running && next > 1000 ? 1000 : next;
+  }
+};
+
+static void setRangeTarget(UITask* task, const TraceTarget& t) {
+  range_test.running = range_test.waiting = false;
+  range_test.target = t;
+  range_test.has_target = true;
+  range_test.head = range_test.count = 0;
+  range_test.sent = range_test.ok = 0;
+  if (task->current() != range_screen) { range_screen->reset(); task->push(range_screen); }
+}
+
+// what a trace or range test can go to: repeaters, then chat contacts reached through repeaters,
+// most recently heard first
+#define PICK_MAX 24
+
+class TargetPickScreen : public ListScreen {
+  struct Item { uint8_t prefix[6]; uint32_t lastmod; bool rpt; };
+  Item* _items = NULL;
+  int _n = 0;
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_PICK_TARGET)); }
+  int count() override { return _n; }
+  const char* emptyText() override { return T(S_NO_TARGETS); }
+  bool hasIcons() override { return true; }
+  const uint8_t* icon(int i) override { return _items[i].rpt ? icon_tower : icon_person; }
+  void label(int i, char* buf, size_t n) override {
+    ContactInfo* c = the_mesh.lookupContactByPubKey(_items[i].prefix, 6);
+    snprintf(buf, n, "%s", c ? c->name : "?");
+  }
+  bool onEnter(int i) override {
+    ContactInfo* c = the_mesh.lookupContactByPubKey(_items[i].prefix, 6);
+    TraceTarget t;
+    if (!c || !traceTargetFor(*c, t)) return true;
+    _task->pop();
+    setRangeTarget(_task, t);
+    return true;
+  }
+public:
+  TargetPickScreen(UITask* task) : ListScreen(task) { }
+  void open() {
+    if (_items == NULL) _items = new Item[PICK_MAX];
+    _n = 0;
+    ContactInfo c;
+    TraceTarget t;
+    int total = the_mesh.getNumContacts() + MAX_ANON_CONTACTS;
+    for (int i = MAX_ANON_CONTACTS; i < total; i++) {
+      if (!the_mesh.getContactByIdx(i, c) || c.type == ADV_TYPE_NONE || !traceTargetFor(c, t)) continue;
+      Item it;
+      memcpy(it.prefix, c.id.pub_key, sizeof(it.prefix));
+      it.lastmod = c.lastmod;
+      it.rpt = c.type == ADV_TYPE_REPEATER;
+      // keep the PICK_MAX best: repeaters first, then the most recently heard
+      int at = _n < PICK_MAX ? _n++ : PICK_MAX;
+      while (at > 0 && (it.rpt > _items[at - 1].rpt || (it.rpt == _items[at - 1].rpt && it.lastmod > _items[at - 1].lastmod))) {
+        if (at < PICK_MAX) _items[at] = _items[at - 1];
+        at--;
+      }
+      if (at < PICK_MAX) _items[at] = it;
+    }
+    reset();
+  }
+};
+
+static TargetPickScreen* target_pick;
+
+static void openTargetPick(UITask* task) {
+  target_pick->open();
+  task->push(target_pick);
+}
+
+// ---- nearby repeaters
+
+class NodeScreen;
+static NodeScreen* node_screen;
+
+class NearbyScreen : public ListScreen {
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override {
+    if (nearby.n > 0) snprintf(buf, n, "%s %d", T(S_NEARBY), nearby.n);
+    else snprintf(buf, n, "%s", T(S_NEARBY));
+  }
+  int count() override { return nearby.n; }
+  const char* emptyText() override {
+    if (!nearby.sent) return T(S_TX_IS_OFF);
+    return nearbyListening() ? T(S_SEARCHING) : T(S_NO_ANSWER);
+  }
+  bool hasIcons() override { return true; }
+  const uint8_t* icon(int i) override { return icon_tower; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", nearby.nodes[i].name); }
+  void rightText(int i, char* buf, size_t n) override {
+    int v = nearby.nodes[i].snr_in4;
+    snprintf(buf, n, "%+d", (v + (v >= 0 ? 2 : -2)) / 4);
+  }
+  bool rightFirst() override { return true; }
+  bool onEnter(int i) override;
+  bool onContext(int i) override {   // hold: search again
+    if (nearbyListening()) return true;
+    nearbySearch();
+    reset();
+    return true;
+  }
+public:
+  NearbyScreen(UITask* task) : ListScreen(task) { }
+  void open() {
+    if (!nearbyListening()) nearbySearch();
+    reset();
+  }
+  int render(DisplayDriver& d) override {
+    if (!nearby.sorted && !nearbyListening() && _sel < nearby.n) {   // keep the cursor on its repeater
+      uint8_t prefix[8];
+      memcpy(prefix, nearby.nodes[_sel].prefix, sizeof(prefix));
+      nearbySortWhenDone();
+      for (int i = 0; i < nearby.n; i++) if (memcmp(nearby.nodes[i].prefix, prefix, sizeof(prefix)) == 0) select(i);
+    }
+    nearbySortWhenDone();
+    int next = ListScreen::render(d);
+    return nearbyListening() && next > 500 ? 500 : next;
+  }
+};
+
+static NearbyScreen* nearby_screen;
+
+// one nearby repeater: both directions of the link, then trace or range test
+class NodeScreen : public ListScreen {
+  NearbyNode _node;
+  char _lines[3][40];
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", _node.name); }
+  int count() override { return 5; }
+  void label(int i, char* buf, size_t n) override {
+    if (i < 3) snprintf(buf, n, "%s", _lines[i]);
+    else snprintf(buf, n, "%s", T(i == 3 ? S_TRACE : S_RANGE));
+  }
+  bool hasIcons() override { return true; }
+  const uint8_t* icon(int i) override { return i == 0 ? icon_up : i == 1 ? icon_down : NULL; }
+  bool onEnter(int i) override {
+    if (i < 3) return true;
+    TraceTarget t;
+    traceTargetForNode(_node.prefix, _node.name, t);
+    if (i == 3) openTrace(_task, t);
+    else setRangeTarget(_task, t);
+    return true;
+  }
+public:
+  NodeScreen(UITask* task) : ListScreen(task) { }
+  void open(const NearbyNode& node) {
+    _node = node;
+    // arrows: up = how it hears us, down = how we hear it
+    snprintf(_lines[0], 40, "%+.1f", node.snr_out4 / 4.0f);
+    snprintf(_lines[1], 40, "%+.1f", node.snr_in4 / 4.0f);
+    char hex[20];
+    snprintf(hex, sizeof(hex), "%02X%02X%02X", node.prefix[0], node.prefix[1], node.prefix[2]);
+    snprintf(_lines[2], 40, T(S_ID_FMT), hex);
+    reset();
+  }
+};
+
+bool NearbyScreen::onEnter(int i) {
+  node_screen->open(nearby.nodes[i]);
+  _task->push(node_screen);
+  return true;
+}
+
+// ---- airtime and radio counters, live
+
+class AirtimeScreen : public ListScreen {
+  char _lines[9][40];
+  int _n = 0;
+  void build() {
+    _n = 0;
+    uint32_t win = _task->airtimeWindowSecs();
+    uint32_t tx = _task->txAirtimeLastHour();
+    uint32_t permille = win > 0 ? (uint32_t)((uint64_t)tx / win) : 0;   // ms per s = 1/1000
+    snprintf(_lines[_n++], 40, T(S_AIR_HOUR_FMT), (int)(permille / 10), (int)(permille % 10));
+    char total[12];
+    formatAge(total, sizeof(total), the_mesh.getTotalAirTime() / 1000);
+    snprintf(_lines[_n++], 40, T(S_AIR_TOTAL_FMT), total);
+    snprintf(_lines[_n++], 40, T(S_TXN_FMT), (unsigned long)radio_driver.getPacketsSent());
+    snprintf(_lines[_n++], 40, T(S_RX_FMT), (unsigned long)radio_driver.getPacketsRecv());
+    snprintf(_lines[_n++], 40, T(S_ERR_FMT), (unsigned long)radio_driver.getPacketsRecvErrors());
+    snprintf(_lines[_n++], 40, T(S_NOISE_FMT), radio_driver.getNoiseFloor());
+    if (rx_any) {
+      snprintf(_lines[_n++], 40, T(S_SNR_FMT), rx_snr);
+      snprintf(_lines[_n++], 40, T(S_RSSI_FMT), (int)radio_driver.getLastRSSI());
+    }
+  }
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_AIRTIME)); }
+  int count() override { return _n; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
+public:
+  AirtimeScreen(UITask* task) : ListScreen(task) { }
+  int render(DisplayDriver& d) override { build(); return ListScreen::render(d); }
+  void open() { build(); reset(); }
+};
+
+static AirtimeScreen* airtime_screen;
+
+class NetworkMenuScreen : public ListScreen {
+protected:
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_NETWORK)); }
+  int count() override { return 3; }
+  void label(int i, char* buf, size_t n) override {
+    static const StrId L[] = { S_NEARBY, S_AIRTIME, S_RANGE };
+    snprintf(buf, n, "%s", T(L[i]));
+  }
+  bool onEnter(int i) override {
+    if (i == 0) { nearby_screen->open(); _task->push(nearby_screen); }
+    else if (i == 1) { airtime_screen->open(); _task->push(airtime_screen); }
+    else { range_screen->reset(); _task->push(range_screen); }
+    return true;
+  }
+public:
+  NetworkMenuScreen(UITask* task) : ListScreen(task) { }
+};
+
+
+void UITask::sampleAirtime() {
+  _air_head = (_air_head + 1) % 61;
+  if (_air_count < 61) _air_count++;
+  _air_total[_air_head] = the_mesh.getTotalAirTime();
+  _air_at[_air_head] = millis();
+}
+
+uint32_t UITask::txAirtimeLastHour() {
+  if (_air_count == 0) return the_mesh.getTotalAirTime();
+  int oldest = (_air_head - (_air_count - 1) + 61) % 61;
+  return the_mesh.getTotalAirTime() - _air_total[oldest];
+}
+
+uint32_t UITask::airtimeWindowSecs() {
+  if (_air_count == 0) return millis() / 1000;
+  int oldest = (_air_head - (_air_count - 1) + 61) % 61;
+  return (millis() - _air_at[oldest]) / 1000;
+}
+
+// ---------------------------------------------------------------- hardware check (Settings > System)
+
+class EncoderTestScreen : public UIScreen {
+  UITask* _task;
+  int32_t _base = 0;
+  int _presses = 0, _holds = 0;
+public:
+  EncoderTestScreen(UITask* task) : _task(task) { }
+  void open() { _base = _task->rawDetents(); _presses = _holds = 0; }
+  int render(DisplayDriver& d) override {
+    big(d);
+    d.setColor(UIColor::title_txt);
+    d.drawTextCentered(d.width() / 2, TEXT_DY, T(S_ENCODER));
+    d.setColor(UIColor::primary_txt);
+    char buf[32];
+    snprintf(buf, sizeof(buf), T(S_TURNS_FMT), (int)(_task->rawDetents() - _base));
+    d.setCursor(0, LH + TEXT_DY); d.print(buf);
+    snprintf(buf, sizeof(buf), T(S_PRESSES_FMT), _presses);
+    d.setCursor(0, 2 * LH + TEXT_DY); d.print(buf);
+    snprintf(buf, sizeof(buf), T(S_HOLDS_FMT), _holds);
+    d.setCursor(0, 3 * LH + TEXT_DY); d.print(buf);
+    return 200;
+  }
+  bool handleInput(char c) override {
+    if (c == KEY_ENTER) _presses++;
+    else if (c == KEY_CONTEXT_MENU) _holds++;
+    else if (c == KEY_CANCEL) return false;   // leave
+    return true;   // turns are counted raw, without the acceleration
+  }
+};
+
+// all pixels on, a fine checkerboard, a frame with a cross: turn for the next one, Back leaves
+class DisplayTestScreen : public UIScreen {
+  int _pattern = 0;
+  unsigned long _hint_until = 0;   // "Turn" over the first pattern, so it is clear how to go on
+public:
+  void open() { _pattern = 0; _hint_until = millis() + 2000; }
+  int render(DisplayDriver& d) override {
+    d.setColor(UIColor::primary_txt);
+    int w = d.width(), h = d.height();
+    if (_pattern == 0) {
+      d.fillRect(0, 0, w, h);
+      if (_hint_until && !timeReached(_hint_until)) {
+        big(d);
+        d.setColor(COLOR_BLACK);
+        d.drawTextCentered(w / 2, (h - LH) / 2 + TEXT_DY, T(S_TURN_HINT));
+        d.setColor(UIColor::primary_txt);
+        return 300;
+      }
+      _hint_until = 0;
+    } else if (_pattern == 1) {
+      for (int y = 0; y < h; y++) for (int x = (y & 1); x < w; x += 2) d.fillRect(x, y, 1, 1);
+    } else {
+      d.drawRect(0, 0, w, h);
+      for (int i = 0; i < w; i++) { d.fillRect(i, i * h / w, 1, 1); d.fillRect(i, h - 1 - i * h / w, 1, 1); }
+    }
+    return 5000;
+  }
+  bool handleInput(char c) override {
+    if (c == KEY_NEXT || c == KEY_PREV) _hint_until = 0;
+    if (c == KEY_NEXT) _pattern = (_pattern + 1) % 3;
+    else if (c == KEY_PREV) _pattern = (_pattern + 2) % 3;
+    else if (c == KEY_CANCEL) return false;
+    return true;
+  }
+};
+
+static EncoderTestScreen* encoder_test;
+static DisplayTestScreen* display_test;
+
+// Settings > System > Hardware: the three tests, then live readings
+class HardwareScreen : public ListScreen {
+  enum { H_ENCODER, H_VIBRATION, H_DISPLAY, H_FIRST_INFO };
+  char _lines[8][40];
+  int _n = 0;
+  void build() {
+    _n = 0;
+    uint16_t mv = _task->battMilliVolts();
+    snprintf(_lines[_n++], 40, T(S_BATT_FMT), mv / 1000, (mv % 1000) / 10, battPercent(mv));
+    uint16_t raw = _task->getBattMilliVolts();
+    snprintf(_lines[_n++], 40, T(S_RAW_FMT), raw / 1000, (raw % 1000) / 10);
+    snprintf(_lines[_n++], 40, T(S_ADC_FMT), board.getAdcMultiplier());
+    snprintf(_lines[_n++], 40, T(S_USB_FMT), T(board.isExternalPowered() ? S_YES : S_NO));
+    snprintf(_lines[_n++], 40, T(S_RESET_FMT), board.getResetReasonString(board.getResetReason()));
+    snprintf(_lines[_n++], 40, T(S_NOISE_FMT), radio_driver.getNoiseFloor());
+    char age[12];
+    formatAge(age, sizeof(age), millis() / 1000);
+    snprintf(_lines[_n++], 40, T(S_UPTIME_FMT), age);
+  }
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_HARDWARE)); }
+  int count() override { return H_FIRST_INFO + _n; }
+  void label(int i, char* buf, size_t n) override {
+    if (i == H_ENCODER) snprintf(buf, n, "%s", T(S_ENCODER));
+    else if (i == H_VIBRATION) snprintf(buf, n, "%s", T(S_SET_VIBE));
+    else if (i == H_DISPLAY) snprintf(buf, n, "%s", T(S_GRP_DISPLAY));
+    else snprintf(buf, n, "%s", _lines[i - H_FIRST_INFO]);
+  }
+  bool onEnter(int i) override {
+    if (i == H_ENCODER) { encoder_test->open(); _task->push(encoder_test); }
+    else if (i == H_VIBRATION) _task->testVibration();
+    else if (i == H_DISPLAY) { display_test->open(); _task->push(display_test); }
+    return true;
+  }
+public:
+  HardwareScreen(UITask* task) : ListScreen(task) { }
+  int render(DisplayDriver& d) override { build(); return ListScreen::render(d); }
+  void open() { build(); reset(); }
+};
+
+static HardwareScreen* hardware_screen;
+
+static void openHardware(UITask* task) {
+  hardware_screen->open();
+  task->push(hardware_screen);
+}
+
+void UITask::testVibration() {
+#ifdef PIN_VIBRATION
+  vibration.playPattern(HAPTIC_DIRECT, sizeof(HAPTIC_DIRECT) / sizeof(HAPTIC_DIRECT[0]));
+#endif
+}
+
 // ---------------------------------------------------------------- UITask
 
 static bool in_rescue = false;
@@ -3016,10 +4073,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   conv_actions = new ConvActionsScreen(this);
   thread_screen = new ThreadScreen(this);
   message_actions = new MessageActionsScreen(this);
+  message_info = new MessageInfoScreen(this);
   contacts_screen = new ContactsScreen(this);
   contact_actions = new ContactActionsScreen(this);
   contact_info = new ContactInfoScreen(this);
   channels_screen = new ChannelsScreen(this);
+  channel_actions = new ChannelActionsScreen(this);
   settings_screen = new SettingsScreen(this);
   settings_group = new SettingsGroupScreen(this);
   value_edit = new ValueEditScreen(this);
@@ -3031,6 +4090,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   reply_pick = new ReplyPickScreen(this);
   send_undo = new SendUndoScreen(this);
   quick_edit = new QuickEditScreen(this);
+  network_menu = new NetworkMenuScreen(this);
+  nearby_screen = new NearbyScreen(this);
+  node_screen = new NodeScreen(this);
+  airtime_screen = new AirtimeScreen(this);
+  trace_screen = new TraceScreen(this);
+  range_screen = new RangeScreen(this);
+  target_pick = new TargetPickScreen(this);
+  hardware_screen = new HardwareScreen(this);
+  encoder_test = new EncoderTestScreen(this);
+  display_test = new DisplayTestScreen();
+  range_test.interval_idx = 1;   // 30 s
 #ifdef UI_ASK_ANTENNA
   {
     uint8_t mode = _node_prefs->ui_ant % 3;
@@ -3048,6 +4118,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
 #endif
   loadQuickReplies();
+  loadMuted();
+  loadLearnedWords();
   loadHistory();   // messages from before the last power off or reset
   _depth = 0;   // splash until home()
   _next_refresh = 100;
@@ -3102,6 +4174,62 @@ bool UITask::setQuickReply(int i, const char* text) {
   StrHelper::strncpy(_quick[i], old, UI_QUICK_LEN);   // not saved: show what is on flash
   _quick_custom = was_custom;
   return false;
+}
+
+// ---- muted channels: the first 4 bytes of each one's key, in /ui_mute
+
+#define MUTE_FILE "/ui_mute"
+
+static uint32_t channelKey(int idx) {
+#ifdef MAX_GROUP_CHANNELS
+  ChannelDetails ch;
+  if (idx < 0 || !the_mesh.getChannel(idx, ch) || !ch.name[0]) return 0;
+  uint32_t k;
+  memcpy(&k, ch.channel.secret, sizeof(k));
+  return k;
+#else
+  return 0;
+#endif
+}
+
+void UITask::loadMuted() {
+  int n = the_mesh.loadUIFile(MUTE_FILE, (uint8_t*)_muted, sizeof(_muted));
+  _num_muted = n > 0 ? n / (int)sizeof(_muted[0]) : 0;
+}
+
+bool UITask::saveMuted() {
+  if (_num_muted == 0) return the_mesh.saveUIFile(MUTE_FILE, (const uint8_t*)_muted, 0);
+  return the_mesh.saveUIFile(MUTE_FILE, (const uint8_t*)_muted, _num_muted * sizeof(_muted[0]));
+}
+
+bool UITask::isChannelMuted(int idx) {
+  uint32_t k = channelKey(idx);
+  if (k == 0) return false;
+  for (int i = 0; i < _num_muted; i++) if (_muted[i] == k) return true;
+  return false;
+}
+
+bool UITask::setChannelMuted(int idx, bool muted) {
+  uint32_t k = channelKey(idx);
+  if (k == 0 || isChannelMuted(idx) == muted) return true;
+  if (muted) {
+    // keys of channels deleted or replaced from the phone stay behind: drop them first
+    for (int i = 0; i < _num_muted; ) {
+      bool used = false;
+#ifdef MAX_GROUP_CHANNELS
+      for (int c = 0; c < MAX_GROUP_CHANNELS && !used; c++) used = channelKey(c) == _muted[i];
+#endif
+      if (used) i++;
+      else _muted[i] = _muted[--_num_muted];
+    }
+    if (_num_muted >= (int)(sizeof(_muted) / sizeof(_muted[0]))) return false;
+    _muted[_num_muted++] = k;
+  } else {
+    for (int i = 0; i < _num_muted; i++) {
+      if (_muted[i] == k) { _muted[i] = _muted[--_num_muted]; break; }
+    }
+  }
+  return saveMuted();
 }
 
 void UITask::applyEncoderPrefs() {
@@ -3206,6 +4334,20 @@ void UITask::showAlert(const char* text, int duration_millis) {
 void UITask::haptic(uint16_t millis_on) {
 #ifdef PIN_VIBRATION
   if (millis_on > 0 && !_node_prefs->vibe_quiet) vibration.pulse(millis_on);
+#endif
+}
+
+bool UITask::hapticBusy() {
+#ifdef PIN_VIBRATION
+  return vibration.isBusy();
+#else
+  return false;
+#endif
+}
+
+void UITask::hapticPattern(const uint16_t* pattern, int n) {
+#ifdef PIN_VIBRATION
+  if (!_node_prefs->vibe_quiet) vibration.playPattern(pattern, n);
 #endif
 }
 
@@ -3322,6 +4464,27 @@ void UITask::markAllRead() {
   for (int i = 0; i < _msg_count; i++) historyAt(i)->unread = false;
 }
 
+void UITask::onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) {
+  if (txt_type != TXT_TYPE_PLAIN && txt_type != TXT_TYPE_SIGNED_PLAIN) return;   // not CLI data
+  msgSource(false, 0, from.id.pub_key);
+  _next_snr4 = pkt->_snr;
+  _next_rssi = (int16_t)radio_driver.getLastRSSI();
+  newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, from.name, text, _msgcount);
+  notifyMsg(UIEventType::contactMessage, hasConnection());
+}
+
+void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) {
+  int idx = the_mesh.findChannelIdx(channel_details.channel);
+  bool muted = idx >= 0 && isChannelMuted(idx);
+  msgSource(true, idx < 0 ? 0 : idx, NULL);
+  _next_muted = muted;
+  _next_snr4 = pkt->_snr;
+  _next_rssi = (int16_t)radio_driver.getLastRSSI();
+  bool mention = isMention(text);   // newMsg() gives a mention the direct message buzz: keep it
+  newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, channel_details.name, text, _msgcount);
+  if (!muted && !mention) notifyMsg(UIEventType::channelMessage, hasConnection());
+}
+
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
   if (msgcount == 0) markAllRead();   // the phone has fetched everything
@@ -3401,6 +4564,12 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   m->channel_idx = _next_channel;
   memcpy(m->pub_prefix, _next_prefix, sizeof(m->pub_prefix));
   _next_src = MSG_SRC_UNKNOWN;
+  m->snr4 = _next_snr4;
+  m->rssi = _next_rssi;
+  bool muted = _next_muted;
+  _next_muted = false;
+  _next_snr4 = 0;
+  _next_rssi = 0;
   _last_new_msg = millis();
 
   // a channel message that names this node counts as a direct one: its buzz and waking the screen
@@ -3409,11 +4578,13 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     notifyMsg(UIEventType::contactMessage, hasConnection());   // replaces the channel buzz
   }
   bool direct = m->src != MSG_SRC_CHANNEL || m->mention;
+  if (muted && !m->mention) direct = false;
 
   if (_display != NULL) {
     // Settings > Messages > Wake for: direct messages (default), all, never; never with a phone
     uint8_t wake = _node_prefs->ui_wake % 3;
-    if (!_display->isOn() && !hasConnection() && (wake == WAKE_ALL || (wake == WAKE_DIRECT && direct))) {
+    if (!_display->isOn() && !hasConnection() && (wake == WAKE_ALL || (wake == WAKE_DIRECT && direct)) &&
+        !(muted && !m->mention)) {   // a muted channel only counts, unless it names this node
       wakeDisplay();
     }
     if (_display->isOn() && current() != standby) {
@@ -3526,6 +4697,7 @@ uint32_t UITask::historyHash() const {
 }
 
 void UITask::saveHistory() {
+  saveLearnedWords();   // only when a new word was learned
   uint32_t hash = historyHash();
   if (hash == _hist_hash) return;   // as on flash already
   if (_msg_count == 0) {
@@ -3573,6 +4745,7 @@ void UITask::shutdown(bool restart) {
   vibration.stop();
 #endif
   the_mesh.flushPendingWrites();   // contacts/paths learned in the last moments
+  saveLearnedWords();
   if (restart) _board->reboot();
   else _board->powerOff();
 }
@@ -3711,6 +4884,7 @@ void UITask::loop() {
       if (r == RotaryInputEvent::None) break;
       net += (r == RotaryInputEvent::Next) ? 1 : -1;
     }
+    _raw_detents += net;
     if (net != 0) {
       int8_t dir = net > 0 ? 1 : -1;
       int n = net > 0 ? net : -net;
@@ -3760,6 +4934,12 @@ void UITask::loop() {
 
   trackReception();
   checkAckTimeouts();
+  rangePoll(this);
+  tracePoll(this);
+  if (_air_next == 0 || timeReached(_air_next)) {   // the airtime of the last hour, a sample a minute
+    _air_next = millis() + 60000UL;
+    sampleAirtime();
+  }
 
   // the antenna question is still open (receive only): a short reminder now and then
   if (_ask_antenna && timeReached(_ant_remind)) {

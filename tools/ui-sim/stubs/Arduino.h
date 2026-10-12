@@ -10,3 +10,4 @@
 extern unsigned long sim_millis;
 inline unsigned long millis() { return sim_millis; }
 void delay(unsigned long ms);   // advances the clock (and keeps the UI's vibration loop happy)
+#include <Stream.h>   // ConfigSerializer reads and writes a Stream
