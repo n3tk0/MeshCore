@@ -47,6 +47,8 @@ TEST(WordPredictor, ExportImportRoundTripAndRejectsGarbage) {
   a.learnText("Лозенец xyzzyq");
   uint8_t buf[PREDICT_USER_WORDS * (PREDICT_MAX_WORD + 1)];
   int len = a.exportUser(buf, sizeof(buf));
+  EXPECT_TRUE(a.userDirty());   // until the file is written
+  a.markUserSaved();
   EXPECT_FALSE(a.userDirty());
 
   WordPredictor b;
@@ -76,7 +78,8 @@ TEST(WordPredictor, OnlyANewWordNeedsAWrite) {
   WordPredictor p;
   p.learnText("xyzzyq qqzzab");
   uint8_t buf[64];
-  p.exportUser(buf, sizeof(buf));   // written: clean
+  p.exportUser(buf, sizeof(buf));
+  p.markUserSaved();                // written: clean
   p.learnText("xyzzyq");            // known, only moves to the front
   EXPECT_FALSE(p.userDirty());
   p.learnText("zzqwerty");

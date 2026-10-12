@@ -36,6 +36,7 @@ public:
   int userCount() const { return _num_user; }
   void clearUser();
   bool userDirty() const { return _user_dirty; }
+  void markUserSaved() { _user_dirty = false; }   // after the file was written
   // file image: the encoded words, NUL separated; returns the length
   int exportUser(uint8_t* buf, int max_len);
   void importUser(const uint8_t* buf, int len);

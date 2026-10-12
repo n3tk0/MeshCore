@@ -162,8 +162,7 @@ int WordPredictor::exportUser(uint8_t* buf, int max_len) {
     memcpy(&buf[len], _user[i], l + 1);
     len += l + 1;
   }
-  _user_dirty = false;
-  return len;
+  return len;   // still dirty until markUserSaved(): the write may fail
 }
 
 void WordPredictor::importUser(const uint8_t* buf, int len) {
