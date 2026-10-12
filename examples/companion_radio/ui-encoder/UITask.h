@@ -84,6 +84,8 @@ class UITask : public AbstractUITask {
   uint8_t _low_count;        // checks in a row below the power-off voltage
   bool _locked;              // key lock: turning does nothing, hold Back unlocks
   unsigned long _ant_remind; // next vibration while the antenna question waits
+  uint32_t _hist_hash;       // message history as last written to flash
+  unsigned long _hist_check; // next look for changes to write
 
   // encoder acceleration
   unsigned long _last_turn;
@@ -114,7 +116,8 @@ class UITask : public AbstractUITask {
   void checkAckTimeouts();
   bool sendAttempt(UIMsgEntry* m);   // (re)sends a direct message from the history
   void checkBattery();
-  void saveHistory();
+  uint32_t historyHash() const;
+  void saveHistory();   // when it changed since the last write
   void loadHistory();
   bool isMention(const char* text) const;
 
@@ -128,6 +131,8 @@ public:
     _low_count = 0;
     _locked = false;
     _ant_remind = 0;
+    _hist_hash = 0;
+    _hist_check = 0;
     _last_turn = 0;
     _last_dir = 0;
     _depth = 0;
