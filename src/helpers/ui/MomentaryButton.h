@@ -30,8 +30,8 @@ class MomentaryButton {
 public:
   MomentaryButton(int8_t pin, int long_press_mills=0, bool reverse=false, bool pulldownup=false, bool multiclick=true);
   MomentaryButton(int8_t pin, int long_press_mills, int analog_threshold);
-  void begin();
-  int check(bool repeat_click=false);  // returns one of BUTTON_EVENT_*
+  virtual void begin();
+  virtual int check(bool repeat_click=false);  // returns one of BUTTON_EVENT_*
   void cancelClick();  // suppress next BUTTON_EVENT_CLICK (if already in DOWN state)
   // Default: a level counts once it has been stable for ms, so a glitch shorter than that is never
   // a press, but a press must still be down at a poll ms after it began. first_edge: a change counts
