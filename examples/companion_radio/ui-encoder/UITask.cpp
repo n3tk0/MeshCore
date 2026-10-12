@@ -2346,7 +2346,7 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_TXPOW: return p->tx_power_dbm - TXPOW_MIN;
     case ST_ANT: return p->ui_ant % 3;
     case ST_LANG: return p->ui_lang % LANG_COUNT;
-    case ST_TZ: return p->ui_tz - TZ_MIN;
+    case ST_TZ: return p->tz_offset - TZ_MIN;
     case ST_DST: return p->ui_dst ? 1 : 0;
     default: return 0;
   }
@@ -2406,7 +2406,7 @@ static void setOpt(UITask* task, uint8_t id, int v) {
     case ST_CSORT: p->ui_csort = v; break;
     case ST_ANT: p->ui_ant = v; break;
     case ST_LANG: p->ui_lang = v; break;
-    case ST_TZ: p->ui_tz = v + TZ_MIN; break;
+    case ST_TZ: p->tz_offset = v + TZ_MIN; break;
     case ST_DST: p->ui_dst = v; break;
   }
 }
@@ -2529,7 +2529,7 @@ public:
     snprintf(_lines[_n++], 40, T(S_UPTIME_FMT), age);
     uint32_t now = rtc_clock.getCurrentTime();
     if (now >= VALID_EPOCH) {
-      uint32_t local = ui::localTime(now, _task->prefs()->ui_tz, _task->prefs()->ui_dst);
+      uint32_t local = ui::localTime(now, _task->prefs()->tz_offset, _task->prefs()->ui_dst);
       snprintf(_lines[_n++], 40, T(S_CLOCK_FMT), (unsigned long)((local / 3600) % 24),
                (unsigned long)((local / 60) % 60), the_mesh.isClockApprox() ? " ~" : "");
     } else {
@@ -2804,7 +2804,7 @@ class StandbyScreen : public UIScreen {
     // the clock, 4x ("~" in the bottom row = time taken from an advert)
     uint32_t now = rtc_clock.getCurrentTime();
     if (now >= VALID_EPOCH) {
-      uint32_t local = ui::localTime(now, _prefs->ui_tz, _prefs->ui_dst);
+      uint32_t local = ui::localTime(now, _prefs->tz_offset, _prefs->ui_dst);
       snprintf(buf, sizeof(buf), "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
     } else {
       snprintf(buf, sizeof(buf), "--:--");
@@ -3320,6 +3320,20 @@ void UITask::clearHistory() {
 
 void UITask::markAllRead() {
   for (int i = 0; i < _msg_count; i++) historyAt(i)->unread = false;
+}
+
+void UITask::onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) {
+  if (txt_type != TXT_TYPE_PLAIN && txt_type != TXT_TYPE_SIGNED_PLAIN) return;   // not CLI data
+  msgSource(false, 0, from.id.pub_key);
+  newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, from.name, text, _msgcount);
+  notifyMsg(UIEventType::contactMessage, hasConnection());
+}
+
+void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) {
+  notifyMsg(UIEventType::channelMessage, hasConnection());
+  int idx = the_mesh.findChannelIdx(channel_details.channel);
+  msgSource(true, idx < 0 ? 0 : idx, NULL);
+  newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, channel_details.name, text, _msgcount);
 }
 
 void UITask::msgRead(int msgcount) {

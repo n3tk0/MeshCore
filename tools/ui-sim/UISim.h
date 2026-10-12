@@ -26,6 +26,13 @@ namespace mesh {
   struct Identity { uint8_t pub_key[PUB_KEY_SIZE]; };
   struct LocalIdentity : Identity { };
   struct GroupChannel { uint8_t hash[PATH_HASH_SIZE]; uint8_t secret[PUB_KEY_SIZE]; };
+  struct Packet {
+    uint8_t header = 0, path_len = 0;
+    int8_t _snr = 0;
+    bool flood = true;
+    bool isRouteFlood() const { return flood; }
+    float getSNR() const { return _snr / 4.0f; }
+  };
 }
 
 struct ContactInfo {
@@ -52,7 +59,24 @@ struct AdvertPath {
   uint8_t path[MAX_PATH_SIZE];
 };
 
-class SimMesh {
+// what UITask gets from MyMesh: the listener interface it implements
+class MyMesh {
+public:
+  class Listener {
+  public:
+    virtual void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) = 0;
+    virtual void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) = 0;
+    virtual void onQueueSizeChanged(int msgcount) = 0;
+    virtual void onACKRecv(uint32_t ack_crc) { }
+    virtual void onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
+                             const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) { }
+    virtual bool onUnhandledResponse(const ContactInfo &from, uint32_t tag, const uint8_t* data, uint8_t len) { return false; }
+    virtual void onControlDataRecv(const mesh::Packet* pkt) { }
+    virtual ~Listener() { }
+  };
+};
+
+class SimMesh : public MyMesh {
 public:
   mesh::LocalIdentity self_id;
   ContactInfo contacts[MAX_ANON_CONTACTS + 16];
@@ -76,6 +100,10 @@ public:
   void setTxAllowed(bool on) { tx_allowed = on; }
   bool isClockApprox() const { return clock_approx; }
   bool getChannel(int idx, ChannelDetails& dest);
+  int findChannelIdx(const mesh::GroupChannel& ch) {
+    for (int i = 0; i < MAX_GROUP_CHANNELS; i++) if (memcmp(channels[i].channel.secret, ch.secret, sizeof(ch.secret)) == 0) return i;
+    return -1;
+  }
   ContactInfo* lookupContactByPubKey(const uint8_t* key, int prefix_len);
   bool getContactByIdx(uint32_t idx, ContactInfo& c);
   int getNumContacts() const { return num_contacts; }
