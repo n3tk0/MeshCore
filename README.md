@@ -65,7 +65,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 | Controls | vibration, encoder direction, encoder steps per detent (2 / 4), keyboard jump to the likely next letter, key lock (by hand / automatic when the screen goes off) |
 | Messages | alerts (without phone / always / never), wake the screen for (direct and mentions / all / never), confirm deletes, contacts sort, 10 quick replies (stored in `/ui_quick`) |
 | Radio | transmit on/off, TX power, antenna question (after a new battery / every boot / never), preset (EU/UK Narrow, EU/UK Deprecated; anything else shows as custom) |
-| System | node name (an advert with the new name is offered; the Bluetooth name changes after a restart), language BG / EN, time zone, EU summer time, battery calibration, about, CLI rescue |
+| System | node name (an advert with the new name is offered; the Bluetooth name changes after a restart), language BG / EN, time zone, EU summer time, battery calibration, about, CLI rescue, firmware update over USB (UF2 drive) or BLE (DFU) |
 
 **Battery calibration:** Settings > System > Battery shows the measured voltage; set it to what a multimeter shows at the battery and the divider factor is saved in prefs. The shown value is averaged, and the node powers off only after three low readings in a row, so a transmit pulse does not switch it off.
 

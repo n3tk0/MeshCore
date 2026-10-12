@@ -141,7 +141,7 @@ enum StrId {
   S_SETTINGS, S_GRP_DISPLAY, S_GRP_INPUT, S_GRP_MSGS, S_GRP_RADIO, S_GRP_SYSTEM, S_SET_OFF,
   S_SET_BRIGHT, S_SET_DOTS, S_SET_MENU_SZ, S_SET_TEXT_SZ, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_NOTIFY,
   S_SET_DELCONF, S_SET_CSORT, S_SET_WAKE, S_SET_LOCK, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET, S_SET_BATT, S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST,
-  S_ABOUT, S_RESCUE, S_RESCUE_Q, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_HIGH,
+  S_ABOUT, S_RESCUE, S_RESCUE_Q, S_SET_DFU_USB, S_SET_DFU_BLE, S_DFU_USB_Q, S_DFU_BLE_Q, S_DFU_USB_L, S_DFU_BLE_L, S_DFU_FAIL, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_HIGH,
   S_MEDIUM, S_LOW, S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_SIZE_LARGE, S_SIZE_MEDIUM, S_SIZE_SMALL, S_SIZE_TINY, S_ENC_NORMAL, S_ENC_REVERSED,
   S_STEPS_FMT, S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER, S_CSORT_NAME, S_CSORT_RECENT,
   S_ANT_POWER_LOSS, S_ANT_ALWAYS, S_ANT_NEVER, S_WAKE_DIRECT, S_WAKE_ALL, S_WAKE_NEVER, S_LOCK_HAND,
@@ -283,6 +283,13 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Инфо", "About" },
   { "CLI rescue", "CLI rescue" },
   { "Rescue? Без app до рестарт", "Rescue? No app until restart" },
+  { "Ъпдейт USB", "Update USB" },
+  { "Ъпдейт BLE", "Update BLE" },
+  { "USB ъпдейт?", "USB update?" },
+  { "BLE ъпдейт?", "BLE update?" },
+  { "USB ъпдейт: копирай UF2 файла", "USB update: copy the UF2 file" },
+  { "BLE ъпдейт: DFU от телефона", "BLE update: DFU from the phone" },
+  { "Не се поддържа", "Not supported" },
   { "Запази", "Save" },
   { "15 с", "15 s" },
   { "30 с", "30 s" },
@@ -2254,7 +2261,7 @@ enum SettingId : uint8_t {
   ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK,
   ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
-  ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE,
+  ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2290,7 +2297,7 @@ static StrId settingName(uint8_t id) {
     S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_LOCK,
     S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
-    S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE,
+    S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
   };
   return N[id];
 }
@@ -2534,6 +2541,8 @@ public:
 static AboutScreen* about_screen;
 
 static void doRescue(UITask* task) { task->enterRescue(); }
+static void doDfuUsb(UITask* task) { task->enterBootloader(true); }
+static void doDfuBle(UITask* task) { task->enterBootloader(false); }
 
 class SettingsGroupScreen : public ListScreen {
   const uint8_t* _items = NULL;
@@ -2564,6 +2573,10 @@ protected:
       _task->push(about_screen);
     } else if (id == ST_RESCUE) {
       askConfirm(_task, T(S_RESCUE_Q), doRescue);
+    } else if (id == ST_DFU_USB) {
+      askConfirm(_task, T(S_DFU_USB_Q), doDfuUsb);
+    } else if (id == ST_DFU_BLE) {
+      askConfirm(_task, T(S_DFU_BLE_Q), doDfuBle);
     }
     return true;
   }
@@ -2578,7 +2591,7 @@ static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIG
 static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK };
 static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK };
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET };
-static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE };
+static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
 class SettingsScreen : public ListScreen {
 protected:
@@ -3128,6 +3141,29 @@ void UITask::enterRescue() {
   _stack[0] = rescue_screen;
   _depth = 1;
   _next_refresh = 0;
+}
+
+// firmware update without the buttons at reset: save what hibernate saves, leave how-to on the
+// screen (the bootloader does not touch the OLED) and restart into the bootloader
+void UITask::enterBootloader(bool usb) {
+  the_mesh.flushPendingWrites();
+  saveHistory();
+  the_mesh.saveOfflineQueue();
+  if (_display != NULL) {
+    _display->turnOn();
+    _display->startFrame();
+    big(*_display);
+    _display->setColor(UIColor::primary_txt);
+    drawLines(*_display, 0, 4, T(usb ? S_DFU_USB_L : S_DFU_BLE_L), 4);
+    _display->endFrame();
+  }
+#ifdef PIN_VIBRATION
+  vibration.stop();
+#endif
+  delay(200);
+  _board->rebootToBootloader(usb);
+  // still here: the board has no bootloader update mode; the saved files are read at the next start
+  showAlert(T(S_DFU_FAIL), 1500);
 }
 
 void UITask::setTransmit(bool on) {

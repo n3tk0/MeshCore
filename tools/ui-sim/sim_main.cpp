@@ -485,6 +485,8 @@ static void scenario(uint8_t lang) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();
       turn(2); press(); turn(3); shot("edit_battery", bg ? "Калибрация: въведи волтажа от мултиметъра" : "Calibration: enter the multimeter reading"); back();
       turn(1); press(); shot("about", bg ? "За устройството" : "About"); back();
+      turn(2); shot("settings_update", bg ? "Ъпдейт на фърмуера от менюто" : "Firmware update from the menu");
+      press(); shot("update_usb_q", bg ? "Рестарт в bootloader-а (USB диск за UF2)" : "Restart into the bootloader (USB drive for a UF2)"); back();
     }
     back();
     turn(1);
