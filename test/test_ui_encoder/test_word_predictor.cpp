@@ -71,3 +71,14 @@ TEST(WordPredictor, ClearForgetsLearnedWords) {
   char rest[48];
   EXPECT_FALSE(p.suggest("xyzz", rest, sizeof(rest)));
 }
+
+TEST(WordPredictor, OnlyANewWordNeedsAWrite) {
+  WordPredictor p;
+  p.learnText("xyzzyq qqzzab");
+  uint8_t buf[64];
+  p.exportUser(buf, sizeof(buf));   // written: clean
+  p.learnText("xyzzyq");            // known, only moves to the front
+  EXPECT_FALSE(p.userDirty());
+  p.learnText("zzqwerty");
+  EXPECT_TRUE(p.userDirty());
+}

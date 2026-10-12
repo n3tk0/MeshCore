@@ -241,7 +241,10 @@ ContactInfo* SimMesh::addContact(const char* name, uint8_t type, uint8_t key0, u
   if (path_len != OUT_PATH_UNKNOWN) for (int i = 0; i < (path_len & 63); i++) c.out_path[i] = i == 0 ? 0x80 : 0xC0 + i;
   return &c;
 }
-void SimMesh::addChannel(int idx, const char* name) { StrHelper::strncpy(channels[idx].name, name, 32); }
+void SimMesh::addChannel(int idx, const char* name) {
+  StrHelper::strncpy(channels[idx].name, name, 32);
+  for (int i = 0; i < 16; i++) channels[idx].channel.secret[i] = 0x31 * (idx + 1) + i;   // a key, so it can be muted
+}
 void SimMesh::addRecent(const char* name, uint32_t ts) {
   AdvertPath& a = recent[num_recent++];
   memset(&a, 0, sizeof(a));
@@ -316,7 +319,7 @@ static void shot(const char* name, const char* caption) {
   shotFrame(name, caption);
 }
 
-static void receive(UITask& ui, bool channel, int ch_idx, const ContactInfo* from, const char* chan_name, const char* text) {
+static void receive(UITask& ui, bool channel, int ch_idx, const ContactInfo* from, const char*, const char* text) {
   if (!channel) {   // as the mesh delivers it: with the signal of the packet
     mesh::Packet pkt;
     pkt._snr = 27;   // +6.75 dB
@@ -325,9 +328,12 @@ static void receive(UITask& ui, bool channel, int ch_idx, const ContactInfo* fro
     radio_driver.recv++;
     return;
   }
-  ui.msgSource(channel, ch_idx, from ? from->id.pub_key : NULL);
-  ui.newMsg(1, channel ? chan_name : from->name, text, 1);
-  ui.notifyMsg(channel ? UIEventType::channelMessage : UIEventType::contactMessage, false);
+  mesh::Packet pkt;   // a channel message, also as the mesh delivers it (mute, mentions)
+  pkt._snr = 18;
+  pkt.path_len = 1;
+  ChannelDetails ch;
+  the_mesh.getChannel(ch_idx, ch);
+  ui.onChannelMessageRecv(&pkt, ch, text);
   radio_driver.recv++;
 }
 
@@ -339,7 +345,7 @@ static void scenario(uint8_t lang) {
   prefs.ui_lang = lang; prefs.tz_offset = 2; prefs.ui_dst = 1;
   prefs.ui_off = 3;   // 5 min, so nothing times out during the script
 
-  sim_millis = 0;
+  // millis() keeps running into the second language: the tools keep their state in statics
   shot_no = 0;
   lang_tag = lang == 0 ? "bg" : "en";
   the_mesh = SimMesh();
@@ -552,7 +558,7 @@ static void scenario(uint8_t lang) {
   }
   turn(3);
   shot("range_running", bg ? "Тест на обхвата: SNR натам/обратно, -- = без отговор" : "Range test: SNR there/back, -- = no answer");
-  turn(-2); press();   // stop
+  turn(-3); press();   // stop
   back(); back();
 
   turn(1); press();

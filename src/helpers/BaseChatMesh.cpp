@@ -160,11 +160,19 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   if (from != NULL) {
     store_blob = strncmp(from->name, parser.getName(), sizeof(from->name) - 1) != 0 ||
                  from->type != parser.getType() ||
-                 (parser.hasLatLon() && (from->gps_lat != parser.getIntLat() || from->gps_lon != parser.getIntLon())) ||
-                 timestamp - from->last_advert_timestamp > 7 * 24 * 3600UL;
-    if (!store_blob) {   // the blob store holds fewer adverts than there are contacts: still there?
+                 (parser.hasLatLon() && (from->gps_lat != parser.getIntLat() || from->gps_lon != parser.getIntLon()));
+    if (!store_blob) {
+      // the blob store holds fewer adverts than there are contacts: still there, and how old is it?
       uint8_t stored[MAX_TRANS_UNIT];
-      store_blob = getBlobByKey(id.pub_key, PUB_KEY_SIZE, stored) == 0;
+      int len = getBlobByKey(id.pub_key, PUB_KEY_SIZE, stored);
+      mesh::Packet old_pkt;
+      if (len <= 0 || !old_pkt.readFrom(stored, len) || old_pkt.payload_len < PUB_KEY_SIZE + 4) {
+        store_blob = true;
+      } else {
+        uint32_t stored_ts;
+        memcpy(&stored_ts, &old_pkt.payload[PUB_KEY_SIZE], 4);
+        store_blob = timestamp - stored_ts > 7 * 24 * 3600UL;
+      }
     }
   }
 
