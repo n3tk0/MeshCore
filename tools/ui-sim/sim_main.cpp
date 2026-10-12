@@ -558,7 +558,10 @@ static void scenario(uint8_t lang) {
   }
   turn(3);
   shot("range_running", bg ? "Тест на обхвата: SNR натам/обратно, -- = без отговор" : "Range test: SNR there/back, -- = no answer");
-  turn(-3); press();   // stop
+  holdBack();
+  shot("standby_range", bg ? "Тестът на обхвата върви: икона в лентата" : "The range test runs: an icon in the status row");
+  press(); turn(3); press(); turn(2); press();   // Menu > Network > Range test
+  turn(1); press();   // stop
   back(); back();
 
   turn(1); press();
@@ -590,7 +593,7 @@ static void scenario(uint8_t lang) {
       press(); turn(3); press(); hold(); turn(-1);
       shot("encoder_test", bg ? "Тест на енкодера: завъртания, натискания, задържания" : "Encoder test: turns, presses, holds");
       back(); turn(2); press();
-      shot("display_test", bg ? "Тест на дисплея: завъртане сменя образа" : "Display test: turn for the next pattern");
+      shot("display_test", bg ? "Тест на дисплея: подсказка на първия образ" : "Display test: a hint on the first pattern");
       back(); back();
       turn(2); shot("settings_update", bg ? "Ъпдейт на фърмуера от менюто" : "Firmware update from the menu");
       press(); shot("update_usb_q", bg ? "Рестарт в bootloader-а (USB диск за UF2)" : "Restart into the bootloader (USB drive for a UF2)"); back();

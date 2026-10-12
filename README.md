@@ -48,7 +48,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 **Messages**
 
 - **Messages** lists conversations (contacts and channels), newest first, with the unread count or the age of the last message. A conversation opens as a chat: every message wrapped over as many rows as it needs, my messages with their delivery icon, the age of the selected one in the title. Press replies, hold opens Reply / Resend / Delete.
-- **Channels** opens a channel's conversation (or the reply picker when it has none yet). Hold on a channel: write, mute (no buzz or screen wake, except for mentions; stored in `/ui_mute`) or delete. The last row, **+ New channel**, joins a `#hashtag` channel typed on the keyboard (key = first 16 bytes of `sha256("#name")`, the same as the app).
+- **Channels** opens a channel's conversation (or the reply picker when it has none yet). Hold on a channel: write, mute (no buzz or screen wake, except for mentions; stored in `/ui_mute`) or delete. The last row, **+ Add**, joins a `#hashtag` channel typed on the keyboard (key = first 16 bytes of `sha256("#name")`, the same as the app).
 - **Message details:** hold on a message > Details shows the time, the route (direct / flood / hops), SNR and RSSI of a received message, or the attempts and state of a sent one.
 - **Reply** first asks **Quick reply** or **Write**. A quick reply can be sent as is or finished on the keyboard. Replies go to where the message came from (contact or channel).
 - **Sending** waits 3 s with a progress bar; Back cancels it. Direct messages are tracked: a clock until the ACK, then a check mark. Without an ACK the message is sent again automatically with the same timestamp (the recipient shows it once), the last attempt as a flood; after 3 attempts it is marked not delivered with a long vibration, and **Resend** starts a new round. Channel messages have no ACK and show as sent.
@@ -60,10 +60,10 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 
 **Network** (Menu > Network)
 
-- **Nearby:** a zero-hop discover request; the repeaters that answer in 10 s, strongest first. A repeater shows how well it hears us and we hear it, and starts a trace or range test to it. Hold searches again.
+- **Nearby:** a zero-hop discover request; the repeaters that answer in 10 s, strongest first. A repeater shows how well it hears us (↑) and we hear it (↓), and starts a trace or range test to it. Hold searches again.
 - **Trace:** from a contact (hold > Trace) or a nearby repeater: a TRACE packet there and back through the repeaters of its path, with the SNR at each hop and the round-trip time.
 - **Airtime:** transmit time in the last hour against the EU 868 MHz 10% duty cycle, total TX time, packets sent / received / errors, noise floor, last SNR and RSSI.
-- **Range test:** a trace to the chosen repeater or contact every 15 / 30 / 60 / 120 s, a buzz for each answer (a different one for a miss), the last results with SNR there and back. Keeps running with the screen off.
+- **Range test:** a trace to the chosen repeater or contact every 15 / 30 / 60 / 120 s, a buzz for each answer (a different one for a miss), the last results with SNR there and back. Keeps running with the screen off until stopped (an icon in the standby status row shows it); stops if transmit is switched off.
 
 **Settings** (Menu > Settings, saved in prefs)
 
