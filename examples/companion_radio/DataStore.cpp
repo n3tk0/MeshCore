@@ -217,6 +217,21 @@ bool DataStore::saveSmallFile(const char* filename, const uint8_t* src, int len)
   return saveFileSafely(_fs, filename, [&](File& file) { return file.write(src, len) == (size_t)len; });
 }
 
+File DataStore::openDataAppend(const char* filename) {
+  FILESYSTEM* fs = _getContactsChannelsFS();
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  return fs->open(filename, FILE_O_WRITE);   // opens at the end
+#elif defined(RP2040_PLATFORM)
+  return fs->open(filename, "a");
+#else
+  return fs->open(filename, "a", true);
+#endif
+}
+
+File DataStore::openDataWrite(const char* filename) {
+  return openWrite(_getContactsChannelsFS(), filename);
+}
+
 bool DataStore::removeFile(const char* filename) {
   return _fs->remove(filename);
 }

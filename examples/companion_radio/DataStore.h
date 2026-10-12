@@ -49,6 +49,10 @@ public:
   bool removeFile(FILESYSTEM* fs, const char* filename);
   int loadSmallFile(const char* filename, uint8_t* dest, int max_len);   // -1 = missing
   bool saveSmallFile(const char* filename, const uint8_t* src, int len);
+  // larger data files go next to the contacts (the ExtraFS when there is one)
+  FILESYSTEM* getDataFS() const { return _getContactsChannelsFS(); }
+  File openDataWrite(const char* filename);   // replaces the file
+  File openDataAppend(const char* filename);  // creates it if missing
   uint32_t getStorageUsedKb() const;
   uint32_t getStorageTotalKb() const;
 

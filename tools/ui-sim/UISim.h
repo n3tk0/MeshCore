@@ -82,13 +82,21 @@ public:
   bool sendGroupMessage(uint32_t ts, mesh::GroupChannel& ch, const char* sender, const char* text, int len);
   int sendMessage(const ContactInfo& c, uint32_t ts, uint8_t attempt, const char* text, uint32_t& ack, uint32_t& timeout);
   int getRecentlyHeard(AdvertPath dest[], int max_num);
-  bool advert() { return tx_allowed; }
+  bool advert(bool flood = false) { return tx_allowed; }
+  void expectAck(uint32_t ack, ContactInfo* c) { }
+  bool setRadioParams(float f, float bw, uint8_t sf, uint8_t cr) {
+    if (prefs) { prefs->freq = f; prefs->bw = bw; prefs->sf = sf; prefs->cr = cr; }
+    return true;
+  }
   void savePrefs() { }
   int loadUIFile(const char*, uint8_t*, int) { return -1; }
   bool saveUIFile(const char*, const uint8_t*, int) { return true; }
   uint32_t getBLEPin() { return ble_pin; }
-  void flushPendingSaves() { }
   void flushPendingWrites() { }
+  bool saveUIData(const char*, const uint8_t*, int, const uint8_t*, int) { return true; }
+  int loadUIData(const char*, uint8_t*, int, int = 0) { return -1; }
+  void removeUIData(const char*) { }
+  bool saveOfflineQueue() { return true; }
   void enterCLIRescue() { }
   void resetContactPath(ContactInfo& c) { c.out_path_len = OUT_PATH_UNKNOWN; }
   void setTxPower(int8_t dbm) { if (prefs) prefs->tx_power_dbm = dbm; }

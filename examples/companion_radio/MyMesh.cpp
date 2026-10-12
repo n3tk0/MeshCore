@@ -237,6 +237,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
         MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
         offline_queue[offline_queue_len - 1].len = len;
         memcpy(offline_queue[offline_queue_len - 1].buf, frame, len);
+        logOfflineAdd(pos);
         return;
       }
       pos++;
@@ -246,6 +247,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
     offline_queue[offline_queue_len].len = len;
     memcpy(offline_queue[offline_queue_len].buf, frame, len);
     offline_queue_len++;
+    logOfflineAdd(-1);
   }
 }
 
@@ -258,6 +260,7 @@ int MyMesh::getFromOfflineQueue(uint8_t frame[]) {
     for (int i = 0; i < offline_queue_len; i++) { // delete top item from queue
       offline_queue[i] = offline_queue[i + 1];
     }
+    logOfflineTake();
     return len;
   }
   return 0; // queue is empty
@@ -416,12 +419,28 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
 void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                           const uint8_t* app_data, size_t app_data_len) {
 #ifdef CLOCK_FROM_ADVERT
-  // No clock yet (no RTC, no phone since boot): take the time of a signed advert. It is off by the
-  // flood delay at most; the phone's time replaces it on the next sync.
+  // No clock yet (no RTC, no phone since boot): take the time from signed adverts. One node with a
+  // wrong clock must not set ours, so two adverts from different nodes have to agree within
+  // CLOCK_ADVERT_AGREE seconds (after allowing for the time between them). The result is off by
+  // the flood delay at most; the phone's time replaces it on the next sync.
   if (getRTCClock()->getCurrentTime() < CLOCK_VALID_EPOCH && timestamp >= CLOCK_VALID_EPOCH &&
       timestamp < CLOCK_MAX_EPOCH) {
-    getRTCClock()->setCurrentTime(timestamp);
-    _clock_approx = true;
+    bool agreed = false;
+    if (_clock_cand_ts != 0 && memcmp(_clock_cand_key, id.pub_key, sizeof(_clock_cand_key)) != 0) {
+      uint32_t expect = _clock_cand_ts + (uint32_t)((millis() - _clock_cand_at) / 1000);
+      uint32_t diff = timestamp > expect ? timestamp - expect : expect - timestamp;
+      if (diff <= CLOCK_ADVERT_AGREE) {
+        getRTCClock()->setCurrentTime(timestamp > expect ? timestamp : expect);   // both lag a little
+        _clock_approx = true;
+        _clock_cand_ts = 0;
+        agreed = true;
+      }
+    }
+    if (!agreed) {   // keep the newest advert as the one the next must agree with
+      _clock_cand_ts = timestamp;
+      _clock_cand_at = millis();
+      memcpy(_clock_cand_key, id.pub_key, sizeof(_clock_cand_key));
+    }
   }
 #endif
   BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
@@ -430,6 +449,26 @@ void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32
 void MyMesh::resetContactPath(ContactInfo& contact) {
   contact.out_path_len = OUT_PATH_UNKNOWN;
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+}
+
+void MyMesh::expectAck(uint32_t ack, ContactInfo* contact) {
+  expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
+  expected_ack_table[next_ack_idx].ack = ack;
+  expected_ack_table[next_ack_idx].contact = contact;
+  next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+}
+
+bool MyMesh::setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr) {
+  if (!radio_driver.paramsSupported(freq, bw, sf, cr)) return false;
+  // same rule as CMD_SET_RADIO_PARAMS: client repeat only on the frequencies that allow it
+  if (_prefs.isRepeatEn() && !isValidClientRepeatFreq((uint32_t)(freq * 1000.0f + 0.5f))) return false;
+  _prefs.freq = freq;
+  _prefs.bw = bw;
+  _prefs.sf = sf;
+  _prefs.cr = cr;
+  radio_driver.setParams(freq, bw, sf, cr);
+  savePrefs();
+  return true;
 }
 
 void MyMesh::setTxPower(int8_t dbm) {
@@ -910,6 +949,11 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _iter_started = false;
   _cli_rescue = false;
   _clock_approx = false;
+  _clock_cand_ts = 0;
+  _clock_cand_at = 0;
+  _offline_taken = 0;
+  _offline_flush_at = 0;
+  memset(_clock_cand_key, 0, sizeof(_clock_cand_key));
 #ifdef UI_ASK_ANTENNA
   _tx_allowed = false;   // the UI asks whether an antenna is fitted before the first transmit
 #else
@@ -998,6 +1042,8 @@ void MyMesh::begin(bool has_display) {
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
   if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;   // sendFlood() accepts hash sizes 1..3
+  // battery calibration made on the device (encoder UI); a value far off is ignored
+  if (_prefs.adc_mult >= 0.5f && _prefs.adc_mult <= 10.0f) board.setAdcMultiplier(_prefs.adc_mult);
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -1023,6 +1069,7 @@ void MyMesh::begin(bool has_display) {
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
+  loadOfflineQueue();   // messages the app had not fetched before the last power off or reset
 
   if (!radio_driver.paramsSupported(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr)) {
     // stored settings this chip cannot use: start on the build defaults rather than half-applied ones
@@ -1077,7 +1124,25 @@ void MyMesh::startInterface(BaseSerialInterface &serial) {
   serial.enable();
 }
 
+// commands that put a packet on the air
+static bool isTransmitCmd(uint8_t cmd) {
+  switch (cmd) {
+    case CMD_SEND_TXT_MSG: case CMD_SEND_CHANNEL_TXT_MSG: case CMD_SEND_SELF_ADVERT: case CMD_SEND_RAW_DATA:
+    case CMD_SEND_LOGIN: case CMD_SEND_STATUS_REQ: case CMD_SEND_TRACE_PATH: case CMD_SEND_TELEMETRY_REQ:
+    case CMD_SEND_BINARY_REQ: case CMD_SEND_PATH_DISCOVERY_REQ: case CMD_SEND_CONTROL_DATA:
+    case CMD_SEND_ANON_REQ: case CMD_SEND_CHANNEL_DATA: case CMD_SEND_RAW_PACKET:
+      return true;
+    default:
+      return false;
+  }
+}
+
 void MyMesh::handleCmdFrame(size_t len) {
+  if (len >= 1 && !_tx_allowed && isTransmitCmd(cmd_frame[0])) {
+    // transmit is off on the device (no antenna confirmed): say so instead of dropping it silently
+    writeErrFrame(ERR_CODE_BAD_STATE);
+    return;
+  }
   if (cmd_frame[0] == CMD_DEVICE_QUERY && len >= 2) { // sent when app establishes connection
     app_target_ver = cmd_frame[1];                    // which version of protocol does app understand
 
@@ -1168,12 +1233,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       if (result == MSG_SEND_FAILED) {
         writeErrFrame(ERR_CODE_TABLE_FULL);
       } else {
-        if (expected_ack) {
-          expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
-          expected_ack_table[next_ack_idx].ack = expected_ack;
-          expected_ack_table[next_ack_idx].contact = recipient;
-          next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
-        }
+        if (expected_ack) expectAck(expected_ack, recipient);
 
         out_frame[0] = RESP_CODE_SENT;
         out_frame[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
@@ -2298,6 +2358,10 @@ void MyMesh::loop() {
     checkSerialInterface();
   }
 
+#ifdef OFFLINE_QUEUE_PERSIST
+  if (_offline_flush_at && millisHasNowPassed(_offline_flush_at)) flushOfflineTakes();
+#endif
+
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     saveContacts();
@@ -2309,19 +2373,212 @@ void MyMesh::loop() {
 #endif
 }
 
-bool MyMesh::advert() {
+#define OFFLINE_QUEUE_FILE  "/offline_q"
+
+static bool writeUIFile(DataStore* store, const char* filename, const uint8_t* head, int head_len,
+                        const uint8_t* body, int body_len) {
+  File f = store->openDataWrite(filename);
+  if (!f) return false;
+  bool ok = f.write(head, head_len) == (size_t)head_len && (body_len == 0 || f.write(body, body_len) == (size_t)body_len);
+  f.close();
+  return ok;
+}
+
+// through a temp file, so a reset while writing keeps the previous version
+bool MyMesh::saveUIData(const char* filename, const uint8_t* head, int head_len, const uint8_t* body, int body_len) {
+  FILESYSTEM* fs = _store->getDataFS();
+  char tmp[40];
+  snprintf(tmp, sizeof(tmp), "%s.tmp", filename);
+  if (writeUIFile(_store, tmp, head, head_len, body, body_len)) {
+    fs->remove(filename);
+    if (fs->rename(tmp, filename)) return true;
+  }
+  fs->remove(tmp);
+  if (writeUIFile(_store, filename, head, head_len, body, body_len)) return true;   // no room for a copy
+  removeUIData(filename);
+  return false;
+}
+
+int MyMesh::loadUIData(const char* filename, uint8_t* dest, int max_len, int offset) {
+  File f = _store->openRead(_store->getDataFS(), filename);
+  if (!f) return -1;
+  int n = (offset == 0 || f.seek(offset)) ? f.read(dest, max_len) : 0;
+  f.close();
+  return n < 0 ? 0 : n;
+}
+
+void MyMesh::removeUIData(const char* filename) {
+  _store->removeFile(_store->getDataFS(), filename);
+}
+
+// Messages the app has not fetched yet. The queue lives in RAM; its file keeps it over a power
+// off. With OFFLINE_QUEUE_PERSIST the file is a log written as the queue changes (one small append
+// per message, the fetches in batches), so not even a reset, a crash or a flat battery loses a
+// message before the app has it; the file goes once the app has fetched everything. Without the
+// flag it is a snapshot written at hibernate.
+// Format: magic, then records: ADD len bytes | TAKE n (from the head) | DROP pos (overflow).
+#define OFFLINE_LOG_MAGIC  0x324C514FUL   // "OQL2"
+#define OQ_ADD   1
+#define OQ_TAKE  2
+#define OQ_DROP  3
+#ifndef OFFLINE_TAKE_FLUSH_MILLIS
+  #define OFFLINE_TAKE_FLUSH_MILLIS  3000   // fetches are written this long after the last one
+#endif
+
+bool MyMesh::appendOfflineLog(const uint8_t* rec, int len, const uint8_t* body, int body_len) {
+  FILESYSTEM* fs = _store->getDataFS();
+  bool fresh = !fs->exists(OFFLINE_QUEUE_FILE);
+  File f = _store->openDataAppend(OFFLINE_QUEUE_FILE);
+  if (!f) return false;
+  uint32_t magic = OFFLINE_LOG_MAGIC;
+  bool ok = (!fresh || f.write((uint8_t*)&magic, 4) == 4) && f.write(rec, len) == (size_t)len &&
+            (body_len == 0 || f.write(body, body_len) == (size_t)body_len);
+  f.close();
+  // a cut-off record would end the replay there: write the queue as it is in RAM instead
+  if (!ok) ok = writeOfflineSnapshot();
+  return ok;
+}
+
+bool MyMesh::writeOfflineQueueTo(const char* filename) {
+  File f = _store->openDataWrite(filename);
+  if (!f) return false;
+  uint32_t magic = OFFLINE_LOG_MAGIC;
+  bool ok = f.write((uint8_t*)&magic, 4) == 4;
+  for (int i = 0; ok && i < offline_queue_len; i++) {
+    uint8_t rec[2] = { OQ_ADD, offline_queue[i].len };
+    ok = f.write(rec, 2) == 2 && f.write(offline_queue[i].buf, rec[1]) == rec[1];
+  }
+  f.close();
+  return ok;
+}
+
+// the whole queue as ADD records, through a temp file so a reset never leaves half a queue; with
+// no room for the copy (the filesystem also holds the contacts) it is rewritten in place
+bool MyMesh::writeOfflineSnapshot() {
+  FILESYSTEM* fs = _store->getDataFS();
+  if (offline_queue_len == 0) { fs->remove(OFFLINE_QUEUE_FILE); return true; }
+  const char* tmp = OFFLINE_QUEUE_FILE ".tmp";
+  if (writeOfflineQueueTo(tmp)) {
+    fs->remove(OFFLINE_QUEUE_FILE);
+    if (fs->rename(tmp, OFFLINE_QUEUE_FILE)) return true;
+  }
+  fs->remove(tmp);
+  return writeOfflineQueueTo(OFFLINE_QUEUE_FILE);
+}
+
+void MyMesh::logOfflineAdd(int dropped_pos) {
+#ifdef OFFLINE_QUEUE_PERSIST
+  flushOfflineTakes();   // the log keeps the order of operations
+  if (dropped_pos >= 0) {
+    uint8_t rec[3] = { OQ_DROP, (uint8_t)(dropped_pos & 0xFF), (uint8_t)(dropped_pos >> 8) };
+    appendOfflineLog(rec, 3, NULL, 0);
+  }
+  Frame& fr = offline_queue[offline_queue_len - 1];
+  uint8_t rec[2] = { OQ_ADD, fr.len };
+  appendOfflineLog(rec, 2, fr.buf, fr.len);
+#endif
+}
+
+void MyMesh::logOfflineTake() {
+#ifdef OFFLINE_QUEUE_PERSIST
+  _offline_taken++;
+  if (offline_queue_len == 0) {   // all fetched: nothing left to keep
+    _store->getDataFS()->remove(OFFLINE_QUEUE_FILE);
+    _offline_taken = 0;
+    _offline_flush_at = 0;
+  } else {
+    _offline_flush_at = futureMillis(OFFLINE_TAKE_FLUSH_MILLIS);
+  }
+#endif
+}
+
+void MyMesh::flushOfflineTakes() {
+#ifdef OFFLINE_QUEUE_PERSIST
+  _offline_flush_at = 0;
+  if (_offline_taken == 0) return;
+  uint8_t rec[3] = { OQ_TAKE, (uint8_t)(_offline_taken & 0xFF), (uint8_t)(_offline_taken >> 8) };
+  _offline_taken = 0;
+  File f = _store->openRead(_store->getDataFS(), OFFLINE_QUEUE_FILE);
+  uint32_t log_size = f ? f.size() : 0;
+  if (f) f.close();
+  // the log grows with every message; rewrite it as the queue alone once fetched ones take 8 KB
+  uint32_t live = 4;
+  for (int i = 0; i < offline_queue_len; i++) live += 2 + offline_queue[i].len;
+  if (log_size > live + 8192) writeOfflineSnapshot();
+  else appendOfflineLog(rec, 3, NULL, 0);
+#endif
+}
+
+// before a power off (hibernate, firmware update)
+bool MyMesh::saveOfflineQueue() {
+#ifdef OFFLINE_QUEUE_PERSIST
+  flushOfflineTakes();   // the adds are on file already
+  return true;
+#else
+  return writeOfflineSnapshot();
+#endif
+}
+
+void MyMesh::loadOfflineQueue() {
+  FILESYSTEM* fs = _store->getDataFS();
+  File f = _store->openRead(fs, OFFLINE_QUEUE_FILE);
+  if (!f) return;
+  uint32_t magic = 0;
+  if (f.read((uint8_t*)&magic, 4) == 4 && magic == OFFLINE_LOG_MAGIC) {
+    uint8_t rec[3];
+    while (f.read(rec, 1) == 1) {   // a cut-off record (reset while writing) ends the replay
+      if (rec[0] == OQ_ADD) {
+        uint8_t len;
+        if (f.read(&len, 1) != 1 || len == 0 || len > MAX_FRAME_SIZE) break;
+        if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {   // cannot happen with a matching build
+          if (!f.seek(f.position() + len)) break;
+          continue;
+        }
+        Frame& fr = offline_queue[offline_queue_len];
+        if (f.read(fr.buf, len) != len) break;
+        fr.len = len;
+        offline_queue_len++;
+      } else if (rec[0] == OQ_TAKE || rec[0] == OQ_DROP) {
+        if (f.read(&rec[1], 2) != 2) break;
+        int v = rec[1] | (rec[2] << 8);
+        if (rec[0] == OQ_TAKE) {
+          int n = v < offline_queue_len ? v : offline_queue_len;
+          for (int i = 0; i + n < offline_queue_len; i++) offline_queue[i] = offline_queue[i + n];
+          offline_queue_len -= n;
+        } else if (v < offline_queue_len) {
+          for (int i = v; i < offline_queue_len - 1; i++) offline_queue[i] = offline_queue[i + 1];
+          offline_queue_len--;
+        }
+      } else {
+        break;   // unknown record
+      }
+    }
+  }
+  f.close();
+#ifdef OFFLINE_QUEUE_PERSIST
+  writeOfflineSnapshot();   // start this session from a compact file (or none)
+#else
+  fs->remove(OFFLINE_QUEUE_FILE);   // once only: a later crash must not bring them back again
+#endif
+}
+
+bool MyMesh::advert(bool flood) {
+  if (!_tx_allowed) return false;
   mesh::Packet* pkt;
   if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
     pkt = createSelfAdvert(_prefs.node_name);
   } else {
     pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
   }
-  if (pkt) {
-    sendZeroHop(pkt);
-    return true;
+  if (!pkt) return false;
+  if (flood) {   // as the app's "flood advert": the whole mesh learns about this node
+    TransportKey default_scope;
+    memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+    sendFloodScoped(default_scope, pkt, 0);
   } else {
-    return false;
+    sendZeroHop(pkt);
   }
+  return true;
 }
 
 // To check if there is pending work
