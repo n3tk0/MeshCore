@@ -8,7 +8,7 @@
 
 // mV per raw 12-bit count. Theory: (3600 / 4096) * (R1 + R2) / R2, i.e. 1.758 for a 1:1
 // divider; 1.815 is the value calibrated on the stock Faketec 1:1 divider (R4/R5 10M/10M, C1 100nF).
-// Override with -D ADC_MULTIPLIER=..., or at runtime via the CLI 'set adc.multiplier'.
+// Override with -D ADC_MULTIPLIER=..., or calibrate on the device: Settings > System > Battery.
 #ifndef ADC_MULTIPLIER
   #define  ADC_MULTIPLIER   (1.815f)
 #endif
@@ -22,6 +22,9 @@ public:
   FaketecBoard() : NRF52Board("Faketec_OTA") {}
   void begin();
   void powerOff() override;
+  void onBootComplete() override;
+  void loop() override;                         // feeds the watchdog
+  uint32_t getResetReason() const override;     // RESETREAS at start-up, 0 = power-on
 
   #define BATTERY_SAMPLES 8
 
