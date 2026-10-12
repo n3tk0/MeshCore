@@ -217,6 +217,10 @@ bool DataStore::saveSmallFile(const char* filename, const uint8_t* src, int len)
   return saveFileSafely(_fs, filename, [&](File& file) { return file.write(src, len) == (size_t)len; });
 }
 
+File DataStore::openDataWrite(const char* filename) {
+  return openWrite(_getContactsChannelsFS(), filename);
+}
+
 bool DataStore::removeFile(const char* filename) {
   return _fs->remove(filename);
 }

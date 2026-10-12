@@ -80,6 +80,9 @@
   #define CLOCK_VALID_EPOCH  1735689600UL   // 2025-01-01: anything earlier means "no clock yet"
 #endif
 #define CLOCK_MAX_EPOCH      2082758400UL   // 2036-01-01: an advert claiming later is ignored
+#ifndef CLOCK_ADVERT_AGREE
+  #define CLOCK_ADVERT_AGREE  600            // seconds two adverts may differ by to set the clock
+#endif
 
 struct AdvertPath {
   uint8_t pubkey_prefix[7];
@@ -102,7 +105,7 @@ public:
 
   void loop();
   void handleCmdFrame(size_t len);
-  bool advert();
+  bool advert(bool flood = false);   // false = neighbours only (zero hop)
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
@@ -184,17 +187,19 @@ public:
   // transmit gate (e.g. until the user confirms an antenna is fitted); receiving is unaffected
   void resetContactPath(ContactInfo& contact);   // next message floods and learns a new path
   void setTxPower(int8_t dbm);                    // applied at once and saved
+  bool setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr);   // checked, applied and saved
   bool isClockApprox() const { return _clock_approx; }   // time taken from an advert, not the phone
   bool isTxAllowed() const { return _tx_allowed; }
   void setTxAllowed(bool on) { _tx_allowed = on; }
 
-  // write pending lazy saves now, before power off
-  void flushPendingSaves() {
-    if (dirty_contacts_expiry) {
-      saveContacts();
-      dirty_contacts_expiry = 0;
-    }
-  }
+  // UI data kept over a power off (e.g. message history), on the contacts filesystem
+  bool saveUIData(const char* filename, const uint8_t* head, int head_len, const uint8_t* body, int body_len);
+  int loadUIData(const char* filename, uint8_t* dest, int max_len, int offset = 0);   // -1 = missing
+  void removeUIData(const char* filename);
+  // messages the app has not fetched yet: kept over a power off, restored at start-up
+  bool saveOfflineQueue();
+  void loadOfflineQueue();
+  int getOfflineQueueLen() const { return offline_queue_len; }
 
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
@@ -256,6 +261,9 @@ private:
   bool _iter_started;
   bool _cli_rescue;
   bool _clock_approx;
+  uint32_t _clock_cand_ts;            // CLOCK_FROM_ADVERT: an advert's time waiting for a second one
+  unsigned long _clock_cand_at;
+  uint8_t _clock_cand_key[4];
   bool _tx_allowed;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   char cli_command[80];

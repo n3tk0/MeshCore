@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
+#include <new>
 #include "target.h"
 #include "UISim.h"
 #include "UITask.h"
@@ -287,7 +288,10 @@ static void run(unsigned long ms) {   // let the UI run for a while, 10 ms per l
 static void press()    { encoder_btn.push(BUTTON_EVENT_CLICK); run(50); }
 static void hold()     { encoder_btn.push(BUTTON_EVENT_LONG_PRESS); run(50); }
 static void back()     { user_btn.push(BUTTON_EVENT_CLICK); run(50); }
-static void holdBack() { user_btn.push(BUTTON_EVENT_LONG_PRESS); run(50); }
+static void holdBack() {   // to standby; on standby it locks the keys, so unlock again
+  user_btn.push(BUTTON_EVENT_LONG_PRESS); run(50);
+  if (ui_task->isLocked()) { user_btn.push(BUTTON_EVENT_LONG_PRESS); run(900); }
+}
 static void turn(int n) {   // slow turn: one detent at a time (no acceleration)
   for (int i = 0; i < (n < 0 ? -n : n); i++) { sim_rotary.turn(n < 0 ? -1 : 1); run(150); }
 }
@@ -314,7 +318,7 @@ static void receive(UITask& ui, bool channel, int ch_idx, const ContactInfo* fro
 
 static void scenario(uint8_t lang) {
   static NodePrefs prefs;
-  memset(&prefs.ui_dots, 0, 16);
+  prefs.~NodePrefs(); new (&prefs) NodePrefs();   // defaults, also for the fields added later
   StrHelper::strncpy(prefs.node_name, "Petko-Z7", sizeof(prefs.node_name));
   prefs.freq = 869.525f; prefs.sf = 11; prefs.cr = 5; prefs.bw = 250.0f; prefs.tx_power_dbm = 22;
   prefs.ui_lang = lang; prefs.ui_tz = 2; prefs.ui_dst = 1;
@@ -380,11 +384,9 @@ static void scenario(uint8_t lang) {
   run(3200);
   shot("standby_unread", bg ? "Standby: 3 непрочетени" : "Standby: 3 unread");
 
-  // press on standby opens the newest unread
+  // press on standby opens the conversation of the newest unread
   press();
-  shot("message_view", bg ? "Натискане от standby отваря най-новото непрочетено" : "Press on standby opens the newest unread");
-  back();
-  shot("thread", bg ? "Разговорът (Back от съобщението)" : "The conversation (Back from the message)");
+  shot("thread", bg ? "Натискане от standby: разговорът с най-новото непрочетено, като чат" : "Press on standby: the conversation of the newest unread, as a chat");
   back();
   shot("conversations", bg ? "Разговори: икона, брой непрочетени или възраст" : "Conversations: icon, unread count or age");
   hold();
@@ -393,18 +395,17 @@ static void scenario(uint8_t lang) {
   shot("confirm_delete_all", bg ? "Изтрий всички иска потвърждение" : "Delete all asks first");
   back();
 
-  // reply: conversation -> thread -> message, press = what to send
-  turn(2); press(); press();
-  shot("message_ivan", bg ? "Съобщението на Иван" : "Ivan's message");
+  // reply: conversation -> thread, press = what to send
+  turn(2); press();
+  shot("thread_ivan", bg ? "Разговорът с Иван: съобщението се вижда цялото" : "The conversation with Ivan: the whole message shows");
   press();
   shot("reply_pick", bg ? "Натискане = отговор: Напиши... и готовите" : "Press = reply: Write... and quick replies");
   turn(2); press();
   run(1200);
   shot("send_undo", bg ? "3 s до изпращане, Back отказва" : "3 s before sending, Back cancels");
   run(2000);
-  shot("sent_alert", bg ? "Изпратено, обратно в съобщението" : "Sent, back to the message");
+  shot("sent_alert", bg ? "Изпратено, обратно в разговора" : "Sent, back to the conversation");
   run(1200);
-  back();
   shot("thread_pending", bg ? "В разговора: изпратеното чака ACK (часовник)" : "In the thread: the sent one waits for an ACK (clock)");
   uint8_t ackb[4]; memcpy(ackb, &the_mesh.last_ack, 4);
   ui->ackReceived(ackb);
@@ -414,10 +415,10 @@ static void scenario(uint8_t lang) {
   // a message that is not delivered: hold on Ivan's message > Reply > a quick reply
   hold(); press(); turn(1); press();
   run(3100);
-  run(10000);
-  shot("thread_failed", bg ? "Без ACK: кръстче и известие" : "No ACK: cross and an alert");
+  run(31000);   // three attempts (the last by flood), each waits for its ACK
+  shot("thread_failed", bg ? "Без ACK след 3 опита: кръстче, известие и вибрация" : "No ACK after 3 attempts: cross, alert and a buzz");
   run(2000);
-  turn(2); hold();
+  turn(12); hold();
   shot("msg_actions_retry", bg ? "Задържане на недоставено: Изпрати пак" : "Hold on an undelivered one: Send again");
   turn(2); press();
   shot("confirm_delete_one", bg ? "Изтриване на едно съобщение (потвърждението се изключва от настройките)" : "Deleting one message (confirmation can be turned off)");
@@ -457,7 +458,10 @@ static void scenario(uint8_t lang) {
   press();
   shot("main_menu", bg ? "Главно меню" : "Main menu");
   turn(2); press();
-  shot("channels", bg ? "Канали" : "Channels");
+  shot("channels", bg ? "Канали: възраст на последното съобщение" : "Channels: age of the last message");
+  turn(1); press();
+  shot("channel_thread", bg ? "Натискане на канал: неговият разговор" : "Press on a channel: its conversation");
+  back();
   back();
   turn(1); press();
   shot("settings", bg ? "Настройки: групи" : "Settings: groups");
@@ -471,15 +475,28 @@ static void scenario(uint8_t lang) {
       press(); turn(2); shot("edit_menu_size", bg ? "Размер на менютата (стойността е в този размер)" : "Menu size (the value is shown in that size)"); back();
       turn(3); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back();
     }
-    if (g == 3) { turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back(); }
+    if (g == 1) { turn(4); press(); shot("edit_lock", bg ? "Заключване: ръчно или при изгасване" : "Key lock: by hand or when the screen goes off"); back(); }
+    if (g == 2) { turn(1); press(); shot("edit_wake", bg ? "Кога светва екранът за съобщение" : "When a message turns the screen on"); back(); }
+    if (g == 3) {
+      turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back();
+      turn(1); press(); turn(1); shot("edit_preset", bg ? "Радио пресет" : "Radio preset"); back();
+    }
     if (g == 4) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();
-      turn(2); press(); shot("about", bg ? "За устройството" : "About"); back();
+      turn(2); press(); turn(3); shot("edit_battery", bg ? "Калибрация: въведи волтажа от мултиметъра" : "Calibration: enter the multimeter reading"); back();
+      turn(1); press(); shot("about", bg ? "За устройството" : "About"); back();
     }
     back();
     turn(1);
   }
   holdBack();
+
+  // key lock: hold Back on standby
+  user_btn.push(BUTTON_EVENT_LONG_PRESS); run(50);
+  turn(3);    // nothing happens: the screen stays off
+  press();
+  shot("locked", bg ? "Заключено: натискане показва как се отключва" : "Locked: a press shows how to unlock");
+  user_btn.push(BUTTON_EVENT_LONG_PRESS); run(900);
 
   // quick menu, hibernate
   hold();
@@ -493,11 +510,17 @@ static void scenario(uint8_t lang) {
 
   // low battery
   holdBack();
+  uint8_t off = prefs.ui_off;
+  prefs.ui_off = 3;   // 5 min: the screen stays on until the warning
+  run(1000);   // the "unlocked" alert of holdBack() goes away
   board.mv = 3540;
-  for (int t = 0; t < 90 && !(display.shown(0, 32) && display.shown(127, 32)); t++) run(100);   // until the alert box shows
+  // the shown value is an average of readings 8 s apart: the warning comes after about a minute
+  for (int t = 0; t < 1500 && !ui->alertShowing(); t++) run(100);
+  run(100);
   shotFrame("low_battery", bg ? "Батерия под 10%: известие и дълга вибрация" : "Battery below 10%: alert and a long buzz");
   board.mv = 3920;
   run(3000);
+  prefs.ui_off = off;
 
   // the other text sizes: menus, lists and messages
   for (int t = 1; t <= 3; t++) {
@@ -520,9 +543,9 @@ static void scenario(uint8_t lang) {
     turn(2); press();
     snprintf(name, sizeof(name), "thread_%s", tag);
     snprintf(cap, sizeof(cap), "%s: %s", bg ? "Разговор" : "Thread", bg ? tb : te); shot(name, cap);
-    turn(-9); press();
-    snprintf(name, sizeof(name), "message_%s", tag);
-    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Съобщение" : "Message", bg ? tb : te); shot(name, cap);
+    turn(-9);
+    snprintf(name, sizeof(name), "thread_top_%s", tag);
+    snprintf(cap, sizeof(cap), "%s: %s", bg ? "Разговор, по-нагоре" : "Thread, scrolled up", bg ? tb : te); shot(name, cap);
     hold();
     snprintf(name, sizeof(name), "msg_actions_%s", tag);
     snprintf(cap, sizeof(cap), "%s: %s", bg ? "Действия" : "Actions", bg ? tb : te); shot(name, cap);

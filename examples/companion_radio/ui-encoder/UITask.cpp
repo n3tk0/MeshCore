@@ -1,4 +1,6 @@
 #include "UITask.h"
+#include <math.h>
+#include <ctype.h>
 #include <helpers/ui/TextFonts.h>
 #include <helpers/TxtDataHelpers.h>
 #ifdef UI_SIM
@@ -30,6 +32,7 @@
 #define VALID_EPOCH          1735689600UL   // 2025-01-01; VolatileRTCClock boots in May 2024, so earlier means "no clock yet"
 #define LOW_BATT_PERCENT     10       // warn once below this
 #define LOW_BATT_REARM       20       // ... and again after charging above this
+#define ANT_REMIND_MILLIS    (5 * 60 * 1000UL)   // unanswered antenna question: a buzz this often
 
 // haptic dictionary (ms): key press, confirmed action, channel msg, direct msg, low battery / power off
 #ifndef UI_HAPTIC_CLICK_MS
@@ -43,6 +46,8 @@
 #define UI_HAPTIC_LONG_MS     600
 static const uint16_t HAPTIC_CHANNEL[] = { 200 };
 static const uint16_t HAPTIC_DIRECT[]  = { 150, 150, 150 };
+static const uint16_t HAPTIC_FAILED[]  = { 300, 150, 300 };   // a sent message was not delivered
+static const uint16_t HAPTIC_REMIND[]  = { 80, 120, 80 };     // the antenna question still waits
 
 #define COLOR_BLACK  0
 
@@ -82,30 +87,26 @@ static const uint8_t CONTRAST_TABLE[] = { 0xFF, 0x60, 0x08 };
 #define NOTIFY_ALWAYS   1
 #define NOTIFY_NEVER    2
 
-#define ANT_ALWAYS      0
-#define ANT_POWER_LOSS  1
+#define ANT_POWER_LOSS  0   // ask after a battery was put in (the default)
+#define ANT_ALWAYS      1
 #define ANT_NEVER       2
+
+#define WAKE_DIRECT     0   // the screen turns on for direct messages and mentions
+#define WAKE_ALL        1
+#define WAKE_NEVER      2
+
+#define LOCK_HAND       0
+#define LOCK_AUTO       1
 
 // ---------------------------------------------------------------- reset reason (antenna question)
 
 // "after power loss": ask about the antenna only on a cold start (battery put in), not when waking
-// from hibernate or after a reset. RESETREAS is empty only after a power-on reset.
-#if defined(NRF52_PLATFORM) && !defined(UI_SIM)
-  #include <nrf.h>
-  #ifdef NRF52_POWER_MANAGEMENT
-    extern uint32_t g_nrf52_reset_reason;
-    static bool coldBoot() { return g_nrf52_reset_reason == 0; }
-  #else
-    static uint32_t ui_reset_reason = 0;
-    // runs before the SoftDevice is enabled, so the register can still be written directly
-    static void __attribute__((constructor(101))) ui_capture_reset_reason() {
-      ui_reset_reason = NRF_POWER->RESETREAS;
-      NRF_POWER->RESETREAS = 0xFFFFFFFF;   // the bits accumulate until cleared
-    }
-    static bool coldBoot() { return ui_reset_reason == 0; }
-  #endif
-#else
+// from hibernate or after a reset. The board reads RESETREAS once at start-up (0 = power-on);
+// boards that cannot tell report 0, so they are asked every time.
+#ifdef UI_SIM
   static bool coldBoot() { return true; }
+#else
+  static bool coldBoot() { return board.getResetReason() == 0; }
 #endif
 
 // ---------------------------------------------------------------- UI language (0 = BG, 1 = EN)
@@ -129,20 +130,22 @@ enum StrId {
   S_TYPE_CHAT, S_TYPE_RPT, S_TYPE_ROOM, S_TYPE_SENSOR, S_HOPS_FMT, S_DIRECT, S_FLOOD,
   S_HEARD_AGO_FMT, S_ID_FMT,
   // menus
-  S_MENU, S_QUICK, S_SEND_ADV, S_ADV_SENT, S_ADV_FAIL, S_HIBERNATE, S_HIB_Q,
+  S_MENU, S_QUICK, S_SEND_ADV, S_SEND_ADV_ALL, S_ADV_SENT, S_ADV_FAIL, S_HIBERNATE, S_HIB_Q,
   // standby
   S_PHONE, S_HEARD_FMT, S_NOBODY, S_NOISE_FMT, S_NO_GPS, S_FIX, S_NOFIX, S_SAT_FMT, S_ALT_FMT,
-  S_POWER_OFF, S_BATT_EMPTY, S_BATT_LOW, S_BATT_OUT, S_WAKE_HINT, S_GPS_ON, S_GPS_OFF,
+  S_POWER_OFF, S_BATT_EMPTY, S_BATT_LOW, S_BATT_OUT, S_CHARGE, S_WAKE_HINT, S_GPS_ON, S_GPS_OFF,
+  S_LOCKED, S_UNLOCKED, S_NAME_SAVED, S_NAME_ADV_Q,
   // antenna / transmit
   S_ANT_Q, S_TX_FMT, S_TX_IS_OFF, S_ANT_NEVER_Q,
   // settings
   S_SETTINGS, S_GRP_DISPLAY, S_GRP_INPUT, S_GRP_MSGS, S_GRP_RADIO, S_GRP_SYSTEM, S_SET_OFF,
   S_SET_BRIGHT, S_SET_DOTS, S_SET_MENU_SZ, S_SET_TEXT_SZ, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_NOTIFY,
-  S_SET_DELCONF, S_SET_CSORT, S_SET_TXPOW, S_SET_ANT, S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST,
+  S_SET_DELCONF, S_SET_CSORT, S_SET_WAKE, S_SET_LOCK, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET, S_SET_BATT, S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST,
   S_ABOUT, S_RESCUE, S_RESCUE_Q, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_HIGH,
   S_MEDIUM, S_LOW, S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_SIZE_LARGE, S_SIZE_MEDIUM, S_SIZE_SMALL, S_SIZE_TINY, S_ENC_NORMAL, S_ENC_REVERSED,
   S_STEPS_FMT, S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER, S_CSORT_NAME, S_CSORT_RECENT,
-  S_ANT_ALWAYS, S_ANT_POWER_LOSS, S_ANT_NEVER, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
+  S_ANT_POWER_LOSS, S_ANT_ALWAYS, S_ANT_NEVER, S_WAKE_DIRECT, S_WAKE_ALL, S_WAKE_NEVER, S_LOCK_HAND,
+  S_LOCK_AUTO, S_PRESET_CUSTOM, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   S_COUNT
 };
@@ -169,7 +172,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Изтрий", "Delete" },
   { "Изтрий чат", "Clear chat" },
   { "Изчисти", "Clear all" },
-  { "Прочетени", "Mark read" },
+  { "Всички прочетени", "Mark all read" },
   { "Изтрий това?", "Delete this?" },
   { "Изтрий чата с %s?", "Clear chat with %s?" },
   { "Изтрий всичко?", "Delete all?" },
@@ -215,7 +218,8 @@ static const char* const STRINGS[S_COUNT][2] = {
   // menus
   { "Меню", "Menu" },
   { "Бързо меню", "Quick menu" },
-  { "Advert", "Advert" },
+  { "Адв. близо", "Adv. near" },   // 10 characters: fits the large font
+  { "Адв. мрежа", "Adv. all" },
   { "Advert изпратен", "Advert sent" },
   { "Advert не е изпратен", "Advert failed" },
   { "Изключи", "Power off" },
@@ -234,9 +238,14 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Батерията е изтощена", "Battery empty" },
   { "Батерия под 10%", "Battery below 10%" },
   { "Батерията може да се извади", "Battery can be removed" },
+  { "Зареди батерията", "Charge the battery" },
   { "Задръж", "Hold" },
   { "GPS: вкл", "GPS: on" },
   { "GPS: изкл", "GPS: off" },
+  { "Заключено. Задръж Back", "Locked. Hold Back" },
+  { "Отключено", "Unlocked" },
+  { "Записано. BT име след рестарт", "Saved. BT name after restart" },
+  { "Прати advert с новото име?", "Send an advert with the new name?" },
   // antenna / transmit
   { "Има ли антена?", "Antenna fitted?" },
   { "TX: %s", "TX: %s" },
@@ -252,17 +261,21 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Изгасване", "Screen off" },
   { "Яркост", "Brightness" },
   { "Точки", "Page dots" },
-  { "Меню", "Menu size" },
-  { "Текст", "Text size" },
+  { "Шрифт меню", "Menu font" },
+  { "Шрифт текст", "Text font" },
   { "Вибрация", "Vibration" },
   { "Посока", "Direction" },
-  { "Щрак", "Detent" },
+  { "Стъпки/щрак", "Steps/click" },
   { "Скок букви", "Auto jump" },
   { "Известия", "Alerts" },
   { "Потвърди", "Confirm" },
   { "Подредба", "Sort" },
+  { "Събуждане", "Wake for" },
+  { "Заключване", "Key lock" },
   { "Мощност", "TX power" },
   { "Антена", "Antenna" },
+  { "Пресет", "Preset" },
+  { "Батерия", "Battery" },
   { "Име", "Name" },
   { "Език", "Language" },
   { "Час. пояс", "Time zone" },
@@ -293,9 +306,15 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "никога", "never" },
   { "по име", "by name" },
   { "последни", "recent" },
-  { "винаги", "always" },
   { "нова батерия", "new battery" },
+  { "винаги", "always" },
   { "никога", "never" },
+  { "лични", "direct" },
+  { "всички", "all" },
+  { "никога", "never" },
+  { "ръчно", "by hand" },
+  { "автоматично", "automatic" },
+  { "свой", "custom" },
   { "ЕС", "EU" },
   { "%s", "%s" },
   { "%d.%02dV %d%%", "%d.%02dV %d%%" },
@@ -798,7 +817,7 @@ static UIMsgEntry* sendNow(UITask* task, const ComposeTarget& t, const char* tex
     ChannelDetails ch;
     if (the_mesh.getChannel(t.channel_idx, ch) && ch.name[0] &&
         the_mesh.sendGroupMessage(ts, ch.channel, task->prefs()->node_name, text, len)) {
-      return task->addSent(t.name, MSG_SRC_CHANNEL, t.channel_idx, NULL, text, 0, 0);
+      return task->addSent(t.name, MSG_SRC_CHANNEL, t.channel_idx, NULL, text, ts, 0, 0);
     }
 #endif
     return NULL;
@@ -806,10 +825,11 @@ static UIMsgEntry* sendNow(UITask* task, const ComposeTarget& t, const char* tex
   ContactInfo* c = the_mesh.lookupContactByPubKey(t.pub_key, PUB_KEY_SIZE);
   uint32_t ack = 0, timeout = 0;
   if (!c || the_mesh.sendMessage(*c, ts, 0, text, ack, timeout) == MSG_SEND_FAILED) return NULL;
-  return task->addSent(t.name, MSG_SRC_CONTACT, 0, t.pub_key, text, ack, timeout);
+  return task->addSent(t.name, MSG_SRC_CONTACT, 0, t.pub_key, text, ts, ack, timeout);
 }
 
 static void closeWriting(UITask* task);
+static void showSentInThread(UITask* task, uint32_t seq);
 
 // ---- sending with undo: the message waits SEND_UNDO_MILLIS, Back cancels it
 
@@ -1346,13 +1366,24 @@ static ComposeScreen* compose_screen;
 void SendUndoScreen::poll() {
   if (!timeReached(_started + SEND_UNDO_MILLIS)) return;
   _task->pop();   // this screen
-  if (sendNow(_task, _target, _text)) {
+  UIMsgEntry* sent = sendNow(_task, _target, _text);
+  if (sent) {
     if (_from_compose) compose_screen->sent();
     closeWriting(_task);
+    showSentInThread(_task, sent->seq);
     _task->notify(UIEventType::ack);
     _task->showAlert(T(S_SENT), 1000);
   } else {
     _task->showAlert(failText(S_SEND_FAIL), 1500);
+  }
+}
+
+static void doAdvertAll(UITask* task) {
+  if (the_mesh.advert(true)) {
+    task->notify(UIEventType::ack);
+    task->showAlert(T(S_ADV_SENT), 1000);
+  } else {
+    task->showAlert(failText(S_ADV_FAIL), 1000);
   }
 }
 
@@ -1374,7 +1405,9 @@ void ComposeScreen::finish() {
     the_mesh.savePrefs();
     if (_task->current() == this) _task->pop();
     _task->haptic(UI_HAPTIC_ACK_MS);
-    _task->showAlert(T(S_SAVED), 800);
+    // others learn the new name from an advert; Bluetooth keeps the old one until a restart
+    _task->showAlert(T(S_NAME_SAVED), 2000);
+    if (the_mesh.isTxAllowed()) askConfirm(_task, T(S_NAME_ADV_Q), doAdvertAll);
     return;
   }
   if (_len == 0) return;
@@ -1491,9 +1524,7 @@ static void deleteConversationOf(UITask* task, uint32_t seq) {
   }
 }
 
-class MessageViewScreen;
 class ThreadScreen;
-static MessageViewScreen* message_view;
 static ThreadScreen* thread_screen;
 
 // one row per conversation, newest first: icon (# channel, person, envelope = unread), name,
@@ -1620,163 +1651,170 @@ bool ConversationsScreen::onContext(int i) {
   return true;
 }
 
-// ---- one conversation, oldest first, opened at the newest message
+// ---- one conversation as a chat, oldest first, opened at the newest message. Every message is
+// shown in full, wrapped. Turning moves from message to message; one taller than the screen
+// scrolls line by line first. The selected message has a bar on its left; my own messages carry
+// their delivery icon at the right of their first line. Press = reply, hold = actions.
 
-class ThreadScreen : public ListScreen {
+class MessageActionsScreen;
+static MessageActionsScreen* message_actions;
+static void openMessageActions(UITask* task, uint32_t seq);
+
+class ThreadScreen : public UIScreen {
+  UITask* _task;
   UIMsgEntry _key;                  // copy of a message of the conversation (its identity fields)
   uint32_t _items[UI_MSG_HISTORY];  // seqs, oldest first
   int _n = 0;
+  uint32_t _sel_seq = 0;            // selected message
+  int _sel = 0;                     // ... its index in _items
+  int _first = 0;                   // first line on screen
+  unsigned long _opened = 0;
 
+  static const int GUTTER = 4;      // selection bar on the left
+  static const int MAX_MSG_LINES = 24;
+  struct Line { uint8_t msg, start, len; };
+  Line _lines[UI_MSG_HISTORY * MAX_MSG_LINES];
+  int _num_lines = 0;
+  int _msg_first[UI_MSG_HISTORY], _msg_last[UI_MSG_HISTORY];
+
+  static int level() { return sizeLevel(true); }
+  static int rows() { return rowsFor(level()); }
+  UIMsgEntry* entry(int i) { return (i >= 0 && i < _n) ? _task->historyAt(_task->historyIndexOf(_items[i])) : NULL; }
+
+  // the conversation's messages and their lines at the current text size
   void rebuild() {
     _n = 0;
     for (int i = _task->historyCount() - 1; i >= 0; i--) {
       UIMsgEntry* m = _task->historyAt(i);
       if (sameConversation(m, &_key)) _items[_n++] = m->seq;
     }
+    _sel = _n - 1;
+    for (int i = 0; i < _n; i++) if (_items[i] == _sel_seq) _sel = i;
+    if (_sel >= 0) _sel_seq = _items[_sel];
+    const UISize& z = UI_SIZES[level()];
+    int cols = (ui_width - GUTTER - 4) / z.cw;
+    int icon_cols = (8 * z.icon_scale + 2 + z.cw - 1) / z.cw;
+    _num_lines = 0;
+    for (int i = 0; i < _n; i++) {
+      UIMsgEntry* m = entry(i);
+      uint8_t starts[MAX_MSG_LINES], lens[MAX_MSG_LINES];
+      int w = (m && m->state != MSG_IN) ? cols - icon_cols : cols;   // room for the delivery icon
+      int k = m ? ui::wrapLines(m->text, w, starts, lens, MAX_MSG_LINES) : 0;
+      if (k == 0) { starts[0] = 0; lens[0] = 0; k = 1; }   // an empty message still takes a row
+      _msg_first[i] = _num_lines;
+      for (int j = 0; j < k; j++) _lines[_num_lines++] = { (uint8_t)i, starts[j], lens[j] };
+      _msg_last[i] = _num_lines - 1;
+    }
+    clampFirst();
   }
-protected:
-  bool isContent() override { return true; }
-  UIMsgEntry* entry(int i) { return (i >= 0 && i < _n) ? _task->historyAt(_task->historyIndexOf(_items[i])) : NULL; }
-  void title(char* buf, size_t n) override { snprintf(buf, n, "%s%s", _key.src == MSG_SRC_CHANNEL ? "#" : "", _key.from); }
-  int count() override { rebuild(); return _n; }
-  bool hasIcons() override { return true; }
-  const uint8_t* icon(int i) override { UIMsgEntry* m = entry(i); return m ? stateIcon(m) : NULL; }
-  void label(int i, char* buf, size_t n) override {
-    UIMsgEntry* m = entry(i);
-    if (m) snprintf(buf, n, "%s", m->text);   // channel texts already start with "sender: "
-    else buf[0] = 0;
+  void clampFirst() {
+    int max_first = _num_lines - rows();
+    if (_first > max_first) _first = max_first;
+    if (_first < 0) _first = 0;
   }
-  bool onEnter(int i) override;
-  bool onContext(int i) override;
+  // after the selection moved: show the whole message if it fits, else its start (down) or end (up)
+  void reveal(bool down) {
+    if (_sel < 0) return;
+    int a = _msg_first[_sel], b = _msg_last[_sel], r = rows();
+    if (b - a + 1 > r) _first = down ? a : b - r + 1;
+    else if (a < _first) _first = a;
+    else if (b >= _first + r) _first = b - r + 1;
+    clampFirst();
+  }
+
 public:
-  ThreadScreen(UITask* task) : ListScreen(task) { memset(&_key, 0, sizeof(_key)); }
-  // open the conversation of message 'seq', with 'seq' selected
+  ThreadScreen(UITask* task) : _task(task) { memset(&_key, 0, sizeof(_key)); }
+  // open the conversation of message 'seq', with 'seq' selected and in view
   void open(uint32_t seq) {
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(seq));
     if (!m) return;
     _key = *m;
+    _sel_seq = seq;
+    _opened = millis();
+    _first = 1 << 14;   // bottom first, then the selected message moves into view
     rebuild();
-    reset();
-    for (int i = 0; i < _n; i++) if (_items[i] == seq) select(i);
+    reveal(true);
   }
+  uint32_t selectedSeq() const { return _sel_seq; }
+  bool showing(const UIMsgEntry* m) const { return sameConversation(m, &_key); }
+
   int render(DisplayDriver& d) override {
-    if (count() == 0) { _task->pop(); return 100; }   // the whole conversation was deleted
-    // what is on screen counts as read
-    if (_sel >= _n) select(_n - 1);
-    clampTop(_n);
-    for (int r = 0; r < rows() && _top + r < _n; r++) {
-      UIMsgEntry* m = entry(_top + r);
-      if (m && m->state == MSG_IN) m->unread = false;
+    rebuild();
+    if (_n == 0) { _task->pop(); return 100; }   // the whole conversation was deleted
+    const int ROWS = rows();
+    useSize(d, level());
+
+    // title: the conversation, and the age of the selected message on the right
+    UIMsgEntry* sel = entry(_sel);
+    char buf[200], age[12];
+    age[0] = 0;
+    if (sel) ageOf(age, sizeof(age), sel->timestamp);
+    d.setColor(UIColor::title_txt);
+    int right_x = d.width();
+    if (age[0]) { d.drawTextRightAlign(right_x, TEXT_DY, age); right_x -= d.getTextWidth(age) + CW; }
+    snprintf(buf, sizeof(buf), "%s%s", _key.src == MSG_SRC_CHANNEL ? "#" : "", _key.from);
+    bool scrolling = drawMarquee(d, 0, TEXT_DY, buf, right_x / CW, _opened, true);
+    drawTitleRule(d);
+    d.setColor(UIColor::primary_txt);
+
+    char line[100], filtered[100];
+    for (int r = 0; r < ROWS && _first + r < _num_lines; r++) {
+      const Line& L = _lines[_first + r];
+      UIMsgEntry* m = entry(L.msg);
+      if (!m) continue;
+      if (m->state == MSG_IN) m->unread = false;   // what is on screen counts as read
+      int y = ROW_TOP + r * LH;
+      if (L.msg == _sel) d.fillRect(0, y, 2, LH);
+      utf8Slice(line, sizeof(line), m->text + L.start, 0, L.len);
+      d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
+      d.setCursor(GUTTER, y + TEXT_DY);
+      d.print(filtered);
+      const uint8_t* st = m->state != MSG_IN ? stateIcon(m) : NULL;
+      if (st && _first + r == _msg_first[L.msg]) drawIcon2(d, d.width() - 4 - ICON_W, y, st);
     }
-    return ListScreen::render(d);
+    if (_num_lines > ROWS) {   // scrollbar
+      int track = ROWS * LH;
+      int h = track * ROWS / _num_lines; if (h < 6) h = 6;
+      int y = ROW_TOP + (track - h) * _first / (_num_lines - ROWS);
+      d.fillRect(d.width() - 3, y, 3, h);
+    }
+    return scrolling ? MARQUEE_STEP_MILLIS : 1000;
   }
-  uint32_t selectedSeq() { UIMsgEntry* m = entry(_sel); return m ? m->seq : 0; }
+
+  bool handleInput(char c) override {
+    rebuild();
+    if (_n == 0) return false;
+    if (c == KEY_NEXT) {
+      if (_msg_last[_sel] >= _first + rows()) _first++;   // the rest of a long message first
+      else if (_sel < _n - 1) { _sel_seq = _items[++_sel]; reveal(true); }
+      clampFirst();
+      return true;
+    }
+    if (c == KEY_PREV) {
+      if (_msg_first[_sel] < _first) _first--;
+      else if (_sel > 0) { _sel_seq = _items[--_sel]; reveal(false); }
+      clampFirst();
+      return true;
+    }
+    UIMsgEntry* m = entry(_sel);
+    if (!m) return false;
+    if (c == KEY_ENTER) { replyTo(_task, m); return true; }
+    if (c == KEY_CONTEXT_MENU) { openMessageActions(_task, m->seq); return true; }
+    return false;
+  }
 };
+
+// a message sent from inside a conversation: select it, so its delivery icon is in view
+static void showSentInThread(UITask* task, uint32_t seq) {
+  UIMsgEntry* m = task->historyAt(task->historyIndexOf(seq));
+  if (m && task->current() == thread_screen && thread_screen->showing(m)) thread_screen->open(seq);
+}
 
 bool ConversationsScreen::onEnter(int i) {
   UIMsgEntry* m = entry(i);
   if (!m) return false;
   thread_screen->open(m->seq);
   _task->push(thread_screen);
-  return true;
-}
-
-// ---- one message: full text, turn to scroll, press = reply, hold = actions
-
-class MessageActionsScreen;
-static MessageActionsScreen* message_actions;
-static void openMessageActions(UITask* task, uint32_t seq);
-
-class MessageViewScreen : public UIScreen {
-  UITask* _task;
-  uint32_t _seq = 0;   // the message shown; new messages shift history indexes
-  int _scroll = 0;
-  static const int MAX_LINES = 24;
-  uint8_t _lines[MAX_LINES];       // start of each line, as offset into the entry text (entries move)
-  uint8_t _line_len[MAX_LINES];    // characters per line
-  int _num_lines = 0;
-  int _wrap_chars = 0;             // line width the lines were broken for
-  unsigned long _opened = 0;
-
-  static int lineChars() { return colsFor(sizeLevel(true)); }
-  static int visible() { return rowsFor(sizeLevel(true)); }
-  void wrap(UIMsgEntry* m) {
-    _wrap_chars = lineChars();
-    _num_lines = ui::wrapLines(m->text, _wrap_chars, _lines, _line_len, MAX_LINES);
-  }
-  void clampScroll() {   // no empty rows at the end, also after the text size changed
-    int v = visible();
-    if (_scroll + v > _num_lines) _scroll = _num_lines > v ? _num_lines - v : 0;
-  }
-
-public:
-  MessageViewScreen(UITask* task) : _task(task) { }
-  void open(uint32_t seq) {
-    _scroll = 0;
-    _opened = millis();
-    _num_lines = 0;
-    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(seq));
-    _seq = m ? m->seq : 0;
-    if (m) { m->unread = false; wrap(m); }
-  }
-  int render(DisplayDriver& d) override {
-    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
-    if (!m) { _task->pop(); return 100; }
-    if (_wrap_chars != lineChars()) wrap(m);   // the text size changed
-    clampScroll();
-    const int VISIBLE = visible();
-    char age[12];
-    ageOf(age, sizeof(age), m->timestamp);
-    useSize(d, sizeLevel(true));
-    d.setColor(UIColor::title_txt);
-    int right_x = d.width();
-    if (age[0]) { d.drawTextRightAlign(right_x, TEXT_DY, age); right_x -= d.getTextWidth(age) + 2; }
-    const uint8_t* st = m->state != MSG_IN ? stateIcon(m) : NULL;
-    if (st) { right_x -= ICON_W; drawIcon2(d, right_x, 0, st); right_x -= 2; }
-    char who[48];
-    if (m->state == MSG_IN) snprintf(who, sizeof(who), "%s", m->from);
-    else snprintf(who, sizeof(who), "%s > %s", T(S_ME), m->from);
-    bool scrolling = drawMarquee(d, 0, TEXT_DY, who, right_x / CW, _opened, true);
-    drawTitleRule(d);
-    d.setColor(UIColor::primary_txt);
-    char line[100], filtered[100];
-    for (int r = 0; r < VISIBLE && _scroll + r < _num_lines; r++) {
-      utf8Slice(line, sizeof(line), m->text + _lines[_scroll + r], 0, _line_len[_scroll + r]);
-      d.translateUTF8ToBlocks(filtered, line, sizeof(filtered));
-      d.setCursor(0, ROW_TOP + r * LH + TEXT_DY);
-      d.print(filtered);
-    }
-    if (_num_lines > VISIBLE) {
-      int track = VISIBLE * LH;
-      int h = track * VISIBLE / _num_lines; if (h < 6) h = 6;
-      int y = ROW_TOP + (track - h) * _scroll / (_num_lines - VISIBLE);
-      d.fillRect(d.width() - 3, y, 3, h);
-    }
-    return scrolling ? MARQUEE_STEP_MILLIS : 5000;
-  }
-  bool handleInput(char c) override {
-    if (c == KEY_NEXT) { if (_scroll + visible() < _num_lines) _scroll++; return true; }
-    if (c == KEY_PREV) { if (_scroll > 0) _scroll--; return true; }
-    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
-    if (!m) return false;
-    if (c == KEY_ENTER) { replyTo(_task, m); return true; }
-    if (c == KEY_CONTEXT_MENU) { openMessageActions(_task, _seq); return true; }
-    return false;
-  }
-};
-
-bool ThreadScreen::onEnter(int i) {
-  UIMsgEntry* m = entry(i);
-  if (!m) return false;
-  message_view->open(m->seq);
-  _task->push(message_view);
-  return true;
-}
-
-bool ThreadScreen::onContext(int i) {
-  UIMsgEntry* m = entry(i);
-  if (!m) return false;
-  openMessageActions(_task, m->seq);
   return true;
 }
 
@@ -1819,25 +1857,9 @@ static void openMessageActions(UITask* task, uint32_t seq) {
 static void doDeleteOne(UITask* task) {
   int idx = task->historyIndexOf(confirm_seq);
   if (idx < 0) return;   // already gone (pushed out of the history)
-  if (task->current() == message_view) task->pop();
   task->deleteHistory(idx);
   task->haptic(UI_HAPTIC_ACK_MS);
   task->showAlert(T(S_DELETED), 800);
-}
-
-// send a failed direct message again: the new copy waits for its ACK, the failed one goes
-static void resend(UITask* task, uint32_t seq) {
-  UIMsgEntry* m = task->historyAt(task->historyIndexOf(seq));
-  if (!m) return;
-  ComposeTarget t;
-  if (!findTarget(m, t)) { task->showAlert(T(S_NO_TARGET), 1200); return; }
-  char text[sizeof(m->text)];
-  StrHelper::strncpy(text, m->text, sizeof(text));
-  if (!sendNow(task, t, text)) { task->showAlert(failText(S_SEND_FAIL), 1500); return; }
-  int old = task->historyIndexOf(seq);   // still there unless the full history pushed it out
-  if (old >= 0) task->deleteHistory(old);
-  task->notify(UIEventType::ack);
-  task->showAlert(T(S_SENT), 1000);
 }
 
 bool MessageActionsScreen::onEnter(int i) {
@@ -1850,7 +1872,12 @@ bool MessageActionsScreen::onEnter(int i) {
       replyTo(_task, m);
       break;
     case A_RETRY:
-      resend(_task, _seq);
+      if (_task->resend(_seq)) {
+        _task->notify(UIEventType::ack);
+        _task->showAlert(T(S_SENT), 1000);
+      } else {
+        _task->showAlert(failText(S_SEND_FAIL), 1500);
+      }
       break;
     case A_DEL:
       confirm_seq = _seq;
@@ -2146,7 +2173,34 @@ protected:
     if (targetForChannel(_channels[i], t)) snprintf(buf, n, "%s", t.name);
     else buf[0] = 0;
   }
+  // the newest message of the channel in the history, or NULL
+  UIMsgEntry* lastMessage(const ComposeTarget& t) {
+    for (int k = 0; k < _task->historyCount(); k++) {
+      UIMsgEntry* m = _task->historyAt(k);
+      if (m->src == MSG_SRC_CHANNEL && m->channel_idx == t.channel_idx && strcmp(m->from, t.name) == 0) return m;
+    }
+    return NULL;
+  }
+  void rightText(int i, char* buf, size_t n) override {
+    ComposeTarget t;
+    UIMsgEntry* m = targetForChannel(_channels[i], t) ? lastMessage(t) : NULL;
+    if (m) ageOf(buf, n, m->timestamp);
+    else buf[0] = 0;
+  }
+  // press: the channel's conversation (press there to write), or straight to writing when it has none
   bool onEnter(int i) override {
+    ComposeTarget t;
+    if (!targetForChannel(_channels[i], t)) return false;
+    UIMsgEntry* m = lastMessage(t);
+    if (m) {
+      thread_screen->open(m->seq);
+      _task->push(thread_screen);
+    } else {
+      openReplyPick(_task, t);
+    }
+    return true;
+  }
+  bool onContext(int i) override {   // hold: write at once
     ComposeTarget t;
     if (!targetForChannel(_channels[i], t)) return false;
     openReplyPick(_task, t);
@@ -2197,11 +2251,34 @@ static uint8_t encoderSteps(const NodePrefs* p) {
 
 enum SettingId : uint8_t {
   ST_OFF, ST_BRIGHT, ST_DOTS, ST_MENU_SZ, ST_TEXT_SZ,
-  ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP,
-  ST_NOTIFY, ST_DELCONF, ST_CSORT, ST_QUICK,
-  ST_TX, ST_TXPOW, ST_ANT,
-  ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_ABOUT, ST_RESCUE,
+  ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK,
+  ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
+  ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
+  ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE,
 };
+
+// the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
+// "EU/UK (Narrow)" and "EU/UK (Deprecated)"; anything else shows as "custom" and stays
+struct RadioPreset { const char* name; float freq, bw; uint8_t sf, cr; };
+static const RadioPreset PRESETS[] = {
+  { "EU/UK Narrow",     869.618f,  62.5f,  8, 8 },
+  { "EU/UK Deprecated", 869.525f, 250.0f, 11, 5 },
+};
+#define NUM_PRESETS ((int)(sizeof(PRESETS) / sizeof(PRESETS[0])))
+
+static int currentPreset(const NodePrefs* p) {
+  for (int i = 0; i < NUM_PRESETS; i++) {
+    const RadioPreset& r = PRESETS[i];
+    if (fabsf(p->freq - r.freq) < 0.0005f && fabsf(p->bw - r.bw) < 0.05f && p->sf == r.sf && p->cr == r.cr) return i;
+  }
+  return NUM_PRESETS;   // custom
+}
+
+// battery calibration: the editor starts at the voltage measured when it opened, the user turns it
+// to what a multimeter shows, and the ADC multiplier is scaled by the ratio
+#define BATT_CAL_MIN_MV 3000
+#define BATT_CAL_STEPS  151        // 3.00 .. 4.50 V in 10 mV steps
+static uint16_t batt_cal_mv = 0;   // measured when the editor opened
 
 #define TZ_MIN  -12
 #define TZ_MAX   14
@@ -2210,10 +2287,10 @@ enum SettingId : uint8_t {
 static StrId settingName(uint8_t id) {
   static const StrId N[] = {
     S_SET_OFF, S_SET_BRIGHT, S_SET_DOTS, S_SET_MENU_SZ, S_SET_TEXT_SZ,
-    S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP,
-    S_SET_NOTIFY, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
-    S_TX_FMT, S_SET_TXPOW, S_SET_ANT,
-    S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_ABOUT, S_RESCUE,
+    S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_LOCK,
+    S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
+    S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
+    S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE,
   };
   return N[id];
 }
@@ -2222,9 +2299,11 @@ static StrId settingName(uint8_t id) {
 static int optCount(uint8_t id) {
   switch (id) {
     case ST_OFF: return 4;
-    case ST_BRIGHT: case ST_DOTS: case ST_NOTIFY: case ST_ANT: return 3;
+    case ST_BRIGHT: case ST_DOTS: case ST_NOTIFY: case ST_ANT: case ST_WAKE: return 3;
+    case ST_PRESET: return NUM_PRESETS + 1;
+    case ST_BATT: return BATT_CAL_STEPS;
     case ST_MENU_SZ: case ST_TEXT_SZ: return 4;
-    case ST_VIBE: case ST_ENC: case ST_STEPS: case ST_SKIP: case ST_DELCONF: case ST_CSORT:
+    case ST_VIBE: case ST_ENC: case ST_STEPS: case ST_SKIP: case ST_DELCONF: case ST_CSORT: case ST_LOCK:
     case ST_TX: case ST_LANG: case ST_DST: return 2;
     case ST_TXPOW: return MAX_LORA_TX_POWER - TXPOW_MIN + 1;
     case ST_TZ: return TZ_MAX - TZ_MIN + 1;
@@ -2245,6 +2324,14 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_STEPS: return encoderSteps(p) == 2 ? 0 : 1;
     case ST_SKIP: return p->ui_skip ? 0 : 1;
     case ST_NOTIFY: return p->ui_notify % 3;
+    case ST_WAKE: return p->ui_wake % 3;
+    case ST_LOCK: return p->ui_lock ? 1 : 0;
+    case ST_PRESET: return currentPreset(p);
+    case ST_BATT: {
+      batt_cal_mv = task->getBattMilliVolts();
+      int v = ((int)batt_cal_mv - BATT_CAL_MIN_MV + 5) / 10;
+      return v < 0 ? 0 : v >= BATT_CAL_STEPS ? BATT_CAL_STEPS - 1 : v;
+    }
     case ST_DELCONF: return p->ui_delconf ? 0 : 1;
     case ST_CSORT: return p->ui_csort ? 1 : 0;
     case ST_TX: return the_mesh.isTxAllowed() ? 1 : 0;
@@ -2266,9 +2353,13 @@ static void optText(uint8_t id, int v, char* buf, size_t n) {
     case ST_ENC: snprintf(buf, n, "%s", T(v ? S_ENC_REVERSED : S_ENC_NORMAL)); break;
     case ST_STEPS: snprintf(buf, n, T(S_STEPS_FMT), v ? 4 : 2); break;
     case ST_NOTIFY: snprintf(buf, n, "%s", T((StrId)(S_NOTIFY_NO_PHONE + v))); break;
+    case ST_WAKE: snprintf(buf, n, "%s", T((StrId)(S_WAKE_DIRECT + v))); break;
+    case ST_LOCK: snprintf(buf, n, "%s", T(v ? S_LOCK_AUTO : S_LOCK_HAND)); break;
+    case ST_PRESET: snprintf(buf, n, "%s", v < NUM_PRESETS ? PRESETS[v].name : T(S_PRESET_CUSTOM)); break;
+    case ST_BATT: { int mv = BATT_CAL_MIN_MV + v * 10; snprintf(buf, n, "%d.%02d V", mv / 1000, (mv % 1000) / 10); break; }
     case ST_CSORT: snprintf(buf, n, "%s", T(v ? S_CSORT_RECENT : S_CSORT_NAME)); break;
     case ST_TXPOW: snprintf(buf, n, "%d dBm", v + TXPOW_MIN); break;
-    case ST_ANT: snprintf(buf, n, "%s", T((StrId)(S_ANT_ALWAYS + v))); break;
+    case ST_ANT: snprintf(buf, n, "%s", T((StrId)(S_ANT_POWER_LOSS + v))); break;
     case ST_LANG: snprintf(buf, n, "%s", LANG_NAMES[v % LANG_COUNT]); break;
     case ST_TZ: snprintf(buf, n, "UTC%+d", v + TZ_MIN); break;
     case ST_DST: snprintf(buf, n, "%s", T(v ? S_DST_EU : S_OFF)); break;
@@ -2290,6 +2381,19 @@ static void setOpt(UITask* task, uint8_t id, int v) {
     case ST_STEPS: p->ui_enc_steps = v ? 4 : 2; task->applyEncoderPrefs(); break;
     case ST_SKIP: p->ui_skip = v ? 0 : 1; break;
     case ST_NOTIFY: p->ui_notify = v; break;
+    case ST_WAKE: p->ui_wake = v; break;
+    case ST_LOCK: p->ui_lock = v; break;
+    case ST_BATT: {
+      // scale the multiplier by multimeter / shown; the build default when the board has none yet
+      float mult = board.getAdcMultiplier();
+      int target = BATT_CAL_MIN_MV + v * 10;
+      if (mult > 0 && batt_cal_mv > 0 && target != (int)batt_cal_mv) {
+        mult = mult * target / batt_cal_mv;
+        if (board.setAdcMultiplier(mult)) p->adc_mult = mult;
+        task->resetBattery();
+      }
+      break;
+    }
     case ST_DELCONF: p->ui_delconf = v ? 0 : 1; break;
     case ST_CSORT: p->ui_csort = v; break;
     case ST_ANT: p->ui_ant = v; break;
@@ -2302,6 +2406,11 @@ static void setOpt(UITask* task, uint8_t id, int v) {
 static void saveOpt(UITask* task, uint8_t id, int v) {
   if (id == ST_TXPOW) {
     the_mesh.setTxPower(v + TXPOW_MIN);   // applied and saved
+  } else if (id == ST_PRESET) {
+    if (v < NUM_PRESETS) {
+      const RadioPreset& r = PRESETS[v];
+      if (!the_mesh.setRadioParams(r.freq, r.bw, r.sf, r.cr)) { task->showAlert(T(S_SAVE_FAIL), 1500); return; }
+    }
   } else {
     setOpt(task, id, v);
     the_mesh.savePrefs();
@@ -2361,7 +2470,7 @@ public:
     }
     if (c == KEY_ENTER && _id == ST_TX) {
       _task->pop();
-      if (_val == 0 && the_mesh.isTxAllowed()) { the_mesh.setTxAllowed(false); _task->haptic(UI_HAPTIC_ACK_MS); }
+      if (_val == 0 && the_mesh.isTxAllowed()) { _task->setTransmit(false); _task->haptic(UI_HAPTIC_ACK_MS); }
       else if (_val == 1 && !the_mesh.isTxAllowed()) turnTransmitOn(_task);
       return true;
     }
@@ -2404,7 +2513,7 @@ public:
     char hex[16];
     snprintf(hex, sizeof(hex), "%02X%02X%02X%02X", k[0], k[1], k[2], k[3]);
     snprintf(_lines[_n++], 40, T(S_ID_FMT), hex);
-    uint16_t mv = _task->getBattMilliVolts();
+    uint16_t mv = _task->battMilliVolts();
     snprintf(_lines[_n++], 40, T(S_BATT_FMT), mv / 1000, (mv % 1000) / 10, battPercent(mv));
     snprintf(_lines[_n++], 40, T(S_CONTACTS_FMT), the_mesh.getNumContacts(), MAX_CONTACTS);
     char age[12];
@@ -2466,10 +2575,10 @@ public:
 static SettingsGroupScreen* settings_group;
 
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
-static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP };
-static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_DELCONF, ST_CSORT, ST_QUICK };
-static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT };
-static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_ABOUT, ST_RESCUE };
+static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK };
+static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK };
+static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET };
+static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE };
 
 class SettingsScreen : public ListScreen {
 protected:
@@ -2518,10 +2627,10 @@ public:
   MainMenuScreen(UITask* task) : ListScreen(task) { }
 };
 
-static void doHibernate(UITask* task) { task->hibernate(); }
+static void doHibernate(UITask* task) { task->hibernate(false); }
 
 class QuickMenuScreen : public ListScreen {
-  enum { ADVERT, TRANSMIT, BLUETOOTH,
+  enum { ADVERT, ADVERT_ALL, TRANSMIT, BLUETOOTH,
 #if ENV_INCLUDE_GPS == 1
     GPS,
 #endif
@@ -2532,6 +2641,7 @@ protected:
   void label(int i, char* buf, size_t n) override {
     switch (i) {
       case ADVERT: snprintf(buf, n, "%s", T(S_SEND_ADV)); break;
+      case ADVERT_ALL: snprintf(buf, n, "%s", T(S_SEND_ADV_ALL)); break;
       case TRANSMIT: snprintf(buf, n, T(S_TX_FMT), the_mesh.isTxAllowed() ? T(S_ON) : T(S_OFF)); break;
       case BLUETOOTH:
         // the pairing PIN is shown while Bluetooth waits for a phone
@@ -2550,7 +2660,8 @@ protected:
   bool onEnter(int i) override {
     switch (i) {
       case ADVERT:
-        if (the_mesh.isTxAllowed() && the_mesh.advert()) {
+      case ADVERT_ALL:
+        if (the_mesh.advert(i == ADVERT_ALL)) {
           _task->notify(UIEventType::ack);
           _task->showAlert(T(S_ADV_SENT), 1000);
         } else {
@@ -2559,7 +2670,7 @@ protected:
         break;
       case TRANSMIT:
         if (the_mesh.isTxAllowed()) {
-          the_mesh.setTxAllowed(false);
+          _task->setTransmit(false);
           _task->notify(UIEventType::ack);
         } else {
           turnTransmitOn(_task);
@@ -2624,7 +2735,7 @@ class StandbyScreen : public UIScreen {
   void renderHeader(DisplayDriver& d) {
     d.setColor(UIColor::title_txt);
     int x = d.width() - 24;
-    drawBattery(d, x, 2, battPercent(_task->getBattMilliVolts()));
+    drawBattery(d, x, 2, battPercent(_task->battMilliVolts()));
     if (isCharging()) { x -= 16; drawIcon2(d, x, 0, icon_bolt); }
     if (_task->isBluetoothEnabled()) { x -= 16; drawIcon2(d, x, 0, icon_bt); }
     if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 18; drawSignal(d, x, 0, rx_snr); }
@@ -2760,7 +2871,7 @@ class StandbyScreen : public UIScreen {
   void renderBattery(DisplayDriver& d) {
     char buf[40];
     int w = cols(d) * CW;
-    uint16_t mv = _task->getBattMilliVolts();
+    uint16_t mv = _task->battMilliVolts();
     snprintf(buf, sizeof(buf), "%d%%", battPercent(mv));
     d.setTextSize(4);
     d.drawTextCentered(w / 2, LH, buf);
@@ -2831,8 +2942,6 @@ bool StandbyScreen::handleInput(char c) {
       _task->push(conversations);
       thread_screen->open(m->seq);
       _task->push(thread_screen);
-      message_view->open(m->seq);
-      _task->push(message_view);
       break;
     }
     return true;
@@ -2892,7 +3001,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   conversations = new ConversationsScreen(this);
   conv_actions = new ConvActionsScreen(this);
   thread_screen = new ThreadScreen(this);
-  message_view = new MessageViewScreen(this);
   message_actions = new MessageActionsScreen(this);
   contacts_screen = new ContactsScreen(this);
   contact_actions = new ContactActionsScreen(this);
@@ -2913,12 +3021,20 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   {
     uint8_t mode = _node_prefs->ui_ant % 3;
     bool ask = _display != NULL;   // no OLED found: nobody could answer, keep the radio usable
-    if (mode == ANT_NEVER || (mode == ANT_POWER_LOSS && !coldBoot())) ask = false;
-    if (!ask) the_mesh.setTxAllowed(true);
+    bool tx = true;
+    if (mode == ANT_NEVER) ask = false;
+    if (ask && mode == ANT_POWER_LOSS && !coldBoot() && _node_prefs->ui_tx_last != 0) {
+      // a reset or a wake from hibernate, not a new battery: the antenna is as it was answered
+      ask = false;
+      tx = _node_prefs->ui_tx_last == 1;
+    }
+    if (!ask) the_mesh.setTxAllowed(tx);
+    _ask_antenna = ask;
+    _ant_remind = millis() + ANT_REMIND_MILLIS;
   }
-  _ask_antenna = !the_mesh.isTxAllowed();
 #endif
   loadQuickReplies();
+  loadHistory();   // messages from before the last hibernate
   _depth = 0;   // splash until home()
   _next_refresh = 100;
 }
@@ -3014,9 +3130,29 @@ void UITask::enterRescue() {
   _next_refresh = 0;
 }
 
+void UITask::setTransmit(bool on) {
+  the_mesh.setTxAllowed(on);
+  uint8_t last = on ? 1 : 2;
+  if (_node_prefs->ui_tx_last != last) {   // remembered for a restart that is not a battery change
+    _node_prefs->ui_tx_last = last;
+    the_mesh.savePrefs();
+  }
+}
+
+void UITask::lock() {
+  _locked = true;
+  home();
+  if (_display != NULL) { _display->turnOff(); _off_at = millis(); }
+}
+
+uint16_t UITask::battMilliVolts() {
+  if (_batt_mv == 0) _batt_mv = getBattMilliVolts();
+  return _batt_mv;
+}
+
 void UITask::answerAntenna(bool fitted) {
   _ask_antenna = false;
-  the_mesh.setTxAllowed(fitted);
+  setTransmit(fitted);
   if (current() == antenna_screen) pop();
   notify(UIEventType::ack);
   snprintf(_alert, sizeof(_alert), T(S_TX_FMT), fitted ? T(S_ON) : T(S_OFF));
@@ -3079,7 +3215,10 @@ void UITask::ackReceived(const uint8_t* data) {
   memcpy(&ack, data, sizeof(ack));
   for (int i = 0; i < _msg_count; i++) {
     UIMsgEntry* m = historyAt(i);
-    if (m->ack == ack && (m->state == MSG_OUT_PENDING || m->state == MSG_OUT_FAILED)) {
+    if (m->state != MSG_OUT_PENDING && m->state != MSG_OUT_FAILED) continue;
+    bool match = false;
+    for (int k = 0; k < 4; k++) if (m->acks[k] != 0 && m->acks[k] == ack) match = true;   // any attempt
+    if (match) {
       m->state = MSG_OUT_ACKED;   // a late ACK still counts
       haptic(UI_HAPTIC_DELIVERED);
       _next_refresh = 0;
@@ -3092,7 +3231,14 @@ void UITask::checkAckTimeouts() {
   for (int i = 0; i < _msg_count; i++) {
     UIMsgEntry* m = historyAt(i);
     if (m->state == MSG_OUT_PENDING && timeReached(m->ack_deadline)) {
+      if (m->tries_left > 0) {   // try again with the same timestamp, the last time by flood
+        m->tries_left--;
+        if (sendAttempt(m)) continue;
+      }
       m->state = MSG_OUT_FAILED;
+#ifdef PIN_VIBRATION
+      if (!_node_prefs->vibe_quiet) vibration.playPattern(HAPTIC_FAILED, sizeof(HAPTIC_FAILED) / sizeof(HAPTIC_FAILED[0]));
+#endif
       if (_display != NULL && _display->isOn()) {
         char alert[64];
         snprintf(alert, sizeof(alert), T(S_NOT_DELIVERED_FMT), m->from);
@@ -3163,18 +3309,46 @@ UIMsgEntry* UITask::addHistory() {
 }
 
 UIMsgEntry* UITask::addSent(const char* conv_name, uint8_t src, uint8_t channel_idx, const uint8_t* pub_prefix,
-                            const char* text, uint32_t ack, uint32_t timeout_millis) {
+                            const char* text, uint32_t sent_ts, uint32_t ack, uint32_t timeout_millis) {
   UIMsgEntry* m = addHistory();
   m->state = ack ? MSG_OUT_PENDING : MSG_OUT_SENT;
+  m->sent_ts = sent_ts;
+  m->attempt = 0;
+  m->tries_left = ack ? UI_SEND_ATTEMPTS - 1 : 0;
+  m->acks[0] = ack;
   StrHelper::strncpy(m->from, conv_name, sizeof(m->from));
   StrHelper::strncpy(m->text, text, sizeof(m->text));
   m->src = src;
   m->channel_idx = channel_idx;
   if (pub_prefix) memcpy(m->pub_prefix, pub_prefix, sizeof(m->pub_prefix));
-  m->ack = ack;
   m->ack_deadline = millis() + timeout_millis + 2000;   // the estimate plus a margin for the way back
   _next_refresh = 0;
   return m;
+}
+
+// one more send of a direct message in the history: same timestamp, next attempt number, so the
+// recipient's app sees a repeat and not a new message. The last automatic one floods (path reset).
+bool UITask::sendAttempt(UIMsgEntry* m) {
+  if (m->src != MSG_SRC_CONTACT || !the_mesh.isTxAllowed()) return false;
+  ContactInfo* c = the_mesh.lookupContactByPubKey(m->pub_prefix, sizeof(m->pub_prefix));
+  if (!c) return false;
+  if (m->tries_left == 0 && c->out_path_len != OUT_PATH_UNKNOWN) the_mesh.resetContactPath(*c);
+  uint8_t attempt = m->attempt + 1;
+  uint32_t ack = 0, timeout = 0;
+  if (the_mesh.sendMessage(*c, m->sent_ts, attempt, m->text, ack, timeout) == MSG_SEND_FAILED) return false;
+  m->attempt = attempt;
+  m->acks[attempt & 3] = ack;
+  m->state = MSG_OUT_PENDING;
+  m->ack_deadline = millis() + timeout + 2000;
+  _next_refresh = 0;
+  return true;
+}
+
+bool UITask::resend(uint32_t seq) {
+  UIMsgEntry* m = historyAt(historyIndexOf(seq));
+  if (!m || m->state == MSG_IN || m->src != MSG_SRC_CONTACT) return false;
+  m->tries_left = UI_SEND_ATTEMPTS - 1;   // a new round, the first send on the known path
+  return sendAttempt(m);
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
@@ -3191,8 +3365,17 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   _next_src = MSG_SRC_UNKNOWN;
   _last_new_msg = millis();
 
+  // a channel message that names this node counts as a direct one: its buzz and waking the screen
+  if (m->src == MSG_SRC_CHANNEL && isMention(text)) {
+    m->mention = true;
+    notifyMsg(UIEventType::contactMessage, hasConnection());   // replaces the channel buzz
+  }
+  bool direct = m->src != MSG_SRC_CHANNEL || m->mention;
+
   if (_display != NULL) {
-    if (!_display->isOn() && !hasConnection()) {
+    // Settings > Messages > Wake for: direct messages (default), all, never; never with a phone
+    uint8_t wake = _node_prefs->ui_wake % 3;
+    if (!_display->isOn() && !hasConnection() && (wake == WAKE_ALL || (wake == WAKE_DIRECT && direct))) {
       wakeDisplay();
     }
     if (_display->isOn() && current() != standby) {
@@ -3203,6 +3386,25 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     if (_display->isOn()) _auto_off = millis() + autoOffMillis();
     _next_refresh = 0;
   }
+}
+
+// "@name" or "@[name]" (the app's mention format) in the text, ASCII letters in any case, whole name only
+bool UITask::isMention(const char* text) const {
+  const char* name = _node_prefs->node_name;
+  int nl = strlen(name);
+  if (nl == 0) return false;
+  for (const char* p = strchr(text, '@'); p; p = strchr(p + 1, '@')) {
+    const char* q = p + 1;
+    bool bracket = *q == '[';
+    if (bracket) q++;
+    int i = 0;
+    while (i < nl && q[i] && tolower((unsigned char)q[i]) == tolower((unsigned char)name[i])) i++;
+    if (i < nl) continue;
+    // the whole name: "@Pet" must not match a node called "Petko", nor "@Petko" one called "Pet"
+    char after = q[nl];
+    if (bracket ? after == ']' : !(isalnum((unsigned char)after) || after == '_' || (after & 0x80))) return true;
+  }
+  return false;
 }
 
 bool UITask::getGPSState() {
@@ -3231,14 +3433,18 @@ void UITask::toggleGPS() {
   }
 }
 
-void UITask::hibernate() {
-  the_mesh.flushPendingSaves();   // contacts are otherwise written a few seconds after a change
+void UITask::hibernate(bool low_battery) {
+  // keep what would otherwise be lost: contacts waiting for their lazy save, the message history
+  // and the messages the phone has not fetched yet (restored at the next start)
+  the_mesh.flushPendingWrites();
+  saveHistory();
+  the_mesh.saveOfflineQueue();
   if (_display != NULL) {
     _display->turnOn();
     _display->startFrame();
     big(*_display);
     _display->setColor(UIColor::primary_txt);
-    drawLines(*_display, 0, 3, T(S_BATT_OUT), 3);
+    drawLines(*_display, 0, 3, T(low_battery ? S_CHARGE : S_BATT_OUT), 3);
     // how to switch on again: hold the encoder (Back held at power-up starts the bootloader's DFU)
     drawHint(*_display, 3 * LH, T(S_WAKE_HINT), NULL);
     _display->endFrame();
@@ -3254,6 +3460,47 @@ void UITask::hibernate() {
   while (millis() - shown < 3000) delay(10);   // long enough to read
   if (_display != NULL) _display->turnOff();
   shutdown();
+}
+
+// ---- history kept over a power off: written at hibernate, read (once) at the next start
+
+#define HISTORY_FILE  "/ui_hist"
+#define HISTORY_MAGIC 0x31484955UL   // "UIH1"
+
+struct HistoryHeader {
+  uint32_t magic;
+  uint16_t entry_size;   // a build with another layout ignores the file
+  uint8_t slots, count;
+  int16_t head;
+};
+// the file is the header plus the ring buffer as it is in RAM (no copy, no extra buffer)
+
+void UITask::saveHistory() {
+  the_mesh.removeUIData(HISTORY_FILE);
+  if (_msg_count == 0) return;
+  HistoryHeader h = { HISTORY_MAGIC, (uint16_t)sizeof(UIMsgEntry), UI_MSG_HISTORY, (uint8_t)_msg_count, (int16_t)_msg_head };
+  the_mesh.saveUIData(HISTORY_FILE, (const uint8_t*)&h, sizeof(h), (const uint8_t*)_msgs, sizeof(_msgs));
+}
+
+void UITask::loadHistory() {
+  HistoryHeader h;
+  int n = the_mesh.loadUIData(HISTORY_FILE, (uint8_t*)&h, sizeof(h));
+  if (n < 0) return;
+  bool ok = n == (int)sizeof(h) && h.magic == HISTORY_MAGIC && h.entry_size == sizeof(UIMsgEntry) &&
+            h.slots == UI_MSG_HISTORY && h.count <= UI_MSG_HISTORY && h.head >= 0 && h.head < UI_MSG_HISTORY &&
+            the_mesh.loadUIData(HISTORY_FILE, (uint8_t*)_msgs, sizeof(_msgs), sizeof(h)) == (int)sizeof(_msgs);
+  the_mesh.removeUIData(HISTORY_FILE);   // once only
+  if (!ok) { memset(_msgs, 0, sizeof(_msgs)); _msg_count = 0; _msg_head = -1; return; }
+  _msg_count = h.count;
+  _msg_head = h.head;
+  for (int i = _msg_count - 1; i >= 0; i--) {   // oldest first: fresh ids in this session
+    UIMsgEntry* m = historyAt(i);
+    m->seq = ++_msg_seq;
+    m->from[sizeof(m->from) - 1] = 0;
+    m->text[sizeof(m->text) - 1] = 0;
+    if (m->state == MSG_OUT_PENDING) m->state = MSG_OUT_FAILED;   // its timer did not survive
+    m->tries_left = 0;
+  }
 }
 
 void UITask::shutdown(bool restart) {
@@ -3274,6 +3521,10 @@ void UITask::shutdown(bool restart) {
   #define UI_BATT_MIN_PLAUSIBLE_MV  2500
 #endif
 
+#ifndef UI_BATT_LOW_CHECKS
+  #define UI_BATT_LOW_CHECKS  3   // battery checks (8 s apart) below the limit before powering off
+#endif
+
 #ifndef UI_RESUME_MILLIS
   #define UI_RESUME_MILLIS  (5 * 60 * 1000UL)   // screen off for less than this: wake where you left off
 #endif
@@ -3282,7 +3533,7 @@ void UITask::wakeDisplay() {
   _display->turnOn();
   applyContrast();
   // writing or reading something when the screen timed out: keep it, otherwise standby
-  if (_depth <= 1 || current() == _splash || millis() - _off_at > UI_RESUME_MILLIS) home();
+  if (_locked || _depth <= 1 || current() == _splash || millis() - _off_at > UI_RESUME_MILLIS) home();
   _auto_off = millis() + autoOffMillis();
   _next_refresh = 0;
 }
@@ -3317,10 +3568,13 @@ void UITask::renderAlert() {
 
 // low battery: one warning below 10% (again after charging above 20%), power off below the limit
 void UITask::checkBattery() {
-  uint16_t mv = getBattMilliVolts();
+  uint16_t raw = getBattMilliVolts();
   // below ~2.5 V no LiPo-powered nRF52 is still running: such a reading is a broken divider or
   // ADC, and acting on it would switch the device off right after every boot
-  if (mv < UI_BATT_MIN_PLAUSIBLE_MV) return;
+  if (raw < UI_BATT_MIN_PLAUSIBLE_MV) return;
+  // the shown value moves slowly (a transmit pulls the cell down for a moment)
+  _batt_mv = _batt_mv == 0 ? raw : (uint16_t)((3UL * _batt_mv + raw) / 4);
+  uint16_t mv = _batt_mv;
   bool external = board.isExternalPowered();
   int pct = battPercent(mv);
   if (external || pct >= LOW_BATT_REARM) _low_batt_warned = false;
@@ -3330,7 +3584,10 @@ void UITask::checkBattery() {
     if (_display != NULL && _display->isOn()) showAlert(T(S_BATT_LOW), 3000);
   }
 #ifdef AUTO_SHUTDOWN_MILLIVOLTS
-  if (mv < AUTO_SHUTDOWN_MILLIVOLTS && !external) {
+  // power off only after UI_BATT_LOW_CHECKS low readings in a row (raw ones: the average lags)
+  if (raw < AUTO_SHUTDOWN_MILLIVOLTS && !external) _low_count++;
+  else _low_count = 0;
+  if (_low_count >= UI_BATT_LOW_CHECKS) {
     if (_display != NULL) {
       _display->turnOn();
       _display->startFrame();
@@ -3341,7 +3598,7 @@ void UITask::checkBattery() {
       _display->endFrame();
       delay(2000);
     }
-    hibernate();
+    hibernate(true);
   }
 #endif
 }
@@ -3350,13 +3607,33 @@ void UITask::loop() {
   char c = 0;
   int repeat = 1;
 
+  // key lock: turning does nothing (not even waking the screen), a press only shows how to unlock,
+  // hold Back unlocks
+  if (_locked && !in_rescue) {
+    while (rotary_input.poll() != RotaryInputEvent::None) { }
+    int e1 = encoder_btn.check(), e2 = user_btn.check();
+    if (e2 == BUTTON_EVENT_LONG_PRESS) {
+      _locked = false;
+      if (_display != NULL && !_display->isOn()) wakeDisplay();
+      haptic(UI_HAPTIC_CLICK_MS);
+      showAlert(T(S_UNLOCKED), 800);
+      if (_display != NULL) _auto_off = millis() + autoOffMillis();
+    } else if (e1 != BUTTON_EVENT_NONE || e2 != BUTTON_EVENT_NONE) {
+      if (_display != NULL) {
+        if (!_display->isOn()) wakeDisplay();
+        _auto_off = millis() + autoOffMillis();
+      }
+      showAlert(T(S_LOCKED), 1500);
+    }
+  }
+
   // encoder push: click = Enter, hold = context / quick menu
-  int ev = encoder_btn.check();
+  int ev = _locked ? BUTTON_EVENT_NONE : encoder_btn.check();
   if (ev == BUTTON_EVENT_CLICK) c = checkDisplayOn(KEY_ENTER);
   else if (ev == BUTTON_EVENT_LONG_PRESS) c = checkDisplayOn(KEY_CONTEXT_MENU);
 
   // Back: click = up one level, hold = standby; held while the splash shows = CLI rescue
-  if (c == 0) {
+  if (c == 0 && !_locked) {
     ev = user_btn.check();
     if (ev == BUTTON_EVENT_CLICK) {
       c = checkDisplayOn(KEY_CANCEL);
@@ -3367,7 +3644,7 @@ void UITask::loop() {
   }
 
   // rotation: all detents queued since the last loop, faster turns move further
-  if (c == 0) {
+  if (c == 0 && !_locked) {
     int net = 0;
     for (int guard = 0; guard < 16; guard++) {
       RotaryInputEvent r = rotary_input.poll();
@@ -3392,14 +3669,23 @@ void UITask::loop() {
 
   if (c != 0) {
     if (c == KEY_HOME) {
-      home();
+      if (current() == standby && _depth == 1 && !in_rescue) {
+        lock();   // hold Back on standby: key lock, screen off
+      } else {
+        if (current() == send_undo) send_undo->handleInput(KEY_CANCEL);   // the message does not go
+        home();
+      }
     } else {
       for (int k = 0; k < repeat; k++) {
         UIScreen* s = current();
         bool handled = s && s->handleInput(c);
         if (!handled && c == KEY_CANCEL) {
           if (_depth > 1) pop();
-          else if (_display != NULL && !in_rescue) _display->turnOff();   // Back on standby = screen off
+          else if (_display != NULL && !in_rescue) {   // Back on standby = screen off
+            _display->turnOff();
+            _off_at = millis();
+            if (_node_prefs->ui_lock % 2 == LOCK_AUTO) _locked = true;
+          }
         }
         if (current() != s) break;   // a step opened or closed a screen: the rest is not for it
       }
@@ -3414,6 +3700,14 @@ void UITask::loop() {
 
   trackReception();
   checkAckTimeouts();
+
+  // the antenna question is still open (receive only): a short reminder now and then
+  if (_ask_antenna && timeReached(_ant_remind)) {
+    _ant_remind = millis() + ANT_REMIND_MILLIS;
+#ifdef PIN_VIBRATION
+    if (!_node_prefs->vibe_quiet) vibration.playPattern(HAPTIC_REMIND, sizeof(HAPTIC_REMIND) / sizeof(HAPTIC_REMIND[0]));
+#endif
+  }
 
   UIScreen* s = current();
   if (s) s->poll();
@@ -3434,6 +3728,7 @@ void UITask::loop() {
     if (timeReached(_auto_off) && !in_rescue) {
       _display->turnOff();
       _off_at = millis();
+      if (_node_prefs->ui_lock % 2 == LOCK_AUTO) _locked = true;
     }
   }
 

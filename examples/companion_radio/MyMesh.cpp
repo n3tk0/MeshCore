@@ -416,12 +416,28 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
 void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                           const uint8_t* app_data, size_t app_data_len) {
 #ifdef CLOCK_FROM_ADVERT
-  // No clock yet (no RTC, no phone since boot): take the time of a signed advert. It is off by the
-  // flood delay at most; the phone's time replaces it on the next sync.
+  // No clock yet (no RTC, no phone since boot): take the time from signed adverts. One node with a
+  // wrong clock must not set ours, so two adverts from different nodes have to agree within
+  // CLOCK_ADVERT_AGREE seconds (after allowing for the time between them). The result is off by
+  // the flood delay at most; the phone's time replaces it on the next sync.
   if (getRTCClock()->getCurrentTime() < CLOCK_VALID_EPOCH && timestamp >= CLOCK_VALID_EPOCH &&
       timestamp < CLOCK_MAX_EPOCH) {
-    getRTCClock()->setCurrentTime(timestamp);
-    _clock_approx = true;
+    bool agreed = false;
+    if (_clock_cand_ts != 0 && memcmp(_clock_cand_key, id.pub_key, sizeof(_clock_cand_key)) != 0) {
+      uint32_t expect = _clock_cand_ts + (uint32_t)((millis() - _clock_cand_at) / 1000);
+      uint32_t diff = timestamp > expect ? timestamp - expect : expect - timestamp;
+      if (diff <= CLOCK_ADVERT_AGREE) {
+        getRTCClock()->setCurrentTime(timestamp > expect ? timestamp : expect);   // both lag a little
+        _clock_approx = true;
+        _clock_cand_ts = 0;
+        agreed = true;
+      }
+    }
+    if (!agreed) {   // keep the newest advert as the one the next must agree with
+      _clock_cand_ts = timestamp;
+      _clock_cand_at = millis();
+      memcpy(_clock_cand_key, id.pub_key, sizeof(_clock_cand_key));
+    }
   }
 #endif
   BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
@@ -430,6 +446,17 @@ void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32
 void MyMesh::resetContactPath(ContactInfo& contact) {
   contact.out_path_len = OUT_PATH_UNKNOWN;
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+}
+
+bool MyMesh::setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr) {
+  if (!radio_driver.paramsSupported(freq, bw, sf, cr)) return false;
+  _prefs.freq = freq;
+  _prefs.bw = bw;
+  _prefs.sf = sf;
+  _prefs.cr = cr;
+  radio_driver.setParams(freq, bw, sf, cr);
+  savePrefs();
+  return true;
 }
 
 void MyMesh::setTxPower(int8_t dbm) {
@@ -910,6 +937,9 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _iter_started = false;
   _cli_rescue = false;
   _clock_approx = false;
+  _clock_cand_ts = 0;
+  _clock_cand_at = 0;
+  memset(_clock_cand_key, 0, sizeof(_clock_cand_key));
 #ifdef UI_ASK_ANTENNA
   _tx_allowed = false;   // the UI asks whether an antenna is fitted before the first transmit
 #else
@@ -998,6 +1028,8 @@ void MyMesh::begin(bool has_display) {
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
   if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;   // sendFlood() accepts hash sizes 1..3
+  // battery calibration made on the device (encoder UI); a value far off is ignored
+  if (_prefs.adc_mult >= 0.5f && _prefs.adc_mult <= 10.0f) board.setAdcMultiplier(_prefs.adc_mult);
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -1023,6 +1055,7 @@ void MyMesh::begin(bool has_display) {
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
+  loadOfflineQueue();   // messages kept over the last hibernate
 
   if (!radio_driver.paramsSupported(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr)) {
     // stored settings this chip cannot use: start on the build defaults rather than half-applied ones
@@ -1077,7 +1110,25 @@ void MyMesh::startInterface(BaseSerialInterface &serial) {
   serial.enable();
 }
 
+// commands that put a packet on the air
+static bool isTransmitCmd(uint8_t cmd) {
+  switch (cmd) {
+    case CMD_SEND_TXT_MSG: case CMD_SEND_CHANNEL_TXT_MSG: case CMD_SEND_SELF_ADVERT: case CMD_SEND_RAW_DATA:
+    case CMD_SEND_LOGIN: case CMD_SEND_STATUS_REQ: case CMD_SEND_TRACE_PATH: case CMD_SEND_TELEMETRY_REQ:
+    case CMD_SEND_BINARY_REQ: case CMD_SEND_PATH_DISCOVERY_REQ: case CMD_SEND_CONTROL_DATA:
+    case CMD_SEND_ANON_REQ: case CMD_SEND_CHANNEL_DATA: case CMD_SEND_RAW_PACKET:
+      return true;
+    default:
+      return false;
+  }
+}
+
 void MyMesh::handleCmdFrame(size_t len) {
+  if (len >= 1 && !_tx_allowed && isTransmitCmd(cmd_frame[0])) {
+    // transmit is off on the device (no antenna confirmed): say so instead of dropping it silently
+    writeErrFrame(ERR_CODE_BAD_STATE);
+    return;
+  }
   if (cmd_frame[0] == CMD_DEVICE_QUERY && len >= 2) { // sent when app establishes connection
     app_target_ver = cmd_frame[1];                    // which version of protocol does app understand
 
@@ -2309,19 +2360,83 @@ void MyMesh::loop() {
 #endif
 }
 
-bool MyMesh::advert() {
+#define OFFLINE_QUEUE_FILE  "/offline_q"
+#define OFFLINE_QUEUE_MAGIC 0x3151464FUL   // "OFQ1"
+
+bool MyMesh::saveUIData(const char* filename, const uint8_t* head, int head_len, const uint8_t* body, int body_len) {
+  File f = _store->openDataWrite(filename);
+  if (!f) return false;
+  bool ok = f.write(head, head_len) == (size_t)head_len && (body_len == 0 || f.write(body, body_len) == (size_t)body_len);
+  f.close();
+  if (!ok) removeUIData(filename);
+  return ok;
+}
+
+int MyMesh::loadUIData(const char* filename, uint8_t* dest, int max_len, int offset) {
+  File f = _store->openRead(_store->getDataFS(), filename);
+  if (!f) return -1;
+  int n = (offset == 0 || f.seek(offset)) ? f.read(dest, max_len) : 0;
+  f.close();
+  return n < 0 ? 0 : n;
+}
+
+void MyMesh::removeUIData(const char* filename) {
+  _store->removeFile(_store->getDataFS(), filename);
+}
+
+// The queue lives in RAM; before a power off (hibernate, battery swap) it goes to a file, so the
+// app still gets these messages afterwards. Format: magic, count, then each frame as len + bytes.
+bool MyMesh::saveOfflineQueue() {
+  removeUIData(OFFLINE_QUEUE_FILE);
+  if (offline_queue_len == 0) return true;
+  File f = _store->openDataWrite(OFFLINE_QUEUE_FILE);
+  if (!f) return false;
+  uint32_t magic = OFFLINE_QUEUE_MAGIC;
+  uint16_t n = offline_queue_len;
+  bool ok = f.write((uint8_t*)&magic, 4) == 4 && f.write((uint8_t*)&n, 2) == 2;
+  for (int i = 0; ok && i < offline_queue_len; i++) {
+    ok = f.write(&offline_queue[i].len, 1) == 1 &&
+         f.write(offline_queue[i].buf, offline_queue[i].len) == offline_queue[i].len;
+  }
+  f.close();
+  if (!ok) removeUIData(OFFLINE_QUEUE_FILE);   // a cut-off file is worse than none
+  return ok;
+}
+
+void MyMesh::loadOfflineQueue() {
+  File f = _store->openRead(_store->getDataFS(), OFFLINE_QUEUE_FILE);
+  if (!f) return;
+  uint32_t magic = 0;
+  uint16_t n = 0;
+  if (f.read((uint8_t*)&magic, 4) == 4 && magic == OFFLINE_QUEUE_MAGIC && f.read((uint8_t*)&n, 2) == 2) {
+    for (int i = 0; i < n && offline_queue_len < OFFLINE_QUEUE_SIZE; i++) {
+      Frame& fr = offline_queue[offline_queue_len];
+      if (f.read(&fr.len, 1) != 1 || fr.len == 0 || fr.len > MAX_FRAME_SIZE) break;
+      if (f.read(fr.buf, fr.len) != fr.len) break;
+      offline_queue_len++;
+    }
+  }
+  f.close();
+  removeUIData(OFFLINE_QUEUE_FILE);   // once only: a later crash must not bring them back again
+}
+
+bool MyMesh::advert(bool flood) {
+  if (!_tx_allowed) return false;
   mesh::Packet* pkt;
   if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
     pkt = createSelfAdvert(_prefs.node_name);
   } else {
     pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
   }
-  if (pkt) {
-    sendZeroHop(pkt);
-    return true;
+  if (!pkt) return false;
+  if (flood) {   // as the app's "flood advert": the whole mesh learns about this node
+    TransportKey default_scope;
+    memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+    sendFloodScoped(default_scope, pkt, 0);
   } else {
-    return false;
+    sendZeroHop(pkt);
   }
+  return true;
 }
 
 // To check if there is pending work
