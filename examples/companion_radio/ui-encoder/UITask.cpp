@@ -78,6 +78,9 @@ static const uint8_t icon_pin[]     = { 0x38, 0x44, 0x54, 0x44, 0x38, 0x10, 0x10
 static const uint8_t icon_knob[]    = { 0x3C, 0x42, 0x99, 0xBD, 0xBD, 0x99, 0x42, 0x3C };
 static const uint8_t icon_back[]    = { 0x10, 0x30, 0x7F, 0xFF, 0x7F, 0x30, 0x10, 0x00 };
 static const uint8_t icon_mute[]    = { 0x10, 0x35, 0xF2, 0xF5, 0xF0, 0x30, 0x10, 0x00 };
+static const uint8_t icon_up[]     = { 0x10, 0x38, 0x7C, 0xFE, 0x38, 0x38, 0x38, 0x00 };   // they hear us
+static const uint8_t icon_down[]   = { 0x38, 0x38, 0x38, 0xFE, 0x7C, 0x38, 0x10, 0x00 };   // we hear them
+static const uint8_t icon_range[]  = { 0x00, 0x42, 0x99, 0xA5, 0xA5, 0x99, 0x42, 0x00 };   // range test runs
 static const uint8_t icon_tower[]   = { 0x10, 0x38, 0x10, 0x28, 0x28, 0x44, 0x44, 0x00 };
 
 static const unsigned long AUTO_OFF_TABLE[] = { 15000, 30000, 60000, 300000 };
@@ -151,7 +154,7 @@ enum StrId {
   S_LOCK_AUTO, S_PRESET_CUSTOM, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
-  S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_WAIT, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_HEARS_US_FMT, S_WE_HEAR_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_AIR_LIMIT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_ENC_TEST, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE,
+  S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY_FMT, S_TURN_HINT, S_TRACE_WAIT_FMT,
   S_COUNT
 };
 
@@ -345,20 +348,16 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Проследи", "Trace" },
   { "Търся...", "Searching..." },
   { "Никой не отговори", "Nobody answered" },
-  { "Изпратено, чакам", "Sent, waiting" },
   { "Няма отговор", "No answer" },
   { "Няма ретранслатор по пътя", "No repeater on the path" },
-  { "Време %lu мс", "Time %lu ms" },
-  { "Чува ни %.1f", "Hears us %.1f" },
-  { "Чуваме го %.1f", "We hear %.1f" },
+  { "Време %lu.%luс", "Time %lu.%lus" },
   { "Старт", "Start" },
   { "Стоп", "Stop" },
   { "През %d с", "Every %d s" },
   { "Успех %d/%d", "OK %d/%d" },
   { "Избери цел", "Pick target" },
   { "Няма цели. Виж Наоколо", "No targets. See Nearby" },
-  { "1ч TX %d.%d%%", "1h TX %d.%d%%" },
-  { "Лимит 10%", "Limit 10%" },
+  { "1ч %d.%d/10%%", "1h %d.%d/10%%" },
   { "RX %lu", "RX %lu" },
   { "TX %lu", "TX %lu" },
   { "Грешки %lu", "Errors %lu" },
@@ -366,11 +365,11 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "SNR %.1f", "SNR %.1f" },
   { "TX общо %s", "TX total %s" },
   { "Опит %d", "Try %d" },
-  { "Доставено", "Delivered" },
-  { "Не е доставено", "Not delivered" },
-  { "Чака ACK", "Waiting ACK" },
-  { "+ Нов канал", "+ New channel" },
-  { "Нов #канал", "New #channel" },
+  { "Стигна", "Delivered" },
+  { "Не стигна", "Failed" },
+  { "Чака", "Waiting" },
+  { "+ Добави", "+ Add" },
+  { "#канал", "#channel" },
   { "Каналът е добавен", "Channel added" },
   { "Вече го има", "Already there" },
   { "Няма свободно място", "No free slot" },
@@ -382,10 +381,9 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Изтрий %s?", "Delete %s?" },
   { "Хардуер", "Hardware" },
   { "Енкодер", "Encoder" },
-  { "Завърти, натисни", "Turn, press" },
   { "Стъпки %+d", "Steps %+d" },
   { "Натиск %d", "Presses %d" },
-  { "Задържане %d", "Holds %d" },
+  { "Задърж. %d", "Holds %d" },
   { "Сурово %d.%02dV", "Raw %d.%02dV" },
   { "ADC x%.3f", "ADC x%.3f" },
   { "USB: %s", "USB: %s" },
@@ -393,6 +391,9 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Думи", "Words" },
   { "Изтрий %d научени думи?", "Delete %d learned words?" },
   { "Няма научени думи", "No learned words" },
+  { "Днес %s", "Today %s" },
+  { "Завърти", "Turn" },
+  { "Чакам %luс", "Waiting %lus" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -663,6 +664,7 @@ protected:
   virtual const uint8_t* icon(int i) { return NULL; }
   virtual bool hasIcons() { return false; }                         // reserve the icon column
   virtual void rightText(int i, char* buf, size_t n) { buf[0] = 0; }
+  virtual bool rightFirst() { return false; }   // true: the right text (a number) is never dropped
   virtual bool onEnter(int i) { return false; }
   virtual bool onContext(int i) { return false; }
   virtual const char* emptyText() { return T(S_EMPTY); }
@@ -714,7 +716,7 @@ public:
       int max_chars = (text_w - x0) / CW;
       rightText(i, right, sizeof(right));
       int rlen = utf8Len(right);
-      if (rlen > 0 && utf8Len(buf) + 1 + rlen <= max_chars) max_chars -= rlen + 1;
+      if (rlen > 0 && (utf8Len(buf) + 1 + rlen <= max_chars || (rightFirst() && rlen + 2 <= max_chars))) max_chars -= rlen + 1;
       else right[0] = 0;   // no room: the label wins
       const uint8_t* ic = icon(i);
       bool selected = i == _sel && listFocused();
@@ -1369,8 +1371,8 @@ public:
     stashDraft();
     _mode = MODE_CHANNEL;
     _draft = false;
-    _max_len = 30;   // "#" + name fits the 32-byte channel name
-    setText("");
+    _max_len = 31;   // "#" + 30 letters fit the 32-byte channel name
+    setText("#");
     start();
   }
 
@@ -1434,6 +1436,7 @@ public:
     }
     if (c == KEY_CANCEL) {
       if (_len == 0) return false;   // empty: leave
+      if (_mode == MODE_CHANNEL && _len == 1) { setText(""); return false; }   // only the "#": leave
       backspace();
       updateSuggestion();
       return true;
@@ -1941,13 +1944,20 @@ bool ConversationsScreen::onEnter(int i) {
 }
 
 // date and time of a timestamp in the local zone: "14:32 12.10", or "" without a clock
+// "Today 12:20", or "11.10 12:20" for another day (fits the 10 columns of the large font)
 static void formatDateTime(char* buf, size_t n, uint32_t ts, const NodePrefs* p) {
   if (ts < VALID_EPOCH) { buf[0] = 0; return; }
   uint32_t local = ui::localTime(ts, p->tz_offset, p->ui_dst);
+  char hm[8];
+  snprintf(hm, sizeof(hm), "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
+  uint32_t now = rtc_clock.getCurrentTime();
+  if (now >= VALID_EPOCH && ui::localTime(now, p->tz_offset, p->ui_dst) / 86400 == local / 86400) {
+    snprintf(buf, n, T(S_TODAY_FMT), hm);
+    return;
+  }
   int32_t y; uint32_t mo, d;
   ui::civilFromDays((int32_t)(local / 86400), y, mo, d);
-  snprintf(buf, n, "%02lu:%02lu %02lu.%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60),
-           (unsigned long)d, (unsigned long)mo);
+  snprintf(buf, n, "%02lu.%02lu %s", (unsigned long)d, (unsigned long)mo, hm);
 }
 
 // how a received message travelled: direct route, or flooded over N hops
@@ -1964,7 +1974,10 @@ class MessageInfoScreen : public ListScreen {
   int _n = 0;
 protected:
   bool isContent() override { return true; }
-  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_INFO)); }
+  void title(char* buf, size_t n) override {   // whose message: the contact or channel
+    UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
+    snprintf(buf, n, "%s", m ? m->from : T(S_INFO));
+  }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
   int render(DisplayDriver& d) override { build(); return ListScreen::render(d); }   // a delivery report may come in
@@ -3051,6 +3064,8 @@ static void trackReception() {
 
 static bool isCharging() { return board.isExternalPowered(); }
 
+static bool rangeRunning();   // the range test (Network) is on: an icon in the status row
+
 class StandbyScreen : public UIScreen {
   UITask* _task;
   NodePrefs* _prefs;
@@ -3071,6 +3086,7 @@ class StandbyScreen : public UIScreen {
     if (isCharging()) { x -= 16; drawIcon2(d, x, 0, icon_bolt); }
     if (_task->isBluetoothEnabled()) { x -= 16; drawIcon2(d, x, 0, icon_bt); }
     if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 18; drawSignal(d, x, 0, rx_snr); }
+    if (rangeRunning()) { x -= 16; drawIcon2(d, x, 0, icon_range); }
     if (!the_mesh.isTxAllowed()) {   // crossed-out "TX": receive only
       x -= 2 * CW + 4;
       d.setCursor(x, TEXT_DY);
@@ -3395,6 +3411,8 @@ static void rangeRecord(UITask* task, bool ok, int8_t out4, int8_t back4) {
   task->refresh();
 }
 
+static bool rangeRunning() { return range_test.running; }
+
 static void rangeStart() {
   range_test.running = true;
   range_test.waiting = false;
@@ -3494,7 +3512,7 @@ void UITask::onControlDataRecv(const mesh::Packet* pkt) {
   node.snr_out4 = (int8_t)pkt->payload[1];
   ContactInfo* c = the_mesh.lookupContactByPubKey(prefix, 8);
   if (c) StrHelper::strncpy(node.name, c->name, sizeof(node.name));
-  else snprintf(node.name, sizeof(node.name), "%02X%02X%02X%02X", prefix[0], prefix[1], prefix[2], prefix[3]);
+  else snprintf(node.name, sizeof(node.name), "%02X%02X", prefix[0], prefix[1]);   // short: the SNR must fit
   int at = nearby.n;
   if (at == NEARBY_MAX) {   // full: the weakest goes, unless this one is weaker still
     at = 0;
@@ -3511,11 +3529,14 @@ void UITask::onControlDataRecv(const mesh::Packet* pkt) {
 
 class TraceScreen : public ListScreen {
   char _lines[MAX_PATH_SIZE + 2][40];
+  char _right[MAX_PATH_SIZE + 2][8];   // SNR of a hop, on the right so a long name cannot hide it
   int _n = 0;
   void build() {
     _n = 0;
+    memset(_right, 0, sizeof(_right));
     if (trace_run.waiting) {
-      snprintf(_lines[_n++], 40, "%s %lus", T(S_TRACE_WAIT), (millis() - trace_run.sent_at) / 1000);
+      snprintf(_lines[_n++], 40, T(S_TRACE_WAIT_FMT), (millis() - trace_run.sent_at) / 1000);
+      snprintf(_lines[_n++], 40, T(S_HOPS_FMT), trace_run.target.n);
       return;
     }
     if (!trace_run.ok) {
@@ -3525,16 +3546,21 @@ class TraceScreen : public ListScreen {
     char name[32];
     for (int i = 0; i < trace_run.n && i < trace_run.target.n && _n < MAX_PATH_SIZE; i++) {
       hopName(trace_run.target.hashes[i], name, sizeof(name));
-      snprintf(_lines[_n++], 40, "%s %+.1f", name, trace_run.snrs[i] / 4.0f);
+      snprintf(_right[_n], 8, "%+.1f", trace_run.snrs[i] / 4.0f);
+      snprintf(_lines[_n++], 40, "%s", name);
     }
-    snprintf(_lines[_n++], 40, "%s %+.1f", T(S_ME), trace_run.final_snr / 4.0f);
-    snprintf(_lines[_n++], 40, T(S_MS_FMT), trace_run.rtt);
+    snprintf(_right[_n], 8, "%+.1f", trace_run.final_snr / 4.0f);
+    snprintf(_lines[_n++], 40, "%s", T(S_ME));
+    unsigned long tenths = (trace_run.rtt + 50) / 100;
+    snprintf(_lines[_n++], 40, T(S_MS_FMT), tenths / 10, tenths % 10);
   }
 protected:
   bool isContent() override { return true; }
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", trace_run.target.name); }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _lines[i]); }
+  void rightText(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _right[i]); }
+  bool rightFirst() override { return true; }
   bool onEnter(int i) override {   // again
     if (trace_run.waiting) return true;
     if (!startTrace(trace_run.target)) _task->showAlert(failText(S_SEND_FAIL), 1500);
@@ -3724,6 +3750,7 @@ protected:
     int v = nearby.nodes[i].snr_in4;
     snprintf(buf, n, "%+d", (v + (v >= 0 ? 2 : -2)) / 4);
   }
+  bool rightFirst() override { return true; }
   bool onEnter(int i) override;
   bool onContext(int i) override {   // hold: search again
     if (nearbyListening()) return true;
@@ -3758,6 +3785,8 @@ protected:
     if (i < 3) snprintf(buf, n, "%s", _lines[i]);
     else snprintf(buf, n, "%s", T(i == 3 ? S_TRACE : S_RANGE));
   }
+  bool hasIcons() override { return true; }
+  const uint8_t* icon(int i) override { return i == 0 ? icon_up : i == 1 ? icon_down : NULL; }
   bool onEnter(int i) override {
     if (i < 3) return true;
     TraceTarget t;
@@ -3770,10 +3799,11 @@ public:
   NodeScreen(UITask* task) : ListScreen(task) { }
   void open(const NearbyNode& node) {
     _node = node;
-    snprintf(_lines[0], 40, T(S_HEARS_US_FMT), node.snr_out4 / 4.0f);
-    snprintf(_lines[1], 40, T(S_WE_HEAR_FMT), node.snr_in4 / 4.0f);
+    // arrows: up = how it hears us, down = how we hear it
+    snprintf(_lines[0], 40, "%+.1f", node.snr_out4 / 4.0f);
+    snprintf(_lines[1], 40, "%+.1f", node.snr_in4 / 4.0f);
     char hex[20];
-    snprintf(hex, sizeof(hex), "%02X%02X%02X%02X", node.prefix[0], node.prefix[1], node.prefix[2], node.prefix[3]);
+    snprintf(hex, sizeof(hex), "%02X%02X%02X", node.prefix[0], node.prefix[1], node.prefix[2]);
     snprintf(_lines[2], 40, T(S_ID_FMT), hex);
     reset();
   }
@@ -3796,7 +3826,6 @@ class AirtimeScreen : public ListScreen {
     uint32_t tx = _task->txAirtimeLastHour();
     uint32_t permille = win > 0 ? (uint32_t)((uint64_t)tx / win) : 0;   // ms per s = 1/1000
     snprintf(_lines[_n++], 40, T(S_AIR_HOUR_FMT), (int)(permille / 10), (int)(permille % 10));
-    snprintf(_lines[_n++], 40, "%s", T(S_AIR_LIMIT));
     char total[12];
     formatAge(total, sizeof(total), the_mesh.getTotalAirTime() / 1000);
     snprintf(_lines[_n++], 40, T(S_AIR_TOTAL_FMT), total);
@@ -3872,7 +3901,7 @@ public:
   int render(DisplayDriver& d) override {
     big(d);
     d.setColor(UIColor::title_txt);
-    d.drawTextCentered(d.width() / 2, TEXT_DY, T(S_ENC_TEST));
+    d.drawTextCentered(d.width() / 2, TEXT_DY, T(S_ENCODER));
     d.setColor(UIColor::primary_txt);
     char buf[32];
     snprintf(buf, sizeof(buf), T(S_TURNS_FMT), (int)(_task->rawDetents() - _base));
@@ -3894,13 +3923,23 @@ public:
 // all pixels on, a fine checkerboard, a frame with a cross: turn for the next one, Back leaves
 class DisplayTestScreen : public UIScreen {
   int _pattern = 0;
+  unsigned long _hint_until = 0;   // "Turn" over the first pattern, so it is clear how to go on
 public:
-  void open() { _pattern = 0; }
+  void open() { _pattern = 0; _hint_until = millis() + 2000; }
   int render(DisplayDriver& d) override {
     d.setColor(UIColor::primary_txt);
     int w = d.width(), h = d.height();
-    if (_pattern == 0) d.fillRect(0, 0, w, h);
-    else if (_pattern == 1) {
+    if (_pattern == 0) {
+      d.fillRect(0, 0, w, h);
+      if (_hint_until && !timeReached(_hint_until)) {
+        big(d);
+        d.setColor(COLOR_BLACK);
+        d.drawTextCentered(w / 2, (h - LH) / 2 + TEXT_DY, T(S_TURN_HINT));
+        d.setColor(UIColor::primary_txt);
+        return 300;
+      }
+      _hint_until = 0;
+    } else if (_pattern == 1) {
       for (int y = 0; y < h; y++) for (int x = (y & 1); x < w; x += 2) d.fillRect(x, y, 1, 1);
     } else {
       d.drawRect(0, 0, w, h);
@@ -3909,6 +3948,7 @@ public:
     return 5000;
   }
   bool handleInput(char c) override {
+    if (c == KEY_NEXT || c == KEY_PREV) _hint_until = 0;
     if (c == KEY_NEXT) _pattern = (_pattern + 1) % 3;
     else if (c == KEY_PREV) _pattern = (_pattern + 2) % 3;
     else if (c == KEY_CANCEL) return false;
