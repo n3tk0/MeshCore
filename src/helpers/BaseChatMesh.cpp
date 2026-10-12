@@ -164,13 +164,16 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
     if (!store_blob) {
       // the blob store holds fewer adverts than there are contacts: still there, and how old is it?
       uint8_t stored[MAX_TRANS_UNIT];
+      // read its timestamp straight from the bytes (a Packet here would cost ~260 bytes of stack):
+      // stored flood-routed without transport codes = header, path_len, path, then the payload
+      // (public key, timestamp, ...)
       int len = getBlobByKey(id.pub_key, PUB_KEY_SIZE, stored);
-      mesh::Packet old_pkt;
-      if (len <= 0 || !old_pkt.readFrom(stored, len) || old_pkt.payload_len < PUB_KEY_SIZE + 4) {
+      int at = len >= 2 ? 2 + (stored[1] & 63) * ((stored[1] >> 6) + 1) + PUB_KEY_SIZE : 0;
+      if (len < 2 || (stored[0] & PH_ROUTE_MASK) != ROUTE_TYPE_FLOOD || at + 4 > len) {
         store_blob = true;
       } else {
         uint32_t stored_ts;
-        memcpy(&stored_ts, &old_pkt.payload[PUB_KEY_SIZE], 4);
+        memcpy(&stored_ts, &stored[at], 4);
         store_blob = timestamp - stored_ts > 7 * 24 * 3600UL;
       }
     }

@@ -154,7 +154,7 @@ enum StrId {
   S_LOCK_AUTO, S_PRESET_CUSTOM, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
-  S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY_FMT, S_TURN_HINT, S_TRACE_WAIT_FMT,
+  S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
   S_COUNT
 };
 
@@ -391,7 +391,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Думи", "Words" },
   { "Изтрий %d научени думи?", "Delete %d learned words?" },
   { "Няма научени думи", "No learned words" },
-  { "Днес %s", "Today %s" },
+  { "Днес", "Today" },
   { "Завърти", "Turn" },
   { "Чакам %luс", "Waiting %lus" },
 };
@@ -1135,6 +1135,7 @@ private:
   }
 
   void learnLastWord() {
+    if (_mode == MODE_CHANNEL) return;   // a channel name is no word to suggest in messages
     int ws = wordStart();
     if (ws < _len) _predict.learn(&_text[ws]);
   }
@@ -1470,6 +1471,7 @@ static bool saveLearnedWords() {
   int n = p.exportUser(buf, WORDS_FILE_MAX);
   bool ok = the_mesh.saveUIFile(WORDS_FILE, buf, n);
   free(buf);
+  if (ok) p.markUserSaved();   // a failed write is tried again with the next history save
   return ok;
 }
 
@@ -1943,21 +1945,21 @@ bool ConversationsScreen::onEnter(int i) {
   return true;
 }
 
-// date and time of a timestamp in the local zone: "14:32 12.10", or "" without a clock
-// "Today 12:20", or "11.10 12:20" for another day (fits the 10 columns of the large font)
-static void formatDateTime(char* buf, size_t n, uint32_t ts, const NodePrefs* p) {
-  if (ts < VALID_EPOCH) { buf[0] = 0; return; }
+// day and time of a timestamp in the local zone, as two rows for the 10 columns of the large font:
+// "Today" or "11.10", and "12:20"; both "" without a clock
+static void formatDateTime(char* day, char* hm, size_t n, uint32_t ts, const NodePrefs* p) {
+  day[0] = hm[0] = 0;
+  if (ts < VALID_EPOCH) return;
   uint32_t local = ui::localTime(ts, p->tz_offset, p->ui_dst);
-  char hm[8];
-  snprintf(hm, sizeof(hm), "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
+  snprintf(hm, n, "%02lu:%02lu", (unsigned long)((local / 3600) % 24), (unsigned long)((local / 60) % 60));
   uint32_t now = rtc_clock.getCurrentTime();
   if (now >= VALID_EPOCH && ui::localTime(now, p->tz_offset, p->ui_dst) / 86400 == local / 86400) {
-    snprintf(buf, n, T(S_TODAY_FMT), hm);
+    snprintf(day, n, "%s", T(S_TODAY));
     return;
   }
   int32_t y; uint32_t mo, d;
   ui::civilFromDays((int32_t)(local / 86400), y, mo, d);
-  snprintf(buf, n, "%02lu.%02lu %s", (unsigned long)d, (unsigned long)mo, hm);
+  snprintf(day, n, "%02lu.%02lu", (unsigned long)d, (unsigned long)mo);
 }
 
 // how a received message travelled: direct route, or flooded over N hops
@@ -1987,8 +1989,8 @@ public:
     _n = 0;
     UIMsgEntry* m = _task->historyAt(_task->historyIndexOf(_seq));
     if (!m) return;
-    formatDateTime(_lines[_n], 40, m->timestamp, _task->prefs());
-    if (_lines[_n][0]) _n++;
+    formatDateTime(_lines[_n], _lines[_n + 1], 40, m->timestamp, _task->prefs());
+    if (_lines[_n][0]) _n += 2;
     if (m->state == MSG_IN) {
       formatRoute(_lines[_n++], 40, m->path_len);
       if (m->rssi != 0) {
@@ -2522,7 +2524,7 @@ static bool addHashtagChannel(UITask* task, const char* typed) {
     name[j++] = c;
   }
   name[j] = 0;
-  if (j < 2) return false;
+  if (j < 2) { task->showAlert(T(S_CH_BAD), 1500); return false; }
   ChannelDetails ch;
   int free_slot = -1;
   for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
@@ -3765,6 +3767,12 @@ public:
     reset();
   }
   int render(DisplayDriver& d) override {
+    if (!nearby.sorted && !nearbyListening() && _sel < nearby.n) {   // keep the cursor on its repeater
+      uint8_t prefix[8];
+      memcpy(prefix, nearby.nodes[_sel].prefix, sizeof(prefix));
+      nearbySortWhenDone();
+      for (int i = 0; i < nearby.n; i++) if (memcmp(nearby.nodes[i].prefix, prefix, sizeof(prefix)) == 0) select(i);
+    }
     nearbySortWhenDone();
     int next = ListScreen::render(d);
     return nearbyListening() && next > 500 ? 500 : next;
