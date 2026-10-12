@@ -52,9 +52,13 @@ public:
   uint8_t ui_delconf = 0;        // encoder UI: 0 = confirm deleting one message, 1 = delete at once
   uint8_t ui_skip = 0;           // encoder UI: keyboard jumps to the likely next letter 0=on, 1=off
   uint8_t ui_dst = 0;            // encoder UI: 0 = no summer time, 1 = EU summer time rule
-  uint8_t ui_ant = 0;            // encoder UI: antenna question 0=every boot, 1=after power loss, 2=never
+  uint8_t ui_ant = 0;            // encoder UI: antenna question 0=after power loss, 1=every boot, 2=never
   uint8_t ui_menu_sz = 0;        // encoder UI: menu text size 0=large, 1=medium, 2=small, 3=tiny
   uint8_t ui_text_sz = 0;        // encoder UI: lists and messages, same values
+  uint8_t ui_tx_last = 0;        // encoder UI: last antenna answer 0=none, 1=transmit on, 2=off (kept over resets)
+  uint8_t ui_wake = 0;           // encoder UI: screen wakes for 0=direct messages, 1=all messages, 2=never
+  uint8_t ui_lock = 0;           // encoder UI: key lock 0=by hand (hold Back on standby), 1=when the screen goes off
+  float   adc_mult = 0;          // battery ADC multiplier from the on-device calibration, 0 = build default
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -145,6 +149,10 @@ private:
       def("ui_ant", _parent->ui_ant);
       def("ui_menu_sz", _parent->ui_menu_sz);
       def("ui_text_sz", _parent->ui_text_sz);
+      def("ui_tx_last", _parent->ui_tx_last);
+      def("ui_wake", _parent->ui_wake);
+      def("ui_lock", _parent->ui_lock);
+      def("adc_mult", _parent->adc_mult);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }

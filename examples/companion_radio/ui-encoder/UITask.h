@@ -47,10 +47,18 @@ struct UIMsgEntry {
   uint8_t  src;         // MSG_SRC_*: who to answer
   uint8_t  channel_idx;
   uint8_t  pub_prefix[6];
+  bool     mention;     // a channel message that names this node (@name)
   uint32_t seq;         // unique per message, so open screens follow it when the history shifts
-  uint32_t ack;         // expected ACK hash of a sent direct message
+  uint32_t sent_ts;     // timestamp the message was sent with: a retry repeats it
+  uint8_t  attempt;     // attempt number of the last send of a direct message
+  uint8_t  tries_left;  // automatic retries still to go before it counts as not delivered
+  uint32_t acks[4];     // expected ACK hash of each recent attempt (a late ACK still counts)
   unsigned long ack_deadline;
 };
+
+#ifndef UI_SEND_ATTEMPTS
+  #define UI_SEND_ATTEMPTS 3   // sends of a direct message before "not delivered"; the last one floods
+#endif
 
 #define MSG_SRC_UNKNOWN  0
 #define MSG_SRC_CONTACT  1
@@ -72,6 +80,12 @@ class UITask : public AbstractUITask {
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
   bool _low_batt_warned;
+  uint16_t _batt_mv;         // smoothed battery voltage, 0 = not measured yet
+  uint8_t _low_count;        // checks in a row below the power-off voltage
+  bool _locked;              // key lock: turning does nothing, hold Back unlocks
+  unsigned long _ant_remind; // next vibration while the antenna question waits
+  uint32_t _hist_hash;       // message history as last written to flash
+  unsigned long _hist_check; // next look for changes to write
 
   // encoder acceleration
   unsigned long _last_turn;
@@ -100,7 +114,12 @@ class UITask : public AbstractUITask {
   void renderAlert();
   UIMsgEntry* addHistory();
   void checkAckTimeouts();
+  bool sendAttempt(UIMsgEntry* m);   // (re)sends a direct message from the history
   void checkBattery();
+  uint32_t historyHash() const;
+  void saveHistory();   // when it changed since the last write
+  void loadHistory();
+  bool isMention(const char* text) const;
 
 public:
   UITask(mesh::MainBoard* board, MultiSerialInterface* serial) : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
@@ -108,6 +127,12 @@ public:
     _auto_off = _off_at = 0;
     ui_started_at = 0;
     _low_batt_warned = false;
+    _batt_mv = 0;
+    _low_count = 0;
+    _locked = false;
+    _ant_remind = 0;
+    _hist_hash = 0;
+    _hist_check = 0;
     _last_turn = 0;
     _last_dir = 0;
     _depth = 0;
@@ -131,6 +156,7 @@ public:
   void refresh() { _next_refresh = 0; }
 
   void showAlert(const char* text, int duration_millis);
+  bool alertShowing() const { return _alert_expiry && (long)(millis() - _alert_expiry) < 0; }
   void haptic(uint16_t millis_on);
   unsigned long autoOffMillis() const;
   void applyContrast();
@@ -149,14 +175,21 @@ public:
   unsigned long lastNewMsgAt() const { return _last_new_msg; }
   // a message sent from the device: kept in the history; ack != 0 waits for the delivery report
   UIMsgEntry* addSent(const char* conv_name, uint8_t src, uint8_t channel_idx, const uint8_t* pub_prefix,
-                      const char* text, uint32_t ack, uint32_t timeout_millis);
+                      const char* text, uint32_t sent_ts, uint32_t ack, uint32_t timeout_millis);
+  bool resend(uint32_t seq);   // a not delivered message: a new round of attempts, same timestamp
   const char* quickReply(int i) const;           // "" for an empty slot
   bool setQuickReply(int i, const char* text);   // saved to flash
 
   bool getGPSState();
   void toggleGPS();
-  void hibernate();
+  void hibernate(bool low_battery = false);
   void answerAntenna(bool fitted);   // true = transmit allowed
+  void setTransmit(bool on);         // Quick menu / Settings: on or off, remembered over resets
+  void enterBootloader(bool usb);   // Settings > System > Update USB / BLE
+  uint16_t battMilliVolts();         // smoothed, for display
+  void resetBattery() { _batt_mv = 0; }
+  void lock();                       // key lock on, screen off
+  bool isLocked() const { return _locked; }
   void applyEncoderPrefs();   // turn direction and steps per detent from NodePrefs
   void enterRescue();         // CLI rescue on the USB serial port, until restart
 

@@ -402,6 +402,14 @@ bool NRF52Board::getBootloaderVersion(char* out, size_t max_len) {
     return false;
 }
 
+// The Adafruit bootloader reads GPREGRET after the reset: UF2 drive or BLE DFU (the core helpers
+// set it through the SoftDevice when it runs)
+bool NRF52Board::rebootToBootloader(bool usb) {
+  if (usb) enterUf2Dfu();
+  else enterOTADfu();
+  return false;   // not reached
+}
+
 bool NRF52Board::startOTAUpdate(const char *id, char reply[]) {
   // Config the peripheral connection with maximum bandwidth
   // more SRAM required by SoftDevice
