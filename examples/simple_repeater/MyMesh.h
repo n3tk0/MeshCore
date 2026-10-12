@@ -59,10 +59,6 @@ struct RepeaterStats {
   uint32_t n_recv_errors;
 };
 
-#ifndef MAX_CLIENTS
-  #define MAX_CLIENTS           32
-#endif
-
 struct NeighbourInfo {
   mesh::Identity id;
   uint32_t advert_timestamp;
@@ -190,6 +186,9 @@ public:
   const char* getNodeName() { return _prefs.node_name; }
   NodePrefs* getNodePrefs() {
     return &_prefs;
+  }
+  bool isHiddenNode() const {
+    return _prefs.advert_interval == 0 && _prefs.flood_advert_interval == 0;
   }
 
   void savePrefs() override {

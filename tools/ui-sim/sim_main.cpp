@@ -29,6 +29,11 @@ SimMesh the_mesh;
 
 static UITask* ui_task = NULL;
 
+// NodePrefs' radio part: the CLI side is not used by the screens
+bool CommonRadioPrefs::handleCommand(const char*, uint32_t, char*) { return false; }
+bool CommonRadioPrefs::setByKey(const char*, const char*) { return false; }
+bool CommonRadioPrefs::getByKey(const char*, char*, size_t) { return false; }
+
 void StrHelper::strncpy(char* dest, const char* src, size_t buf_sz) {   // as in TxtDataHelpers.cpp
   while (buf_sz > 1 && *src) { *dest++ = *src++; buf_sz--; }
   *dest = 0;
@@ -321,7 +326,7 @@ static void scenario(uint8_t lang) {
   prefs.~NodePrefs(); new (&prefs) NodePrefs();   // defaults, also for the fields added later
   StrHelper::strncpy(prefs.node_name, "Petko-Z7", sizeof(prefs.node_name));
   prefs.freq = 869.525f; prefs.sf = 11; prefs.cr = 5; prefs.bw = 250.0f; prefs.tx_power_dbm = 22;
-  prefs.ui_lang = lang; prefs.ui_tz = 2; prefs.ui_dst = 1;
+  prefs.ui_lang = lang; prefs.tz_offset = 2; prefs.ui_dst = 1;
   prefs.ui_off = 3;   // 5 min, so nothing times out during the script
 
   sim_millis = 0;

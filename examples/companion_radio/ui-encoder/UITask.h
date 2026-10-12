@@ -193,14 +193,19 @@ public:
   void applyEncoderPrefs();   // turn direction and steps per detent from NodePrefs
   void enterRescue();         // CLI rescue on the USB serial port, until restart
 
-  // from AbstractUITask
-  void msgRead(int msgcount) override;
-  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
-  void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key) override;
+  void msgRead(int msgcount);
+  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount);
+  void msgSource(bool is_channel, uint8_t channel_idx, const uint8_t* pub_key);
+  void notifyMsg(UIEventType t, bool connected);
+  void ackReceived(const uint8_t* ack);
+
+  // from AbstractUITask / MyMesh::Listener
   void notify(UIEventType t = UIEventType::none) override;
-  void notifyMsg(UIEventType t, bool connected) override;
-  void ackReceived(const uint8_t* ack) override;
   void loop() override;
+  void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) override;
+  void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) override;
+  void onQueueSizeChanged(int msgcount) override { msgRead(msgcount); }
+  void onACKRecv(uint32_t ack_crc) override { ackReceived((const uint8_t*)&ack_crc); }
 
   void shutdown(bool restart = false);
 };
