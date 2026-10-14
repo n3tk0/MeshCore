@@ -4678,6 +4678,9 @@ void UITask::hibernate(bool low_battery) {
   the_mesh.flushPendingWrites();
   saveHistory();
   the_mesh.saveOfflineQueue();
+#if defined(FAKETEC_V5) && !defined(UI_SIM)
+  FaketecBoard::setQuietPowerHaptics(_node_prefs->vibe_quiet);   // also for the buzz at the next wake
+#endif
 
   if (low_battery) {
     if (_display != NULL) {
@@ -4699,9 +4702,16 @@ void UITask::hibernate(bool low_battery) {
     }
 #endif
     while (millis() - shown < 3000) delay(10);   // long enough to read warning
+    if (_display != NULL) _display->turnOff();
+  } else if (_display != NULL) {
+    // "Power off" stays up while the board buzzes, then the board turns the display off
+    _display->turnOn();
+    _display->startFrame();
+    big(*_display);
+    _display->setColor(UIColor::primary_txt);
+    _display->drawTextCentered(_display->width() / 2, (_display->height() - LH) / 2 + TEXT_DY, T(S_POWER_OFF));
+    _display->endFrame();
   }
-
-  if (_display != NULL) _display->turnOff();
   shutdown();
 }
 
@@ -4874,7 +4884,9 @@ void UITask::loop() {
 #if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN) && defined(PIN_USER_BTN)
   static unsigned long combo_sleep_at = 0;
   if (encoder_btn.isPressed() && user_btn.isPressed()) {
-    if (combo_sleep_at == 0) {
+    if (_locked) {
+      combo_sleep_at = 0;   // keys locked: the combo does nothing (no power off, no unlock)
+    } else if (combo_sleep_at == 0) {
       combo_sleep_at = millis();
     } else if (millis() - combo_sleep_at >= 2500) {
       combo_sleep_at = 0;
