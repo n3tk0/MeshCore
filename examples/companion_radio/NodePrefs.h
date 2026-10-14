@@ -66,6 +66,7 @@ public:
   uint8_t ui_tx_last = 0;        // encoder UI: last antenna answer 0=none, 1=transmit on, 2=off (kept over resets)
   uint8_t ui_wake = 0;           // encoder UI: screen wakes for 0=direct messages, 1=all messages, 2=never
   uint8_t ui_lock = 0;           // encoder UI: key lock 0=by hand (hold Back on standby), 1=when the screen goes off
+  uint8_t ui_input = 0;          // encoder UI: on the encoder pins 0=not known yet, 1=encoder, 2=two buttons
   float   adc_mult = 0;          // battery ADC multiplier from the on-device calibration, 0 = build default
   int8_t tz_offset = 0;
 #ifdef ENABLE_WIFI_INTERFACE
@@ -204,6 +205,7 @@ private:
       def("ui_tx_last", _parent->ui_tx_last);
       def("ui_wake", _parent->ui_wake);
       def("ui_lock", _parent->ui_lock);
+      def("ui_input", _parent->ui_input);
       def("adc_mult", _parent->adc_mult);
       def("tz_offset", _parent->tz_offset);
     }

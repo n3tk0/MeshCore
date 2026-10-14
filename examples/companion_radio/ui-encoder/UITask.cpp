@@ -165,7 +165,7 @@ enum StrId {
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
-  S_LET_GO_1, S_LET_GO_2,
+  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE,
   S_COUNT
 };
 
@@ -405,6 +405,9 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Чакам %luс", "Waiting %lus" },
   { "Пусни за", "Let go to" },
   { "отказ", "cancel" },
+  { "Бутони", "Buttons" },
+  { "Натисни", "Press" },
+  { "Избери", "Choose" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -796,9 +799,12 @@ static void askConfirm(UITask* task, const char* question, void (*action)(UITask
 }
 
 // Asked before the first transmit (UI_ASK_ANTENNA): sending into a missing antenna can damage the
-// SX1262 PA, and the chip cannot detect it. Enter = yes (transmit on), Back = no (receive only).
+// SX1262 PA, and the chip cannot detect it. Turn or press up/down to pick yes or no, Enter answers;
+// Back = no (receive only).
 class AntennaScreen : public UIScreen {
   UITask* _task;
+  int _sel = -1;                    // nothing chosen yet: 0 = yes, 1 = no
+  unsigned long _nudge_until = 0;   // Enter before a choice: "Choose" in place of the answers
 public:
   AntennaScreen(UITask* task) : _task(task) { }
   int render(DisplayDriver& d) override {
@@ -806,12 +812,40 @@ public:
     d.setColor(UIColor::warning_txt);
     drawLines(d, 0, 3, T(S_ANT_Q), 3);
     d.setColor(UIColor::primary_txt);
-    drawHint(d, 3 * LH, T(S_YES), T(S_NO));
+    if (_nudge_until && !timeReached(_nudge_until)) {
+      d.drawTextCentered(d.width() / 2, 3 * LH + TEXT_DY, T(S_CHOOSE));
+      return 300;
+    }
+    _nudge_until = 0;
+    // no answer is preselected: the first turn or button press picks one, and it also shows
+    // whether an encoder or two buttons are fitted
+    const char* ans[2] = { T(S_YES), T(S_NO) };
+    for (int i = 0; i < 2; i++) {
+      int cx = d.width() * (1 + 2 * i) / 4;
+      int w = d.getTextWidth(ans[i]) + 8;
+      if (i == _sel) {
+        d.fillRect(cx - w / 2, 3 * LH, w, LH);
+        d.setColor(COLOR_BLACK);
+      }
+      d.drawTextCentered(cx, 3 * LH + TEXT_DY, ans[i]);
+      d.setColor(UIColor::primary_txt);
+    }
     return 1000;
   }
   bool handleInput(char c) override {
-    if (c != KEY_ENTER && c != KEY_CANCEL) return c == KEY_NEXT || c == KEY_PREV;
-    _task->answerAntenna(c == KEY_ENTER);
+    if (c == KEY_PREV || c == KEY_NEXT) {
+      _sel = (c == KEY_PREV) ? 0 : 1;
+      _nudge_until = 0;
+      return true;
+    }
+    if (c == KEY_ENTER && _sel < 0) {
+      _nudge_until = millis() + 1500;
+      return true;
+    }
+    if (c != KEY_ENTER && c != KEY_CANCEL) return false;
+    bool fitted = (c == KEY_ENTER && _sel == 0);   // Back: no, receive only
+    _sel = -1;
+    _task->answerAntenna(fitted);
     return true;
   }
 };
@@ -3929,6 +3963,9 @@ uint32_t UITask::airtimeWindowSecs() {
 
 // ---------------------------------------------------------------- hardware check (Settings > System)
 
+static bool buttonsFitted() { return rotary_input.mode() == RotaryInputMode::Buttons; }
+static StrId inputLabel() { return buttonsFitted() ? S_BUTTONS : S_ENCODER; }
+
 class EncoderTestScreen : public UIScreen {
   UITask* _task;
   int32_t _base = 0;
@@ -3939,7 +3976,7 @@ public:
   int render(DisplayDriver& d) override {
     big(d);
     d.setColor(UIColor::title_txt);
-    d.drawTextCentered(d.width() / 2, TEXT_DY, T(S_ENCODER));
+    d.drawTextCentered(d.width() / 2, TEXT_DY, T(inputLabel()));
     d.setColor(UIColor::primary_txt);
     char buf[32];
     snprintf(buf, sizeof(buf), T(S_TURNS_FMT), (int)(_task->rawDetents() - _base));
@@ -3972,7 +4009,7 @@ public:
       if (_hint_until && !timeReached(_hint_until)) {
         big(d);
         d.setColor(COLOR_BLACK);
-        d.drawTextCentered(w / 2, (h - LH) / 2 + TEXT_DY, T(S_TURN_HINT));
+        d.drawTextCentered(w / 2, (h - LH) / 2 + TEXT_DY, T(buttonsFitted() ? S_PRESS_HINT : S_TURN_HINT));
         d.setColor(UIColor::primary_txt);
         return 300;
       }
@@ -4021,7 +4058,7 @@ protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_HARDWARE)); }
   int count() override { return H_FIRST_INFO + _n; }
   void label(int i, char* buf, size_t n) override {
-    if (i == H_ENCODER) snprintf(buf, n, "%s", T(S_ENCODER));
+    if (i == H_ENCODER) snprintf(buf, n, "%s", T(inputLabel()));
     else if (i == H_VIBRATION) snprintf(buf, n, "%s", T(S_SET_VIBE));
     else if (i == H_DISPLAY) snprintf(buf, n, "%s", T(S_GRP_DISPLAY));
     else snprintf(buf, n, "%s", _lines[i - H_FIRST_INFO]);
@@ -4074,6 +4111,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   encoder_btn.wakeOnChange();
   rotary_input.begin();
   applyEncoderPrefs();
+  // encoder or two buttons on its pins: remembered, but found out again after a battery was put
+  // in (the hardware may have changed); until then both work and the first press or turn decides
+  if (coldBoot() || (_node_prefs->ui_input != 1 && _node_prefs->ui_input != 2)) {
+    rotary_input.setMode(RotaryInputMode::Detect);
+  } else {
+    rotary_input.setMode(_node_prefs->ui_input == 2 ? RotaryInputMode::Buttons : RotaryInputMode::Encoder);
+  }
 
   if (_display != NULL) {
     ui_width = _display->width();
@@ -5003,12 +5047,19 @@ void UITask::loop() {
       net += (r == RotaryInputEvent::Next) ? 1 : -1;
     }
     _raw_detents += net;
-    if (net != 0) {
+    if (net != 0) {   // after a battery change the first turn or press shows what is fitted: keep it
+      RotaryInputMode m = rotary_input.mode();
+      uint8_t v = m == RotaryInputMode::Buttons ? 2 : m == RotaryInputMode::Encoder ? 1 : 0;
+      if (v != 0 && _node_prefs->ui_input != v) {
+        _node_prefs->ui_input = v;
+        the_mesh.savePrefs();
+      }
       int8_t dir = net > 0 ? 1 : -1;
       int n = net > 0 ? net : -net;
       unsigned long now = millis();
       unsigned long per_detent = (now - _last_turn) / n;
-      int steps = ui::accelSteps(per_detent, dir == _last_dir);
+      // buttons repeat at their own pace while held; only a turning encoder speeds up
+      int steps = buttonsFitted() ? 1 : ui::accelSteps(per_detent, dir == _last_dir);
       _last_turn = now;
       _last_dir = dir;
       c = checkDisplayOn(dir > 0 ? KEY_NEXT : KEY_PREV);
