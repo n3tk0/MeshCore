@@ -189,6 +189,7 @@ public:
   bool hapticBusy();   // a pattern or pulse is running (a message alert must not be cut short)
   unsigned long autoOffMillis() const;
   void applyContrast();
+  void drawPowerOffCountdown(unsigned long held);
 
   // state used by screens
   NodePrefs* prefs() { return _node_prefs; }
