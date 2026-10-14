@@ -44,7 +44,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 | Hold press | Quick menu (advert nearby, advert to the whole mesh, transmit on/off, Bluetooth, GPS, power off) or the actions of the current item |
 | Back (BTN) | Back one level; on standby, screen off |
 | Hold Back | Standby from anywhere; on standby, lock the keys (hold Back again to unlock); while the boot splash shows, CLI rescue |
-| Hold Back + press 2.5 s | Power off (system off, a double buzz confirms). To switch on, hold Back + press together ~1.5 s until it buzzes; a shorter press goes back to sleep. With USB power it starts at once |
+| Hold Back + press 2.5 s | Power off ("Power off" shows, a double buzz confirms; does nothing while the keys are locked). To switch on, hold Back + press together ~1.5 s until it buzzes; a shorter press goes back to sleep. With USB power it starts at once. In quiet mode neither buzzes |
 
 **Messages**
 

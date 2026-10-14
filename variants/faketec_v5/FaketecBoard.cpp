@@ -96,6 +96,11 @@ static void enterSystemOff() {
   #define REJECT_WAIT_MILLIS    2000   // rejected wake: the same, shorter (the CPU is running)
   #define WAKE_BUZZ_MILLIS      120
   #define DFU_MAGIC_SKIP        0x6D   // Adafruit nRF52 bootloader, src/main.c
+  // GPREGRET2 is retained through system off (cleared by a power-on); Faketec does not build
+  // NRF52_POWER_MANAGEMENT, the only other user of it
+  #define QUIET_HAPTICS_FLAG    0x80
+
+static bool quietHaptics() { return (NRF_POWER->GPREGRET2 & QUIET_HAPTICS_FLAG) != 0; }
 
 static bool backDown() { return digitalRead(PIN_USER_BTN) == LOW; }
 static bool pushDown() { return digitalRead(PIN_ENCODER_BTN) == LOW; }
@@ -109,6 +114,7 @@ static bool vbusPresent() {
 
 static void buzz(uint16_t ms) {
 #ifdef PIN_VIBRATION
+  if (quietHaptics()) return;
   pinMode(PIN_VIBRATION, OUTPUT);
   #ifdef VIBRATION_PWM
     analogWrite(PIN_VIBRATION, VIBRATION_PWM);
@@ -235,6 +241,21 @@ static void confirmComboWake() {
 }
 #endif
 
+void FaketecBoard::setQuietPowerHaptics(bool quiet) {
+#ifdef FAKETEC_COMBO_WAKE
+  uint32_t v = NRF_POWER->GPREGRET2;
+  v = quiet ? (v | QUIET_HAPTICS_FLAG) : (v & ~QUIET_HAPTICS_FLAG);
+  if (softDeviceEnabled()) {
+    sd_power_gpregret_clr(1, 0xFF);
+    sd_power_gpregret_set(1, v);
+  } else {
+    NRF_POWER->GPREGRET2 = v;
+  }
+#else
+  (void)quiet;
+#endif
+}
+
 void FaketecBoard::begin() {    
     NRF52Board::begin();
 #ifdef FAKETEC_COMBO_WAKE
@@ -263,10 +284,12 @@ void FaketecBoard::begin() {
 void FaketecBoard::powerOff() {
 #ifdef FAKETEC_COMBO_WAKE
   #ifdef PIN_VIBRATION
-    // Double buzz confirmation before shutdown: 80ms ON, 80ms OFF, 120ms ON
-    buzz(80);
-    delay(80);
-    buzz(120);
+    // Double buzz confirmation before shutdown: 80ms ON, 80ms OFF, 120ms ON (not in quiet mode)
+    if (!quietHaptics()) {
+      buzz(80);
+      delay(80);
+      buzz(120);
+    }
   #endif
 
   // End button and rotary listeners
