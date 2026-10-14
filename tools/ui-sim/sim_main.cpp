@@ -154,6 +154,7 @@ public:
 };
 
 static SimDisplay display;
+void SimBoard::powerOff() { display.turnOff(); }
 
 // ---------------------------------------------------------------- PNG (uncompressed deflate, no libraries)
 
@@ -618,7 +619,9 @@ static void scenario(uint8_t lang) {
   encoder_btn.push(BUTTON_EVENT_CLICK);
   ui->loop();   // runs hibernate(): draws, waits, "powers off"
   display.turnOn();
-  shotFrame("hibernate", bg ? "Хибернация: как се включва" : "Hibernate: how to wake");
+  shotFrame("hibernate", bg ? "Изключване: екранът гасне веднага" : "Power off: the screen goes dark at once");
+  ui->drawPowerOffCountdown(1500);
+  shotFrame("poweroff_hold", bg ? "Back + енкодер задържани: пусни за отказ" : "Back + push held: let go to cancel");
 
   // low battery
   holdBack();

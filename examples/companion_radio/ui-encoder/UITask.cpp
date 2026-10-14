@@ -165,6 +165,7 @@ enum StrId {
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
+  S_LET_GO_1, S_LET_GO_2,
   S_COUNT
 };
 
@@ -402,6 +403,8 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Днес", "Today" },
   { "Завърти", "Turn" },
   { "Чакам %luс", "Waiting %lus" },
+  { "Пусни за", "Let go to" },
+  { "отказ", "cancel" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -4880,20 +4883,56 @@ void UITask::checkBattery() {
 #endif
 }
 
+#ifndef UI_COMBO_OFF_MILLIS
+  #define UI_COMBO_OFF_MILLIS   2500
+#endif
+#ifndef UI_COMBO_SHOW_MILLIS
+  #define UI_COMBO_SHOW_MILLIS  500
+#endif
+
+// "Power off" + a bar filling up to the power off + "Let go to cancel"
+void UITask::drawPowerOffCountdown(unsigned long held) {
+  DisplayDriver& d = *_display;
+  d.startFrame();
+  big(d);
+  d.setColor(UIColor::primary_txt);
+  d.drawTextCentered(d.width() / 2, TEXT_DY, T(S_POWER_OFF));
+  unsigned long span = UI_COMBO_OFF_MILLIS - UI_COMBO_SHOW_MILLIS;
+  unsigned long el = held > UI_COMBO_SHOW_MILLIS ? held - UI_COMBO_SHOW_MILLIS : 0;
+  if (el > span) el = span;
+  int full = d.width() - 8;
+  d.drawRect(4, LH + 4, full, 8);
+  d.fillRect(6, LH + 6, (int)(el * (unsigned long)(full - 4) / span), 4);
+  d.drawTextCentered(d.width() / 2, 2 * LH + TEXT_DY, T(S_LET_GO_1));
+  d.drawTextCentered(d.width() / 2, 3 * LH + TEXT_DY, T(S_LET_GO_2));
+  d.endFrame();
+}
+
 void UITask::loop() {
 #if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN) && defined(PIN_USER_BTN)
+  // Back + push held together: power off after UI_COMBO_OFF_MILLIS; from UI_COMBO_SHOW_MILLIS the
+  // screen shows the countdown, letting go before the end cancels
   static unsigned long combo_sleep_at = 0;
+  static bool combo_shown = false, combo_was_off = false;
   if (encoder_btn.isPressed() && user_btn.isPressed()) {
     if (_locked) {
       combo_sleep_at = 0;   // keys locked: the combo does nothing (no power off, no unlock)
     } else if (combo_sleep_at == 0) {
       combo_sleep_at = millis();
-    } else if (millis() - combo_sleep_at >= 2500) {
+    } else if (millis() - combo_sleep_at >= UI_COMBO_OFF_MILLIS) {
       combo_sleep_at = 0;
+      combo_shown = false;
       encoder_btn.cancelClick();
       user_btn.cancelClick();
       hibernate(false);
       return;
+    } else if (_display != NULL && millis() - combo_sleep_at >= UI_COMBO_SHOW_MILLIS) {
+      if (!combo_shown) {
+        combo_shown = true;
+        combo_was_off = !_display->isOn();
+        if (combo_was_off) { _display->turnOn(); applyContrast(); }
+      }
+      drawPowerOffCountdown(millis() - combo_sleep_at);
     }
     // While both buttons are held together, consume and suppress individual events
     encoder_btn.check();
@@ -4902,10 +4941,17 @@ void UITask::loop() {
     user_btn.cancelClick();
     return;
   } else if (combo_sleep_at != 0) {
-    // Both were held but released before 2.5s: suppress trailing clicks from uneven release
+    // Both were held but released before the end: cancelled; no clicks from an uneven release
     encoder_btn.cancelClick();
     user_btn.cancelClick();
     combo_sleep_at = 0;
+    if (combo_shown) {
+      combo_shown = false;
+      showAlert(T(S_CANCELLED), 800);
+      _next_refresh = 0;
+      // the screen was off before: back off once "Cancelled" has been read
+      _auto_off = millis() + (combo_was_off ? 900 : autoOffMillis());
+    }
   }
 #endif
 
