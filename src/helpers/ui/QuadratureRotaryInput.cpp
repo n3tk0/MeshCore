@@ -31,6 +31,7 @@ bool QuadratureRotaryInput::begin() {
 
   _state = readState();
   _accum = 0;
+  _buttons.reset();
   _fwd_seen = _fwd_count;
   _back_seen = _back_count;
   _instance = this;
@@ -54,6 +55,7 @@ QRI_ISR_ATTR void QuadratureRotaryInput::handleEdge() {
   uint8_t s = readState();
   int8_t acc = _accum + QRI_TRANSITIONS[(_state << 2) | s];
   _state = s;
+  _buttons.onEdge(s);
 
   int8_t step = 0;
   // rest positions: 11 for full-step encoders, 11 and 00 for half-step (2 transitions per detent)
@@ -91,10 +93,34 @@ void QuadratureRotaryInput::end() {
   _ready = false;
 }
 
+void QuadratureRotaryInput::setMode(RotaryInputMode mode) {
+  noInterrupts();
+  _mode = (uint8_t)mode;
+  _buttons.reset();
+  _accum = 0;
+  _fwd_seen = _fwd_count;
+  _back_seen = _back_count;
+  interrupts();
+}
+
 RotaryInputEvent QuadratureRotaryInput::poll() {
   if (!_ready) {
     begin();
     return RotaryInputEvent::None;
+  }
+
+  RotaryInputMode mode = (RotaryInputMode)_mode;
+  if (mode != RotaryInputMode::Encoder) {
+    uint8_t s = readState();
+    uint32_t now = millis();
+    noInterrupts();   // the edge interrupt also writes the decoder
+    int8_t b = _buttons.poll(s, now, mode == RotaryInputMode::Buttons);
+    interrupts();
+    if (b != 0) {
+      _mode = (uint8_t)RotaryInputMode::Buttons;   // a press with one pin low: buttons from now on
+      if (_reverse) b = -b;
+      return b > 0 ? RotaryInputEvent::Next : RotaryInputEvent::Prev;
+    }
   }
 
   uint8_t fwd = (uint8_t)(_fwd_count - _fwd_seen);
@@ -107,6 +133,12 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
   else if (back > 0) { _back_seen++; dir = -1; }
 
   if (dir == 0) return RotaryInputEvent::None;
+  if (mode == RotaryInputMode::Buttons) {   // two buttons pressed over each other can look like a turn
+    _fwd_seen = _fwd_count;
+    _back_seen = _back_count;
+    return RotaryInputEvent::None;
+  }
+  if (mode == RotaryInputMode::Detect) _mode = (uint8_t)RotaryInputMode::Encoder;   // a full Gray-code step
   if (_reverse) dir = -dir;
   return dir > 0 ? RotaryInputEvent::Next : RotaryInputEvent::Prev;
 }

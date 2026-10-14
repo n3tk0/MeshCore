@@ -2,11 +2,13 @@
 
 #include <Arduino.h>
 #include <helpers/ui/RotaryInput.h>
+#include <helpers/ui/NavButtonDecoder.h>
 
 // Mechanical quadrature encoder wired directly to two GPIOs (common pin to GND,
 // internal pull-ups). Edges are decoded in interrupts with a transition table,
 // so bounce is rejected and steps are not lost while the main loop is busy.
-// Only one instance is supported.
+// The same pins also take two push buttons instead (each to GND: A = previous, B = next), see
+// setMode(). Only one instance is supported.
 class QuadratureRotaryInput : public RotaryInput {
 public:
   QuadratureRotaryInput(int8_t pin_a, int8_t pin_b, uint8_t steps_per_detent = 4, bool reverse = false)
@@ -22,6 +24,8 @@ public:
     _steps_per_detent = steps;   // single byte, read by the ISR
     _accum = 0;
   }
+  void setMode(RotaryInputMode mode) override;
+  RotaryInputMode mode() const override { return (RotaryInputMode)_mode; }
 
 private:
   static void onEdge();
@@ -38,6 +42,8 @@ private:
   // written only by the ISR, read by poll(); single-byte counters need no IRQ masking
   volatile uint8_t _fwd_count = 0, _back_count = 0;
   uint8_t _fwd_seen = 0, _back_seen = 0;
+  NavButtonDecoder _buttons;
+  uint8_t _mode = (uint8_t)RotaryInputMode::Encoder;   // changed only from the main loop
 
   static QuadratureRotaryInput* _instance;
 };
