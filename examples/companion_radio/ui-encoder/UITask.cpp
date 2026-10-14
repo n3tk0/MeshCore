@@ -4675,7 +4675,6 @@ void UITask::toggleGPS() {
 void UITask::hibernate(bool low_battery) {
   // keep what would otherwise be lost: contacts waiting for their lazy save, the message history
   // and the messages the phone has not fetched yet (restored at the next start)
-  the_mesh.savePrefs();
   the_mesh.flushPendingWrites();
   saveHistory();
   the_mesh.saveOfflineQueue();
@@ -4779,7 +4778,6 @@ void UITask::shutdown(bool restart) {
 #ifdef PIN_VIBRATION
   vibration.stop();
 #endif
-  the_mesh.savePrefs();
   the_mesh.flushPendingWrites();   // contacts/paths learned in the last moments
   saveLearnedWords();
   if (restart) _board->reboot();
