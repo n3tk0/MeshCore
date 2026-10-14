@@ -84,9 +84,7 @@ class CustomSX1262 : public SX1262 {
     #ifndef SX126X_TXEN
       #define SX126X_TXEN RADIOLIB_NC
     #endif
-    #if (defined(P_LORA_BUSY) && (SX126X_RXEN != P_LORA_BUSY)) || !defined(P_LORA_BUSY)
       setRfSwitchPins(SX126X_RXEN, SX126X_TXEN);
-    #endif
   #endif 
 
   // for improved RX with Heltec v4

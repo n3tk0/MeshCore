@@ -48,8 +48,8 @@
 
 #define WIRE_INTERFACES_COUNT 2
 
-#define PIN_WIRE_SDA         (8)    // P1.04, same as PIN_BOARD_SDA (pin 6 is the BTN)
-#define PIN_WIRE_SCL         (7)
+#define PIN_WIRE_SDA         (2)    // P0.17
+#define PIN_WIRE_SCL         (3)    // P0.20
 #define PIN_WIRE1_SDA        (13)
 #define PIN_WIRE1_SCL        (14)
 
@@ -86,11 +86,11 @@
 #define PIN_ENCODER_B        (19)  // P1.02
 #define PIN_ENCODER_BTN      (23)  // P1.07
 
-// Vibration motor: PIN_VIBRATION is set from platformio.ini (default 10 = P0.09 = T2G,
-// gate of the on-board T2 MOSFET footprint). Other Faketec MOSFET gates: T1G = P0.24
-// (shared with PIN_GPS_EN), T3G = P0.06.
-#ifndef PIN_VIBRATION
-  #define PIN_VIBRATION        (10)  // P0.09 = T2G (gate of SI2312 N-MOSFET)
+// Vibration motor: gate T2G = P1.04 (Arduino pin 8) via SI2312 N-MOSFET.
+// Other Faketec MOSFET gates: T1G = P0.24 (shared with PIN_GPS_EN), T3G = P1.06.
+// To build without vibration, add -D NO_VIBRATION.
+#if !defined(PIN_VIBRATION) && !defined(NO_VIBRATION)
+  #define PIN_VIBRATION        (8)  // P1.04 = T2G (gate of SI2312 N-MOSFET)
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
@@ -104,7 +104,5 @@
 #define P_LORA_SCLK               (12)
 #define P_LORA_MOSI               (14)
 #define SX126X_POWER_EN           (21)
-#define SX126X_RXEN               (16)
-#define SX126X_TXEN               (-1)
 #define SX126X_DIO2_AS_RF_SWITCH  true
 #define SX126X_DIO3_TCXO_VOLTAGE  (1.8f)

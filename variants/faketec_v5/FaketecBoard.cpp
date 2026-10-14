@@ -72,9 +72,9 @@ static void enterSystemOff() {
 // starting the screen or the radio. With USB power it starts at once.
 //
 // The switched 3.3 V rail (SX126X_POWER_EN, P0.13) feeds the radio, the OLED and, on the Faketec,
-// R7. Its pin is retained through system off (the rail stays on, the SX1262 sleeps at ~1 uA), but a
-// wake resets it and the rail drops. So a wake turns it on again before reading SW2, and a rejected
-// wake puts the freshly powered SX1262 back to sleep (it powers up in standby, ~0.6 mA).
+// R7. The rail is kept powered (HIGH) through system off, while the SX1262 is put into cold
+// sleep (~0.6 uA) and the OLED is off (0xAE, ~1 uA). Keeping the rail powered guarantees R7
+// pulls SW2 (P1.00) solidly to 3.3 V with zero leakage (no voltage divider into an unpowered rail).
 //
 // Some ProMicro bootloaders read P1.00 held at reset as their DFU button. GPREGRET = DFU_MAGIC_SKIP
 // makes the Adafruit bootloader (0.6.0 and later) start the app without looking at the buttons; it
@@ -144,25 +144,28 @@ static bool waitButtonsReleased(unsigned long timeout) {
 static void systemOffWithComboWake(unsigned long release_timeout) {
   waitButtonsReleased(release_timeout);
 
-  // Ensure switched power rail is unpowered
+  // Keep switched power rail powered: SX1262 is sleeping (~0.6 uA) and OLED is off (~1 uA).
+  // Keeping 3.3V on allows R7 (10k pull-up) to hold SW2 (P1.00) HIGH with zero leakage.
   pinMode(SX126X_POWER_EN, OUTPUT);
-  digitalWrite(SX126X_POWER_EN, LOW);
+  digitalWrite(SX126X_POWER_EN, HIGH);
 
-  // Ensure RXEN (P0.29 / pin 16) is LOW
-  #if defined(SX126X_RXEN)
-    pinMode(SX126X_RXEN, OUTPUT);
-    digitalWrite(SX126X_RXEN, LOW);
+  #ifdef PIN_VIBRATION
+    pinMode(PIN_VIBRATION, OUTPUT);
+    digitalWrite(PIN_VIBRATION, LOW);
   #endif
-  nrf_gpio_cfg_output(29);
-  nrf_gpio_pin_write(29, 0);
+
+  #ifdef P_LORA_BUSY
+    nrf_gpio_cfg_output(g_ADigitalPinMap[P_LORA_BUSY]);
+    nrf_gpio_pin_write(g_ADigitalPinMap[P_LORA_BUSY], 0);
+  #endif
 
   // no pull-ups and no input buffers on the encoder pins: nothing flows through a closed contact
   nrf_gpio_cfg_default(g_ADigitalPinMap[PIN_ENCODER_A]);
   nrf_gpio_cfg_default(g_ADigitalPinMap[PIN_ENCODER_B]);
   nrf_gpio_cfg_default(g_ADigitalPinMap[PIN_ENCODER_BTN]);
-  // SW2 is the only wake pin. Use NRF_GPIO_PIN_PULLUP so it is guaranteed to have a pull-up
-  // even if external 3.3V power rails are off.
-  nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_USER_BTN], NRF_GPIO_PIN_PULLUP,
+
+  // SW2 is the only wake pin. Since R7 holds it at 3.3V, NRF_GPIO_PIN_NOPULL has 0 uA leakage.
+  nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_USER_BTN], NRF_GPIO_PIN_NOPULL,
                            backDown() ? NRF_GPIO_PIN_SENSE_HIGH : NRF_GPIO_PIN_SENSE_LOW);
   if (softDeviceEnabled()) {
     sd_power_gpregret_clr(0, 0xFF);
@@ -255,44 +258,6 @@ void FaketecBoard::powerOff() {
 
   // Shutdown display, LoRa radio to sleep
   shutdownPeripherals();
-
-  // Power down switched 3.3V rail (SX126X_POWER_EN)
-  pinMode(SX126X_POWER_EN, OUTPUT);
-  digitalWrite(SX126X_POWER_EN, LOW);
-
-  // Set SX1262 SPI / control lines to default (disconnected) to avoid leaking into unpowered rail
-  #ifdef P_LORA_NSS
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_NSS]);
-  #endif
-  #ifdef P_LORA_RESET
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_RESET]);
-  #endif
-  #if defined(P_LORA_SCLK) && defined(P_LORA_MISO) && defined(P_LORA_MOSI)
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_SCLK]);
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_MOSI]);
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_MISO]);
-  #endif
-  #ifdef P_LORA_BUSY
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_BUSY]);
-  #endif
-  #ifdef P_LORA_DIO_1
-    nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_DIO_1]);
-  #endif
-
-  // Disconnect I2C lines to avoid leaking into unpowered OLED
-  Wire.end();
-  #if defined(PIN_BOARD_SDA) && defined(PIN_BOARD_SCL)
-    nrf_gpio_cfg_default(g_ADigitalPinMap[PIN_BOARD_SDA]);
-    nrf_gpio_cfg_default(g_ADigitalPinMap[PIN_BOARD_SCL]);
-  #endif
-
-  // Ensure RXEN (P0.29 / Arduino pin 16) is LOW
-  #if defined(SX126X_RXEN)
-    pinMode(SX126X_RXEN, OUTPUT);
-    digitalWrite(SX126X_RXEN, LOW);
-  #endif
-  nrf_gpio_cfg_output(29);
-  nrf_gpio_pin_write(29, 0);
 
   #ifdef PIN_VIBRATION
     pinMode(PIN_VIBRATION, OUTPUT);
