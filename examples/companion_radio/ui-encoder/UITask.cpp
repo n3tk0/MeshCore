@@ -257,7 +257,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Батерия под 10%", "Battery below 10%" },
   { "Батерията може да се извади", "Battery can be removed" },
   { "Зареди батерията", "Charge the battery" },
-  { "Задръж", "Hold" },
+  { "+ Back", "+ Back" },
   { "GPS: вкл", "GPS: on" },
   { "GPS: изкл", "GPS: off" },
   { "Заключено. Задръж Back", "Locked. Hold Back" },
@@ -4687,6 +4687,7 @@ void UITask::hibernate(bool low_battery) {
       big(*_display);
       _display->setColor(UIColor::primary_txt);
       drawLines(*_display, 0, 3, T(S_CHARGE), 3);
+      // how to switch on again: hold Back + encoder push ~1.5s (120ms buzz confirms)
       drawHint(*_display, 3 * LH, T(S_WAKE_HINT), NULL);
       _display->endFrame();
     }
