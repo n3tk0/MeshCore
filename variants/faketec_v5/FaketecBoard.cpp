@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <SPI.h>
 
 #include "FaketecBoard.h"
 #include "target.h"
@@ -75,6 +76,8 @@ static void enterSystemOff() {
 // R7. The rail is kept powered (HIGH) through system off, while the SX1262 is put into cold
 // sleep (~0.6 uA) and the OLED is off (0xAE, ~1 uA). Keeping the rail powered guarantees R7
 // pulls SW2 (P1.00) solidly to 3.3 V with zero leakage (no voltage divider into an unpowered rail).
+// BUSY (P0.29) is an output of the SX1262 (high while it sleeps), so it stays an input: driving it
+// low would short it against the radio for the whole time the board is off.
 //
 // Some ProMicro bootloaders read P1.00 held at reset as their DFU button. GPREGRET = DFU_MAGIC_SKIP
 // makes the Adafruit bootloader (0.6.0 and later) start the app without looking at the buttons; it
@@ -93,6 +96,11 @@ static void enterSystemOff() {
   #define REJECT_WAIT_MILLIS    2000   // rejected wake: the same, shorter (the CPU is running)
   #define WAKE_BUZZ_MILLIS      120
   #define DFU_MAGIC_SKIP        0x6D   // Adafruit nRF52 bootloader, src/main.c
+  // GPREGRET2 is retained through system off (cleared by a power-on); Faketec does not build
+  // NRF52_POWER_MANAGEMENT, the only other user of it
+  #define QUIET_HAPTICS_FLAG    0x80
+
+static bool quietHaptics() { return (NRF_POWER->GPREGRET2 & QUIET_HAPTICS_FLAG) != 0; }
 
 static bool backDown() { return digitalRead(PIN_USER_BTN) == LOW; }
 static bool pushDown() { return digitalRead(PIN_ENCODER_BTN) == LOW; }
@@ -106,6 +114,7 @@ static bool vbusPresent() {
 
 static void buzz(uint16_t ms) {
 #ifdef PIN_VIBRATION
+  if (quietHaptics()) return;
   pinMode(PIN_VIBRATION, OUTPUT);
   #ifdef VIBRATION_PWM
     analogWrite(PIN_VIBRATION, VIBRATION_PWM);
@@ -140,6 +149,29 @@ static bool waitButtonsReleased(unsigned long timeout) {
   return false;
 }
 
+// Rejected wake: the reset left P0.13 floating for a moment, so the rail may have dipped and the
+// SX1262 restarted in standby (~0.6 mA). SetSleep again over SPI (NSS low also wakes it if it
+// was still asleep), then leave NSS high and the bus pins without input buffers.
+static void radioSleepRaw() {
+  pinMode(P_LORA_NSS, OUTPUT);
+  digitalWrite(P_LORA_NSS, HIGH);
+  pinMode(P_LORA_BUSY, INPUT);
+  SPI.setPins(P_LORA_MISO, P_LORA_SCLK, P_LORA_MOSI);
+  SPI.begin();
+  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(P_LORA_NSS, LOW);
+  unsigned long t = millis();
+  while (digitalRead(P_LORA_BUSY) == HIGH && millis() - t < 10) { }   // wakes from sleep in < 4 ms
+  SPI.transfer(0x84);   // SetSleep
+  SPI.transfer(0x00);   // cold start, no RTC wake-up
+  digitalWrite(P_LORA_NSS, HIGH);
+  SPI.endTransaction();
+  SPI.end();
+  nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_SCLK]);
+  nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_MOSI]);
+  nrf_gpio_cfg_default(g_ADigitalPinMap[P_LORA_MISO]);
+}
+
 // last step of every power off and of a rejected wake; does not return
 static void systemOffWithComboWake(unsigned long release_timeout) {
   waitButtonsReleased(release_timeout);
@@ -152,11 +184,6 @@ static void systemOffWithComboWake(unsigned long release_timeout) {
   #ifdef PIN_VIBRATION
     pinMode(PIN_VIBRATION, OUTPUT);
     digitalWrite(PIN_VIBRATION, LOW);
-  #endif
-
-  #ifdef P_LORA_BUSY
-    nrf_gpio_cfg_output(g_ADigitalPinMap[P_LORA_BUSY]);
-    nrf_gpio_pin_write(g_ADigitalPinMap[P_LORA_BUSY], 0);
   #endif
 
   // no pull-ups and no input buffers on the encoder pins: nothing flows through a closed contact
@@ -180,6 +207,8 @@ static void systemOffWithComboWake(unsigned long release_timeout) {
 // Runs first in begin(), before the screen and the radio are started.
 static void confirmComboWake() {
   if (!(faketec_reset_reason & POWER_RESETREAS_OFF_Msk)) return;   // RST, power-up, watchdog, VBUS...
+  pinMode(SX126X_POWER_EN, OUTPUT);   // the rail feeds R7 (Back's pull-up), the radio and the OLED
+  digitalWrite(SX126X_POWER_EN, HIGH);
   if (vbusPresent()) return;   // on the charger: start without the buttons
 
   pinMode(PIN_USER_BTN, INPUT_PULLUP);       // internal pull-up guarantees read even if rail was off
@@ -203,6 +232,7 @@ static void confirmComboWake() {
     }
   }
   if (!held) {
+    radioSleepRaw();
     systemOffWithComboWake(REJECT_WAIT_MILLIS); // rejected wake: straight back to system off!
   }
 
@@ -210,6 +240,21 @@ static void confirmComboWake() {
   waitButtonsReleased(RELEASE_WAIT_MILLIS);     // the UI must not see this hold as a click
 }
 #endif
+
+void FaketecBoard::setQuietPowerHaptics(bool quiet) {
+#ifdef FAKETEC_COMBO_WAKE
+  uint32_t v = NRF_POWER->GPREGRET2;
+  v = quiet ? (v | QUIET_HAPTICS_FLAG) : (v & ~QUIET_HAPTICS_FLAG);
+  if (softDeviceEnabled()) {
+    sd_power_gpregret_clr(1, 0xFF);
+    sd_power_gpregret_set(1, v);
+  } else {
+    NRF_POWER->GPREGRET2 = v;
+  }
+#else
+  (void)quiet;
+#endif
+}
 
 void FaketecBoard::begin() {    
     NRF52Board::begin();
@@ -239,10 +284,12 @@ void FaketecBoard::begin() {
 void FaketecBoard::powerOff() {
 #ifdef FAKETEC_COMBO_WAKE
   #ifdef PIN_VIBRATION
-    // Double buzz confirmation before shutdown: 80ms ON, 80ms OFF, 120ms ON
-    buzz(80);
-    delay(80);
-    buzz(120);
+    // Double buzz confirmation before shutdown: 80ms ON, 80ms OFF, 120ms ON (not in quiet mode)
+    if (!quietHaptics()) {
+      buzz(80);
+      delay(80);
+      buzz(120);
+    }
   #endif
 
   // End button and rotary listeners
