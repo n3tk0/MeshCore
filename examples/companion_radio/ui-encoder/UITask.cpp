@@ -4675,28 +4675,32 @@ void UITask::toggleGPS() {
 void UITask::hibernate(bool low_battery) {
   // keep what would otherwise be lost: contacts waiting for their lazy save, the message history
   // and the messages the phone has not fetched yet (restored at the next start)
+  the_mesh.savePrefs();
   the_mesh.flushPendingWrites();
   saveHistory();
   the_mesh.saveOfflineQueue();
-  if (_display != NULL) {
-    _display->turnOn();
-    _display->startFrame();
-    big(*_display);
-    _display->setColor(UIColor::primary_txt);
-    drawLines(*_display, 0, 3, T(low_battery ? S_CHARGE : S_BATT_OUT), 3);
-    // how to switch on again: hold the encoder (Back held at power-up starts the bootloader's DFU)
-    drawHint(*_display, 3 * LH, T(S_WAKE_HINT), NULL);
-    _display->endFrame();
-  }
-  unsigned long shown = millis();
+
+  if (low_battery) {
+    if (_display != NULL) {
+      _display->turnOn();
+      _display->startFrame();
+      big(*_display);
+      _display->setColor(UIColor::primary_txt);
+      drawLines(*_display, 0, 3, T(S_CHARGE), 3);
+      drawHint(*_display, 3 * LH, T(S_WAKE_HINT), NULL);
+      _display->endFrame();
+    }
+    unsigned long shown = millis();
 #ifdef PIN_VIBRATION
-  if (!_node_prefs->vibe_quiet) {
-    vibration.pulse(UI_HAPTIC_LONG_MS);
-    unsigned long t = millis();
-    while (millis() - t < UI_HAPTIC_LONG_MS + 50) vibration.loop();
-  }
+    if (!_node_prefs->vibe_quiet) {
+      vibration.pulse(UI_HAPTIC_LONG_MS);
+      unsigned long t = millis();
+      while (millis() - t < UI_HAPTIC_LONG_MS + 50) vibration.loop();
+    }
 #endif
-  while (millis() - shown < 3000) delay(10);   // long enough to read
+    while (millis() - shown < 3000) delay(10);   // long enough to read warning
+  }
+
   if (_display != NULL) _display->turnOff();
   shutdown();
 }
@@ -4774,6 +4778,7 @@ void UITask::shutdown(bool restart) {
 #ifdef PIN_VIBRATION
   vibration.stop();
 #endif
+  the_mesh.savePrefs();
   the_mesh.flushPendingWrites();   // contacts/paths learned in the last moments
   saveLearnedWords();
   if (restart) _board->reboot();
@@ -4867,6 +4872,32 @@ void UITask::checkBattery() {
 }
 
 void UITask::loop() {
+#if defined(UI_HAS_ROTARY_INPUT) && defined(PIN_ENCODER_BTN) && defined(PIN_USER_BTN)
+  static unsigned long combo_sleep_at = 0;
+  if (encoder_btn.isPressed() && user_btn.isPressed()) {
+    if (combo_sleep_at == 0) {
+      combo_sleep_at = millis();
+    } else if (millis() - combo_sleep_at >= 2500) {
+      combo_sleep_at = 0;
+      encoder_btn.cancelClick();
+      user_btn.cancelClick();
+      hibernate(false);
+      return;
+    }
+    // While both buttons are held together, consume and suppress individual events
+    encoder_btn.check();
+    user_btn.check();
+    encoder_btn.cancelClick();
+    user_btn.cancelClick();
+    return;
+  } else if (combo_sleep_at != 0) {
+    // Both were held but released before 2.5s: suppress trailing clicks from uneven release
+    encoder_btn.cancelClick();
+    user_btn.cancelClick();
+    combo_sleep_at = 0;
+  }
+#endif
+
   char c = 0;
   int repeat = 1;
 
