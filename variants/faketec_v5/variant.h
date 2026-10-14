@@ -86,9 +86,12 @@
 #define PIN_ENCODER_B        (19)  // P1.02
 #define PIN_ENCODER_BTN      (23)  // P1.07
 
-// Vibration motor: PIN_VIBRATION is set from platformio.ini (default 0 = P0.08 = T2G,
+// Vibration motor: PIN_VIBRATION is set from platformio.ini (default 10 = P0.09 = T2G,
 // gate of the on-board T2 MOSFET footprint). Other Faketec MOSFET gates: T1G = P0.24
 // (shared with PIN_GPS_EN), T3G = P0.06.
+#ifndef PIN_VIBRATION
+  #define PIN_VIBRATION        (10)  // P0.09 = T2G (gate of SI2312 N-MOSFET)
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 // LoRa
@@ -101,7 +104,7 @@
 #define P_LORA_SCLK               (12)
 #define P_LORA_MOSI               (14)
 #define SX126X_POWER_EN           (21)
-#define SX126X_RXEN               (2)
+#define SX126X_RXEN               (16)
 #define SX126X_TXEN               (-1)
 #define SX126X_DIO2_AS_RF_SWITCH  true
 #define SX126X_DIO3_TCXO_VOLTAGE  (1.8f)
