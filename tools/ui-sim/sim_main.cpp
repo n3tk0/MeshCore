@@ -376,7 +376,11 @@ static void scenario(uint8_t lang) {
   run(200);
   shot("splash", bg ? "Начален екран" : "Splash");
   run(2600);
-  shot("antenna", bg ? "Въпрос за антената (Back = не, само приемане)" : "Antenna question (Back = no, receive only)");
+  shot("antenna", bg ? "Въпрос за антената: нищо не е избрано, първото движение избира" : "Antenna question: nothing preselected, the first move picks");
+  press();
+  shot("antenna_nudge", bg ? "Enter преди избор: подсказка" : "Enter before a choice: a hint");
+  turn(-1);
+  shot("antenna_yes", bg ? "Антена: избрано Да (Back = не, само приемане)" : "Antenna: Yes picked (Back = no, receive only)");
   press();
   run(1300);
 
@@ -595,7 +599,15 @@ static void scenario(uint8_t lang) {
       shot("encoder_test", bg ? "Тест на енкодера: завъртания, натискания, задържания" : "Encoder test: turns, presses, holds");
       back(); turn(2); press();
       shot("display_test", bg ? "Тест на дисплея: подсказка на първия образ" : "Display test: a hint on the first pattern");
-      back(); back();
+      back();
+      sim_rotary.setMode(RotaryInputMode::Buttons);   // two buttons on the encoder pins instead
+      ui->refresh(); run(50);
+      shot("hardware_buttons", bg ? "Хардуер с два бутона вместо енкодер" : "Hardware with two buttons instead of the encoder");
+      press();
+      shot("display_test_buttons", bg ? "Тест на дисплея с бутони: Натисни" : "Display test with buttons: Press");
+      back();
+      sim_rotary.setMode(RotaryInputMode::Encoder);
+      back();
       turn(2); shot("settings_update", bg ? "Ъпдейт на фърмуера от менюто" : "Firmware update from the menu");
       press(); shot("update_usb_q", bg ? "Рестарт в bootloader-а (USB диск за UF2)" : "Restart into the bootloader (USB drive for a UF2)"); back();
     }

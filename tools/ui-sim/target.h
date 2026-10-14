@@ -32,14 +32,20 @@ public:
 
 class SimRotary : public RotaryInput {
   int _pending = 0;   // + next, - prev
+  RotaryInputMode _mode = RotaryInputMode::Encoder;
 public:
+  bool buttons = false;   // what the sim pretends is fitted, found out like on the device
   bool begin() override { return true; }
   bool isReady() const override { return true; }
+  void setMode(RotaryInputMode mode) override { _mode = mode; }
+  RotaryInputMode mode() const override { return _mode; }
   void turn(int n) { _pending += n; }
   RotaryInputEvent poll() override {
+    if (_pending == 0) return RotaryInputEvent::None;
+    if (_mode == RotaryInputMode::Detect) _mode = buttons ? RotaryInputMode::Buttons : RotaryInputMode::Encoder;
     if (_pending > 0) { _pending--; return RotaryInputEvent::Next; }
-    if (_pending < 0) { _pending++; return RotaryInputEvent::Prev; }
-    return RotaryInputEvent::None;
+    _pending++;
+    return RotaryInputEvent::Prev;
   }
 };
 
