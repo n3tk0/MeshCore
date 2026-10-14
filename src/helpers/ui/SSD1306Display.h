@@ -44,9 +44,12 @@ class SSD1306Display : public DisplayDriver {
 #endif
   bool _isOn;
   uint8_t _color;
+  uint8_t _contrast = 0xCF;   // the Adafruit init values, applied again after a re-init
+  uint8_t _dim = 0;
   RefCountedDigitalPin* _peripher_power;
 
   bool i2c_probe(TwoWire& wire, uint8_t addr);
+  void applyDrive();
 public:
   SSD1306Display(RefCountedDigitalPin* peripher_power=NULL) : DisplayDriver(128, 64), 
       display(128, 64, &Wire, PIN_OLED_RESET),
@@ -60,6 +63,7 @@ public:
   void turnOn() override;
   void turnOff() override;
   void setContrast(uint8_t level) override;
+  void setDim(uint8_t level) override;
   void clear() override;
   void startFrame(ColorVal bkg = UIColor::window_bkg) override;
   void setTextSize(int sz) override;
