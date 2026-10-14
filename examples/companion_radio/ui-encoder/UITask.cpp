@@ -84,7 +84,17 @@ static const uint8_t icon_range[]  = { 0x00, 0x42, 0x99, 0xA5, 0xA5, 0x99, 0x42,
 static const uint8_t icon_tower[]   = { 0x10, 0x38, 0x10, 0x28, 0x28, 0x44, 0x44, 0x00 };
 
 static const unsigned long AUTO_OFF_TABLE[] = { 15000, 30000, 60000, 300000 };
-static const uint8_t CONTRAST_TABLE[] = { 0xFF, 0x60, 0x08 };
+// brightness levels 1..13. The first NIGHT_LEVELS also lower the panel drive (DisplayDriver::setDim),
+// which goes far below what contrast alone reaches; the rest are SSD1306 contrast with steps that
+// grow because the eye barely sees the top ones. Levels 6, 10 and 13 are the old low / medium / high.
+struct BrightStep { uint8_t contrast, dim; };
+static const BrightStep BRIGHT_TABLE[] = {
+  { 0x00, 2 }, { 0x30, 2 }, { 0x00, 1 },                                  // night
+  { 0x01, 0 }, { 0x03, 0 }, { 0x08, 0 }, { 0x12, 0 }, { 0x24, 0 },
+  { 0x40, 0 }, { 0x60, 0 }, { 0x8C, 0 }, { 0xC0, 0 }, { 0xFF, 0 },
+};
+#define BRIGHT_LEVELS ((int)(sizeof(BRIGHT_TABLE) / sizeof(BRIGHT_TABLE[0])))
+#define NIGHT_LEVELS  3
 #define DOTS_BOTTOM 0
 #define DOTS_RIGHT  1
 #define DOTS_NONE   2
@@ -147,8 +157,8 @@ enum StrId {
   S_SETTINGS, S_GRP_DISPLAY, S_GRP_INPUT, S_GRP_MSGS, S_GRP_RADIO, S_GRP_SYSTEM, S_SET_OFF,
   S_SET_BRIGHT, S_SET_DOTS, S_SET_MENU_SZ, S_SET_TEXT_SZ, S_SET_VIBE, S_SET_ENC, S_SET_STEPS, S_SET_SKIP, S_SET_NOTIFY,
   S_SET_DELCONF, S_SET_CSORT, S_SET_WAKE, S_SET_LOCK, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET, S_SET_BATT, S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST,
-  S_ABOUT, S_RESCUE, S_RESCUE_Q, S_SET_DFU_USB, S_SET_DFU_BLE, S_DFU_USB_Q, S_DFU_BLE_Q, S_DFU_USB_L, S_DFU_BLE_L, S_DFU_FAIL, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_HIGH,
-  S_MEDIUM, S_LOW, S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_SIZE_LARGE, S_SIZE_MEDIUM, S_SIZE_SMALL, S_SIZE_TINY, S_ENC_NORMAL, S_ENC_REVERSED,
+  S_ABOUT, S_RESCUE, S_RESCUE_Q, S_SET_DFU_USB, S_SET_DFU_BLE, S_DFU_USB_Q, S_DFU_BLE_Q, S_DFU_USB_L, S_DFU_BLE_L, S_DFU_FAIL, S_EDIT_HINT, S_OFF_15S, S_OFF_30S, S_OFF_1M, S_OFF_5M, S_NIGHT_FMT,
+  S_DOTS_BOTTOM, S_DOTS_RIGHT, S_DOTS_NONE, S_SIZE_LARGE, S_SIZE_MEDIUM, S_SIZE_SMALL, S_SIZE_TINY, S_ENC_NORMAL, S_ENC_REVERSED,
   S_STEPS_FMT, S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER, S_CSORT_NAME, S_CSORT_RECENT,
   S_ANT_POWER_LOSS, S_ANT_ALWAYS, S_ANT_NEVER, S_WAKE_DIRECT, S_WAKE_ALL, S_WAKE_NEVER, S_LOCK_HAND,
   S_LOCK_AUTO, S_PRESET_CUSTOM, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
@@ -303,9 +313,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "30 с", "30 s" },
   { "1 мин", "1 min" },
   { "5 мин", "5 min" },
-  { "висока", "high" },
-  { "средна", "medium" },
-  { "ниска", "low" },
+  { "нощ %d", "night %d" },
   { "отдолу", "bottom" },
   { "вдясно", "right" },
   { "скрити", "hidden" },
@@ -2575,6 +2583,12 @@ static uint8_t encoderSteps(const NodePrefs* p) {
   return (p->ui_enc_steps == 2 || p->ui_enc_steps == 4) ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
 }
 
+// brightness 1..BRIGHT_LEVELS; anything else (unset, corrupt prefs) is full brightness
+static int brightLevel(const NodePrefs* p) {
+  int l = p->ui_bright_lvl;
+  return (l >= 1 && l <= BRIGHT_LEVELS) ? l : BRIGHT_LEVELS;
+}
+
 enum SettingId : uint8_t {
   ST_OFF, ST_BRIGHT, ST_DOTS, ST_MENU_SZ, ST_TEXT_SZ,
   ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK,
@@ -2627,7 +2641,8 @@ static StrId settingName(uint8_t id) {
 static int optCount(uint8_t id) {
   switch (id) {
     case ST_OFF: return 4;
-    case ST_BRIGHT: case ST_DOTS: case ST_NOTIFY: case ST_ANT: case ST_WAKE: return 3;
+    case ST_BRIGHT: return BRIGHT_LEVELS;
+    case ST_DOTS: case ST_NOTIFY: case ST_ANT: case ST_WAKE: return 3;
     case ST_PRESET: return NUM_PRESETS + 1;
     case ST_BATT: return BATT_CAL_STEPS;
     case ST_MENU_SZ: case ST_TEXT_SZ: return 4;
@@ -2643,7 +2658,7 @@ static int getOpt(UITask* task, uint8_t id) {
   NodePrefs* p = task->prefs();
   switch (id) {
     case ST_OFF: return p->ui_off % 4;
-    case ST_BRIGHT: return p->ui_bright % 3;
+    case ST_BRIGHT: return brightLevel(p) - 1;
     case ST_DOTS: return p->ui_dots % 3;
     case ST_MENU_SZ: return p->ui_menu_sz % 4;
     case ST_TEXT_SZ: return p->ui_text_sz % 4;
@@ -2675,7 +2690,10 @@ static int getOpt(UITask* task, uint8_t id) {
 static void optText(uint8_t id, int v, char* buf, size_t n) {
   switch (id) {
     case ST_OFF: snprintf(buf, n, "%s", T((StrId)(S_OFF_15S + v))); break;
-    case ST_BRIGHT: snprintf(buf, n, "%s", T((StrId)(S_HIGH + v))); break;
+    case ST_BRIGHT:
+      if (v < NIGHT_LEVELS) snprintf(buf, n, T(S_NIGHT_FMT), v + 1);
+      else snprintf(buf, n, "%d/%d", v + 1 - NIGHT_LEVELS, BRIGHT_LEVELS - NIGHT_LEVELS);
+      break;
     case ST_DOTS: snprintf(buf, n, "%s", T((StrId)(S_DOTS_BOTTOM + v))); break;
     case ST_MENU_SZ: case ST_TEXT_SZ: snprintf(buf, n, "%s", T((StrId)(S_SIZE_LARGE + v))); break;
     case ST_ENC: snprintf(buf, n, "%s", T(v ? S_ENC_REVERSED : S_ENC_NORMAL)); break;
@@ -2700,7 +2718,7 @@ static void setOpt(UITask* task, uint8_t id, int v) {
   NodePrefs* p = task->prefs();
   switch (id) {
     case ST_OFF: p->ui_off = v; break;
-    case ST_BRIGHT: p->ui_bright = v; task->applyContrast(); break;
+    case ST_BRIGHT: p->ui_bright_lvl = v + 1; task->applyContrast(); break;
     case ST_DOTS: p->ui_dots = v; break;
     case ST_MENU_SZ: p->ui_menu_sz = v; break;
     case ST_TEXT_SZ: p->ui_text_sz = v; break;
@@ -2780,6 +2798,15 @@ public:
       d.drawTextCentered(d.width() / 2, LH + 8 + TEXT_DY, val);
       d.setCursor(0, LH + 8 + TEXT_DY); d.print("<");
       d.drawTextRightAlign(d.width(), LH + 8 + TEXT_DY, ">");
+      if (_id == ST_BRIGHT) {   // level bar: filled up to the level (night ones hollow), a dash for the rest
+        const int sw = 7, gap = 2, y = 2 * LH + 10;
+        int x = (d.width() - (BRIGHT_LEVELS * (sw + gap) - gap)) / 2;
+        for (int i = 0; i < BRIGHT_LEVELS; i++, x += sw + gap) {
+          if (i > _val) d.fillRect(x, y + 3, sw, 1);
+          else if (i < NIGHT_LEVELS) d.drawRect(x, y, sw, 4);
+          else d.fillRect(x, y, sw, 4);
+        }
+      }
     } else {
       drawLines(d, LH, 2, val, 2);
     }
@@ -2793,7 +2820,7 @@ public:
       if (n <= 4) v = (v + n) % n;            // short lists wrap around
       else if (v < 0 || v >= n) return true;  // ranges stop at the ends
       _val = v;
-      if (_id == ST_BRIGHT) { _task->prefs()->ui_bright = _val; _task->applyContrast(); }   // preview
+      if (_id == ST_BRIGHT) { _task->prefs()->ui_bright_lvl = _val + 1; _task->applyContrast(); }   // preview
       return true;
     }
     if (c == KEY_ENTER && _id == ST_TX) {
@@ -2812,7 +2839,7 @@ public:
       return true;
     }
     if (c == KEY_CANCEL && _id == ST_BRIGHT) {
-      _task->prefs()->ui_bright = _orig;
+      _task->prefs()->ui_bright_lvl = _orig + 1;
       _task->applyContrast();
     }
     return false;   // Back: the stack pops
@@ -4238,7 +4265,10 @@ void UITask::applyEncoderPrefs() {
 }
 
 void UITask::applyContrast() {
-  if (_display != NULL) _display->setContrast(CONTRAST_TABLE[_node_prefs->ui_bright % 3]);
+  if (_display == NULL) return;
+  const BrightStep& s = BRIGHT_TABLE[brightLevel(_node_prefs) - 1];
+  _display->setDim(s.dim);
+  _display->setContrast(s.contrast);
 }
 
 unsigned long UITask::autoOffMillis() const {

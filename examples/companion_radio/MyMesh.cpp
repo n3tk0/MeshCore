@@ -1115,6 +1115,10 @@ void MyMesh::begin() {
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
   if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;   // sendFlood() accepts hash sizes 1..3
   if (_prefs.tz_offset == 0 && _prefs.ui_tz != 0) { _prefs.tz_offset = _prefs.ui_tz; _prefs.ui_tz = 0; }   // older encoder UI setting
+  if (_prefs.ui_bright_lvl == 0 || _prefs.ui_bright_lvl > 13) {   // older 3-step encoder UI brightness: high/medium/low
+    static const uint8_t OLD_BRIGHT[] = { 13, 10, 6 };
+    _prefs.ui_bright_lvl = OLD_BRIGHT[_prefs.ui_bright % 3];
+  }
   // battery calibration made on the device (encoder UI); a value far off is ignored
   if (_prefs.adc_mult >= 0.5f && _prefs.adc_mult <= 10.0f) board.setAdcMultiplier(_prefs.adc_mult);
 
