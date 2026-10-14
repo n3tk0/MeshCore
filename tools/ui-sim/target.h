@@ -50,7 +50,7 @@ public:
   uint16_t getBattMilliVolts() override { return mv; }
   const char* getManufacturerName() const override { return "Faketec sim"; }
   void reboot() override { }
-  void powerOff() override { }
+  void powerOff() override;   // display off, like the real board
   uint8_t getStartupReason() const override { return 0; }
   bool isExternalPowered() override { return external; }
 };
