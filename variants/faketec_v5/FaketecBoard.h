@@ -22,10 +22,11 @@ public:
   FaketecBoard() : NRF52Board("Faketec_OTA") {}
   void begin();
   void powerOff() override;
-  void enterDeepSleep() { powerOff(); }
   void onBootComplete() override;
   void loop() override;                         // feeds the watchdog
   uint32_t getResetReason() const override;     // RESETREAS at start-up, 0 = power-on
+  // no buzz at power off and at the next wake (the UI's quiet mode); kept through system off
+  static void setQuietPowerHaptics(bool quiet);
 
   #define BATTERY_SAMPLES 8
 
