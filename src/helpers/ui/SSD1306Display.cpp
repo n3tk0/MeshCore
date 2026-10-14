@@ -129,6 +129,7 @@ bool SSD1306Display::begin() {
   if (i2c_probe(Wire, DISPLAY_ADDRESS)) addr = DISPLAY_ADDRESS;
   else if (i2c_probe(Wire, DISPLAY_ADDRESS ^ 1)) addr = DISPLAY_ADDRESS ^ 1;
   bool ok = display.begin(SSD1306_SWITCHCAPVCC, addr ? addr : DISPLAY_ADDRESS, true, false);
+  if (_dim || _contrast != 0xCF) { applyDrive(); setContrast(_contrast); }   // the brightness from before a re-init
   return addr != 0 && ok;
 }
 
@@ -155,8 +156,23 @@ void SSD1306Display::turnOff() {
 }
 
 void SSD1306Display::setContrast(uint8_t level) {
+  _contrast = level;
   display.ssd1306_command(SSD1306_SETCONTRAST);
   display.ssd1306_command(level);
+}
+
+// Night dimming beyond contrast: VCOMH (0xDB) down from ~0.77 to ~0.65 Vcc, and for the dimmest
+// level also the shortest pre-charge phases (0xD9, 1 + 1 clocks instead of the charge-pump 0xF1).
+void SSD1306Display::setDim(uint8_t level) {
+  _dim = level > 2 ? 2 : level;
+  applyDrive();
+}
+
+void SSD1306Display::applyDrive() {
+  display.ssd1306_command(SSD1306_SETPRECHARGE);
+  display.ssd1306_command(_dim >= 2 ? 0x11 : 0xF1);
+  display.ssd1306_command(SSD1306_SETVCOMDETECT);
+  display.ssd1306_command(_dim >= 1 ? 0x00 : 0x40);
 }
 
 void SSD1306Display::clear() {

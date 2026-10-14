@@ -29,6 +29,8 @@ public:
   virtual void turnOn() = 0;
   virtual void turnOff() = 0;
   virtual void setContrast(uint8_t level) { }   // 0..255, where the panel supports it
+  // panel drive below what contrast reaches, for night use: 0 = normal, 1 = dim, 2 = dimmest
+  virtual void setDim(uint8_t level) { }
   virtual void clear() = 0;
   virtual void startFrame(ColorVal bkg = UIColor::window_bkg) = 0;
   virtual void setTextSize(int sz) = 0;
