@@ -49,7 +49,7 @@
 #define WIRE_INTERFACES_COUNT 2
 
 #define PIN_WIRE_SDA         (8)    // P1.04, same as PIN_BOARD_SDA (pin 6 is the BTN)
-#define PIN_WIRE_SCL         (7)
+#define PIN_WIRE_SCL         (7)    // P0.11
 #define PIN_WIRE1_SDA        (13)
 #define PIN_WIRE1_SCL        (14)
 
@@ -88,7 +88,8 @@
 
 // Vibration motor: PIN_VIBRATION is set from platformio.ini (default 0 = P0.08 = T2G,
 // gate of the on-board T2 MOSFET footprint). Other Faketec MOSFET gates: T1G = P0.24
-// (shared with PIN_GPS_EN), T3G = P0.06.
+// (shared with PIN_GPS_EN), T3G = P0.06. Checked against the fakeTecv5 KiCad PCB nets:
+// OLED SDA/SCL = P1.04/P0.11, RXEN = P0.17, LoRa RESET = P0.09, BUSY = P0.29.
 
 //////////////////////////////////////////////////////////////////////////////
 // LoRa
