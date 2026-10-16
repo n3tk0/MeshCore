@@ -565,6 +565,9 @@ static void scenario(uint8_t lang) {
   shot("range_running", bg ? "Тест на обхвата: SNR натам/обратно, -- = без отговор" : "Range test: SNR there/back, -- = no answer");
   holdBack();
   shot("standby_range", bg ? "Тестът на обхвата върви: икона в лентата" : "The range test runs: an icon in the status row");
+  prefs.setRepeatEn(true); ui->refresh(); run(50);
+  shot("standby_repeat", bg ? "Препредаване + тест на обхвата: две икони" : "Repeat + range test: two icons");
+  prefs.setRepeatEn(false);
   press(); turn(3); press(); turn(2); press();   // Menu > Network > Range test
   turn(1); press();   // stop
   back(); back();
@@ -574,14 +577,30 @@ static void scenario(uint8_t lang) {
   for (int g = 0; g < 5; g++) {
     press();
     char name[24]; snprintf(name, sizeof(name), "settings_%d", g);
-    static const char* GB[] = { "Настройки: екран", "Настройки: управление", "Настройки: съобщения", "Настройки: радио", "Настройки: система" };
-    static const char* GE[] = { "Settings: display", "Settings: controls", "Settings: messages", "Settings: radio", "Settings: system" };
+    static const char* GB[] = { "Настройки: екран", "Настройки: хардуер", "Настройки: съобщения", "Настройки: радио", "Настройки: система" };
+    static const char* GE[] = { "Settings: display", "Settings: hardware", "Settings: messages", "Settings: radio", "Settings: system" };
     shot(name, bg ? GB[g] : GE[g]);
     if (g == 0) {
       press(); turn(2); shot("edit_menu_size", bg ? "Размер на менютата (стойността е в този размер)" : "Menu size (the value is shown in that size)"); back();
       turn(3); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back();
     }
-    if (g == 1) { turn(4); press(); shot("edit_lock", bg ? "Заключване: ръчно или при изгасване" : "Key lock: by hand or when the screen goes off"); back(); }
+    if (g == 1) {   // Hardware: Direction, Steps, Vibration, Skip, Lock, the tests, Readings
+      turn(4); press(); shot("edit_lock", bg ? "Заключване: ръчно или при изгасване" : "Key lock: by hand or when the screen goes off"); back();
+      turn(1); press(); turn(3); press(); hold(); turn(-1);
+      shot("encoder_test", bg ? "Тест вход: завъртания, натискания, задържания" : "Input test: turns, presses, holds");
+      back(); turn(2); press();
+      shot("display_test", bg ? "Тест екран: подсказка на първия образ" : "Screen test: a hint on the first pattern");
+      back(); turn(1); press();
+      shot("hardware", bg ? "Показания: батерия, ADC, USB, рестарт, шум" : "Readings: battery, ADC, USB, reset, noise");
+      back();
+      sim_rotary.setMode(RotaryInputMode::Buttons);   // two buttons on the encoder pins instead
+      ui->refresh(); run(50);
+      shot("hardware_buttons", bg ? "Хардуер с два бутона: без „Стъпки“" : "Hardware with two buttons: no steps row");
+      turn(-1); press();
+      shot("display_test_buttons", bg ? "Тест на екрана с бутони: Натисни" : "Screen test with buttons: Press");
+      back();
+      sim_rotary.setMode(RotaryInputMode::Encoder);
+    }
     if (g == 2) {
       turn(1); press(); shot("edit_wake", bg ? "Кога светва екранът за съобщение" : "When a message turns the screen on"); back();
       turn(4); press(); shot("words", bg ? "Научени думи: изтриване (още няма)" : "Learned words: clear (none yet)"); run(2000);
@@ -589,26 +608,14 @@ static void scenario(uint8_t lang) {
     if (g == 3) {
       turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back();
       turn(1); press(); turn(1); shot("edit_preset", bg ? "Радио пресет" : "Radio preset"); back();
+      turn(1); press(); turn(1); press();
+      shot("repeat_q", bg ? "Репийтър: само при авария" : "Repeat: emergencies only"); back(); back();
     }
     if (g == 4) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();
       turn(2); press(); turn(3); shot("edit_battery", bg ? "Калибрация: въведи волтажа от мултиметъра" : "Calibration: enter the multimeter reading"); back();
       turn(1); press(); shot("about", bg ? "За устройството" : "About"); back();
-      turn(1); press(); shot("hardware", bg ? "Хардуер: тестове и измервания" : "Hardware: tests and readings");
-      press(); turn(3); press(); hold(); turn(-1);
-      shot("encoder_test", bg ? "Тест на енкодера: завъртания, натискания, задържания" : "Encoder test: turns, presses, holds");
-      back(); turn(2); press();
-      shot("display_test", bg ? "Тест на дисплея: подсказка на първия образ" : "Display test: a hint on the first pattern");
-      back();
-      sim_rotary.setMode(RotaryInputMode::Buttons);   // two buttons on the encoder pins instead
-      ui->refresh(); run(50);
-      shot("hardware_buttons", bg ? "Хардуер с два бутона вместо енкодер" : "Hardware with two buttons instead of the encoder");
-      press();
-      shot("display_test_buttons", bg ? "Тест на дисплея с бутони: Натисни" : "Display test with buttons: Press");
-      back();
-      sim_rotary.setMode(RotaryInputMode::Encoder);
-      back();
-      turn(2); shot("settings_update", bg ? "Ъпдейт на фърмуера от менюто" : "Firmware update from the menu");
+      turn(1); shot("settings_update", bg ? "Ъпдейт на фърмуера от менюто" : "Firmware update from the menu");
       press(); shot("update_usb_q", bg ? "Рестарт в bootloader-а (USB диск за UF2)" : "Restart into the bootloader (USB drive for a UF2)"); back();
     }
     back();

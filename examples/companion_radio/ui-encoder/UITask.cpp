@@ -165,7 +165,7 @@ enum StrId {
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
-  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE,
+  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
   S_COUNT
 };
 
@@ -273,7 +273,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   // settings
   { "Настройки", "Settings" },
   { "Екран", "Display" },
-  { "Управление", "Controls" },
+  { "Хардуер", "Hardware" },
   { "Съобщения", "Messages" },
   { "Радио", "Radio" },
   { "Система", "System" },
@@ -284,7 +284,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Шрифт текст", "Text font" },
   { "Вибрация", "Vibration" },
   { "Посока", "Direction" },
-  { "Стъпки/щрак", "Steps/click" },
+  { "Стъпки", "Steps" },
   { "Скок букви", "Auto jump" },
   { "Известия", "Alerts" },
   { "Потвърди", "Confirm" },
@@ -388,7 +388,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Заглушен", "Muted" },
   { "Със звук", "Sound on" },
   { "Изтрий %s?", "Delete %s?" },
-  { "Хардуер", "Hardware" },
+  { "Показания", "Readings" },
   { "Енкодер", "Encoder" },
   { "Стъпки %+d", "Steps %+d" },
   { "Натиск %d", "Presses %d" },
@@ -408,6 +408,12 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Бутони", "Buttons" },
   { "Натисни", "Press" },
   { "Избери", "Choose" },
+  { "Репийтър", "Repeater" },
+  { "Само при авария! Включи?", "Emergency only! Turn on?" },
+  { "Не на тази честота", "Not on this frequency" },
+  { "Тест вход", "Input test" },
+  { "Тест вибро", "Vibe test" },
+  { "Тест екран", "OLED test" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -2620,6 +2626,19 @@ static uint8_t encoderSteps(const NodePrefs* p) {
   return (p->ui_enc_steps == 2 || p->ui_enc_steps == 4) ? p->ui_enc_steps : ENCODER_STEPS_PER_DETENT;
 }
 
+static bool buttonsFitted() { return rotary_input.mode() == RotaryInputMode::Buttons; }
+
+// encoder or two buttons on the encoder pins: found out on the first turn or press after a
+// battery was put in (remembered in ui_input until then), and switched over whenever the other
+// one is clearly in use
+static void applyInputMode(const NodePrefs* p) {
+  if (coldBoot() || (p->ui_input != 1 && p->ui_input != 2)) {
+    rotary_input.setMode(RotaryInputMode::Detect);
+  } else {
+    rotary_input.setMode(p->ui_input == 2 ? RotaryInputMode::Buttons : RotaryInputMode::Encoder);
+  }
+}
+
 // brightness 1..BRIGHT_LEVELS; anything else (unset, corrupt prefs) is full brightness
 static int brightLevel(const NodePrefs* p) {
   int l = p->ui_bright_lvl;
@@ -2632,7 +2651,7 @@ enum SettingId : uint8_t {
   ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
-  ST_WORDS, ST_HW,
+  ST_WORDS, ST_HW, ST_REPEAT, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2669,7 +2688,7 @@ static StrId settingName(uint8_t id) {
     S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
-    S_WORDS, S_HARDWARE,
+    S_WORDS, S_HARDWARE, S_SET_REPEAT, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
   };
   return N[id];
 }
@@ -2684,7 +2703,7 @@ static int optCount(uint8_t id) {
     case ST_BATT: return BATT_CAL_STEPS;
     case ST_MENU_SZ: case ST_TEXT_SZ: return 4;
     case ST_VIBE: case ST_ENC: case ST_STEPS: case ST_SKIP: case ST_DELCONF: case ST_CSORT: case ST_LOCK:
-    case ST_TX: case ST_LANG: case ST_DST: return 2;
+    case ST_TX: case ST_LANG: case ST_DST: case ST_REPEAT: return 2;
     case ST_TXPOW: return MAX_LORA_TX_POWER - TXPOW_MIN + 1;
     case ST_TZ: return TZ_MAX - TZ_MIN + 1;
     default: return 0;
@@ -2720,6 +2739,7 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_LANG: return p->ui_lang % LANG_COUNT;
     case ST_TZ: return p->tz_offset - TZ_MIN;
     case ST_DST: return p->ui_dst ? 1 : 0;
+    case ST_REPEAT: return p->isRepeatEn() ? 1 : 0;
     default: return 0;
   }
 }
@@ -2787,18 +2807,31 @@ static void setOpt(UITask* task, uint8_t id, int v) {
 }
 
 static void saveOpt(UITask* task, uint8_t id, int v) {
-  if (id == ST_TXPOW) {
+  if (id == ST_REPEAT) {
+    if (!the_mesh.setRepeat(v != 0)) { task->showAlert(T(S_REPEAT_FREQ), 1500); return; }
+  } else if (id == ST_TXPOW) {
     the_mesh.setTxPower(v + TXPOW_MIN);   // applied and saved
   } else if (id == ST_PRESET) {
     if (v < NUM_PRESETS) {
       const RadioPreset& r = PRESETS[v];
-      if (!the_mesh.setRadioParams(r.freq, r.bw, r.sf, r.cr)) { task->showAlert(T(S_SAVE_FAIL), 1500); return; }
+      if (!the_mesh.setRadioParams(r.freq, r.bw, r.sf, r.cr)) {   // repeat on: only its frequencies
+        task->showAlert(T(task->prefs()->isRepeatEn() ? S_REPEAT_FREQ : S_SAVE_FAIL), 1500);
+        return;
+      }
     }
   } else {
     setOpt(task, id, v);
     the_mesh.savePrefs();
   }
   task->haptic(UI_HAPTIC_ACK_MS);
+}
+
+// repeat (client repeat): forwards other nodes' packets. Only on the frequencies the build allows,
+// and turning it on asks first: it adds traffic to the mesh, meant for emergencies.
+static void doRepeatOn(UITask* task) {
+  if (the_mesh.setRepeat(true)) task->haptic(UI_HAPTIC_ACK_MS);
+  else task->showAlert(T(S_REPEAT_FREQ), 1500);
+  task->pop();   // the value editor
 }
 
 static void doNeverAskAntenna(UITask* task) {
@@ -2871,6 +2904,10 @@ public:
         askConfirm(_task, T(S_ANT_NEVER_Q), doNeverAskAntenna);
         return true;
       }
+      if (_id == ST_REPEAT && _val == 1 && _orig == 0) {
+        askConfirm(_task, T(S_REPEAT_Q), doRepeatOn);
+        return true;
+      }
       saveOpt(_task, _id, _val);
       _task->pop();
       return true;
@@ -2932,6 +2969,8 @@ static void doClearWords(UITask* task) {
   else task->showAlert(T(S_SAVE_FAIL), 1500);
 }
 static void openHardware(UITask* task);
+static void openInputTest(UITask* task);
+static void openScreenTest(UITask* task);
 static void doDfuUsb(UITask* task) { task->enterBootloader(true); }
 static void doDfuBle(UITask* task) { task->enterBootloader(false); }
 
@@ -2939,16 +2978,41 @@ class SettingsGroupScreen : public ListScreen {
   const uint8_t* _items = NULL;
   int _n = 0;
   StrId _title = S_SETTINGS;
+  // steps per detent mean nothing with two buttons: not listed then
+  bool _steps_hidden = false;   // as last listed
+  static bool hidden(uint8_t id, bool steps_hidden) { return id == ST_STEPS && steps_hidden; }
+  uint8_t item(int i, bool steps_hidden) const {
+    for (int k = 0; k < _n; k++) {
+      if (hidden(_items[k], steps_hidden)) continue;
+      if (i-- == 0) return _items[k];
+    }
+    return _items[_n - 1];
+  }
+  uint8_t item(int i) const { return item(i, buttonsFitted()); }
+  // the input switched over by itself (Steps came or went): keep the same setting selected
+  void followInput() {
+    bool h = buttonsFitted();
+    if (h == _steps_hidden) return;
+    uint8_t id = item(_sel, _steps_hidden);
+    _steps_hidden = h;
+    for (int i = 0; i < count(); i++) if (item(i) == id) { _sel = i; break; }
+    if (_sel >= count()) _sel = count() - 1;
+  }
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(_title)); }
-  int count() override { return _n; }
+  int count() override {
+    int c = 0;
+    bool h = buttonsFitted();
+    for (int k = 0; k < _n; k++) if (!hidden(_items[k], h)) c++;
+    return c;
+  }
   // names only (a value does not fit beside them at this font size); press opens the value
   void label(int i, char* buf, size_t n) override {
-    uint8_t id = _items[i];
+    uint8_t id = item(i);
     snprintf(buf, n, "%s", id == ST_TX ? "TX" : T(settingName(id)));
   }
   bool onEnter(int i) override {
-    uint8_t id = _items[i];
+    uint8_t id = item(i);
     int n = optCount(id);
     if (n >= 2) {
       value_edit->open(id);
@@ -2970,6 +3034,12 @@ protected:
       askConfirm(_task, q, doClearWords);
     } else if (id == ST_HW) {
       openHardware(_task);
+    } else if (id == ST_TEST_INPUT) {
+      openInputTest(_task);
+    } else if (id == ST_TEST_VIBE) {
+      _task->testVibration();
+    } else if (id == ST_TEST_SCREEN) {
+      openScreenTest(_task);
     } else if (id == ST_RESCUE) {
       askConfirm(_task, T(S_RESCUE_Q), doRescue);
     } else if (id == ST_DFU_USB) {
@@ -2981,16 +3051,19 @@ protected:
   }
 public:
   SettingsGroupScreen(UITask* task) : ListScreen(task) { }
-  void open(StrId title, const uint8_t* items, int n) { _title = title; _items = items; _n = n; reset(); }
+  void open(StrId title, const uint8_t* items, int n) { _title = title; _items = items; _n = n; _steps_hidden = buttonsFitted(); reset(); }
+  int render(DisplayDriver& d) override { followInput(); return ListScreen::render(d); }
+  bool handleInput(char c) override { followInput(); return ListScreen::handleInput(c); }
 };
 
 static SettingsGroupScreen* settings_group;
 
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
-static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK };
+// controls and hardware in one place: the input settings, the tests, then the readings
+static const uint8_t GROUP_INPUT[]   = { ST_ENC, ST_STEPS, ST_VIBE, ST_SKIP, ST_LOCK, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN, ST_HW };
 static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
-static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET };
-static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_HW, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
+static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET, ST_REPEAT };
+static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
 class SettingsScreen : public ListScreen {
 protected:
@@ -3153,6 +3226,7 @@ class StandbyScreen : public UIScreen {
     if (_task->isBluetoothEnabled()) { x -= 16; drawIcon2(d, x, 0, icon_bt); }
     if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 18; drawSignal(d, x, 0, rx_snr); }
     if (rangeRunning()) { x -= 16; drawIcon2(d, x, 0, icon_range); }
+    if (_prefs->isRepeatEn()) { x -= 16; drawIcon2(d, x, 0, icon_tower); }   // repeat on (emergencies)
     if (!the_mesh.isTxAllowed()) {   // crossed-out "TX": receive only
       x -= 2 * CW + 4;
       d.setCursor(x, TEXT_DY);
@@ -3963,7 +4037,6 @@ uint32_t UITask::airtimeWindowSecs() {
 
 // ---------------------------------------------------------------- hardware check (Settings > System)
 
-static bool buttonsFitted() { return rotary_input.mode() == RotaryInputMode::Buttons; }
 static StrId inputLabel() { return buttonsFitted() ? S_BUTTONS : S_ENCODER; }
 
 class EncoderTestScreen : public UIScreen {
@@ -4034,9 +4107,9 @@ public:
 static EncoderTestScreen* encoder_test;
 static DisplayTestScreen* display_test;
 
-// Settings > System > Hardware: the three tests, then live readings
+// Settings > Hardware > Readings: live readings (the tests are rows of the Hardware group)
 class HardwareScreen : public ListScreen {
-  enum { H_ENCODER, H_VIBRATION, H_DISPLAY, H_FIRST_INFO };
+  enum { H_FIRST_INFO };
   char _lines[8][40];
   int _n = 0;
   void build() {
@@ -4058,16 +4131,10 @@ protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_HARDWARE)); }
   int count() override { return H_FIRST_INFO + _n; }
   void label(int i, char* buf, size_t n) override {
-    if (i == H_ENCODER) snprintf(buf, n, "%s", T(inputLabel()));
-    else if (i == H_VIBRATION) snprintf(buf, n, "%s", T(S_SET_VIBE));
-    else if (i == H_DISPLAY) snprintf(buf, n, "%s", T(S_GRP_DISPLAY));
-    else snprintf(buf, n, "%s", _lines[i - H_FIRST_INFO]);
+    snprintf(buf, n, "%s", _lines[i - H_FIRST_INFO]);
   }
   bool onEnter(int i) override {
-    if (i == H_ENCODER) { encoder_test->open(); _task->push(encoder_test); }
-    else if (i == H_VIBRATION) _task->testVibration();
-    else if (i == H_DISPLAY) { display_test->open(); _task->push(display_test); }
-    return true;
+    return true;   // readings only
   }
 public:
   HardwareScreen(UITask* task) : ListScreen(task) { }
@@ -4080,6 +4147,16 @@ static HardwareScreen* hardware_screen;
 static void openHardware(UITask* task) {
   hardware_screen->open();
   task->push(hardware_screen);
+}
+
+static void openInputTest(UITask* task) {
+  encoder_test->open();
+  task->push(encoder_test);
+}
+
+static void openScreenTest(UITask* task) {
+  display_test->open();
+  task->push(display_test);
 }
 
 void UITask::testVibration() {
@@ -4111,13 +4188,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   encoder_btn.wakeOnChange();
   rotary_input.begin();
   applyEncoderPrefs();
-  // encoder or two buttons on its pins: remembered, but found out again after a battery was put
-  // in (the hardware may have changed); until then both work and the first press or turn decides
-  if (coldBoot() || (_node_prefs->ui_input != 1 && _node_prefs->ui_input != 2)) {
-    rotary_input.setMode(RotaryInputMode::Detect);
-  } else {
-    rotary_input.setMode(_node_prefs->ui_input == 2 ? RotaryInputMode::Buttons : RotaryInputMode::Encoder);
-  }
+  applyInputMode(_node_prefs);
 
   if (_display != NULL) {
     ui_width = _display->width();
