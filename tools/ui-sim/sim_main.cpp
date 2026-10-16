@@ -584,9 +584,8 @@ static void scenario(uint8_t lang) {
       press(); turn(2); shot("edit_menu_size", bg ? "Размер на менютата (стойността е в този размер)" : "Menu size (the value is shown in that size)"); back();
       turn(3); press(); turn(1); shot("edit_brightness", bg ? "Редакция на стойност (яркостта се вижда веднага)" : "Value editor (brightness previews live)"); back();
     }
-    if (g == 1) {   // Hardware: Input, Direction, Steps, Vibration, Skip, Lock, the tests, Readings
-      press(); shot("edit_input", bg ? "Вход: Авто, сега: Енкодер" : "Input: Auto, now: Encoder"); back();
-      turn(5); press(); shot("edit_lock", bg ? "Заключване: ръчно или при изгасване" : "Key lock: by hand or when the screen goes off"); back();
+    if (g == 1) {   // Hardware: Direction, Steps, Vibration, Skip, Lock, the tests, Readings
+      turn(4); press(); shot("edit_lock", bg ? "Заключване: ръчно или при изгасване" : "Key lock: by hand or when the screen goes off"); back();
       turn(1); press(); turn(3); press(); hold(); turn(-1);
       shot("encoder_test", bg ? "Тест вход: завъртания, натискания, задържания" : "Input test: turns, presses, holds");
       back(); turn(2); press();
@@ -596,7 +595,7 @@ static void scenario(uint8_t lang) {
       back();
       sim_rotary.setMode(RotaryInputMode::Buttons);   // two buttons on the encoder pins instead
       ui->refresh(); run(50);
-      shot("hardware_buttons", bg ? "Хардуер с два бутона: без „Стъпки/щрак“" : "Hardware with two buttons: no steps row");
+      shot("hardware_buttons", bg ? "Хардуер с два бутона: без „Стъпки“" : "Hardware with two buttons: no steps row");
       turn(-1); press();
       shot("display_test_buttons", bg ? "Тест на екрана с бутони: Натисни" : "Screen test with buttons: Press");
       back();
