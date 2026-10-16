@@ -134,6 +134,11 @@ public:
   void enterCLIRescue() { }
   void resetContactPath(ContactInfo& c) { c.out_path_len = OUT_PATH_UNKNOWN; }
   void setTxPower(int8_t dbm) { if (prefs) prefs->tx_power_dbm = dbm; }
+  bool setRepeat(bool on) {   // the Faketec build allows 869.495 and 869.618 MHz
+    if (on && prefs && !(fabsf(prefs->freq - 869.495f) < 0.0005f || fabsf(prefs->freq - 869.618f) < 0.0005f)) return false;
+    if (prefs) prefs->setRepeatEn(on);
+    return true;
+  }
   // tools: the scenario answers traces and discover requests by hand
   uint32_t air_total = 0, last_tag = 0;
   uint32_t next_tag = 0x5000;

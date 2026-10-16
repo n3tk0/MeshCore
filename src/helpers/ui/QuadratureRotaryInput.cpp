@@ -110,9 +110,26 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
   }
 
   RotaryInputMode mode = (RotaryInputMode)_mode;
+  uint32_t now = millis();
+  if (mode == RotaryInputMode::Encoder) {   // buttons after all?
+    uint8_t s = readState();
+    noInterrupts();   // the edge interrupt also writes the decoder
+    int8_t b = _buttons.poll(s, now, false);   // a press that pulled one pin only, on its release
+    interrupts();
+    if (b != 0 && _buttons.buttonTap(now)) {   // the second one soon after: buttons after all
+      noInterrupts();
+      _mode = (uint8_t)RotaryInputMode::Buttons;
+      _buttons.reset();
+      _accum = 0;
+      _fwd_seen = _fwd_count;
+      _back_seen = _back_count;
+      interrupts();
+      if (_reverse) b = -b;
+      return b > 0 ? RotaryInputEvent::Next : RotaryInputEvent::Prev;
+    }
+  }
   if (mode != RotaryInputMode::Encoder) {
     uint8_t s = readState();
-    uint32_t now = millis();
     noInterrupts();   // the edge interrupt also writes the decoder
     int8_t b = _buttons.poll(s, now, mode == RotaryInputMode::Buttons);
     interrupts();
@@ -133,10 +150,14 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
   else if (back > 0) { _back_seen++; dir = -1; }
 
   if (dir == 0) return RotaryInputEvent::None;
-  if (mode == RotaryInputMode::Buttons) {   // two buttons pressed over each other can look like a turn
-    _fwd_seen = _fwd_count;
-    _back_seen = _back_count;
-    return RotaryInputEvent::None;
+  if (mode == RotaryInputMode::Buttons) {
+    // two buttons pressed over each other can look like one step; a second step the same way
+    // soon after is an encoder turning (e.g. it was taken for buttons after a half click)
+    if (!_buttons.encoderStep(dir, now)) return RotaryInputEvent::None;
+    noInterrupts();
+    _mode = (uint8_t)RotaryInputMode::Encoder;
+    _buttons.reset();
+    interrupts();
   }
   if (mode == RotaryInputMode::Detect) _mode = (uint8_t)RotaryInputMode::Encoder;   // a full Gray-code step
   if (_reverse) dir = -dir;

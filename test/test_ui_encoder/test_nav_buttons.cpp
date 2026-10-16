@@ -75,3 +75,36 @@ TEST(NavButtons, BothButtonsTogetherDoNothing) {
   EXPECT_EQ(0, edge(d, IDLE, 200, true));
   EXPECT_EQ(0, d.poll(IDLE, 300, true));
 }
+
+TEST(NavButtons, TwoTapsMeanButtons) {
+  NavButtonDecoder d;
+  // encoder mode watches presses with emit_on_press false: they count on release only
+  EXPECT_EQ(0, edge(d, A_DOWN, 1000, false));
+  EXPECT_EQ(0, edge(d, IDLE, 1080, false));
+  EXPECT_EQ(-1, d.poll(IDLE, 1110, false));     // released and settled: a one-pin press
+  EXPECT_FALSE(d.buttonTap(1110));              // one alone may be a half click on an encoder
+  EXPECT_TRUE(d.buttonTap(2500));               // a second soon after: buttons
+  EXPECT_FALSE(d.buttonTap(5000));
+  EXPECT_FALSE(d.buttonTap(7100));              // too late: counts as a first again
+  // a full encoder click pulls both pins: no tap at all
+  EXPECT_EQ(0, edge(d, A_DOWN, 8000, false));
+  EXPECT_EQ(0, edge(d, BOTH, 8010, false));
+  EXPECT_EQ(0, edge(d, B_DOWN, 8020, false));
+  EXPECT_EQ(0, edge(d, IDLE, 8030, false));
+  EXPECT_EQ(0, d.poll(IDLE, 8100, false));
+  // an encoder resting with one pin low never lets go: nothing
+  EXPECT_EQ(0, edge(d, A_DOWN, 9000, false));
+  EXPECT_EQ(0, d.poll(A_DOWN, 20000, false));
+}
+
+TEST(NavButtons, TwoStepsTheSameWayMeanEncoder) {
+  NavButtonDecoder d;
+  EXPECT_FALSE(d.encoderStep(1, 1000));        // one step: could be two buttons over each other
+  EXPECT_TRUE(d.encoderStep(1, 1500));         // a second one soon after: turning
+  EXPECT_FALSE(d.encoderStep(-1, 3000));
+  EXPECT_FALSE(d.encoderStep(1, 3100));        // the other way does not count
+  EXPECT_FALSE(d.encoderStep(1, 4200));        // too late
+  EXPECT_TRUE(d.encoderStep(1, 4300));
+  d.reset();
+  EXPECT_FALSE(d.encoderStep(1, 4400));        // reset forgets the last step
+}

@@ -7,11 +7,11 @@
 #define FIRMWARE_VER_CODE 14
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "14 Aug 2026"
+#define FIRMWARE_BUILD_DATE "15 Oct 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v1.17.1"
+#define FIRMWARE_VERSION "v1.18.0"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -217,6 +217,7 @@ public:
   void resetContactPath(ContactInfo& contact);   // next message floods and learns a new path
   void setTxPower(int8_t dbm);                    // applied at once and saved
   bool setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr);   // checked, applied and saved
+  bool setRepeat(bool on);                        // false: not allowed on this frequency
   // a sent message's ACK: the app gets PUSH_CODE_SEND_CONFIRMED and the ACK is not flooded on
   void expectAck(uint32_t ack, ContactInfo* contact);
   bool isClockApprox() const { return _clock_approx; }   // time taken from an advert, not the phone
