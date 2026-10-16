@@ -565,6 +565,9 @@ static void scenario(uint8_t lang) {
   shot("range_running", bg ? "Тест на обхвата: SNR натам/обратно, -- = без отговор" : "Range test: SNR there/back, -- = no answer");
   holdBack();
   shot("standby_range", bg ? "Тестът на обхвата върви: икона в лентата" : "The range test runs: an icon in the status row");
+  prefs.setRepeatEn(true); ui->refresh(); run(50);
+  shot("standby_repeat", bg ? "Препредаване + тест на обхвата: две икони" : "Repeat + range test: two icons");
+  prefs.setRepeatEn(false);
   press(); turn(3); press(); turn(2); press();   // Menu > Network > Range test
   turn(1); press();   // stop
   back(); back();

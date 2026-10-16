@@ -3217,6 +3217,7 @@ class StandbyScreen : public UIScreen {
     if (_task->isBluetoothEnabled()) { x -= 16; drawIcon2(d, x, 0, icon_bt); }
     if (rx_any && millis() - rx_at < SIGNAL_STALE_MILLIS) { x -= 18; drawSignal(d, x, 0, rx_snr); }
     if (rangeRunning()) { x -= 16; drawIcon2(d, x, 0, icon_range); }
+    if (_prefs->isRepeatEn()) { x -= 16; drawIcon2(d, x, 0, icon_tower); }   // repeat on (emergencies)
     if (!the_mesh.isTxAllowed()) {   // crossed-out "TX": receive only
       x -= 2 * CW + 4;
       d.setCursor(x, TEXT_DY);
