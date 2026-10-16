@@ -217,6 +217,7 @@ public:
   void resetContactPath(ContactInfo& contact);   // next message floods and learns a new path
   void setTxPower(int8_t dbm);                    // applied at once and saved
   bool setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr);   // checked, applied and saved
+  bool setRepeat(bool on);                        // false: not allowed on this frequency
   // a sent message's ACK: the app gets PUSH_CODE_SEND_CONFIRMED and the ACK is not flooded on
   void expectAck(uint32_t ack, ContactInfo* contact);
   bool isClockApprox() const { return _clock_approx; }   // time taken from an advert, not the phone

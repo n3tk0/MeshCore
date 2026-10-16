@@ -474,6 +474,13 @@ bool MyMesh::setRadioParams(float freq, float bw, uint8_t sf, uint8_t cr) {
   return true;
 }
 
+bool MyMesh::setRepeat(bool on) {
+  if (on && !isValidClientRepeatFreq((uint32_t)(_prefs.freq * 1000.0f + 0.5f))) return false;
+  _prefs.setRepeatEn(on);
+  savePrefs();
+  return true;
+}
+
 void MyMesh::setTxPower(int8_t dbm) {
   if (dbm < -9) dbm = -9;
   if (dbm > MAX_LORA_TX_POWER) dbm = MAX_LORA_TX_POWER;
