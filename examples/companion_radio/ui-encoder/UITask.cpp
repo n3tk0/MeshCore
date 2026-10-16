@@ -2630,7 +2630,10 @@ static bool buttonsFitted() { return rotary_input.mode() == RotaryInputMode::But
 // in goes back to Auto, so a wrong fixed choice (buttons with an encoder fitted) is never stuck.
 static void applyInputMode(NodePrefs* p, bool boot) {
   uint8_t sel = p->ui_input_sel % 3;
-  if (boot && coldBoot()) sel = p->ui_input_sel = 0;   // saved with the next prefs write
+  if (boot && coldBoot() && sel != 0) {
+    sel = p->ui_input_sel = 0;
+    the_mesh.savePrefs();   // the mesh has loaded and can save its prefs before the UI starts
+  }
   if (sel != 0) {
     rotary_input.setAutoSwitch(false);
     rotary_input.setMode(sel == 2 ? RotaryInputMode::Buttons : RotaryInputMode::Encoder);
