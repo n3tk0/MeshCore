@@ -165,7 +165,7 @@ enum StrId {
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
-  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_INPUT, S_AUTO, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ,
+  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_INPUT, S_AUTO, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN, S_NOW_FMT,
   S_COUNT
 };
 
@@ -273,7 +273,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   // settings
   { "Настройки", "Settings" },
   { "Екран", "Display" },
-  { "Управление", "Controls" },
+  { "Хардуер", "Hardware" },
   { "Съобщения", "Messages" },
   { "Радио", "Radio" },
   { "Система", "System" },
@@ -388,7 +388,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Заглушен", "Muted" },
   { "Със звук", "Sound on" },
   { "Изтрий %s?", "Delete %s?" },
-  { "Хардуер", "Hardware" },
+  { "Показания", "Readings" },
   { "Енкодер", "Encoder" },
   { "Стъпки %+d", "Steps %+d" },
   { "Натиск %d", "Presses %d" },
@@ -410,9 +410,13 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Избери", "Choose" },
   { "Вход", "Input" },
   { "Авто", "Auto" },
-  { "Препредаване", "Repeat" },
+  { "Репийтър", "Repeater" },
   { "Само при авария! Включи?", "Emergency only! Turn on?" },
   { "Не на тази честота", "Not on this frequency" },
+  { "Тест вход", "Input test" },
+  { "Тест вибро", "Vibe test" },
+  { "Тест екран", "Screen test" },
+  { "сега: %s", "now: %s" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -2662,7 +2666,7 @@ enum SettingId : uint8_t {
   ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
-  ST_WORDS, ST_HW, ST_INPUT, ST_REPEAT,
+  ST_WORDS, ST_HW, ST_INPUT, ST_REPEAT, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2699,7 +2703,7 @@ static StrId settingName(uint8_t id) {
     S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
-    S_WORDS, S_HARDWARE, S_SET_INPUT, S_SET_REPEAT,
+    S_WORDS, S_HARDWARE, S_SET_INPUT, S_SET_REPEAT, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
   };
   return N[id];
 }
@@ -2882,6 +2886,15 @@ public:
       d.drawTextCentered(d.width() / 2, LH + 8 + TEXT_DY, val);
       d.setCursor(0, LH + 8 + TEXT_DY); d.print("<");
       d.drawTextRightAlign(d.width(), LH + 8 + TEXT_DY, ">");
+      if (_id == ST_INPUT && _val == 0) {   // Auto: what is in use now
+        char now[40];
+        snprintf(now, sizeof(now), T(S_NOW_FMT), T(buttonsFitted() ? S_BUTTONS : rotary_input.mode() == RotaryInputMode::Encoder ? S_ENCODER : S_AUTO));
+        char shown[40];
+        d.translateUTF8ToBlocks(shown, now, sizeof(shown));
+        useSize(d, SIZE_TINY);
+        d.drawTextCentered(d.width() / 2, 2 * UI_SIZES[SIZE_LARGE].lh + 7, shown);
+        big(d);
+      }
       if (_id == ST_BRIGHT) {   // level bar: filled up to the level (night ones hollow), a dash for the rest
         const int sw = 7, gap = 2, y = 2 * LH + 10;
         int x = (d.width() - (BRIGHT_LEVELS * (sw + gap) - gap)) / 2;
@@ -2983,6 +2996,8 @@ static void doClearWords(UITask* task) {
   else task->showAlert(T(S_SAVE_FAIL), 1500);
 }
 static void openHardware(UITask* task);
+static void openInputTest(UITask* task);
+static void openScreenTest(UITask* task);
 static void doDfuUsb(UITask* task) { task->enterBootloader(true); }
 static void doDfuBle(UITask* task) { task->enterBootloader(false); }
 
@@ -3034,6 +3049,12 @@ protected:
       askConfirm(_task, q, doClearWords);
     } else if (id == ST_HW) {
       openHardware(_task);
+    } else if (id == ST_TEST_INPUT) {
+      openInputTest(_task);
+    } else if (id == ST_TEST_VIBE) {
+      _task->testVibration();
+    } else if (id == ST_TEST_SCREEN) {
+      openScreenTest(_task);
     } else if (id == ST_RESCUE) {
       askConfirm(_task, T(S_RESCUE_Q), doRescue);
     } else if (id == ST_DFU_USB) {
@@ -3051,10 +3072,11 @@ public:
 static SettingsGroupScreen* settings_group;
 
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
-static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK };
+// controls and hardware in one place: the input and its settings, the tests, then the readings
+static const uint8_t GROUP_INPUT[]   = { ST_INPUT, ST_ENC, ST_STEPS, ST_VIBE, ST_SKIP, ST_LOCK, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN, ST_HW };
 static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET, ST_REPEAT };
-static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_HW, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
+static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
 class SettingsScreen : public ListScreen {
 protected:
@@ -4098,9 +4120,9 @@ public:
 static EncoderTestScreen* encoder_test;
 static DisplayTestScreen* display_test;
 
-// Settings > System > Hardware: the three tests, then live readings
+// Settings > Hardware > Readings: live readings (the tests are rows of the Hardware group)
 class HardwareScreen : public ListScreen {
-  enum { H_ENCODER, H_INPUT, H_VIBRATION, H_DISPLAY, H_FIRST_INFO };
+  enum { H_FIRST_INFO };
   char _lines[8][40];
   int _n = 0;
   void build() {
@@ -4122,18 +4144,10 @@ protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_HARDWARE)); }
   int count() override { return H_FIRST_INFO + _n; }
   void label(int i, char* buf, size_t n) override {
-    if (i == H_ENCODER) snprintf(buf, n, "%s", T(inputLabel()));
-    else if (i == H_INPUT) snprintf(buf, n, "%s", T(S_SET_INPUT));
-    else if (i == H_VIBRATION) snprintf(buf, n, "%s", T(S_SET_VIBE));
-    else if (i == H_DISPLAY) snprintf(buf, n, "%s", T(S_GRP_DISPLAY));
-    else snprintf(buf, n, "%s", _lines[i - H_FIRST_INFO]);
+    snprintf(buf, n, "%s", _lines[i - H_FIRST_INFO]);
   }
   bool onEnter(int i) override {
-    if (i == H_ENCODER) { encoder_test->open(); _task->push(encoder_test); }
-    else if (i == H_INPUT) { value_edit->open(ST_INPUT); _task->push(value_edit); }
-    else if (i == H_VIBRATION) _task->testVibration();
-    else if (i == H_DISPLAY) { display_test->open(); _task->push(display_test); }
-    return true;
+    return true;   // readings only
   }
 public:
   HardwareScreen(UITask* task) : ListScreen(task) { }
@@ -4146,6 +4160,16 @@ static HardwareScreen* hardware_screen;
 static void openHardware(UITask* task) {
   hardware_screen->open();
   task->push(hardware_screen);
+}
+
+static void openInputTest(UITask* task) {
+  encoder_test->open();
+  task->push(encoder_test);
+}
+
+static void openScreenTest(UITask* task) {
+  display_test->open();
+  task->push(display_test);
 }
 
 void UITask::testVibration() {
