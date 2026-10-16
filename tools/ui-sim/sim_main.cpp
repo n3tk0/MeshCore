@@ -597,6 +597,8 @@ static void scenario(uint8_t lang) {
       turn(1); press(); shot("hardware", bg ? "Хардуер: тестове и измервания" : "Hardware: tests and readings");
       press(); turn(3); press(); hold(); turn(-1);
       shot("encoder_test", bg ? "Тест на енкодера: завъртания, натискания, задържания" : "Encoder test: turns, presses, holds");
+      back(); turn(1); press();
+      shot("edit_input", bg ? "Вход: Авто, Енкодер или Бутони" : "Input: Auto, Encoder or Buttons");
       back(); turn(2); press();
       shot("display_test", bg ? "Тест на дисплея: подсказка на първия образ" : "Display test: a hint on the first pattern");
       back();
