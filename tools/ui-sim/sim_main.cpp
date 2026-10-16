@@ -589,6 +589,8 @@ static void scenario(uint8_t lang) {
     if (g == 3) {
       turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back();
       turn(1); press(); turn(1); shot("edit_preset", bg ? "Радио пресет" : "Radio preset"); back();
+      turn(1); press(); turn(1); press();
+      shot("repeat_q", bg ? "Препредаване: само при авария" : "Repeat: emergencies only"); back(); back();
     }
     if (g == 4) {
       turn(2); press(); shot("edit_tz", bg ? "Часова зона" : "Time zone"); back();

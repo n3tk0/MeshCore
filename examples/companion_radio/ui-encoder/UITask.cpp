@@ -165,7 +165,7 @@ enum StrId {
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
-  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_INPUT, S_AUTO,
+  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_INPUT, S_AUTO, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ,
   S_COUNT
 };
 
@@ -410,6 +410,9 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Избери", "Choose" },
   { "Вход", "Input" },
   { "Авто", "Auto" },
+  { "Препредаване", "Repeat" },
+  { "Само при авария! Включи?", "Emergency only! Turn on?" },
+  { "Не на тази честота", "Not on this frequency" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -2659,7 +2662,7 @@ enum SettingId : uint8_t {
   ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
-  ST_WORDS, ST_HW, ST_INPUT,
+  ST_WORDS, ST_HW, ST_INPUT, ST_REPEAT,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2696,7 +2699,7 @@ static StrId settingName(uint8_t id) {
     S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
-    S_WORDS, S_HARDWARE, S_SET_INPUT,
+    S_WORDS, S_HARDWARE, S_SET_INPUT, S_SET_REPEAT,
   };
   return N[id];
 }
@@ -2711,7 +2714,7 @@ static int optCount(uint8_t id) {
     case ST_BATT: return BATT_CAL_STEPS;
     case ST_MENU_SZ: case ST_TEXT_SZ: return 4;
     case ST_VIBE: case ST_ENC: case ST_STEPS: case ST_SKIP: case ST_DELCONF: case ST_CSORT: case ST_LOCK:
-    case ST_TX: case ST_LANG: case ST_DST: return 2;
+    case ST_TX: case ST_LANG: case ST_DST: case ST_REPEAT: return 2;
     case ST_TXPOW: return MAX_LORA_TX_POWER - TXPOW_MIN + 1;
     case ST_TZ: return TZ_MAX - TZ_MIN + 1;
     default: return 0;
@@ -2748,6 +2751,7 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_TZ: return p->tz_offset - TZ_MIN;
     case ST_DST: return p->ui_dst ? 1 : 0;
     case ST_INPUT: return p->ui_input_sel % 3;
+    case ST_REPEAT: return p->isRepeatEn() ? 1 : 0;
     default: return 0;
   }
 }
@@ -2817,18 +2821,31 @@ static void setOpt(UITask* task, uint8_t id, int v) {
 }
 
 static void saveOpt(UITask* task, uint8_t id, int v) {
-  if (id == ST_TXPOW) {
+  if (id == ST_REPEAT) {
+    if (!the_mesh.setRepeat(v != 0)) { task->showAlert(T(S_REPEAT_FREQ), 1500); return; }
+  } else if (id == ST_TXPOW) {
     the_mesh.setTxPower(v + TXPOW_MIN);   // applied and saved
   } else if (id == ST_PRESET) {
     if (v < NUM_PRESETS) {
       const RadioPreset& r = PRESETS[v];
-      if (!the_mesh.setRadioParams(r.freq, r.bw, r.sf, r.cr)) { task->showAlert(T(S_SAVE_FAIL), 1500); return; }
+      if (!the_mesh.setRadioParams(r.freq, r.bw, r.sf, r.cr)) {   // repeat on: only its frequencies
+        task->showAlert(T(task->prefs()->isRepeatEn() ? S_REPEAT_FREQ : S_SAVE_FAIL), 1500);
+        return;
+      }
     }
   } else {
     setOpt(task, id, v);
     the_mesh.savePrefs();
   }
   task->haptic(UI_HAPTIC_ACK_MS);
+}
+
+// repeat (client repeat): forwards other nodes' packets. Only on the frequencies the build allows,
+// and turning it on asks first: it adds traffic to the mesh, meant for emergencies.
+static void doRepeatOn(UITask* task) {
+  if (the_mesh.setRepeat(true)) task->haptic(UI_HAPTIC_ACK_MS);
+  else task->showAlert(T(S_REPEAT_FREQ), 1500);
+  task->pop();   // the value editor
 }
 
 static void doNeverAskAntenna(UITask* task) {
@@ -2899,6 +2916,10 @@ public:
     if (c == KEY_ENTER) {
       if (_id == ST_ANT && _val == ANT_NEVER && _orig != ANT_NEVER) {
         askConfirm(_task, T(S_ANT_NEVER_Q), doNeverAskAntenna);
+        return true;
+      }
+      if (_id == ST_REPEAT && _val == 1 && _orig == 0) {
+        askConfirm(_task, T(S_REPEAT_Q), doRepeatOn);
         return true;
       }
       saveOpt(_task, _id, _val);
@@ -3032,7 +3053,7 @@ static SettingsGroupScreen* settings_group;
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
 static const uint8_t GROUP_INPUT[]   = { ST_VIBE, ST_ENC, ST_STEPS, ST_SKIP, ST_LOCK };
 static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
-static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET };
+static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET, ST_REPEAT };
 static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_HW, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
 class SettingsScreen : public ListScreen {
