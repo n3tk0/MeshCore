@@ -26,6 +26,7 @@ public:
   }
   void setMode(RotaryInputMode mode) override;
   RotaryInputMode mode() const override { return (RotaryInputMode)_mode; }
+  void setAutoSwitch(bool on) override { _auto_switch = on; }
 
 private:
   static void onEdge();
@@ -44,6 +45,7 @@ private:
   uint8_t _fwd_seen = 0, _back_seen = 0;
   NavButtonDecoder _buttons;
   uint8_t _mode = (uint8_t)RotaryInputMode::Encoder;   // changed only from the main loop
+  bool _auto_switch = true;   // encoder <-> buttons when the other one is clearly in use
 
   static QuadratureRotaryInput* _instance;
 };

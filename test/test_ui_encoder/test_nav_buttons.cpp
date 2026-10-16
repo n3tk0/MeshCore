@@ -75,3 +75,28 @@ TEST(NavButtons, BothButtonsTogetherDoNothing) {
   EXPECT_EQ(0, edge(d, IDLE, 200, true));
   EXPECT_EQ(0, d.poll(IDLE, 300, true));
 }
+
+TEST(NavButtons, HeldAloneMeansButtons) {
+  NavButtonDecoder d;
+  EXPECT_FALSE(d.heldAlone(A_DOWN, 1000));
+  EXPECT_FALSE(d.heldAlone(A_DOWN, 1399));
+  EXPECT_TRUE(d.heldAlone(A_DOWN, 1400));      // one pin down alone 400 ms: a button
+  EXPECT_FALSE(d.heldAlone(B_DOWN, 1450));     // the other pin: timed afresh
+  EXPECT_FALSE(d.heldAlone(IDLE, 1500));
+  EXPECT_FALSE(d.heldAlone(B_DOWN, 1600));
+  EXPECT_FALSE(d.heldAlone(BOTH, 1800));       // both down (half-step rest): an encoder
+  EXPECT_FALSE(d.heldAlone(B_DOWN, 1900));
+  EXPECT_FALSE(d.heldAlone(B_DOWN, 2200));     // a short stop between detents is not enough
+}
+
+TEST(NavButtons, TwoStepsTheSameWayMeanEncoder) {
+  NavButtonDecoder d;
+  EXPECT_FALSE(d.encoderStep(1, 1000));        // one step: could be two buttons over each other
+  EXPECT_TRUE(d.encoderStep(1, 1500));         // a second one soon after: turning
+  EXPECT_FALSE(d.encoderStep(-1, 3000));
+  EXPECT_FALSE(d.encoderStep(1, 3100));        // the other way does not count
+  EXPECT_FALSE(d.encoderStep(1, 4200));        // too late
+  EXPECT_TRUE(d.encoderStep(1, 4300));
+  d.reset();
+  EXPECT_FALSE(d.encoderStep(1, 4400));        // reset forgets the last step
+}

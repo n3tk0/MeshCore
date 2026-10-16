@@ -15,9 +15,30 @@ public:
     REPEAT_MS = 150,         // then this often
     REPEAT_FAST_MS = 70,     // and faster after a while
     REPEAT_FAST_AFTER = 8,
+    SWITCH_HOLD_MS = 400,    // encoder mode: one pin held low alone this long is a button
+    SWITCH_STEPS_MS = 1000,  // buttons mode: two full Gray-code steps the same way this close are an encoder
   };
 
-  void reset() { _low = 0; _edge = false; _down = false; }
+  void reset() { _low = 0; _edge = false; _down = false; _alone = 0x03; _step_dir = 0; }
+
+  // Encoder mode, from the main loop with the current pin state: true once one pin has stayed low
+  // on its own for SWITCH_HOLD_MS. A detented encoder rests with both pins high (full step) or
+  // both equal (half step), so only a held button keeps a single pin down.
+  bool heldAlone(uint8_t state, uint32_t now) {
+    if (state != PIN_A && state != PIN_B) { _alone = 0x03; return false; }
+    if (state != _alone) { _alone = state; _alone_ms = now; return false; }
+    return (uint32_t)(now - _alone_ms) >= SWITCH_HOLD_MS;
+  }
+
+  // Buttons mode: a full Gray-code step in direction dir (+1 / -1). True on the second step the
+  // same way within SWITCH_STEPS_MS: a turning encoder. Two buttons pressed over each other make
+  // at most one such step.
+  bool encoderStep(int8_t dir, uint32_t now) {
+    if (dir == _step_dir && (uint32_t)(now - _step_ms) <= SWITCH_STEPS_MS) { _step_dir = 0; return true; }
+    _step_dir = dir;
+    _step_ms = now;
+    return false;
+  }
 
   // a pin change, from the interrupt: remember which pins were low during this press
   void onEdge(uint8_t state) { _low |= (uint8_t)(~state) & 0x03; _edge = true; }
@@ -62,4 +83,8 @@ private:
   bool _down = false;           // this press was answered (buttons known)
   uint8_t _repeats = 0;
   uint32_t _next_ms = 0;
+  uint8_t _alone = 0x03;        // heldAlone(): the single-pin-low state being timed
+  uint32_t _alone_ms = 0;
+  int8_t _step_dir = 0;         // encoderStep(): the last step, 0 = none
+  uint32_t _step_ms = 0;
 };
