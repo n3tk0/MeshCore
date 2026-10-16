@@ -15,19 +15,21 @@ public:
     REPEAT_MS = 150,         // then this often
     REPEAT_FAST_MS = 70,     // and faster after a while
     REPEAT_FAST_AFTER = 8,
-    SWITCH_HOLD_MS = 400,    // encoder mode: one pin held low alone this long is a button
+    SWITCH_TAPS_MS = 2000,   // encoder mode: two one-pin presses this close are two buttons
     SWITCH_STEPS_MS = 1000,  // buttons mode: two full Gray-code steps the same way this close are an encoder
   };
 
-  void reset() { _low = 0; _edge = false; _down = false; _alone = 0x03; _step_dir = 0; }
+  void reset() { _low = 0; _edge = false; _down = false; _tap_seen = false; _step_dir = 0; }
 
-  // Encoder mode, from the main loop with the current pin state: true once one pin has stayed low
-  // on its own for SWITCH_HOLD_MS. A detented encoder rests with both pins high (full step) or
-  // both equal (half step), so only a held button keeps a single pin down.
-  bool heldAlone(uint8_t state, uint32_t now) {
-    if (state != PIN_A && state != PIN_B) { _alone = 0x03; return false; }
-    if (state != _alone) { _alone = state; _alone_ms = now; return false; }
-    return (uint32_t)(now - _alone_ms) >= SWITCH_HOLD_MS;
+  // Encoder mode: a press that pulled only one pin low and let it go again (poll() with
+  // emit_on_press false gave non-zero). True on the second one within SWITCH_TAPS_MS: two buttons.
+  // A single one can be an encoder nudged half a click and let back, and an encoder that rests
+  // between detents never lets go, so neither switches.
+  bool buttonTap(uint32_t now) {
+    if (_tap_seen && (uint32_t)(now - _tap_ms) <= SWITCH_TAPS_MS) { _tap_seen = false; return true; }
+    _tap_seen = true;
+    _tap_ms = now;
+    return false;
   }
 
   // Buttons mode: a full Gray-code step in direction dir (+1 / -1). True on the second step the
@@ -83,8 +85,8 @@ private:
   bool _down = false;           // this press was answered (buttons known)
   uint8_t _repeats = 0;
   uint32_t _next_ms = 0;
-  uint8_t _alone = 0x03;        // heldAlone(): the single-pin-low state being timed
-  uint32_t _alone_ms = 0;
+  bool _tap_seen = false;       // buttonTap(): a one-pin press was seen at _tap_ms
+  uint32_t _tap_ms = 0;
   int8_t _step_dir = 0;         // encoderStep(): the last step, 0 = none
   uint32_t _step_ms = 0;
 };

@@ -113,16 +113,19 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
   uint32_t now = millis();
   if (mode == RotaryInputMode::Encoder && _auto_switch) {
     uint8_t s = readState();
-    if (_buttons.heldAlone(s, now)) {   // one pin held down alone: buttons after all
+    noInterrupts();   // the edge interrupt also writes the decoder
+    int8_t b = _buttons.poll(s, now, false);   // a press that pulled one pin only, on its release
+    interrupts();
+    if (b != 0 && _buttons.buttonTap(now)) {   // the second one soon after: buttons after all
       noInterrupts();
       _mode = (uint8_t)RotaryInputMode::Buttons;
       _buttons.reset();
-      _buttons.onEdge(s);   // the button still held answers at once below
       _accum = 0;
       _fwd_seen = _fwd_count;
       _back_seen = _back_count;
       interrupts();
-      mode = RotaryInputMode::Buttons;
+      if (_reverse) b = -b;
+      return b > 0 ? RotaryInputEvent::Next : RotaryInputEvent::Prev;
     }
   }
   if (mode != RotaryInputMode::Encoder) {
