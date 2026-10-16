@@ -28,6 +28,4 @@ public:
   virtual void setStepsPerDetent(uint8_t steps) { }
   virtual void setMode(RotaryInputMode mode) { }
   virtual RotaryInputMode mode() const { return RotaryInputMode::Encoder; }
-  // on: switch between Encoder and Buttons when the other one is clearly in use; off: a fixed choice
-  virtual void setAutoSwitch(bool on) { }
 };

@@ -165,7 +165,7 @@ enum StrId {
   S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
-  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_INPUT, S_AUTO, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN, S_NOW_FMT,
+  S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
   S_COUNT
 };
 
@@ -284,7 +284,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Шрифт текст", "Text font" },
   { "Вибрация", "Vibration" },
   { "Посока", "Direction" },
-  { "Стъпки/щрак", "Steps/click" },
+  { "Стъпки", "Steps" },
   { "Скок букви", "Auto jump" },
   { "Известия", "Alerts" },
   { "Потвърди", "Confirm" },
@@ -408,15 +408,12 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Бутони", "Buttons" },
   { "Натисни", "Press" },
   { "Избери", "Choose" },
-  { "Вход", "Input" },
-  { "Авто", "Auto" },
   { "Репийтър", "Repeater" },
   { "Само при авария! Включи?", "Emergency only! Turn on?" },
   { "Не на тази честота", "Not on this frequency" },
   { "Тест вход", "Input test" },
   { "Тест вибро", "Vibe test" },
-  { "Тест екран", "Screen test" },
-  { "сега: %s", "now: %s" },
+  { "Тест екран", "OLED test" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -2631,23 +2628,11 @@ static uint8_t encoderSteps(const NodePrefs* p) {
 
 static bool buttonsFitted() { return rotary_input.mode() == RotaryInputMode::Buttons; }
 
-// encoder or two buttons on the encoder pins. Auto: found out on the first turn or press after a
+// encoder or two buttons on the encoder pins: found out on the first turn or press after a
 // battery was put in (remembered in ui_input until then), and switched over whenever the other
-// one is clearly in use. Settings > System > Hardware > Input can fix it instead; a battery put
-// in goes back to Auto, so a wrong fixed choice (buttons with an encoder fitted) is never stuck.
-static void applyInputMode(NodePrefs* p, bool boot) {
-  uint8_t sel = p->ui_input_sel % 3;
-  if (boot && coldBoot() && sel != 0) {
-    sel = p->ui_input_sel = 0;
-    the_mesh.savePrefs();   // the mesh has loaded and can save its prefs before the UI starts
-  }
-  if (sel != 0) {
-    rotary_input.setAutoSwitch(false);
-    rotary_input.setMode(sel == 2 ? RotaryInputMode::Buttons : RotaryInputMode::Encoder);
-    return;
-  }
-  rotary_input.setAutoSwitch(true);
-  if ((boot && coldBoot()) || (p->ui_input != 1 && p->ui_input != 2)) {
+// one is clearly in use
+static void applyInputMode(const NodePrefs* p) {
+  if (coldBoot() || (p->ui_input != 1 && p->ui_input != 2)) {
     rotary_input.setMode(RotaryInputMode::Detect);
   } else {
     rotary_input.setMode(p->ui_input == 2 ? RotaryInputMode::Buttons : RotaryInputMode::Encoder);
@@ -2666,7 +2651,7 @@ enum SettingId : uint8_t {
   ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK,
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
-  ST_WORDS, ST_HW, ST_INPUT, ST_REPEAT, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN,
+  ST_WORDS, ST_HW, ST_REPEAT, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2703,7 +2688,7 @@ static StrId settingName(uint8_t id) {
     S_SET_NOTIFY, S_SET_WAKE, S_SET_DELCONF, S_SET_CSORT, S_QUICK_MSGS,
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
-    S_WORDS, S_HARDWARE, S_SET_INPUT, S_SET_REPEAT, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
+    S_WORDS, S_HARDWARE, S_SET_REPEAT, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
   };
   return N[id];
 }
@@ -2713,7 +2698,7 @@ static int optCount(uint8_t id) {
   switch (id) {
     case ST_OFF: return 4;
     case ST_BRIGHT: return BRIGHT_LEVELS;
-    case ST_DOTS: case ST_NOTIFY: case ST_ANT: case ST_WAKE: case ST_INPUT: return 3;
+    case ST_DOTS: case ST_NOTIFY: case ST_ANT: case ST_WAKE: return 3;
     case ST_PRESET: return NUM_PRESETS + 1;
     case ST_BATT: return BATT_CAL_STEPS;
     case ST_MENU_SZ: case ST_TEXT_SZ: return 4;
@@ -2754,7 +2739,6 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_LANG: return p->ui_lang % LANG_COUNT;
     case ST_TZ: return p->tz_offset - TZ_MIN;
     case ST_DST: return p->ui_dst ? 1 : 0;
-    case ST_INPUT: return p->ui_input_sel % 3;
     case ST_REPEAT: return p->isRepeatEn() ? 1 : 0;
     default: return 0;
   }
@@ -2782,7 +2766,6 @@ static void optText(uint8_t id, int v, char* buf, size_t n) {
     case ST_LANG: snprintf(buf, n, "%s", LANG_NAMES[v % LANG_COUNT]); break;
     case ST_TZ: snprintf(buf, n, "UTC%+d", v + TZ_MIN); break;
     case ST_DST: snprintf(buf, n, "%s", T(v ? S_DST_EU : S_OFF)); break;
-    case ST_INPUT: snprintf(buf, n, "%s", T(v == 1 ? S_ENCODER : v == 2 ? S_BUTTONS : S_AUTO)); break;
     default: snprintf(buf, n, "%s", T(v ? S_ON : S_OFF)); break;
   }
 }
@@ -2820,7 +2803,6 @@ static void setOpt(UITask* task, uint8_t id, int v) {
     case ST_LANG: p->ui_lang = v; break;
     case ST_TZ: p->tz_offset = v + TZ_MIN; break;
     case ST_DST: p->ui_dst = v; break;
-    case ST_INPUT: p->ui_input_sel = v; applyInputMode(p, false); break;
   }
 }
 
@@ -2886,15 +2868,6 @@ public:
       d.drawTextCentered(d.width() / 2, LH + 8 + TEXT_DY, val);
       d.setCursor(0, LH + 8 + TEXT_DY); d.print("<");
       d.drawTextRightAlign(d.width(), LH + 8 + TEXT_DY, ">");
-      if (_id == ST_INPUT && _val == 0) {   // Auto: what is in use now
-        char now[40];
-        snprintf(now, sizeof(now), T(S_NOW_FMT), T(buttonsFitted() ? S_BUTTONS : rotary_input.mode() == RotaryInputMode::Encoder ? S_ENCODER : S_AUTO));
-        char shown[40];
-        d.translateUTF8ToBlocks(shown, now, sizeof(shown));
-        useSize(d, SIZE_TINY);
-        d.drawTextCentered(d.width() / 2, 2 * UI_SIZES[SIZE_LARGE].lh + 7, shown);
-        big(d);
-      }
       if (_id == ST_BRIGHT) {   // level bar: filled up to the level (night ones hollow), a dash for the rest
         const int sw = 7, gap = 2, y = 2 * LH + 10;
         int x = (d.width() - (BRIGHT_LEVELS * (sw + gap) - gap)) / 2;
@@ -3006,19 +2979,31 @@ class SettingsGroupScreen : public ListScreen {
   int _n = 0;
   StrId _title = S_SETTINGS;
   // steps per detent mean nothing with two buttons: not listed then
-  static bool hidden(uint8_t id) { return id == ST_STEPS && buttonsFitted(); }
-  uint8_t item(int i) const {
+  bool _steps_hidden = false;   // as last listed
+  static bool hidden(uint8_t id, bool steps_hidden) { return id == ST_STEPS && steps_hidden; }
+  uint8_t item(int i, bool steps_hidden) const {
     for (int k = 0; k < _n; k++) {
-      if (hidden(_items[k])) continue;
+      if (hidden(_items[k], steps_hidden)) continue;
       if (i-- == 0) return _items[k];
     }
     return _items[_n - 1];
+  }
+  uint8_t item(int i) const { return item(i, buttonsFitted()); }
+  // the input switched over by itself (Steps came or went): keep the same setting selected
+  void followInput() {
+    bool h = buttonsFitted();
+    if (h == _steps_hidden) return;
+    uint8_t id = item(_sel, _steps_hidden);
+    _steps_hidden = h;
+    for (int i = 0; i < count(); i++) if (item(i) == id) { _sel = i; break; }
+    if (_sel >= count()) _sel = count() - 1;
   }
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(_title)); }
   int count() override {
     int c = 0;
-    for (int k = 0; k < _n; k++) if (!hidden(_items[k])) c++;
+    bool h = buttonsFitted();
+    for (int k = 0; k < _n; k++) if (!hidden(_items[k], h)) c++;
     return c;
   }
   // names only (a value does not fit beside them at this font size); press opens the value
@@ -3066,14 +3051,16 @@ protected:
   }
 public:
   SettingsGroupScreen(UITask* task) : ListScreen(task) { }
-  void open(StrId title, const uint8_t* items, int n) { _title = title; _items = items; _n = n; reset(); }
+  void open(StrId title, const uint8_t* items, int n) { _title = title; _items = items; _n = n; _steps_hidden = buttonsFitted(); reset(); }
+  int render(DisplayDriver& d) override { followInput(); return ListScreen::render(d); }
+  bool handleInput(char c) override { followInput(); return ListScreen::handleInput(c); }
 };
 
 static SettingsGroupScreen* settings_group;
 
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
-// controls and hardware in one place: the input and its settings, the tests, then the readings
-static const uint8_t GROUP_INPUT[]   = { ST_INPUT, ST_ENC, ST_STEPS, ST_VIBE, ST_SKIP, ST_LOCK, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN, ST_HW };
+// controls and hardware in one place: the input settings, the tests, then the readings
+static const uint8_t GROUP_INPUT[]   = { ST_ENC, ST_STEPS, ST_VIBE, ST_SKIP, ST_LOCK, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN, ST_HW };
 static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET, ST_REPEAT };
 static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
@@ -4201,7 +4188,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   encoder_btn.wakeOnChange();
   rotary_input.begin();
   applyEncoderPrefs();
-  applyInputMode(_node_prefs, true);
+  applyInputMode(_node_prefs);
 
   if (_display != NULL) {
     ui_width = _display->width();
@@ -5134,7 +5121,7 @@ void UITask::loop() {
     if (net != 0) {   // after a battery change the first turn or press shows what is fitted: keep it
       RotaryInputMode m = rotary_input.mode();
       uint8_t v = m == RotaryInputMode::Buttons ? 2 : m == RotaryInputMode::Encoder ? 1 : 0;
-      if (v != 0 && _node_prefs->ui_input_sel == 0 && _node_prefs->ui_input != v) {   // Auto only
+      if (v != 0 && _node_prefs->ui_input != v) {
         _node_prefs->ui_input = v;
         the_mesh.savePrefs();
       }

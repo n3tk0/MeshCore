@@ -111,7 +111,7 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
 
   RotaryInputMode mode = (RotaryInputMode)_mode;
   uint32_t now = millis();
-  if (mode == RotaryInputMode::Encoder && _auto_switch) {
+  if (mode == RotaryInputMode::Encoder) {   // buttons after all?
     uint8_t s = readState();
     noInterrupts();   // the edge interrupt also writes the decoder
     int8_t b = _buttons.poll(s, now, false);   // a press that pulled one pin only, on its release
@@ -153,7 +153,7 @@ RotaryInputEvent QuadratureRotaryInput::poll() {
   if (mode == RotaryInputMode::Buttons) {
     // two buttons pressed over each other can look like one step; a second step the same way
     // soon after is an encoder turning (e.g. it was taken for buttons after a half click)
-    if (!_auto_switch || !_buttons.encoderStep(dir, now)) return RotaryInputEvent::None;
+    if (!_buttons.encoderStep(dir, now)) return RotaryInputEvent::None;
     noInterrupts();
     _mode = (uint8_t)RotaryInputMode::Encoder;
     _buttons.reset();
