@@ -1398,6 +1398,7 @@ void MyMesh::loadMailbox() {
     MESH_DEBUG_PRINTLN("loadMailbox: damaged file, mailbox reset");
   }
   f.close();
+  mailbox.expire(getRTCClock()->getCurrentTime());   // the clock may have started over
 }
 
 void MyMesh::saveMailbox() {
@@ -1434,7 +1435,10 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
   }
 
   bool changed = false;
-  if (type == PAYLOAD_TYPE_TXT_MSG) {
+  if (type == PAYLOAD_TYPE_TXT_MSG && pkt->isRouteDirect() && pkt->getPathHashCount() == 0) {
+    // no hop: from a neighbour of the owner, or another mailbox handing over; keeping it would
+    // pass copies back and forth between mailboxes
+  } else if (type == PAYLOAD_TYPE_TXT_MSG) {
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
     changed = mailbox.onPacket(type, pkt->payload, pkt->payload_len, hash, now);

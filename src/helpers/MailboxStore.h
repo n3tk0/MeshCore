@@ -159,13 +159,17 @@ public:
     return removed;
   }
 
-  // drop messages older than ttl_hours; returns true when something was removed
+  // drop messages older than ttl_hours; returns true when something was removed.
+  // A time ahead of 'now' (kept before a restart, on a repeater whose clock starts over) counts from now,
+  // so such a message still expires and can still be matched to a retry or a PATH reply.
   bool expire(uint32_t now) {
     bool removed = false;
     uint32_t ttl = (uint32_t)_cfg.ttl_hours * 3600;
     for (int i = _count - 1; i >= 0; i--) {
-      if (now > _items[i].stored_at && now - _items[i].stored_at > ttl) { removeAt(i); removed = true; }
+      if (_items[i].stored_at > now) _items[i].stored_at = now;
+      if (now - _items[i].stored_at > ttl) { removeAt(i); removed = true; }
     }
+    for (int i = 0; i < MAILBOX_MAX_OWNERS; i++) if (_heard[i] > now) _heard[i] = 0;
     return removed;
   }
 
