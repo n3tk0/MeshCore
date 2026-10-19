@@ -1,0 +1,71 @@
+name: Build LoRa OTA Android App
+
+# The Android app that updates our repeaters over LoRa through a companion (android/).
+# - push / pull request: unit tests (delta generator, protocol) and the APK as a workflow artifact
+# - tag "lora-ota-app-v1.2.3": also publishes a GitHub release with the APK
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android-app.yml'
+  push:
+    branches: [main]
+    tags:
+      - 'lora-ota-app-*'
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android-app.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit Tests
+        run: ./gradlew --no-daemon :delta:test :app:testDebugUnitTest
+
+      - name: Build APK
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk "out/LoraOta-${GITHUB_REF_NAME//\//-}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: LoraOta-apk
+          path: android/out
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "LoRa OTA app ${{ github.ref_name }}"
+          body: |
+            Android app that updates the Xiao repeaters over LoRa (delta, no hop, side channel) through a companion.
+            Install the APK (allow installs from this source).
+          files: android/out/*.apk

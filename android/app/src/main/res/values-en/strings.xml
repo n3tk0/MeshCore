@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_hint">Updates a repeater over LoRa through your companion. Turn the companion on and find it.</string>
+    <string name="scan">Find companion</string>
+    <string name="scanning">Searching…</string>
+    <string name="connected_to">Connected to %1$s</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="repeater_hint">Choose a repeater. It has to be next to you: updates only go with no hop.</string>
+    <string name="no_repeaters">The companion has no repeaters in its contacts.</string>
+    <string name="admin_password">Admin password</string>
+    <string name="login">Log in</string>
+    <string name="back">Back</string>
+    <string name="platform">Platform</string>
+    <string name="image">Firmware</string>
+    <string name="running_firmware">Running firmware (.bin)</string>
+    <string name="running_unknown">Not found in the releases. Choose the same .bin file the repeater runs.</string>
+    <string name="pick_file">Choose file</string>
+    <string name="new_firmware">New firmware</string>
+    <string name="chosen">Chosen: %1$s</string>
+    <string name="reload_releases">Reload releases</string>
+    <string name="side_channel">Side channel</string>
+    <string name="side_channel_hint">The update runs on another frequency so the network does not stop. Default 869.470 MHz, BW 125, below the 869.618 MHz main channel. 869.40–869.65 MHz allows 10% time on air.</string>
+    <string name="duty">Air %</string>
+    <string name="make_delta">Make delta</string>
+    <string name="delta_size">Delta: %1$.1f KB (new firmware %2$.0f KB), about %3$.0f min</string>
+    <string name="send">Send</string>
+    <string name="stop">Stop</string>
+    <string name="verify_hint">The repeater restarts with the new firmware. After half a minute, check which firmware runs.</string>
+    <string name="verify">Check</string>
+    <string name="msg_disconnected">Lost the companion.</string>
+    <string name="msg_stopped">Stopped. The repeater keeps its old firmware.</string>
+    <string name="msg_bluetooth_off">Bluetooth is off.</string>
+    <string name="msg_connect_failed">Could not connect to the companion.</string>
+    <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
+    <string name="msg_releases_failed">Releases did not load: %1$s</string>
+    <string name="msg_not_running_firmware">This is not the firmware the repeater runs.</string>
+    <string name="msg_too_big">The new firmware does not fit on the repeater.</string>
+    <string name="msg_done">Done: the repeater checked the new firmware.</string>
+    <string name="msg_verified">The repeater runs the new firmware: %1$s</string>
+    <string name="msg_not_verified">The repeater does not run the new firmware yet: %1$s</string>
+</resources>

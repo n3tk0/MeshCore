@@ -1,6 +1,20 @@
 #include "MyMesh.h"
 #include <algorithm>
 
+#ifdef WITH_LORA_OTA
+  #if defined(NRF52_PLATFORM)
+    #include <helpers/nrf52/NRF52OtaTarget.h>
+    static NRF52OtaTarget ota_target;
+  #elif defined(ESP32)
+    #include <helpers/esp32/ESP32OtaTarget.h>
+    static ESP32OtaTarget ota_target;
+  #endif
+  #define OTA_SIDE_RADIO_DELAY   2500                 // the BEGIN reply goes out on the normal radio first
+  #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
+  #define OTA_COMMIT_DELAY       3000                 // the END reply goes out before the reboot
+  #define OTA_MAX_SIDE_MILLIS    (60 * 60 * 1000UL)   // hard limit on the side radio, whatever happens
+#endif
+
 /* ------------------------------ Config -------------------------------- */
 
 #ifndef LORA_FREQ
@@ -701,6 +715,38 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
     memcpy(&timestamp, data, 4);
 
     if (timestamp > client->last_timestamp) { // prevent replay attacks
+#ifdef WITH_LORA_OTA
+      if (len > 5 && data[4] == OTA_REQ_TYPE) {
+        if (!client->isAdmin()) return;
+        client->last_timestamp = timestamp;
+        client->last_activity = getRTCClock()->getCurrentTime();
+        bool zero_hop = packet->isRouteDirect() && packet->getPathHashCount() == 0;
+        memcpy(reply_data, &timestamp, 4);
+        int n = lora_ota.handleRequest(client->id.pub_key, zero_hop, &data[4], len - 4, &reply_data[4], millis());
+        applyOtaAction();
+        if (n == 0) return;   // DATA: no reply, the admin asks for STATUS now and then
+        if (zero_hop) {
+          mesh::Packet *reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, reply_data, 4 + n);
+          if (reply) sendZeroHop(reply, SERVER_RESPONSE_DELAY);
+          return;
+        }
+        // not direct: say so, by the usual route
+        int reply_len = 4 + n;
+        if (packet->isRouteFlood()) {
+          mesh::Packet *path = createPathReturn(client->id, secret, packet->path, packet->path_len,
+                                                PAYLOAD_TYPE_RESPONSE, reply_data, reply_len);
+          if (path) sendFloodReply(path, SERVER_RESPONSE_DELAY, packet->getPathHashSize());
+        } else {
+          mesh::Packet *reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, reply_data, reply_len);
+          if (reply && client->out_path_len != OUT_PATH_UNKNOWN) {
+            sendDirect(reply, client->out_path, client->out_path_len, SERVER_RESPONSE_DELAY);
+          } else if (reply) {
+            sendFloodReply(reply, SERVER_RESPONSE_DELAY, packet->getPathHashSize());
+          }
+        }
+        return;
+      }
+#endif
       int reply_len = handleRequest(client, timestamp, &data[4], len - 4);
       if (reply_len == 0) return; // invalid command
 
@@ -897,6 +943,9 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 #if defined(WITH_RS232_BRIDGE)
       , bridge(&_prefs, WITH_RS232_BRIDGE, _mgr, &rtc)
 #endif
+#ifdef WITH_LORA_OTA
+      , lora_ota(&ota_target)
+#endif
 #if defined(WITH_ESPNOW_BRIDGE)
       , bridge(&_prefs, _mgr, &rtc)
 #endif
@@ -971,6 +1020,10 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   mailbox_deliver_owner = -1;
   mailbox_next_send = mailbox_save_at = mailbox_next_expire = mailbox_learn_until = 0;
 #endif
+#ifdef WITH_LORA_OTA
+  ota_commit_at = 0;
+  ota_ident[0] = 0;
+#endif
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -981,6 +1034,10 @@ void MyMesh::begin(FILESYSTEM *fs) {
   acl.load(_fs, self_id);
 #ifdef WITH_MAILBOX
   loadMailbox();
+#endif
+#ifdef WITH_LORA_OTA
+  snprintf(ota_ident, sizeof(ota_ident), "%s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, board.getManufacturerName());
+  lora_ota.setIdent(ota_ident);
 #endif
   // TODO: key_store.begin();
   region_map.load(_fs);
@@ -1310,6 +1367,16 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
   } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleMailboxCommand(&command[7], reply);
 #endif
+#ifdef WITH_LORA_OTA
+  } else if (strcmp(command, "ota status") == 0) {
+    static const char* states[] = { "idle", "receiving", "ready", "failed" };
+    uint8_t st = lora_ota.getState();
+    sprintf(reply, "> %s, %s", st < 4 ? states[st] : "?", ota_ident);
+  #ifdef ESP32
+  } else if (strcmp(command, "ota rollback") == 0) {
+    if (lora_ota.isActive() || !ESP32OtaTarget::rollback()) strcpy(reply, "Err - no previous firmware");
+  #endif
+#endif
   } else if (memcmp(command, "discover.neighbors", 18) == 0) {
     const char* sub = command + 18;
     while (*sub == ' ') sub++;
@@ -1357,6 +1424,9 @@ void MyMesh::loop() {
     MESH_DEBUG_PRINTLN("Radio params restored");
   }
 
+#ifdef WITH_LORA_OTA
+  otaLoop();
+#endif
 #ifdef WITH_MAILBOX
   mailboxLoop();
 #endif
@@ -1449,7 +1519,11 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
 }
 
 void MyMesh::mailboxLoop() {
-  if (mailbox_deliver_owner >= 0 && millisHasNowPassed(mailbox_next_send)) {
+  bool on_side_radio = false;
+#ifdef WITH_LORA_OTA
+  on_side_radio = lora_ota.isActive();   // the owner would not hear it there
+#endif
+  if (mailbox_deliver_owner >= 0 && !on_side_radio && millisHasNowPassed(mailbox_next_send)) {
     int i = mailbox.nextFor(mailbox_deliver_owner);
     mesh::Packet* pkt = i >= 0 ? obtainNewPacket() : NULL;
     if (i < 0) {
@@ -1577,5 +1651,49 @@ bool MyMesh::hasPendingWork() const {
 #ifdef WITH_MAILBOX
   if (mailbox_deliver_owner >= 0 || mailbox_save_at) return true;
 #endif
+#ifdef WITH_LORA_OTA
+  if (lora_ota.isActive()) return true;
+#endif
   return _mgr->getOutboundTotal() > 0;
 }
+
+#ifdef WITH_LORA_OTA
+void MyMesh::applyOtaAction() {
+  switch (lora_ota.takeAction()) {
+  case LoraOta::ACT_SIDE_RADIO: {
+    const OtaRadioParams& side = lora_ota.sideRadio();
+    pending_freq = side.freq;
+    pending_bw = side.bw;
+    pending_sf = side.sf;
+    pending_cr = side.cr;
+    set_radio_at = futureMillis(OTA_SIDE_RADIO_DELAY);
+    revert_radio_at = futureMillis(OTA_SIDE_RADIO_DELAY + OTA_MAX_SIDE_MILLIS);
+    break;
+  }
+  case LoraOta::ACT_RESTORE_RADIO:
+    set_radio_at = 0;
+    revert_radio_at = futureMillis(OTA_RESTORE_DELAY);
+    break;
+  case LoraOta::ACT_COMMIT:
+    ota_commit_at = futureMillis(OTA_COMMIT_DELAY);
+    break;
+  default:
+    break;
+  }
+}
+
+void MyMesh::otaLoop() {
+  if (lora_ota.checkTimeout(millis())) {
+    MESH_DEBUG_PRINTLN("LoRa OTA: session timed out");
+    applyOtaAction();
+  }
+  if (ota_commit_at && millisHasNowPassed(ota_commit_at)) {
+    ota_commit_at = 0;
+    if (dirty_contacts_expiry) acl.save(_fs);   // nothing is lost by the reboot
+  #ifdef WITH_MAILBOX
+    if (mailbox_save_at) saveMailbox();
+  #endif
+    lora_ota.commit();   // does not return
+  }
+}
+#endif
