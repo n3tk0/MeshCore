@@ -109,6 +109,21 @@ TEST(MailboxStore, DeliveryOrderAndRemoveOwner) {
   EXPECT_EQ(0, m.nextFor(0));
 }
 
+TEST(MailboxStore, ClockStartedOverAfterRestart) {
+  MailboxStore& m = *makeStore();
+  uint8_t p[40], h[MAILBOX_HASH_SIZE];
+  hashOf(h, 1);
+  m.onPacket(0x02, p, msg(p, OWNER, SENDER, 20, 1), h, 2000000000);   // kept with a synced clock
+  m.config().ttl_hours = 1;
+  EXPECT_FALSE(m.expire(1000));        // clock now far behind: counts from now
+  EXPECT_EQ(1000u, m.at(0).stored_at);
+  hashOf(h, 2);
+  EXPECT_TRUE(m.onPacket(0x02, p, msg(p, OWNER, SENDER, 20, 2), h, 1010));   // a retry still merges
+  EXPECT_EQ(1, m.count());
+  EXPECT_TRUE(m.expire(1010 + 3601));
+  EXPECT_EQ(0, m.count());
+}
+
 struct MemFile {
   uint8_t buf[1 + sizeof(MailboxConfig) + 2 + MAILBOX_MAX * (6 + MAILBOX_HASH_SIZE + MAILBOX_PAYLOAD_MAX)];
   int len = 0, pos = 0;
