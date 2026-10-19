@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -232,8 +233,11 @@ private fun UpdateStep(vm: AppViewModel) {
             onDismissRequest = { vm.confirmUpdate = false },
             title = { Text(stringResource(if (continuing) R.string.resume else R.string.update)) },
             text = {
-                Text(stringResource(R.string.confirm_text, vm.newImage?.name ?: "", (p?.size ?: 0) / 1024.0,
-                    vm.estimateMinutes() ?: 0.0, vm.sideRadio().cliArgs()))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.confirm_text, vm.newImage?.name ?: "", (p?.size ?: 0) / 1024.0,
+                        vm.estimateMinutes() ?: 0.0, vm.sideRadio().cliArgs()))
+                    if (vm.ignoreAirLimit) Text(stringResource(R.string.ignore_air_limit_warning), color = MaterialTheme.colorScheme.error)
+                }
             },
             confirmButton = { TextButton(onClick = { vm.send() }) { Text(stringResource(R.string.start)) } },
             dismissButton = { TextButton(onClick = { vm.confirmUpdate = false }) { Text(stringResource(R.string.cancel)) } },
@@ -266,8 +270,15 @@ private fun UpdateStep(vm: AppViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NumberField(vm.sf, { vm.sf = it }, "SF", Modifier.weight(1f), !vm.busy)
             NumberField(vm.cr, { vm.cr = it }, "CR", Modifier.weight(1f), !vm.busy)
-            NumberField(vm.dutyPercent, { vm.dutyPercent = it }, stringResource(R.string.duty), Modifier.weight(1f), !vm.busy)
+            NumberField(vm.dutyPercent, { vm.dutyPercent = it }, stringResource(R.string.duty), Modifier.weight(1f), !vm.busy && !vm.ignoreAirLimit)
         }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !vm.busy) { vm.ignoreAirLimit = !vm.ignoreAirLimit }) {
+            Text(stringResource(R.string.ignore_air_limit), modifier = Modifier.weight(1f))
+            Switch(checked = vm.ignoreAirLimit, onCheckedChange = { vm.ignoreAirLimit = it }, enabled = !vm.busy)
+        }
+        if (vm.ignoreAirLimit) Warning(stringResource(R.string.ignore_air_limit_warning))
         for (line in vm.log.takeLast(10)) Text(line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
     }
     Spacer(Modifier.height(24.dp))

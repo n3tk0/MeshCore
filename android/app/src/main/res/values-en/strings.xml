@@ -91,4 +91,6 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="forget_password">Forget password</string>
     <string name="notif_channel">Update</string>
     <string name="notif_title">Updating %1$s</string>
+    <string name="ignore_air_limit">Ignore the time-on-air limit</string>
+    <string name="ignore_air_limit_warning">With no limit the update never stops to wait, but in 869.4–869.65 MHz the rules allow 10% time on air an hour. Use it only when you know it is allowed.</string>
 </resources>
