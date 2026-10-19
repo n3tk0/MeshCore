@@ -59,6 +59,12 @@
 #define CLI_REPLY_DELAY_MILLIS      600
 
 #define LAZY_CONTACTS_WRITE_DELAY    5000
+#ifdef WITH_MAILBOX
+  #define MAILBOX_FIRST_DELAY        2000   // after the owner's advert
+  #define MAILBOX_SEND_GAP           2500   // between kept messages
+  #define MAILBOX_EXPIRE_EVERY     600000
+  #define MAILBOX_LEARN_TIME       120000
+#endif
 
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
 #if MAX_NEIGHBOURS // check if neighbours enabled
@@ -565,6 +571,9 @@ mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* pkt) {
   } else {
     recv_pkt_region = NULL;
   }
+#ifdef WITH_MAILBOX
+  onMailboxPacket(pkt);
+#endif
   return Mesh::onRecvPacket(pkt);
 }
 
@@ -657,6 +666,24 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
     if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) { // just keep neigbouring Repeaters
       putNeighbour(id, timestamp, packet->getSNR());
     }
+#ifdef WITH_MAILBOX
+    if (mailbox_learn_until && parser.isValid() && parser.getType() == ADV_TYPE_CHAT) {
+      if (!millisHasNowPassed(mailbox_learn_until) && mailbox.addOwner(id.pub_key)) {
+        mailbox.config().enabled = 1;
+        saveMailbox();
+      }
+      mailbox_learn_until = 0;
+    }
+    // a mailbox owner heard with no hop between: hand over what was kept for it
+    int owner = mailbox.isEnabled() ? mailbox.findOwner(id.pub_key, PUB_KEY_SIZE) : -1;
+    if (owner >= 0) {
+      mailbox.markHeard(owner, getRTCClock()->getCurrentTime());
+      if (mailbox_deliver_owner < 0 && mailbox.countFor(owner) > 0) {
+        mailbox_deliver_owner = owner;
+        mailbox_next_send = futureMillis(MAILBOX_FIRST_DELAY);
+      }
+    }
+#endif
   }
 }
 
@@ -940,6 +967,10 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   pending_discover_until = 0;
 
   memset(default_scope.key, 0, sizeof(default_scope.key));
+#ifdef WITH_MAILBOX
+  mailbox_deliver_owner = -1;
+  mailbox_next_send = mailbox_save_at = mailbox_next_expire = mailbox_learn_until = 0;
+#endif
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -948,6 +979,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
   // load persisted prefs
   _cli.loadPrefs(_fs);
   acl.load(_fs, self_id);
+#ifdef WITH_MAILBOX
+  loadMailbox();
+#endif
   // TODO: key_store.begin();
   region_map.load(_fs);
 
@@ -1272,6 +1306,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       Serial.printf("\n");
     }
     reply[0] = 0;
+#ifdef WITH_MAILBOX
+  } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
+    handleMailboxCommand(&command[7], reply);
+#endif
   } else if (memcmp(command, "discover.neighbors", 18) == 0) {
     const char* sub = command + 18;
     while (*sub == ' ') sub++;
@@ -1319,6 +1357,10 @@ void MyMesh::loop() {
     MESH_DEBUG_PRINTLN("Radio params restored");
   }
 
+#ifdef WITH_MAILBOX
+  mailboxLoop();
+#endif
+
   // is pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     acl.save(_fs);
@@ -1331,10 +1373,199 @@ void MyMesh::loop() {
   last_millis = now;
 }
 
+#ifdef WITH_MAILBOX
+#define MAILBOX_FILE  "/mailbox"
+#define MAILBOX_TMP   "/mailbox.tmp"
+
+static uint8_t mailbox_buf[MailboxStore::maxBytes()];
+
+void MyMesh::loadMailbox() {
+  if (!_fs->exists(MAILBOX_FILE)) return;
+#if defined(RP2040_PLATFORM)
+  File f = _fs->open(MAILBOX_FILE, "r");
+#else
+  File f = _fs->open(MAILBOX_FILE);
+#endif
+  if (!f) return;
+  int len = f.read(mailbox_buf, sizeof(mailbox_buf));
+  f.close();
+  if (!mailbox.fromBytes(mailbox_buf, len)) {
+    MESH_DEBUG_PRINTLN("loadMailbox: damaged file, mailbox reset");
+  }
+}
+
+void MyMesh::saveMailbox() {
+  int len = mailbox.toBytes(mailbox_buf);
+  // write a temp file and rename it over the old one, so a reset mid-write keeps the old mailbox
+  _fs->remove(MAILBOX_TMP);
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  File f = _fs->open(MAILBOX_TMP, FILE_O_WRITE);
+#elif defined(RP2040_PLATFORM)
+  File f = _fs->open(MAILBOX_TMP, "w");
+#else
+  File f = _fs->open(MAILBOX_TMP, "w", true);
+#endif
+  if (!f) return;
+  bool ok = f.write(mailbox_buf, len) == (size_t)len;
+  f.close();
+  if (ok) {
+    _fs->remove(MAILBOX_FILE);
+    _fs->rename(MAILBOX_TMP, MAILBOX_FILE);
+  }
+}
+
+void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
+  if (!mailbox.isEnabled() || pkt->payload_len < 2) return;
+  uint32_t now = getRTCClock()->getCurrentTime();
+  uint8_t type = pkt->getPayloadType();
+
+  // an owner's own flood packet with no hop yet: it is here and gets messages the normal way
+  if (pkt->isRouteFlood() && pkt->getPathHashCount() == 0
+      && (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE || type == PAYLOAD_TYPE_PATH)) {
+    for (int i = 0; i < mailbox.config().num_owners; i++) {
+      if (mailbox.config().owners[i][0] == pkt->payload[1]) mailbox.markHeard(i, now);
+    }
+  }
+
+  bool changed = false;
+  if (type == PAYLOAD_TYPE_TXT_MSG) {
+    uint8_t hash[MAX_HASH_SIZE];
+    pkt->calculatePacketHash(hash);
+    changed = mailbox.onPacket(type, pkt->payload, pkt->payload_len, hash, now);
+  } else if (type == PAYLOAD_TYPE_PATH) {
+    changed = mailbox.onPathReply(pkt->payload, pkt->payload_len, now);
+  }
+  if (changed) mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);   // a sender's retries come in a burst
+}
+
+void MyMesh::mailboxLoop() {
+  if (mailbox_deliver_owner >= 0 && millisHasNowPassed(mailbox_next_send)) {
+    int i = mailbox.nextFor(mailbox_deliver_owner);
+    mesh::Packet* pkt = i >= 0 ? obtainNewPacket() : NULL;
+    if (i < 0) {
+      mailbox_deliver_owner = -1;   // all handed over
+    } else if (pkt) {
+      const MailboxEntry& e = mailbox.at(i);
+      pkt->header = (PAYLOAD_TYPE_TXT_MSG << PH_TYPE_SHIFT);   // ver 1, route set by sendZeroHop()
+      pkt->payload_len = e.len;
+      memcpy(pkt->payload, e.payload, e.len);
+      sendZeroHop(pkt);             // no hop: only the owner next to us hears it, nobody repeats it
+      mailbox.remove(i);
+      mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      mailbox_next_send = futureMillis(MAILBOX_SEND_GAP);
+    } else {
+      mailbox_next_send = futureMillis(MAILBOX_SEND_GAP);   // no free packet, try again later
+    }
+  }
+
+  if (millisHasNowPassed(mailbox_next_expire)) {
+    mailbox_next_expire = futureMillis(MAILBOX_EXPIRE_EVERY);
+    if (mailbox.expire(getRTCClock()->getCurrentTime())) mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  }
+
+  if (mailbox_save_at && millisHasNowPassed(mailbox_save_at)) {
+    mailbox_save_at = 0;
+    saveMailbox();
+  }
+}
+
+// mailbox                    state
+// mailbox on|off
+// mailbox add <pubkey-hex>   owner, the full 64-hex public key
+// mailbox learn              the next companion advert heard with no hop (in 2 minutes) becomes an owner
+// mailbox del <hex prefix>   owner and its messages
+// mailbox list               owners: key prefix, kept messages, heard with no hop
+// mailbox ttl <hours>        keep messages this long (1..720)
+// mailbox away <minutes>     owner heard this recently = present, nothing kept (0..1440)
+// mailbox clear              drop all kept messages
+void MyMesh::handleMailboxCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+  MailboxConfig& c = mailbox.config();
+  uint32_t now = getRTCClock()->getCurrentTime();
+  bool save = true;
+
+  if (*args == 0) {
+    sprintf(reply, "%s, owners %d, kept %d/%d, ttl %dh, away %dmin", c.enabled ? "on" : "off",
+            c.num_owners, mailbox.count(), MAILBOX_MAX, c.ttl_hours, c.away_mins);
+    save = false;
+  } else if (strcmp(args, "on") == 0 || strcmp(args, "off") == 0) {
+    c.enabled = args[1] == 'n';
+    if (!c.enabled) mailbox_deliver_owner = -1;
+    strcpy(reply, c.enabled && c.num_owners == 0 ? "OK - add an owner too" : "OK");
+  } else if (memcmp(args, "add ", 4) == 0) {
+    char* hex = &args[4];
+    uint8_t key[PUB_KEY_SIZE];
+    if (strlen(hex) != PUB_KEY_SIZE * 2 || !mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
+      strcpy(reply, "Err - need the full 64-hex public key");
+      save = false;
+    } else if (!mailbox.addOwner(key)) {
+      sprintf(reply, "Err - max %d owners", MAILBOX_MAX_OWNERS);
+      save = false;
+    } else {
+      strcpy(reply, "OK");
+    }
+  } else if (strcmp(args, "learn") == 0) {
+    if (c.num_owners >= MAILBOX_MAX_OWNERS) {
+      sprintf(reply, "Err - max %d owners", MAILBOX_MAX_OWNERS);
+    } else {
+      mailbox_learn_until = futureMillis(MAILBOX_LEARN_TIME);
+      strcpy(reply, "OK - send an advert (no hop) from the companion within 2 min");
+    }
+    save = false;
+  } else if (memcmp(args, "del ", 4) == 0) {
+    char* hex = &args[4];
+    uint8_t key[PUB_KEY_SIZE];
+    int n = strlen(hex) / 2;
+    if (n < 1 || n > PUB_KEY_SIZE || !mesh::Utils::fromHex(key, n, hex)) {
+      strcpy(reply, "Err - bad key");
+      save = false;
+    } else {
+      int owner = mailbox.findOwner(key, n);
+      if (owner >= 0 && mailbox.removeOwner(owner)) {
+        mailbox_deliver_owner = -1;
+        strcpy(reply, "OK");
+      } else {
+        strcpy(reply, "Err - not an owner");
+        save = false;
+      }
+    }
+  } else if (strcmp(args, "list") == 0) {
+    char* dp = reply;
+    *dp = 0;
+    for (int i = 0; i < c.num_owners; i++) {
+      char hex[9];
+      mesh::Utils::toHex(hex, c.owners[i], 4);
+      dp += sprintf(dp, "%s%s: %d%s", i ? ", " : "", hex, mailbox.countFor(i), mailbox.isPresent(i, now) ? " here" : "");
+    }
+    if (c.num_owners == 0) strcpy(reply, "no owners");
+    save = false;
+  } else if (memcmp(args, "ttl ", 4) == 0) {
+    int h = atoi(&args[4]);
+    if (h < 1 || h > 720) { strcpy(reply, "Err - 1..720 hours"); save = false; }
+    else { c.ttl_hours = h; strcpy(reply, "OK"); }
+  } else if (memcmp(args, "away ", 5) == 0) {
+    int m = atoi(&args[5]);
+    if (m < 0 || m > 1440) { strcpy(reply, "Err - 0..1440 minutes"); save = false; }
+    else { c.away_mins = m; strcpy(reply, "OK"); }
+  } else if (strcmp(args, "clear") == 0) {
+    mailbox.clear();
+    mailbox_deliver_owner = -1;
+    strcpy(reply, "OK");
+  } else {
+    strcpy(reply, "Err - mailbox [on|off|learn|add|del|list|ttl|away|clear]");
+    save = false;
+  }
+  if (save) saveMailbox();
+}
+#endif
+
 // To check if there is pending work
 bool MyMesh::hasPendingWork() const {
 #if defined(WITH_BRIDGE)
   if (bridge.isRunning()) return true;  // bridge needs WiFi radio, can't sleep
+#endif
+#ifdef WITH_MAILBOX
+  if (mailbox_deliver_owner >= 0 || mailbox_save_at) return true;
 #endif
   return _mgr->getOutboundTotal() > 0;
 }

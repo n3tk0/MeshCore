@@ -262,6 +262,13 @@ public:
   }
 
 private:
+  // the same message again (a sender's retry, or a copy a repeater kept for us): sender key + timestamp
+  #define RECENT_MSG_TABLE_SIZE  32
+  struct RecentMsg { uint8_t key[4]; uint32_t timestamp; };
+  RecentMsg recent_msgs[RECENT_MSG_TABLE_SIZE];
+  int next_recent_msg;
+  bool isRepeatedMsg(const ContactInfo &from, uint32_t sender_timestamp);
+
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
   void writeDisabledFrame();
