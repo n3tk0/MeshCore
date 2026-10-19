@@ -38,4 +38,6 @@
     <string name="msg_done">Done: the repeater checked the new firmware.</string>
     <string name="msg_verified">The repeater runs the new firmware: %1$s</string>
     <string name="msg_not_verified">The repeater does not run the new firmware yet: %1$s</string>
+    <string name="msg_no_route">The repeater did not answer with a route. Try again.</string>
+    <string name="msg_not_direct">The repeater is not next to you: %1$d hop(s) between you. Updates only go with no hop.</string>
 </resources>

@@ -45,6 +45,7 @@ extern "C" {
 #define OTA_ERR_NOT_DIRECT     8
 #define OTA_ERR_BAD_ARG        9
 #define OTA_ERR_OLD_IMAGE      10   // the delta was made from other firmware than this node runs
+#define OTA_ERR_BAD_IMAGE      11   // the new image is not an app for this board
 
 #define OTA_STATE_IDLE         0
 #define OTA_STATE_RECEIVING    1
@@ -71,6 +72,7 @@ public:
   virtual bool finishNew() = 0;                                       // everything written: flush
   virtual bool readNew(uint32_t offset, uint8_t* dest, size_t len) = 0;
   virtual void abortNew() = 0;
+  virtual bool newLooksBootable() { return true; }                    // e.g. an image for another chip
   virtual void commit() = 0;                                          // boot into the new image; no return when it works
 };
 
@@ -78,6 +80,8 @@ struct OtaRadioParams {
   float freq, bw;
   uint8_t sf, cr;
 };
+
+typedef bool (*OtaRadioCheck)(void* ctx, const OtaRadioParams& p);   // can this node's radio do it?
 
 class LoraOta {
 public:
@@ -87,7 +91,7 @@ private:
   OtaTarget* _target;
   const char* _ident;
   uint8_t _state, _err, _chunk;
-  uint8_t _owner[4];
+  uint8_t _owner[8];
   uint32_t _patch_size, _new_size, _received, _written, _from_pos;
   uint16_t _next_seq;
   uint8_t _new_sha[32];
@@ -98,6 +102,9 @@ private:
   uint32_t _timeout_ms;
   Action _action;
   OtaRadioParams _side;
+  bool _on_side;
+  OtaRadioCheck _radio_check;
+  void* _radio_ctx;
   detools_apply_patch_t _patch;
 
   static uint32_t getU32(const uint8_t* p) { uint32_t v; memcpy(&v, p, 4); return v; }
@@ -156,11 +163,16 @@ private:
     return memcmp(got, _new_sha, 32) == 0;
   }
 
+  void restoreRadio() {
+    if (_on_side) _action = ACT_RESTORE_RADIO;
+    _on_side = false;
+  }
+
   void fail(uint8_t err) {
     if (_state == OTA_STATE_RECEIVING) _target->abortNew();
     _state = OTA_STATE_FAILED;
     _err = err;
-    _action = ACT_RESTORE_RADIO;
+    restoreRadio();
   }
 
   int reply(uint8_t* out, uint8_t op, uint8_t status) {
@@ -183,7 +195,7 @@ private:
 
     if (_state == OTA_STATE_RECEIVING || _state == OTA_STATE_READY) {
       // the same BEGIN again (its reply was lost) is answered again; anything else waits for this one
-      bool same = memcmp(_owner, sender_key, 4) == 0 && _patch_size == patch_size && _new_size == new_size
+      bool same = memcmp(_owner, sender_key, sizeof(_owner)) == 0 && _patch_size == patch_size && _new_size == new_size
                   && memcmp(_new_sha, new_sha, 32) == 0;
       if (!same) return reply(out, OTA_OP_BEGIN, OTA_ERR_BUSY);
       _last_activity = now_ms;
@@ -198,12 +210,18 @@ private:
                            && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8)) {
       return reply(out, OTA_OP_BEGIN, OTA_ERR_BAD_ARG);
     }
+    OtaRadioParams side;
+    side.freq = (float)freq_khz / 1000.0f;
+    side.bw = (float)bw_hz / 1000.0f;
+    side.sf = sf;
+    side.cr = cr;
+    if (freq_khz != 0 && _radio_check && !_radio_check(_radio_ctx, side)) return reply(out, OTA_OP_BEGIN, OTA_ERR_BAD_ARG);
     if (!computeImageSha()) return reply(out, OTA_OP_BEGIN, OTA_ERR_FLASH);
     if (memcmp(old_sha, _img_sha, 32) != 0) return reply(out, OTA_OP_BEGIN, OTA_ERR_OLD_IMAGE);
     if (new_size > _target->maxNewSize()) return reply(out, OTA_OP_BEGIN, OTA_ERR_TOO_BIG);
     if (!_target->beginNew(new_size)) return reply(out, OTA_OP_BEGIN, OTA_ERR_FLASH);
 
-    memcpy(_owner, sender_key, 4);
+    memcpy(_owner, sender_key, sizeof(_owner));
     _patch_size = patch_size;
     _new_size = new_size;
     memcpy(_new_sha, new_sha, 32);
@@ -218,10 +236,8 @@ private:
     detools_apply_patch_init(&_patch, fromRead, fromSeek, patch_size, toWrite, this);
     _state = OTA_STATE_RECEIVING;
     if (freq_khz != 0) {
-      _side.freq = (float)freq_khz / 1000.0f;
-      _side.bw = (float)bw_hz / 1000.0f;
-      _side.sf = sf;
-      _side.cr = cr;
+      _side = side;
+      _on_side = true;
       _action = ACT_SIDE_RADIO;
     }
     int n = reply(out, OTA_OP_BEGIN, OTA_OK);
@@ -267,6 +283,10 @@ private:
       fail(OTA_ERR_HASH);
       return reply(out, OTA_OP_END, _err);
     }
+    if (!_target->newLooksBootable()) {
+      fail(OTA_ERR_BAD_IMAGE);
+      return reply(out, OTA_OP_END, _err);
+    }
     _state = OTA_STATE_READY;
     _action = ACT_COMMIT;
     return reply(out, OTA_OP_END, OTA_OK);
@@ -276,12 +296,15 @@ public:
   LoraOta(OtaTarget* target) : _target(target), _ident(""), _state(OTA_STATE_IDLE), _err(OTA_OK), _chunk(0),
                                _patch_size(0), _new_size(0), _received(0), _written(0), _from_pos(0),
                                _next_seq(0), _img_size(0), _img_sha_ok(false), _last_activity(0),
-                               _timeout_ms(OTA_DEFAULT_TIMEOUT * 1000), _action(ACT_NONE) {
+                               _timeout_ms(OTA_DEFAULT_TIMEOUT * 1000), _action(ACT_NONE), _on_side(false),
+                               _radio_check(NULL), _radio_ctx(NULL) {
     memset(_owner, 0, sizeof(_owner));
     memset(&_side, 0, sizeof(_side));
   }
 
   void setIdent(const char* ident) { _ident = ident; }
+  void setRadioCheck(OtaRadioCheck check, void* ctx) { _radio_check = check; _radio_ctx = ctx; }
+  bool isOnSideRadio() const { return _on_side; }
   bool isActive() const { return _state == OTA_STATE_RECEIVING || _state == OTA_STATE_READY; }
   uint8_t getState() const { return _state; }
   const OtaRadioParams& sideRadio() const { return _side; }
@@ -293,7 +316,13 @@ public:
     return a;
   }
 
-  void commit() { _target->commit(); }
+  // boot the new image; only returns when that failed
+  void commit() {
+    _target->commit();
+    _state = OTA_STATE_FAILED;
+    _err = OTA_ERR_FLASH;
+    restoreRadio();
+  }
 
   // a session nobody talks to any more is dropped, so the node gets back to its normal radio settings
   bool checkTimeout(unsigned long now_ms) {
@@ -314,7 +343,7 @@ public:
     if (_target == NULL || _target->platform() == OTA_PLATFORM_NONE) return reply(out, op, OTA_ERR_UNSUPPORTED);
     if (!is_zero_hop) return op == OTA_OP_DATA ? 0 : reply(out, op, OTA_ERR_NOT_DIRECT);
 
-    bool owner = memcmp(_owner, sender_key, 4) == 0;
+    bool owner = memcmp(_owner, sender_key, sizeof(_owner)) == 0;
     if (op != OTA_OP_INFO && op != OTA_OP_BEGIN && isActive() && !owner) {
       return op == OTA_OP_DATA ? 0 : reply(out, op, OTA_ERR_BUSY);
     }
@@ -349,9 +378,10 @@ public:
     }
     case OTA_OP_END:
       return handleEnd(out);
-    case OTA_OP_ABORT:
+    case OTA_OP_ABORT:   // also cancels the reboot into an image already checked
       if (_state == OTA_STATE_RECEIVING) _target->abortNew();
       if (_state != OTA_STATE_IDLE) _action = ACT_RESTORE_RADIO;
+      _on_side = false;
       _state = OTA_STATE_IDLE;
       _err = OTA_OK;
       memset(_owner, 0, sizeof(_owner));

@@ -1,6 +1,8 @@
 #include "MyMesh.h"
 #include <algorithm>
 
+#define RADIO_SWITCH_WAIT_MAX    10000   // a radio settings switch waits this long at most for sending to finish
+
 #ifdef WITH_LORA_OTA
   #if defined(NRF52_PLATFORM)
     #include <helpers/nrf52/NRF52OtaTarget.h>
@@ -11,7 +13,7 @@
   #endif
   #define OTA_SIDE_RADIO_DELAY   2500                 // the BEGIN reply goes out on the normal radio first
   #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
-  #define OTA_COMMIT_DELAY       3000                 // the END reply goes out before the reboot
+  #define OTA_COMMIT_DELAY       10000                // the END reply goes out (and is repeated if lost) before the reboot
   #define OTA_MAX_SIDE_MILLIS    (60 * 60 * 1000UL)   // hard limit on the side radio, whatever happens
 #endif
 
@@ -720,10 +722,14 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
         if (!client->isAdmin()) return;
         client->last_timestamp = timestamp;
         client->last_activity = getRTCClock()->getCurrentTime();
-        bool zero_hop = packet->isRouteDirect() && packet->getPathHashCount() == 0;
+        // a direct packet has no path left when it gets here, however many hops it took: the
+        // route back to this admin (learned at login, with no hop) tells whether it is next to us
+        bool zero_hop = packet->isRouteDirect() && packet->getPathHashCount() == 0
+                        && client->out_path_len != OUT_PATH_UNKNOWN && (client->out_path_len & 63) == 0;
         memcpy(reply_data, &timestamp, 4);
         int n = lora_ota.handleRequest(client->id.pub_key, zero_hop, &data[4], len - 4, &reply_data[4], millis());
         applyOtaAction();
+        if (ota_on_side && revert_radio_at) revert_radio_at = futureMillis(OTA_MAX_SIDE_MILLIS);   // still busy
         if (n == 0) return;   // DATA: no reply, the admin asks for STATUS now and then
         if (zero_hop) {
           mesh::Packet *reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, reply_data, 4 + n);
@@ -1022,6 +1028,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 #endif
 #ifdef WITH_LORA_OTA
   ota_commit_at = 0;
+  ota_on_side = false;
   ota_ident[0] = 0;
 #endif
 }
@@ -1038,6 +1045,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #ifdef WITH_LORA_OTA
   snprintf(ota_ident, sizeof(ota_ident), "%s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, board.getManufacturerName());
   lora_ota.setIdent(ota_ident);
+  lora_ota.setRadioCheck([](void*, const OtaRadioParams& p) {
+    return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
+  }, NULL);
 #endif
   // TODO: key_store.begin();
   region_map.load(_fs);
@@ -1412,13 +1422,20 @@ void MyMesh::loop() {
     updateAdvertTimer(); // schedule next local advert
   }
 
-  if (set_radio_at && millisHasNowPassed(set_radio_at)) { // apply pending (temporary) radio params
+  // a radio switch waits for what is being sent (e.g. the reply that announced it), up to a limit
+  bool radio_idle = !isSending() && _mgr->getOutboundTotal() == 0;
+  if (set_radio_at && millisHasNowPassed(set_radio_at) && !radio_idle && !millisHasNowPassed(set_radio_at + RADIO_SWITCH_WAIT_MAX)) {
+    // not yet
+  } else if (set_radio_at && millisHasNowPassed(set_radio_at)) { // apply pending (temporary) radio params
     set_radio_at = 0;                                     // clear timer
     radio_driver.setParams(pending_freq, pending_bw, pending_sf, pending_cr);
     MESH_DEBUG_PRINTLN("Temp radio params");
   }
 
-  if (revert_radio_at && millisHasNowPassed(revert_radio_at)) { // revert radio params to orig
+  if (revert_radio_at && millisHasNowPassed(revert_radio_at) && !radio_idle
+      && !millisHasNowPassed(revert_radio_at + RADIO_SWITCH_WAIT_MAX)) {
+    // not yet
+  } else if (revert_radio_at && millisHasNowPassed(revert_radio_at)) { // revert radio params to orig
     revert_radio_at = 0;                                        // clear timer
     radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
     MESH_DEBUG_PRINTLN("Radio params restored");
@@ -1521,7 +1538,7 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
 void MyMesh::mailboxLoop() {
   bool on_side_radio = false;
 #ifdef WITH_LORA_OTA
-  on_side_radio = lora_ota.isActive();   // the owner would not hear it there
+  on_side_radio = ota_on_side;   // the owner would not hear it there
 #endif
   if (mailbox_deliver_owner >= 0 && !on_side_radio && millisHasNowPassed(mailbox_next_send)) {
     int i = mailbox.nextFor(mailbox_deliver_owner);
@@ -1662,6 +1679,7 @@ void MyMesh::applyOtaAction() {
   switch (lora_ota.takeAction()) {
   case LoraOta::ACT_SIDE_RADIO: {
     const OtaRadioParams& side = lora_ota.sideRadio();
+    ota_on_side = true;
     pending_freq = side.freq;
     pending_bw = side.bw;
     pending_sf = side.sf;
@@ -1671,8 +1689,12 @@ void MyMesh::applyOtaAction() {
     break;
   }
   case LoraOta::ACT_RESTORE_RADIO:
-    set_radio_at = 0;
-    revert_radio_at = futureMillis(OTA_RESTORE_DELAY);
+    ota_commit_at = 0;   // an ABORT after END: no reboot
+    if (ota_on_side) {
+      set_radio_at = 0;
+      revert_radio_at = futureMillis(OTA_RESTORE_DELAY);
+      ota_on_side = false;
+    }
     break;
   case LoraOta::ACT_COMMIT:
     ota_commit_at = futureMillis(OTA_COMMIT_DELAY);
@@ -1693,7 +1715,9 @@ void MyMesh::otaLoop() {
   #ifdef WITH_MAILBOX
     if (mailbox_save_at) saveMailbox();
   #endif
-    lora_ota.commit();   // does not return
+    lora_ota.commit();   // does not return when it works
+    MESH_DEBUG_PRINTLN("LoRa OTA: could not boot the new image");
+    applyOtaAction();
   }
 }
 #endif
