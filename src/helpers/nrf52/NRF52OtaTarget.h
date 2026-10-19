@@ -19,11 +19,29 @@ extern "C" {
 
 #define NRF52_OTA_PAGE        4096
 #define NRF52_BL_SETTINGS     0xFF000   // Adafruit bootloader settings: u16 bank_0, u16 bank_0_crc, ...
+#define NRF52_BL_SETTINGS_WORDS 8       // sizeof(bootloader_settings_t) = 28 bytes, rounded up
 
 // Runs from RAM with interrupts off: flash below it is being rewritten, so it calls nothing.
 __attribute__((section(".data"), noinline, long_call))
 static void nrf52OtaCopyAndReset(uint32_t dst, uint32_t src, uint32_t pages) {
   __disable_irq();
+  // Bootloader settings: u16 bank_0 (1 = valid app), u16 bank_0_crc, then sizes. While the copy runs
+  // bank_0 is 0, so a power cut leaves the node in the bootloader (USB / BLE DFU), not in half an image.
+  volatile uint32_t* settings = (volatile uint32_t*) NRF52_BL_SETTINGS;
+  uint32_t saved[NRF52_BL_SETTINGS_WORDS];
+  for (uint32_t w = 0; w < NRF52_BL_SETTINGS_WORDS; w++) saved[w] = settings[w];
+  // only when the rest of the page is empty: it is erased and rewritten at the end
+  bool marked = (saved[0] & 0xFFFF) == 0x0001;
+  for (uint32_t w = NRF52_BL_SETTINGS_WORDS; marked && w < NRF52_OTA_PAGE / 4; w++) {
+    if (settings[w] != 0xFFFFFFFF) marked = false;
+  }
+  if (marked) {
+    NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Wen;
+    while (NRF_NVMC->READY == 0) { }
+    settings[0] = saved[0] & 0xFFFF0000;   // bank_0 = 0: no valid app
+    while (NRF_NVMC->READY == 0) { }
+  }
+
   for (uint32_t p = 0; p < pages; p++) {
     uint32_t d = dst + p * NRF52_OTA_PAGE;
     volatile uint32_t* to = (volatile uint32_t*) d;
@@ -46,13 +64,23 @@ static void nrf52OtaCopyAndReset(uint32_t dst, uint32_t src, uint32_t pages) {
       while (NRF_NVMC->READY == 0) { }
     }
   }
-  // a CRC stored by an earlier DFU would no longer match: 0 tells the bootloader not to check it
-  volatile uint32_t* settings = (volatile uint32_t*) NRF52_BL_SETTINGS;
-  uint32_t word = settings[0];
-  if ((word & 0xFFFF0000) != 0 && (word & 0xFFFF) == 0x0001) {   // bank_0 == BANK_VALID_APP, crc set
+  if (marked) {
+    // valid again, with CRC 0: a CRC stored by an earlier DFU would not match the new image
+    NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Een;
+    while (NRF_NVMC->READY == 0) { }
+    NRF_NVMC->ERASEPAGE = NRF52_BL_SETTINGS;
+    while (NRF_NVMC->READY == 0) { }
     NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Wen;
     while (NRF_NVMC->READY == 0) { }
-    settings[0] = word & 0x0000FFFF;
+    saved[0] = 0x00000001;
+    for (uint32_t w = 0; w < NRF52_BL_SETTINGS_WORDS; w++) {
+      settings[w] = saved[w];
+      while (NRF_NVMC->READY == 0) { }
+    }
+  } else if ((saved[0] & 0xFFFF) == 0x0001 && (saved[0] & 0xFFFF0000) != 0) {
+    NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Wen;   // at least turn off the CRC check
+    while (NRF_NVMC->READY == 0) { }
+    settings[0] = saved[0] & 0x0000FFFF;
     while (NRF_NVMC->READY == 0) { }
   }
   NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Ren;
@@ -115,6 +143,14 @@ public:
   bool readNew(uint32_t offset, uint8_t* dest, size_t len) override {
     memcpy(dest, (const void*) (staging() + offset), len);
     return true;
+  }
+
+  bool newLooksBootable() override {
+    // vector table of an app for this chip and this flash layout: stack in RAM, reset handler in the app
+    const uint32_t* v = (const uint32_t*) staging();
+    uint32_t sp = v[0], reset = v[1];
+    return sp > 0x20000000 && sp <= 0x20040000 && (sp & 3) == 0
+           && (reset & 1) && reset > appStart() && reset < appStart() + _new_size;
   }
 
   void abortNew() override {

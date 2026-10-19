@@ -39,4 +39,6 @@
     <string name="msg_done">Готово: новият firmware е проверен на repeater-а.</string>
     <string name="msg_verified">Repeater-ът работи с новия firmware: %1$s</string>
     <string name="msg_not_verified">Repeater-ът още не е с новия firmware: %1$s</string>
+    <string name="msg_no_route">Repeater-ът не отговори с маршрут. Опитай пак.</string>
+    <string name="msg_not_direct">Repeater-ът не е до теб: между вас има %1$d hop. Обновяването е само без hop.</string>
 </resources>

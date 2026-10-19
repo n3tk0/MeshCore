@@ -2298,7 +2298,8 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     return true;
   }
 
-  // the LoRa OTA side channel: 'tempradio <freq> <bw> <sf> <cr> <secs>', back by itself after secs, or 'tempradio off'
+  // the LoRa OTA side channel: 'tempradio <freq> <bw> <sf> <cr> <mins>' (as on repeaters), back by itself
+  // after mins or when the app disconnects, or 'tempradio off'
   if (strcmp(command, "tempradio off") == 0) {
     temp_radio_until = 0;
     radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
@@ -2314,12 +2315,12 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     float bw = num > 1 ? strtof(parts[1], nullptr) : 0.0f;
     uint8_t sf = num > 2 ? atoi(parts[2]) : 0;
     uint8_t cr = num > 3 ? atoi(parts[3]) : 0;
-    int secs = num > 4 ? atoi(parts[4]) : 0;
+    int mins = num > 4 ? atoi(parts[4]) : 0;
     if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f
-        && secs > 0 && secs <= 3600 && radio_driver.paramsSupported(freq, bw, sf, cr)) {
+        && mins > 0 && mins <= 60 && radio_driver.paramsSupported(freq, bw, sf, cr)) {
       radio_driver.setParams(freq, bw, sf, cr);
-      temp_radio_until = futureMillis(secs * 1000UL);
-      sprintf(reply, "OK - temp params for %d secs", secs);
+      temp_radio_until = futureMillis(mins * 60000UL);
+      sprintf(reply, "OK - temp params for %d mins", mins);
     } else {
       strcpy(reply, "Error, invalid params");
     }
@@ -2640,7 +2641,7 @@ void MyMesh::loop() {
     dirty_contacts_expiry = 0;
   }
 
-  if (temp_radio_until && millisHasNowPassed(temp_radio_until)) {   // 'tempradio' ran out
+  if (temp_radio_until && (millisHasNowPassed(temp_radio_until) || !_serial->isConnected())) {   // ran out, or app gone
     temp_radio_until = 0;
     radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   }

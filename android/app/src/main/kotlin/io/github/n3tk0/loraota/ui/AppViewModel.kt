@@ -31,6 +31,7 @@ import io.github.n3tk0.loraota.ota.SideRadio
 import io.github.n3tk0.loraota.ota.hex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -149,6 +150,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!link.connect(device)) throw Exception(ctx.getString(R.string.msg_connect_failed))
         companion.start()
+        runCatching { companion.cli("tempradio off") }   // left on the side channel by an update cut short
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
         repeaters.clear()
         repeaters.addAll(companion.contacts().filter { it.isRepeater }.sortedBy { it.name.lowercase() })
@@ -156,17 +158,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
-        stop()
-        viewModelScope.launch { restorePath() }
-        link.close()
         step = Step.COMPANION
+        viewModelScope.launch {
+            job?.cancelAndJoin()   // the update's own clean-up (ABORT, normal radio) goes first
+            restorePath()
+            link.close()
+        }
     }
 
     // ---- repeater ----
 
     fun login(contact: Contact, password: String) = work {
-        if (!companion.login(contact, password)) throw Exception(ctx.getString(R.string.msg_not_admin))
-        companion.setZeroHop(contact)
+        // log in by flood, so both sides learn the route: the update only goes when it has no hop
+        companion.resetPath(contact)
+        try {
+            if (!companion.login(contact, password)) throw Exception(ctx.getString(R.string.msg_not_admin))
+            delay(4000)   // the companion sends its route back to the repeater
+            val hops = companion.contact(contact.publicKey)?.outPathLen ?: 0xFF
+            if (hops == 0xFF || (hops and 63) != 0) {
+                throw Exception(if (hops == 0xFF) ctx.getString(R.string.msg_no_route) else ctx.getString(R.string.msg_not_direct, hops and 63))
+            }
+        } catch (e: Exception) {
+            runCatching { companion.restorePath(contact) }
+            throw e
+        }
         repeater = contact
         val session = OtaSession(companion, contact, sideRadio(), duty(), {}, { _, _ -> })
         val i = session.info()
@@ -186,11 +201,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun backToRepeaters() {
-        stop()
-        viewModelScope.launch { restorePath() }
-        repeater = null
-        info = null
         step = Step.REPEATER
+        viewModelScope.launch {
+            job?.cancelAndJoin()
+            restorePath()
+            repeater = null
+            info = null
+        }
     }
 
     // ---- firmware ----
@@ -211,7 +228,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Releases for the same board as the one the repeater runs (all when that is not known). */
     fun newCandidates(): List<FirmwareFile> {
         val env = oldImage?.env ?: releases.firstOrNull { it.sha256 == oldImage?.sha }?.env
-        return releases.filter { (env == null || it.env == env) && it.sha256 != oldImage?.sha }
+        val nrf = info?.platform == OtaProtocol.PLATFORM_NRF52
+        return releases.filter {
+            // unknown board: at least the same chip family (the repeater also refuses an image for another chip)
+            (if (env != null) it.env == env else it.env.contains("nrf52", ignoreCase = true) == nrf) &&
+                it.sha256 != oldImage?.sha
+        }
     }
 
     fun pickRelease(f: FirmwareFile) = work {

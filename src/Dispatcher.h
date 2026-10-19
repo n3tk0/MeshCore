@@ -174,6 +174,7 @@ protected:
   virtual bool allowTransmit() const { return true; }    // false = drop due packets instead of sending
 
 public:
+  bool isSending() const { return outbound != NULL; }   // a packet is being transmitted now
   void begin();
   void loop();
 

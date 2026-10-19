@@ -35,6 +35,7 @@ object OtaProtocol {
         8 -> "not heard directly (no hop)"
         9 -> "bad parameters"
         10 -> "the delta is for other firmware than the repeater runs"
+        11 -> "the new firmware is not for this board"
         else -> "error $code"
     }
 
@@ -98,12 +99,13 @@ data class SideRadio(val freqKhz: Int, val bwHz: Int, val sf: Int, val cr: Int) 
     fun cliArgs(): String = "%.3f %s %d %d".format(java.util.Locale.ROOT, freqMhz,
         if (bwHz % 1000 == 0) (bwHz / 1000).toString() else "%.1f".format(java.util.Locale.ROOT, bwKhz), sf, cr)
 
-    /** Seconds on air for a LoRa packet of [bytes] (explicit header, CRC, 16 symbol preamble). */
+    /** Seconds on air for a LoRa packet of [bytes] (explicit header, CRC, MeshCore's preamble). */
     fun airtime(bytes: Int): Double {
         val tsym = 2.0.pow(sf) / bwHz
         val de = if (tsym > 0.016) 1 else 0
+        val preamble = if (sf <= 8) 32 else 16   // RadioLibWrapper::preambleLengthForSF
         val payload = 8 + maxOf(ceil((8.0 * bytes - 4 * sf + 28 + 16) / (4.0 * (sf - 2 * de))).toInt() * cr, 0)
-        return (16 + 4.25) * tsym + payload * tsym
+        return (preamble + 4.25) * tsym + payload * tsym
     }
 
     companion object {

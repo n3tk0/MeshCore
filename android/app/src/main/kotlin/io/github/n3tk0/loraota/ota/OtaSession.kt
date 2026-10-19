@@ -26,7 +26,7 @@ class OtaSession(
         const val WINDOW = 8
         const val SESSION_TIMEOUT_SECS = 90           // repeater drops the session after this much silence
         const val SIDE_RADIO_DELAY_MS = 3500L         // repeater switches 2.5 s after its BEGIN reply
-        const val COMPANION_TEMP_SECS = 3600
+        const val COMPANION_LEASE_MINS = 2              // renewed with every window; back by itself if the app is gone
     }
 
     private var onSide = false
@@ -41,6 +41,11 @@ class OtaSession(
             }
         }
         return null
+    }
+
+    private suspend fun sideLease() {
+        val r = companion.cli("tempradio ${radio.cliArgs()} $COMPANION_LEASE_MINS")
+        if (!r.contains("OK")) throw OtaFailed("the companion cannot use the side channel: $r")
     }
 
     private suspend fun pace(bytes: Int) {
@@ -67,7 +72,7 @@ class OtaSession(
             if (r != null && r.status != 0) throw OtaFailed(OtaProtocol.statusText(r.status))
             // no reply may only mean the reply was lost: the repeater may already be on the side channel
             delay(SIDE_RADIO_DELAY_MS)
-            companion.cli("tempradio ${radio.cliArgs()} $COMPANION_TEMP_SECS")
+            sideLease()
             onSide = true
             log("side channel ${radio.cliArgs()}")
 
@@ -77,6 +82,7 @@ class OtaSession(
             var next = st.nextSeq
             progress(next, total)
             while (next < total) {
+                sideLease()
                 val end = minOf(total, next + WINDOW)
                 for (seq in next until end) {
                     val bytes = patch.copyOfRange(seq * CHUNK, minOf(patch.size, (seq + 1) * CHUNK))
@@ -92,8 +98,18 @@ class OtaSession(
             }
 
             log("END")
-            val e = request(OtaProtocol.end(), statusTimeoutMs(), 4) ?: throw OtaFailed("no answer to END")
-            if (e.status != 0) throw OtaFailed(OtaProtocol.statusText(e.status))
+            val e = request(OtaProtocol.end(), statusTimeoutMs(), 2)
+            if (e != null && e.status != 0) throw OtaFailed(OtaProtocol.statusText(e.status))
+            if (e == null) {
+                // the reply may be what was lost: the repeater reboots into the new image on its own,
+                // so ask it on the normal channel which firmware it runs
+                log("no answer to END, asking the repeater on the normal channel")
+                companion.cli("tempradio off")
+                onSide = false
+                delay(20_000)
+                val i = info(30_000)
+                if (!i.imageSha.contentEquals(newSha)) throw OtaFailed("no answer to END, the repeater runs its old firmware")
+            }
             log("new firmware checked, the repeater restarts with it")
         } catch (e: Throwable) {
             if (onSide) withContext(NonCancellable) {

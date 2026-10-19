@@ -1,6 +1,8 @@
 package io.github.n3tk0.loraota.ble
 
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -26,6 +28,8 @@ class CompanionRadio(private val link: CompanionLink) {
         const val CMD_APP_START = 1
         const val CMD_GET_CONTACTS = 4
         const val CMD_ADD_UPDATE_CONTACT = 9
+        const val CMD_RESET_PATH = 13
+        const val CMD_GET_CONTACT_BY_KEY = 30
         const val CMD_SEND_LOGIN = 26
         const val CMD_SEND_BINARY_REQ = 50
         const val CMD_RUN_CLI_COMMAND = 66
@@ -47,6 +51,8 @@ class CompanionRadio(private val link: CompanionLink) {
 
     // frames that came while waiting for something else (a late response, a push)
     private val pending = ArrayDeque<ByteArray>()
+    // one command and its reply at a time: a second caller would take the first one's reply
+    private val lock = Mutex()
 
     private suspend fun await(timeoutMs: Long, match: (ByteArray) -> Boolean): ByteArray {
         val it = pending.iterator()
@@ -73,11 +79,11 @@ class CompanionRadio(private val link: CompanionLink) {
 
     private fun code(f: ByteArray) = f[0].toInt() and 0xff
 
-    private suspend fun command(frame: ByteArray, timeoutMs: Long = 5000, vararg codes: Int): ByteArray {
+    private suspend fun command(frame: ByteArray, timeoutMs: Long = 5000, vararg codes: Int): ByteArray = lock.withLock {
         link.send(frame)
         val f = await(timeoutMs) { code(it) in codes || code(it) == RESP_ERR }
         if (code(f) == RESP_ERR) throw CompanionError("companion error ${if (f.size > 1) f[1].toInt() else 0}")
-        return f
+        f
     }
 
     suspend fun start() {
@@ -89,17 +95,19 @@ class CompanionRadio(private val link: CompanionLink) {
         nodeName = if (f.size > 58) String(f, 58, f.size - 58, Charsets.UTF_8).trimEnd('\u0000') else ""
     }
 
-    suspend fun contacts(): List<Contact> {
+    suspend fun contacts(): List<Contact> = lock.withLock {
         link.send(byteArrayOf(CMD_GET_CONTACTS.toByte()))
         val out = ArrayList<Contact>()
-        while (true) {
+        var end = false
+        while (!end) {
             val f = await(10_000) { code(it) in intArrayOf(2, RESP_CONTACT, RESP_END_OF_CONTACTS, RESP_ERR) }
             when (code(f)) {
                 RESP_CONTACT -> if (f.size >= 148) out.add(Contact(f))
-                RESP_END_OF_CONTACTS -> return out
+                RESP_END_OF_CONTACTS -> end = true
                 RESP_ERR -> throw CompanionError("contacts")
             }
         }
+        out
     }
 
     /** Admin login; true when the repeater accepted it with admin rights. */
@@ -107,14 +115,16 @@ class CompanionRadio(private val link: CompanionLink) {
         command(byteArrayOf(CMD_SEND_LOGIN.toByte()) + contact.publicKey + password.toByteArray(), 5000, RESP_SENT)
         val prefix = contact.publicKey.copyOfRange(0, 6)
         val f = try {
-            await(30_000) {
+            lock.withLock { await(30_000) {
                 (code(it) == PUSH_LOGIN_SUCCESS || code(it) == PUSH_LOGIN_FAIL) && it.size >= 8 &&
                     it.copyOfRange(2, 8).contentEquals(prefix)
-            }
+            } }
         } catch (e: TimeoutCancellationException) {
             throw CompanionError("no answer from the repeater")
         }
-        return code(f) == PUSH_LOGIN_SUCCESS && (f[1].toInt() and 0x03) == 3   // PERM_ACL_ADMIN
+        // byte 1 is 'is admin'; newer repeaters also send the permissions (byte 7 of their reply, here 12)
+        return code(f) == PUSH_LOGIN_SUCCESS &&
+            (f[1].toInt() == 1 || (f.size > 12 && (f[12].toInt() and 0x03) == 3))
     }
 
     /** Requests to this contact go with no hop: only a repeater next to us hears them, nobody repeats them. */
@@ -123,6 +133,18 @@ class CompanionRadio(private val link: CompanionLink) {
         f[0] = CMD_ADD_UPDATE_CONTACT.toByte()
         f[35] = 0
         command(f, 5000, RESP_OK)
+    }
+
+    /** Forgets the route to the contact: the next message (the login) floods, and the route is learned again. */
+    suspend fun resetPath(contact: Contact) {
+        command(byteArrayOf(CMD_RESET_PATH.toByte()) + contact.publicKey, 5000, RESP_OK)
+    }
+
+    /** The contact as the companion has it now (with the route it learned). */
+    suspend fun contact(publicKey: ByteArray): Contact? = try {
+        Contact(command(byteArrayOf(CMD_GET_CONTACT_BY_KEY.toByte()) + publicKey, 5000, RESP_CONTACT))
+    } catch (e: CompanionError) {
+        null
     }
 
     /** Restores the path the contact had before. */
@@ -140,9 +162,11 @@ class CompanionRadio(private val link: CompanionLink) {
 
     /** The response to a request: the data after its tag, or null if none came in time. */
     suspend fun awaitResponse(tag: Int, timeoutMs: Long): ByteArray? = try {
-        val f = await(timeoutMs) {
-            code(it) == PUSH_BINARY_RESPONSE && it.size >= 6 &&
-                ByteBuffer.wrap(it, 2, 4).order(ByteOrder.LITTLE_ENDIAN).int == tag
+        val f = lock.withLock {
+            await(timeoutMs) {
+                code(it) == PUSH_BINARY_RESPONSE && it.size >= 6 &&
+                    ByteBuffer.wrap(it, 2, 4).order(ByteOrder.LITTLE_ENDIAN).int == tag
+            }
         }
         f.copyOfRange(6, f.size)
     } catch (e: TimeoutCancellationException) {
