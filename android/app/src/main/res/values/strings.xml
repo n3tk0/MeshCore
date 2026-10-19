@@ -92,4 +92,6 @@
     <string name="forget_password">Забрави паролата</string>
     <string name="notif_channel">Обновяване</string>
     <string name="notif_title">Обновяване на %1$s</string>
+    <string name="ignore_air_limit">Игнорирай лимита за ефир</string>
+    <string name="ignore_air_limit_warning">Без лимита обновяването не спира да чака, но в 869.4–869.65 MHz законът позволява 10% време в ефир на час. Ползвай го само ако знаеш, че е допустимо.</string>
 </resources>

@@ -85,6 +85,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var sf by mutableStateOf("7")
     var cr by mutableStateOf("5")
     var dutyPercent by mutableStateOf("10")
+    var ignoreAirLimit by mutableStateOf(false)   // not kept: each start of the app is back within the limit
     private val budget = AirtimeBudget(0.1)   // the companion's time on air over the last hour
 
     var sent by mutableStateOf(0)
@@ -347,7 +348,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cr.toIntOrNull() ?: 5,
     )
 
-    fun duty(): Double = ((dutyPercent.toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
+    fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
 
     fun estimateMinutes(): Double? {
         val p = patch ?: return null
