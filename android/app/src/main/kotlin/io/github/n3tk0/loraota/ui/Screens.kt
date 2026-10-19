@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -212,6 +214,7 @@ private fun UpdateStep(vm: AppViewModel) {
         Text(stringResource(R.string.chosen, vm.newImage!!.name))
     }
     if (vm.oldImage == null && info != null) Warning(stringResource(R.string.running_unknown))
+    if (vm.inPlace()) InPlaceWarning(detail = true)
 
     val ready = vm.oldImage != null && vm.newImage != null && info?.enabled == true
     val continuing = info?.state == OtaProtocol.STATE_PAUSED || vm.resumable
@@ -236,6 +239,7 @@ private fun UpdateStep(vm: AppViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.confirm_text, vm.newImage?.name ?: "", (p?.size ?: 0) / 1024.0,
                         vm.estimateMinutes() ?: 0.0, vm.sideRadio().cliArgs()))
+                    if (vm.inPlace()) InPlaceWarning(detail = false)
                     if (vm.ignoreAirLimit) Text(stringResource(R.string.ignore_air_limit_warning), color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -295,6 +299,24 @@ private fun Message(vm: AppViewModel) {
 private fun Warning(text: String) {
     Card(Modifier.fillMaxWidth()) {
         Text(text, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
+    }
+}
+
+/** Big and red: an update "in place" can leave the repeater with no firmware. */
+@Composable
+private fun InPlaceWarning(detail: Boolean) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.in_place_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.in_place_text), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (detail) Text(stringResource(R.string.in_place_detail), style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 

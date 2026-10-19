@@ -7,6 +7,9 @@
   #if defined(NRF52_PLATFORM)
     #include <helpers/nrf52/NRF52OtaTarget.h>
     static NRF52OtaTarget ota_target;
+    #ifdef QSPI_STORAGE
+      static QspiStorage qspi;   // the new image and the mailbox go to the board's external flash
+    #endif
   #elif defined(ESP32)
     #include <helpers/esp32/ESP32OtaTarget.h>
     static ESP32OtaTarget ota_target;
@@ -1051,6 +1054,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
   // load persisted prefs
   _cli.loadPrefs(_fs);
   acl.load(_fs, self_id);
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+  if (qspi.begin()) ota_target.setQspi(&qspi);
+#endif
 #ifdef WITH_MAILBOX
   loadMailbox();
 #endif
@@ -1481,6 +1487,9 @@ void MyMesh::loop() {
 
 #ifdef WITH_LORA_OTA
   otaLoop();
+  #ifdef QSPI_STORAGE
+  qspi.loop();
+  #endif
 #endif
 #ifdef WITH_MAILBOX
   mailboxLoop();
@@ -1510,7 +1519,112 @@ struct MailboxFile {
   int read(uint8_t* p, int n) { return f.read(p, n); }
 };
 
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+// the mailbox in the external flash: a ring of slots, [magic][seq][len][crc] then the data; the header
+// is written last, so a save cut short is not seen and the slot before stays the newest
+#define MAILBOX_QSPI_MAGIC  0x3158424D   // "MBX1"
+#define MAILBOX_QSPI_HDR    16
+static uint32_t mailbox_qspi_seq = 0, mailbox_qspi_slot = QSPI_MAILBOX_SLOTS - 1;
+
+static uint32_t crc32Update(uint32_t crc, const uint8_t* p, int n) {
+  crc = ~crc;
+  while (n-- > 0) {
+    crc ^= *p++;
+    for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320 & (0 - (crc & 1)));
+  }
+  return ~crc;
+}
+
+struct MailboxQspiWriter {
+  uint32_t base, pos = 0, erased = 0, crc = 0;
+  bool ok = true;
+  MailboxQspiWriter(uint32_t b) : base(b) { }
+  void write(const uint8_t* p, int n) {
+    if (!ok) return;
+    uint32_t at = MAILBOX_QSPI_HDR + pos;
+    if (at + n > QSPI_MAILBOX_SLOT) { ok = false; return; }
+    while (erased < at + n) {
+      if (!qspi.erase(base + erased)) { ok = false; return; }
+      erased += QSPI_SECTOR;
+    }
+    if (!qspi.write(base + at, p, n)) ok = false;
+    crc = crc32Update(crc, p, n);
+    pos += n;
+  }
+};
+
+struct MailboxQspiReader {
+  uint32_t base, pos = 0, len;
+  MailboxQspiReader(uint32_t b, uint32_t l) : base(b), len(l) { }
+  int read(uint8_t* p, int n) {
+    if (pos + n > len) n = len - pos;
+    if (n <= 0 || !qspi.read(base + MAILBOX_QSPI_HDR + pos, p, n)) return 0;
+    pos += n;
+    return n;
+  }
+};
+
+static bool mailboxSlotValid(uint32_t slot, uint32_t* seq, uint32_t* len) {
+  uint32_t base = QSPI_MAILBOX_ADDR + slot * QSPI_MAILBOX_SLOT;
+  uint32_t h[4];
+  if (!qspi.read(base, (uint8_t*)h, sizeof(h)) || h[0] != MAILBOX_QSPI_MAGIC) return false;
+  if (h[2] > QSPI_MAILBOX_SLOT - MAILBOX_QSPI_HDR) return false;
+  uint32_t crc = 0;
+  uint8_t buf[256];
+  for (uint32_t off = 0; off < h[2]; off += sizeof(buf)) {
+    uint32_t n = h[2] - off < sizeof(buf) ? h[2] - off : sizeof(buf);
+    if (!qspi.read(base + MAILBOX_QSPI_HDR + off, buf, n)) return false;
+    crc = crc32Update(crc, buf, n);
+  }
+  if (crc != h[3]) return false;
+  *seq = h[1];
+  *len = h[2];
+  return true;
+}
+
+// true when the external flash holds a mailbox (then it is loaded)
+static bool loadMailboxQspi(MailboxStore& mailbox) {
+  bool found = false;
+  uint32_t best_len = 0;
+  for (uint32_t i = 0; i < QSPI_MAILBOX_SLOTS; i++) {
+    uint32_t seq, len;
+    if (mailboxSlotValid(i, &seq, &len) && (!found || (int32_t)(seq - mailbox_qspi_seq) > 0)) {
+      found = true;
+      mailbox_qspi_seq = seq;
+      mailbox_qspi_slot = i;
+      best_len = len;
+    }
+  }
+  if (!found) return false;
+  MailboxQspiReader r(QSPI_MAILBOX_ADDR + mailbox_qspi_slot * QSPI_MAILBOX_SLOT, best_len);
+  if (!mailbox.load(r)) MESH_DEBUG_PRINTLN("loadMailbox: damaged slot, mailbox reset");
+  return true;
+}
+
+static bool saveMailboxQspi(const MailboxStore& mailbox) {
+  uint32_t slot = (mailbox_qspi_slot + 1) % QSPI_MAILBOX_SLOTS;
+  uint32_t base = QSPI_MAILBOX_ADDR + slot * QSPI_MAILBOX_SLOT;
+  MailboxQspiWriter w(base);
+  mailbox.save(w);
+  if (!w.ok) return false;
+  uint32_t h[4] = { MAILBOX_QSPI_MAGIC, mailbox_qspi_seq + 1, w.pos, w.crc };
+  if (!qspi.write(base, (const uint8_t*)h, sizeof(h))) return false;
+  mailbox_qspi_seq++;
+  mailbox_qspi_slot = slot;
+  return true;
+}
+#endif
+
 void MyMesh::loadMailbox() {
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+  if (qspi.ok()) {
+    if (loadMailboxQspi(mailbox)) {
+      mailbox.expire(getRTCClock()->getCurrentTime());
+      return;
+    }
+    // none there yet: the one in the internal flash (moved over with the next save)
+  }
+#endif
   if (!_fs->exists(MAILBOX_FILE)) return;
 #if defined(RP2040_PLATFORM)
   File f = _fs->open(MAILBOX_FILE, "r");
@@ -1527,6 +1641,15 @@ void MyMesh::loadMailbox() {
 }
 
 void MyMesh::saveMailbox() {
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+  if (qspi.ok()) {
+    if (saveMailboxQspi(mailbox)) {
+      if (_fs->exists(MAILBOX_FILE)) _fs->remove(MAILBOX_FILE);
+      return;
+    }
+    MESH_DEBUG_PRINTLN("saveMailbox: external flash failed, internal file instead");
+  }
+#endif
   // write a temp file and rename it over the old one, so a reset mid-write keeps the old mailbox
   _fs->remove(MAILBOX_TMP);
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

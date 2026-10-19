@@ -94,4 +94,8 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="ignore_air_limit">Ignore the time-on-air limit</string>
     <string name="ignore_air_limit_warning">With no limit the update never stops to wait, but in 869.4–869.65 MHz the rules allow 10% time on air an hour. Use it only when you know it is allowed.</string>
     <string name="msg_no_bt_permission">The app may not use Nearby devices. Allow it in the phone\'s settings.</string>
+    <string name="st_no_ram">The repeater has too little RAM for the start of the new firmware. Nothing was changed.</string>
+    <string name="in_place_title">WARNING</string>
+    <string name="in_place_text">If the power goes off, someone has to go there.</string>
+    <string name="in_place_detail">The new firmware does not fit next to the old one on this repeater, so it is written over it. The risky part is the last 20 seconds or so, while the repeater copies: a power cut then leaves it with no firmware, fixed only on site (USB or Bluetooth).</string>
 </resources>

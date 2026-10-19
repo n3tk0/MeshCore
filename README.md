@@ -106,6 +106,8 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 - **Off by default:** run `set ota on` in the repeater's console first (`set ota off` turns it off again, `ota status` shows it).
 - **Cut short:** the repeater goes back to its normal channel and keeps its progress for 30 minutes; the same update in the app continues where it stopped.
 - **Time on air:** the app keeps to 10 % of each hour; a bigger delta waits for the next part of the hour on the normal channel.
+- **nRF52 storage:** the new image goes to the free internal flash after the running one, then is copied over it just before the restart. The Xiao nRF52840 keeps it in its 2 MB QSPI flash instead (`-D QSPI_STORAGE`), which also holds the mailbox (a ring of 32 slots). Boards where the old and the new image do not fit together (e.g. RAK4631, about 460 KB) update **in place**: the repeater keeps the delta and the end of the image, and makes the start again in RAM just before the copy. The app shows a big warning for it.
+- **Power cut on nRF52:** during the final copy (about 20 s) a power cut leaves the repeater in the bootloader with no firmware; it has to be updated on site (USB or BLE DFU). ESP32 has two app slots and is not at risk.
 - **ESP32 rollback:** a new image that does not get an admin login or 10 minutes of uptime before a restart goes back to the previous one; `ota rollback` does it by hand.
 - **APK signing:** CI signs with the key from the secrets `LORAOTA_KEYSTORE_BASE64`, `LORAOTA_KEYSTORE_PASSWORD`, `LORAOTA_KEY_ALIAS`, `LORAOTA_KEY_PASSWORD` (a debug key when they are not set).
 

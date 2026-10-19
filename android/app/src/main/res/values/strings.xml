@@ -95,4 +95,8 @@
     <string name="ignore_air_limit">Игнорирай лимита за ефир</string>
     <string name="ignore_air_limit_warning">Без лимита обновяването не спира да чака, но в 869.4–869.65 MHz законът позволява 10% време в ефир на час. Ползвай го само ако знаеш, че е допустимо.</string>
     <string name="msg_no_bt_permission">Приложението няма разрешение за „Устройства наблизо“. Разреши го в настройките на телефона.</string>
+    <string name="st_no_ram">Repeater-ът няма достатъчно RAM за началото на новия firmware. Нищо не е променено.</string>
+    <string name="in_place_title">ВНИМАНИЕ</string>
+    <string name="in_place_text">Ако спре токът, трябва да се ходи на място.</string>
+    <string name="in_place_detail">Новият firmware не се събира до стария на този repeater и се записва върху него. Опасни са последните около 20 секунди, докато repeater-ът копира: ако тогава спре токът, той остава без firmware и се оправя само на място (USB или Bluetooth).</string>
 </resources>
