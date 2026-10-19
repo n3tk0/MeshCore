@@ -41,7 +41,7 @@
     <string name="cancel">Cancel</string>
     <string name="advanced">Advanced</string>
     <string name="advanced_hide">Hide advanced</string>
-    <string name="ota_off">OTA is off on this repeater. Run `set ota on` in its console (MeshCore app > repeater > Command line) and log in again.</string>
+    <string name="ota_off">OTA is off on this repeater. Tap Turn on OTA: the app runs `set ota on` in its console.</string>
     <string name="paused_hint">An update was cut short. The repeater keeps its progress for 30 minutes. Choose the same firmware and tap Continue.</string>
     <string name="confirm_text">The repeater gets %1$s (delta %2$.1f KB) in about %3$.0f min on the side channel %4$s.
 
@@ -79,4 +79,16 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="err_after_restart">The repeater did not answer after the restart. Log in to it again in a while.</string>
     <string name="err_companion">Companion error: %1$s</string>
     <string name="running_now">Running now</string>
+    <string name="enable_ota">Turn on OTA</string>
+    <string name="msg_ota_on">OTA is on.</string>
+    <string name="msg_ota_on_failed">The repeater did not turn OTA on. Try again, or run `set ota on` in its console.</string>
+    <string name="route_direct">next to you, no hop</string>
+    <string name="route_unknown">route not known yet</string>
+    <plurals name="route_hops">
+        <item quantity="one">%d hop away</item>
+        <item quantity="other">%d hops away</item>
+    </plurals>
+    <string name="forget_password">Forget password</string>
+    <string name="notif_channel">Update</string>
+    <string name="notif_title">Updating %1$s</string>
 </resources>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LoRa OTA</string>
+    <string name="app_name" translatable="false">LoRa OTA</string>
     <string name="companion_hint">Обновяване на repeater по LoRa през твоя companion. Включи companion-а и го намери.</string>
     <string name="scan">Търси companion</string>
     <string name="scanning">Търся…</string>
@@ -42,7 +42,7 @@
     <string name="cancel">Отказ</string>
     <string name="advanced">Разширени</string>
     <string name="advanced_hide">Скрий разширените</string>
-    <string name="ota_off">OTA е изключено на този repeater. Пусни `set ota on` в конзолата му (MeshCore приложението > repeater > Command line) и влез пак.</string>
+    <string name="ota_off">OTA е изключено на този repeater. Натисни „Включи OTA“: приложението ще пусне `set ota on` в конзолата му.</string>
     <string name="paused_hint">Има прекъснато обновяване. Repeater-ът пази докъде е стигнал 30 минути. Избери същия firmware и натисни „Продължи“.</string>
     <string name="confirm_text">Repeater-ът ще получи %1$s (delta %2$.1f KB) за около %3$.0f мин на страничния канал %4$s.
 
@@ -80,4 +80,16 @@
     <string name="err_after_restart">Repeater-ът не отговори след рестарта. Провери го след малко с вход.</string>
     <string name="err_companion">Грешка от companion-а: %1$s</string>
     <string name="running_now">Сега работи</string>
+    <string name="enable_ota">Включи OTA</string>
+    <string name="msg_ota_on">OTA е включено.</string>
+    <string name="msg_ota_on_failed">Repeater-ът не включи OTA. Опитай пак или пусни `set ota on` в конзолата му.</string>
+    <string name="route_direct">до теб, без hop</string>
+    <string name="route_unknown">маршрутът не е известен</string>
+    <plurals name="route_hops">
+        <item quantity="one">през %d hop</item>
+        <item quantity="other">през %d hop-а</item>
+    </plurals>
+    <string name="forget_password">Забрави паролата</string>
+    <string name="notif_channel">Обновяване</string>
+    <string name="notif_title">Обновяване на %1$s</string>
 </resources>
