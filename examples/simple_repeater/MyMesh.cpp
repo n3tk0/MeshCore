@@ -1377,7 +1377,13 @@ void MyMesh::loop() {
 #define MAILBOX_FILE  "/mailbox"
 #define MAILBOX_TMP   "/mailbox.tmp"
 
-static uint8_t mailbox_buf[MailboxStore::maxBytes()];
+struct MailboxFile {
+  File& f;
+  bool ok = true;
+  MailboxFile(File& file) : f(file) { }
+  void write(const uint8_t* p, int n) { if (f.write(p, n) != (size_t)n) ok = false; }
+  int read(uint8_t* p, int n) { return f.read(p, n); }
+};
 
 void MyMesh::loadMailbox() {
   if (!_fs->exists(MAILBOX_FILE)) return;
@@ -1387,15 +1393,14 @@ void MyMesh::loadMailbox() {
   File f = _fs->open(MAILBOX_FILE);
 #endif
   if (!f) return;
-  int len = f.read(mailbox_buf, sizeof(mailbox_buf));
-  f.close();
-  if (!mailbox.fromBytes(mailbox_buf, len)) {
+  MailboxFile mf(f);
+  if (!mailbox.load(mf)) {
     MESH_DEBUG_PRINTLN("loadMailbox: damaged file, mailbox reset");
   }
+  f.close();
 }
 
 void MyMesh::saveMailbox() {
-  int len = mailbox.toBytes(mailbox_buf);
   // write a temp file and rename it over the old one, so a reset mid-write keeps the old mailbox
   _fs->remove(MAILBOX_TMP);
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -1406,9 +1411,10 @@ void MyMesh::saveMailbox() {
   File f = _fs->open(MAILBOX_TMP, "w", true);
 #endif
   if (!f) return;
-  bool ok = f.write(mailbox_buf, len) == (size_t)len;
+  MailboxFile mf(f);
+  mailbox.save(mf);
   f.close();
-  if (ok) {
+  if (mf.ok) {
     _fs->remove(MAILBOX_FILE);
     _fs->rename(MAILBOX_TMP, MAILBOX_FILE);
   }

@@ -109,28 +109,36 @@ TEST(MailboxStore, DeliveryOrderAndRemoveOwner) {
   EXPECT_EQ(0, m.nextFor(0));
 }
 
+struct MemFile {
+  uint8_t buf[1 + sizeof(MailboxConfig) + 2 + MAILBOX_MAX * (6 + MAILBOX_HASH_SIZE + MAILBOX_PAYLOAD_MAX)];
+  int len = 0, pos = 0;
+  void write(const uint8_t* p, int n) { memcpy(&buf[len], p, n); len += n; }
+  int read(uint8_t* p, int n) { if (n > len - pos) n = len - pos; memcpy(p, &buf[pos], n); pos += n; return n; }
+};
+
 TEST(MailboxStore, SavesAndLoads) {
   MailboxStore& m = *makeStore();
   uint8_t p[40], h[MAILBOX_HASH_SIZE];
   hashOf(h, 1); m.onPacket(0x02, p, msg(p, OWNER, SENDER, 20, 1), h, 1000);
   hashOf(h, 2); m.onPacket(0x02, p, msg(p, OWNER, 0x44, 33, 2), h, 1100);
   m.config().ttl_hours = 5;
-  static uint8_t buf[MailboxStore::maxBytes()];
-  int len = m.toBytes(buf);
+  static MemFile f;
+  m.save(f);
 
   static MailboxStore l;
-  EXPECT_TRUE(l.fromBytes(buf, len));
+  EXPECT_TRUE(l.load(f));
   EXPECT_EQ(2, l.count());
   EXPECT_EQ(5, l.config().ttl_hours);
   EXPECT_TRUE(l.isEnabled());
   EXPECT_EQ(33, l.at(1).len);
   EXPECT_EQ(0, memcmp(l.at(1).payload, m.at(1).payload, 33));
 
-  EXPECT_FALSE(l.fromBytes(buf, len - 5));   // cut short
+  f.pos = 0; f.len -= 5;                     // cut short
+  EXPECT_FALSE(l.load(f));
   EXPECT_EQ(0, l.count());
   EXPECT_FALSE(l.isEnabled());
-  buf[0] = 99;
-  EXPECT_FALSE(l.fromBytes(buf, len));       // other version
+  f.pos = 0; f.len += 5; f.buf[0] = 99;     // other version
+  EXPECT_FALSE(l.load(f));
 }
 
 int main(int argc, char** argv) {
