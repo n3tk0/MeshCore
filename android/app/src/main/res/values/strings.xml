@@ -77,4 +77,5 @@
     <string name="err_old_still_runs">Repeater-ът още работи със стария firmware: %1$s</string>
     <string name="err_after_restart">Repeater-ът не отговори след рестарта. Провери го след малко с вход.</string>
     <string name="err_companion">Грешка от companion-а: %1$s</string>
+    <string name="running_now">Сега работи</string>
 </resources>
