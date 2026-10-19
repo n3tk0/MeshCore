@@ -70,6 +70,8 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="err_no_answer">The repeater does not answer. It has to be next to you, with no hop.</string>
     <string name="err_no_side">The repeater is not heard on the side channel.</string>
     <string name="err_not_started">The repeater did not start the update.</string>
+    <string name="err_air_too_small">The time-on-air limit is too small for even one packet. Check the side channel settings.</string>
+    <string name="err_end_lost">The end of the update did not reach the repeater. It keeps everything for 30 minutes: tap Continue.</string>
     <string name="err_lost">Lost the repeater. It keeps its progress for 30 minutes: tap Continue.</string>
     <string name="err_dropped">The repeater stopped the update.</string>
     <string name="err_paused">The update was cut short (%1$s). The repeater keeps its progress for 30 minutes: tap Continue.</string>

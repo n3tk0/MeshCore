@@ -1,8 +1,10 @@
 #pragma once
 
 // LoRa OTA on nRF52: the new image is written to the free flash after the running one, then a routine
-// in RAM copies it over the running image and resets. If power is lost during that copy the
-// application is gone but the bootloader stays, so the node can be flashed again over USB or BLE.
+// in RAM copies it over the running image and resets. While it copies, the bootloader settings say
+// "no valid app", so a power cut leaves the node in the bootloader (USB / BLE DFU), not in half an
+// image. That needs the settings page to hold only the settings (as the Adafruit bootloader writes
+// it); otherwise the page is left as it is and a power cut during the copy can leave a broken app.
 
 #include <Arduino.h>
 #include <helpers/LoraOta.h>
