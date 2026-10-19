@@ -1,7 +1,8 @@
 #pragma once
 
 // LoRa OTA on ESP32: the new image goes to the other OTA partition, the running one stays as it is.
-// `ota rollback` can boot the previous image again.
+// A new image boots as 'pending verify': if the node restarts before confirm() (the admin talks to it,
+// or it runs for a while), the bootloader goes back to the previous image. `ota rollback` does it by hand.
 
 #include <Arduino.h>
 #include <helpers/LoraOta.h>
@@ -14,9 +15,10 @@ class ESP32OtaTarget : public OtaTarget {
   esp_ota_handle_t _handle;
   uint32_t _img_size, _new_size;
   bool _open;
+  int8_t _pending;   // running image waits for confirm(): -1 not read yet
 
 public:
-  ESP32OtaTarget() : _next(NULL), _handle(0), _img_size(0), _new_size(0), _open(false) { }
+  ESP32OtaTarget() : _next(NULL), _handle(0), _img_size(0), _new_size(0), _open(false), _pending(-1) { }
 
   uint8_t platform() const override { return OTA_PLATFORM_ESP32; }
 
@@ -41,8 +43,22 @@ public:
     return next ? next->size : 0;
   }
 
+  bool isUnconfirmed() override {
+    if (_pending < 0) {   // read once: it only changes by confirm()
+      const esp_partition_t* running = esp_ota_get_running_partition();
+      esp_ota_img_states_t st;
+      _pending = running && esp_ota_get_state_partition(running, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY;
+    }
+    return _pending == 1;
+  }
+
+  void confirm() override {
+    if (isUnconfirmed() && esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) _pending = 0;
+  }
+
   bool beginNew(uint32_t size) override {
     abortNew();
+    confirm();   // the next image goes over the previous one, which is then no way back
     _next = esp_ota_get_next_update_partition(NULL);
     if (_next == NULL || size > _next->size) return false;
     // erase as the data comes in: erasing the whole partition up front would block for seconds

@@ -54,6 +54,7 @@ protected:
   void SetUp() override {
     target.image.assign(fixture_old, fixture_old + sizeof(fixture_old));
     ota.setIdent("v1 test|Board");
+    ota.setEnabled(true);
   }
 
   int send(const uint8_t* key, const std::vector<uint8_t>& args, bool zero_hop = true) {
@@ -97,18 +98,19 @@ protected:
 
 TEST_F(LoraOtaTest, InfoTellsWhatRuns) {
   int n = send(ADMIN, { OTA_OP_INFO });
-  ASSERT_GE(n, 2 + 2 + 4 + 32 + 4);
+  ASSERT_GE(n, 2 + 3 + 4 + 32 + 4);
   EXPECT_EQ(OTA_OP_INFO, out[0]);
   EXPECT_EQ(OTA_OK, out[1]);
   EXPECT_EQ(OTA_PLATFORM_NRF52, out[2]);
   EXPECT_EQ(OTA_STATE_IDLE, out[3]);
+  EXPECT_EQ(OTA_FLAG_ENABLED, out[4]);
   uint32_t size;
-  memcpy(&size, &out[4], 4);
+  memcpy(&size, &out[5], 4);
   EXPECT_EQ(sizeof(fixture_old), size);
   uint8_t h[32];
   sha(fixture_old, sizeof(fixture_old), h);
-  EXPECT_EQ(0, memcmp(h, &out[8], 32));
-  EXPECT_EQ(std::string("v1 test|Board"), std::string((char*)&out[44], n - 44));
+  EXPECT_EQ(0, memcmp(h, &out[9], 32));
+  EXPECT_EQ(std::string("v1 test|Board"), std::string((char*)&out[45], n - 45));
 }
 
 TEST_F(LoraOtaTest, WholeUpdate) {
@@ -229,7 +231,7 @@ TEST_F(LoraOtaTest, OneAdminAtATime) {
   EXPECT_TRUE(target.aborted);
 }
 
-TEST_F(LoraOtaTest, SilentAdminTimesOut) {
+TEST_F(LoraOtaTest, SilentAdminPauses) {
   send(ADMIN, beginArgs());
   ota.takeAction();
   now += 59000;
@@ -241,6 +243,82 @@ TEST_F(LoraOtaTest, SilentAdminTimesOut) {
   EXPECT_TRUE(ota.checkTimeout(now));
   EXPECT_EQ(LoraOta::ACT_RESTORE_RADIO, ota.takeAction());
   EXPECT_FALSE(ota.isActive());
+  EXPECT_EQ(OTA_STATE_PAUSED, ota.getState());
+  EXPECT_FALSE(target.aborted);
+
+  now += OTA_PAUSE_KEEP_MS;   // nobody came back
+  EXPECT_TRUE(ota.checkTimeout(now));
+  EXPECT_EQ(OTA_STATE_FAILED, ota.getState());
+  EXPECT_TRUE(target.aborted);
+  EXPECT_EQ(LoraOta::ACT_NONE, ota.takeAction());   // already on the normal radio
+}
+
+TEST_F(LoraOtaTest, PausedUpdateGoesOn) {
+  send(ADMIN, beginArgs());
+  ota.takeAction();
+  int half = chunks(sizeof(fixture_patch)) / 2;
+  for (int s = 0; s < half; s++) sendData(fixture_patch, sizeof(fixture_patch), s);
+  now += 61000;
+  EXPECT_TRUE(ota.checkTimeout(now));
+  ota.takeAction();
+
+  send(OTHER, beginArgs());   // the paused update is kept for its admin
+  EXPECT_EQ(OTA_ERR_BUSY, out[1]);
+  send(OTHER, { OTA_OP_STATUS });
+  EXPECT_EQ(OTA_ERR_BUSY, out[1]);
+
+  now += 10 * 60 * 1000UL;
+  send(ADMIN, beginArgs());
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(LoraOta::ACT_SIDE_RADIO, ota.takeAction());
+  send(ADMIN, { OTA_OP_STATUS });
+  EXPECT_EQ(OTA_STATE_RECEIVING, out[2]);
+  uint16_t next;
+  memcpy(&next, &out[3], 2);
+  EXPECT_EQ(half, next);
+  for (int s = next; s < chunks(sizeof(fixture_patch)); s++) sendData(fixture_patch, sizeof(fixture_patch), s);
+  send(ADMIN, { OTA_OP_END });
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(0, memcmp(fixture_new, target.next.data(), sizeof(fixture_new)));
+}
+
+TEST_F(LoraOtaTest, AdminPausesAndKeepsItAlive) {
+  send(ADMIN, beginArgs());
+  ota.takeAction();
+  sendData(fixture_patch, sizeof(fixture_patch), 0);
+  send(ADMIN, { OTA_OP_PAUSE });
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(LoraOta::ACT_RESTORE_RADIO, ota.takeAction());
+  EXPECT_EQ(OTA_STATE_PAUSED, ota.getState());
+  now += OTA_PAUSE_KEEP_MS - 1000;
+  send(ADMIN, { OTA_OP_STATUS });   // still there: kept for another while
+  now += OTA_PAUSE_KEEP_MS - 1000;
+  EXPECT_FALSE(ota.checkTimeout(now));
+  send(ADMIN, beginArgs());
+  EXPECT_EQ(OTA_OK, out[1]);
+  send(ADMIN, { OTA_OP_STATUS });
+  EXPECT_EQ(1, out[3]);
+}
+
+TEST_F(LoraOtaTest, OtherUpdateDropsThePausedOne) {
+  send(ADMIN, beginArgs());
+  sendData(fixture_patch, sizeof(fixture_patch), 0);
+  now += 61000;
+  ota.checkTimeout(now);
+  send(ADMIN, beginArgs(869470, fixture_old, sizeof(fixture_old), sizeof(fixture_patch) + 1));
+  EXPECT_EQ(OTA_OK, out[1]);
+  send(ADMIN, { OTA_OP_STATUS });
+  EXPECT_EQ(0, out[3]);   // from the start
+}
+
+TEST_F(LoraOtaTest, OffUntilTurnedOn) {
+  ota.setEnabled(false);
+  send(ADMIN, beginArgs());
+  EXPECT_EQ(OTA_ERR_DISABLED, out[1]);
+  EXPECT_FALSE(ota.isActive());
+  send(ADMIN, { OTA_OP_INFO });
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(0, out[4]);
 }
 
 int main(int argc, char **argv) {

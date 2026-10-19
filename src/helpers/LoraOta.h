@@ -16,14 +16,18 @@ extern "C" {
 //
 // Request (after the 4 byte REQ timestamp): [OTA_REQ_TYPE][op][args]
 // Reply   (after the 4 byte tag):           [op][status][data]
-//   INFO   -> [platform][state][img_size u32][img_sha 32][max_new u32][ident...]
+//   INFO   -> [platform][state][flags][img_size u32][img_sha 32][max_new u32][ident...]
+//             flags: OTA_FLAG_ENABLED (`set ota on`), OTA_FLAG_UNCONFIRMED (new image not confirmed yet)
 //   BEGIN  [patch_size u32][new_size u32][new_sha 32][old_sha 32][chunk u8]
 //          [freq_khz u32][bw_hz u32][sf][cr][timeout_s u16]          -> [chunk u8]
 //          freq_khz 0 = stay on the current radio settings
+//          the same BEGIN for a paused update goes on from where it stopped (STATUS says where)
 //   DATA   [seq u16][chunk bytes]                                    -> no reply
 //   STATUS                                                           -> [state][next_seq u16][received u32][written u32]
 //   END    (all data sent)                                           -> boots into the new image when status is OK
 //   ABORT                                                            -> back to idle and the normal radio settings
+//   PAUSE  (the admin waits for its time on air)                     -> back to the normal radio settings, progress
+//          kept for OTA_PAUSE_KEEP_MS (any request of the admin starts that again), BEGIN goes on
 
 #define OTA_REQ_TYPE           0x40
 
@@ -33,6 +37,7 @@ extern "C" {
 #define OTA_OP_STATUS          4
 #define OTA_OP_END             5
 #define OTA_OP_ABORT           6
+#define OTA_OP_PAUSE           7
 
 #define OTA_OK                 0
 #define OTA_ERR_STATE          1
@@ -46,11 +51,16 @@ extern "C" {
 #define OTA_ERR_BAD_ARG        9
 #define OTA_ERR_OLD_IMAGE      10   // the delta was made from other firmware than this node runs
 #define OTA_ERR_BAD_IMAGE      11   // the new image is not an app for this board
+#define OTA_ERR_DISABLED       12   // `set ota on` first
 
 #define OTA_STATE_IDLE         0
 #define OTA_STATE_RECEIVING    1
 #define OTA_STATE_READY        2    // new image written and checked, about to boot into it
 #define OTA_STATE_FAILED       3
+#define OTA_STATE_PAUSED       4    // the admin went quiet: back on the normal radio, progress kept a while
+
+#define OTA_FLAG_ENABLED       0x01
+#define OTA_FLAG_UNCONFIRMED   0x02
 
 #define OTA_PLATFORM_NONE      0
 #define OTA_PLATFORM_NRF52     1
@@ -60,6 +70,7 @@ extern "C" {
 #define OTA_MAX_CHUNK          160
 #define OTA_DEFAULT_TIMEOUT    60    // seconds with nothing from the admin before the session is dropped
 #define OTA_MAX_TIMEOUT        600
+#define OTA_PAUSE_KEEP_MS      (30 * 60 * 1000UL)   // a paused update can go on for this long
 
 class OtaTarget {
 public:
@@ -73,6 +84,8 @@ public:
   virtual bool readNew(uint32_t offset, uint8_t* dest, size_t len) = 0;
   virtual void abortNew() = 0;
   virtual bool newLooksBootable() { return true; }                    // e.g. an image for another chip
+  virtual bool isUnconfirmed() { return false; }                      // booted into a new image, not yet confirmed
+  virtual void confirm() { }                                          // the new image works: keep it
   virtual void commit() = 0;                                          // boot into the new image; no return when it works
 };
 
@@ -103,6 +116,8 @@ private:
   Action _action;
   OtaRadioParams _side;
   bool _on_side;
+  bool _enabled;
+  unsigned long _paused_at;
   OtaRadioCheck _radio_check;
   void* _radio_ctx;
   detools_apply_patch_t _patch;
@@ -168,8 +183,10 @@ private:
     _on_side = false;
   }
 
+  bool held() const { return isActive() || _state == OTA_STATE_PAUSED; }
+
   void fail(uint8_t err) {
-    if (_state == OTA_STATE_RECEIVING) _target->abortNew();
+    if (_state == OTA_STATE_RECEIVING || _state == OTA_STATE_PAUSED) _target->abortNew();
     _state = OTA_STATE_FAILED;
     _err = err;
     restoreRadio();
@@ -179,6 +196,19 @@ private:
     out[0] = op;
     out[1] = status;
     return 2;
+  }
+
+  void setTimeout(uint16_t timeout_s) {
+    if (timeout_s == 0) timeout_s = OTA_DEFAULT_TIMEOUT;
+    if (timeout_s > OTA_MAX_TIMEOUT) timeout_s = OTA_MAX_TIMEOUT;
+    _timeout_ms = (uint32_t)timeout_s * 1000;
+  }
+
+  void startSide(bool on, const OtaRadioParams& side) {
+    if (!on) return;
+    _side = side;
+    _on_side = true;
+    _action = ACT_SIDE_RADIO;
   }
 
   int handleBegin(const uint8_t* sender_key, const uint8_t* args, size_t len, uint8_t* out, unsigned long now_ms) {
@@ -203,6 +233,18 @@ private:
       out[n++] = _chunk;
       return n;
     }
+    if (!_enabled) return reply(out, OTA_OP_BEGIN, OTA_ERR_DISABLED);
+    bool resume = false;
+    if (_state == OTA_STATE_PAUSED) {
+      bool own = memcmp(_owner, sender_key, sizeof(_owner)) == 0;
+      if (!own) return reply(out, OTA_OP_BEGIN, OTA_ERR_BUSY);
+      resume = _patch_size == patch_size && _new_size == new_size && memcmp(_new_sha, new_sha, 32) == 0
+               && memcmp(old_sha, _img_sha, 32) == 0;
+      if (!resume) {   // the owner starts another update: the paused one is dropped
+        _target->abortNew();
+        _state = OTA_STATE_IDLE;
+      }
+    }
     if (patch_size == 0 || chunk < OTA_MIN_CHUNK || chunk > OTA_MAX_CHUNK || new_size == 0) {
       return reply(out, OTA_OP_BEGIN, OTA_ERR_BAD_ARG);
     }
@@ -216,6 +258,15 @@ private:
     side.sf = sf;
     side.cr = cr;
     if (freq_khz != 0 && _radio_check && !_radio_check(_radio_ctx, side)) return reply(out, OTA_OP_BEGIN, OTA_ERR_BAD_ARG);
+    if (resume) {
+      setTimeout(timeout_s);
+      _last_activity = now_ms;
+      _state = OTA_STATE_RECEIVING;
+      startSide(freq_khz != 0, side);
+      int n = reply(out, OTA_OP_BEGIN, OTA_OK);
+      out[n++] = _chunk;
+      return n;
+    }
     if (!computeImageSha()) return reply(out, OTA_OP_BEGIN, OTA_ERR_FLASH);
     if (memcmp(old_sha, _img_sha, 32) != 0) return reply(out, OTA_OP_BEGIN, OTA_ERR_OLD_IMAGE);
     if (new_size > _target->maxNewSize()) return reply(out, OTA_OP_BEGIN, OTA_ERR_TOO_BIG);
@@ -229,17 +280,11 @@ private:
     _received = _written = _from_pos = 0;
     _next_seq = 0;
     _err = OTA_OK;
-    if (timeout_s == 0) timeout_s = OTA_DEFAULT_TIMEOUT;
-    if (timeout_s > OTA_MAX_TIMEOUT) timeout_s = OTA_MAX_TIMEOUT;
-    _timeout_ms = (uint32_t)timeout_s * 1000;
+    setTimeout(timeout_s);
     _last_activity = now_ms;
     detools_apply_patch_init(&_patch, fromRead, fromSeek, patch_size, toWrite, this);
     _state = OTA_STATE_RECEIVING;
-    if (freq_khz != 0) {
-      _side = side;
-      _on_side = true;
-      _action = ACT_SIDE_RADIO;
-    }
+    startSide(freq_khz != 0, side);
     int n = reply(out, OTA_OP_BEGIN, OTA_OK);
     out[n++] = _chunk;
     return n;
@@ -297,12 +342,15 @@ public:
                                _patch_size(0), _new_size(0), _received(0), _written(0), _from_pos(0),
                                _next_seq(0), _img_size(0), _img_sha_ok(false), _last_activity(0),
                                _timeout_ms(OTA_DEFAULT_TIMEOUT * 1000), _action(ACT_NONE), _on_side(false),
+                               _enabled(false), _paused_at(0),
                                _radio_check(NULL), _radio_ctx(NULL) {
     memset(_owner, 0, sizeof(_owner));
     memset(&_side, 0, sizeof(_side));
   }
 
   void setIdent(const char* ident) { _ident = ident; }
+  void setEnabled(bool on) { _enabled = on; }
+  bool isEnabled() const { return _enabled; }
   void setRadioCheck(OtaRadioCheck check, void* ctx) { _radio_check = check; _radio_ctx = ctx; }
   bool isOnSideRadio() const { return _on_side; }
   bool isActive() const { return _state == OTA_STATE_RECEIVING || _state == OTA_STATE_READY; }
@@ -324,12 +372,21 @@ public:
     restoreRadio();
   }
 
-  // a session nobody talks to any more is dropped, so the node gets back to its normal radio settings
+  // a session nobody talks to any more is paused, so the node gets back to its normal radio settings;
+  // what was received is kept for OTA_PAUSE_KEEP_MS, for the same BEGIN to go on with
   bool checkTimeout(unsigned long now_ms) {
-    if (_state != OTA_STATE_RECEIVING) return false;
-    if ((unsigned long)(now_ms - _last_activity) < _timeout_ms) return false;
-    fail(OTA_ERR_STATE);
-    return true;
+    if (_state == OTA_STATE_RECEIVING) {
+      if ((unsigned long)(now_ms - _last_activity) < _timeout_ms) return false;
+      _state = OTA_STATE_PAUSED;
+      _paused_at = now_ms;
+      restoreRadio();
+      return true;
+    }
+    if (_state == OTA_STATE_PAUSED && (unsigned long)(now_ms - _paused_at) >= OTA_PAUSE_KEEP_MS) {
+      fail(OTA_ERR_STATE);
+      return true;
+    }
+    return false;
   }
 
   // req starts at the OTA_REQ_TYPE byte. Returns the reply length (written to out), 0 for none.
@@ -344,10 +401,11 @@ public:
     if (!is_zero_hop) return op == OTA_OP_DATA ? 0 : reply(out, op, OTA_ERR_NOT_DIRECT);
 
     bool owner = memcmp(_owner, sender_key, sizeof(_owner)) == 0;
-    if (op != OTA_OP_INFO && op != OTA_OP_BEGIN && isActive() && !owner) {
+    if (op != OTA_OP_INFO && op != OTA_OP_BEGIN && held() && !owner) {
       return op == OTA_OP_DATA ? 0 : reply(out, op, OTA_ERR_BUSY);
     }
     if (owner && isActive()) _last_activity = now_ms;
+    if (owner && _state == OTA_STATE_PAUSED) _paused_at = now_ms;
 
     switch (op) {
     case OTA_OP_INFO: {
@@ -355,6 +413,7 @@ public:
       int n = reply(out, op, OTA_OK);
       out[n++] = _target->platform();
       out[n++] = _state;
+      out[n++] = (_enabled ? OTA_FLAG_ENABLED : 0) | (_target->isUnconfirmed() ? OTA_FLAG_UNCONFIRMED : 0);
       putU32(&out[n], _img_size); n += 4;
       memcpy(&out[n], _img_sha, 32); n += 32;
       putU32(&out[n], _target->maxNewSize()); n += 4;
@@ -378,9 +437,15 @@ public:
     }
     case OTA_OP_END:
       return handleEnd(out);
+    case OTA_OP_PAUSE:
+      if (_state != OTA_STATE_RECEIVING) return reply(out, op, _state == OTA_STATE_PAUSED ? OTA_OK : OTA_ERR_STATE);
+      _state = OTA_STATE_PAUSED;
+      _paused_at = now_ms;
+      restoreRadio();
+      return reply(out, op, OTA_OK);
     case OTA_OP_ABORT:   // also cancels the reboot into an image already checked
-      if (_state == OTA_STATE_RECEIVING) _target->abortNew();
-      if (_state != OTA_STATE_IDLE) _action = ACT_RESTORE_RADIO;
+      if (_state == OTA_STATE_RECEIVING || _state == OTA_STATE_PAUSED) _target->abortNew();
+      if (_state != OTA_STATE_IDLE) _action = ACT_RESTORE_RADIO;   // also cancels a reboot after END
       _on_side = false;
       _state = OTA_STATE_IDLE;
       _err = OTA_OK;

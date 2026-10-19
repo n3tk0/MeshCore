@@ -1,5 +1,6 @@
 package io.github.n3tk0.loraota.ota
 
+import io.github.n3tk0.loraota.R
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.ceil
@@ -14,32 +15,42 @@ object OtaProtocol {
     const val OP_STATUS = 4
     const val OP_END = 5
     const val OP_ABORT = 6
+    const val OP_PAUSE = 7
 
     const val STATE_IDLE = 0
     const val STATE_RECEIVING = 1
     const val STATE_READY = 2
     const val STATE_FAILED = 3
+    const val STATE_PAUSED = 4
+
+    const val FLAG_ENABLED = 1
+    const val FLAG_UNCONFIRMED = 2
 
     const val PLATFORM_NRF52 = 1
     const val PLATFORM_ESP32 = 2
 
-    fun statusText(code: Int): String = when (code) {
-        0 -> "OK"
-        1 -> "wrong state"
-        2 -> "new firmware too big"
-        3 -> "delta could not be applied"
-        4 -> "new firmware checksum differs"
-        5 -> "this repeater has no LoRa OTA"
-        6 -> "flash error"
-        7 -> "busy with another update"
-        8 -> "not heard directly (no hop)"
-        9 -> "bad parameters"
-        10 -> "the delta is for other firmware than the repeater runs"
-        11 -> "the new firmware is not for this board"
-        else -> "error $code"
+    /** The repeater's status code as a message for the user. */
+    fun statusRes(code: Int): Int = when (code) {
+        1 -> R.string.st_state
+        2 -> R.string.st_too_big
+        3 -> R.string.st_patch
+        4 -> R.string.st_hash
+        5 -> R.string.st_unsupported
+        6 -> R.string.st_flash
+        7 -> R.string.st_busy
+        8 -> R.string.st_not_direct
+        9 -> R.string.st_bad_arg
+        10 -> R.string.st_old_image
+        11 -> R.string.st_bad_image
+        12 -> R.string.st_disabled
+        else -> R.string.st_unknown
     }
 
-    class Info(val platform: Int, val state: Int, val imageSize: Int, val imageSha: ByteArray, val maxNew: Int, val ident: String)
+    class Info(val platform: Int, val state: Int, val flags: Int, val imageSize: Int, val imageSha: ByteArray,
+               val maxNew: Int, val ident: String) {
+        val enabled get() = flags and FLAG_ENABLED != 0
+        val unconfirmed get() = flags and FLAG_UNCONFIRMED != 0
+    }
     class Status(val state: Int, val nextSeq: Int, val received: Int, val written: Int)
     class Reply(val op: Int, val status: Int, val data: ByteBuffer)
 
@@ -49,6 +60,7 @@ object OtaProtocol {
     fun status() = byteArrayOf(REQ_TYPE.toByte(), OP_STATUS.toByte())
     fun end() = byteArrayOf(REQ_TYPE.toByte(), OP_END.toByte())
     fun abort() = byteArrayOf(REQ_TYPE.toByte(), OP_ABORT.toByte())
+    fun pause() = byteArrayOf(REQ_TYPE.toByte(), OP_PAUSE.toByte())
 
     fun begin(patchSize: Int, newSize: Int, newSha: ByteArray, oldSha: ByteArray, chunk: Int,
               radio: SideRadio?, timeoutSecs: Int): ByteArray {
@@ -77,12 +89,13 @@ object OtaProtocol {
         val b = r.data
         val platform = b.get().toInt() and 0xff
         val state = b.get().toInt() and 0xff
+        val flags = b.get().toInt() and 0xff
         val size = b.int
         val sha = ByteArray(32).also { b.get(it) }
         val maxNew = b.int
         val rest = ByteArray(b.remaining()).also { b.get(it) }
         val end = rest.indexOf(0).let { if (it < 0) rest.size else it }
-        return Info(platform, state, size, sha, maxNew, String(rest, 0, end, Charsets.UTF_8))
+        return Info(platform, state, flags, size, sha, maxNew, String(rest, 0, end, Charsets.UTF_8))
     }
 
     fun parseStatus(r: Reply): Status {

@@ -100,6 +100,15 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 - **Shown once:** the companion firmware drops a direct message it already showed (same sender and timestamp, last 32), so a kept copy or a retry is not shown twice; the sender still gets its ACK.
 - **CLI** (serial or remote admin): `mailbox` (state), `mailbox on|off`, `mailbox learn` (the next companion advert with no hop in 2 minutes becomes an owner), `mailbox add <64-hex key>`, `mailbox del <key prefix>`, `mailbox list`, `mailbox ttl <hours>` (default 72), `mailbox away <minutes>` (default 10), `mailbox clear`.
 
+### LoRa OTA for repeaters (nRF52, ESP32)
+
+- **How:** the Android app in [`android/`](./android) makes a delta from the firmware the repeater runs to the new one and sends it through your companion, only with no hop, on a side channel (default 869.470 MHz / 125 kHz / SF7) so the main channel keeps working.
+- **Off by default:** run `set ota on` in the repeater's console first (`set ota off` turns it off again, `ota status` shows it).
+- **Cut short:** the repeater goes back to its normal channel and keeps its progress for 30 minutes; the same update in the app continues where it stopped.
+- **Time on air:** the app keeps to 10 % of each hour; a bigger delta waits for the next part of the hour on the normal channel.
+- **ESP32 rollback:** a new image that does not get an admin login or 10 minutes of uptime before a restart goes back to the previous one; `ota rollback` does it by hand.
+- **APK signing:** CI signs with the key from the secrets `LORAOTA_KEYSTORE_BASE64`, `LORAOTA_KEYSTORE_PASSWORD`, `LORAOTA_KEY_ALIAS`, `LORAOTA_KEY_PASSWORD` (a debug key when they are not set).
+
 ### Fixes to upstream MeshCore
 
 These are in shared code and apply to every board.
@@ -124,6 +133,9 @@ These are in shared code and apply to every board.
 
 ### Builds and CI
 
+- [`.github/workflows/build-boards.yml`](./.github/workflows/build-boards.yml) builds any boards by hand (Actions > Build Firmware for Boards > Run workflow): a list of env names, or every repeater / companion / room server, optionally only names containing a filter such as `Xiao`. Files go to the run's artifacts, and optionally to a GitHub pre-release.
+- [`.github/workflows/build-xiao-repeaters.yml`](./.github/workflows/build-xiao-repeaters.yml) builds the Xiao repeaters with the `.bin` files and `ota-manifest.json` the LoRa OTA app uses; a `xiao-repeater-v*` tag publishes a release.
+- [`.github/workflows/build-android-app.yml`](./.github/workflows/build-android-app.yml) tests and builds the LoRa OTA app; a `lora-ota-app-v*` tag publishes the APK.
 - [`.github/workflows/build-faketec-v5.yml`](./.github/workflows/build-faketec-v5.yml) builds the BLE and USB firmware on pushes to `main` and on manual runs, and uploads the `.uf2` and OTA `.zip` as run artifacts. A `faketec-v*` tag also publishes a GitHub release with them.
 
 ## About MeshCore
