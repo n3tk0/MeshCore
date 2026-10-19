@@ -36,7 +36,8 @@
 #include <helpers/RegionMap.h>
 #include <helpers/RoutingPolicy.h>
 #include "RateLimiter.h"
-#ifdef WITH_MAILBOX
+#ifndef NO_MAILBOX
+  #define WITH_MAILBOX           // every repeater of this fork; off until 'mailbox learn' / 'mailbox on'
   #include <helpers/MailboxStore.h>
 #endif
 

@@ -7,10 +7,14 @@
 // owner is away and hands them over when it hears the owner again with no hop between).
 // The repeater cannot read the messages: they stay encrypted to the owner. A TXT_MSG payload starts
 // with dest_hash(1) + src_hash(1), so a message is kept by the owner's first public key byte.
-// Pure logic, no radio or file system: MyMesh feeds it packets and saves toBytes()/fromBytes().
+// Pure logic, no radio or file system: MyMesh feeds it packets and streams it to a file with save()/load().
 
 #ifndef MAILBOX_MAX
-  #define MAILBOX_MAX            64     // stored messages, all owners together
+  #if defined(STM32_PLATFORM)
+    #define MAILBOX_MAX           8     // ~200 bytes of RAM each
+  #else
+    #define MAILBOX_MAX          64     // stored messages, all owners together
+  #endif
 #endif
 #define MAILBOX_MAX_OWNERS        4
 #define MAILBOX_KEY_SIZE         32     // PUB_KEY_SIZE
@@ -173,47 +177,44 @@ public:
   void remove(int i) { if (i >= 0 && i < _count) removeAt(i); }
   void clear() { _count = 0; }
 
-  // file image: ver(1) + config + count(2) + entries (only 'len' bytes of each payload)
-  static constexpr int maxBytes() { return 1 + sizeof(MailboxConfig) + 2 + MAILBOX_MAX * (4 + 1 + 1 + MAILBOX_HASH_SIZE + MAILBOX_PAYLOAD_MAX); }
-
-  int toBytes(uint8_t* out) const {
-    int n = 0;
-    out[n++] = MAILBOX_FILE_VER;
-    memcpy(&out[n], &_cfg, sizeof(_cfg)); n += sizeof(_cfg);
-    out[n++] = _count & 0xFF;
-    out[n++] = _count >> 8;
+  // file image: ver(1) + config + count(2) + entries (only 'len' bytes of each payload).
+  // W: write(const uint8_t*, int); R: int read(uint8_t*, int) -> bytes read. Streamed, no big buffer.
+  template<class W> void save(W& w) const {
+    uint8_t ver = MAILBOX_FILE_VER;
+    w.write(&ver, 1);
+    w.write((const uint8_t*)&_cfg, sizeof(_cfg));
+    uint8_t cnt[2] = { (uint8_t)(_count & 0xFF), (uint8_t)(_count >> 8) };
+    w.write(cnt, 2);
     for (int i = 0; i < _count; i++) {
       const MailboxEntry& e = _items[i];
-      memcpy(&out[n], &e.stored_at, 4); n += 4;
-      out[n++] = e.owner;
-      out[n++] = e.len;
-      memcpy(&out[n], e.hash, MAILBOX_HASH_SIZE); n += MAILBOX_HASH_SIZE;
-      memcpy(&out[n], e.payload, e.len); n += e.len;
+      w.write((const uint8_t*)&e.stored_at, 4);
+      w.write(&e.owner, 1);
+      w.write(&e.len, 1);
+      w.write(e.hash, MAILBOX_HASH_SIZE);
+      w.write(e.payload, e.len);
     }
-    return n;
   }
 
   // a damaged or foreign file leaves the mailbox empty and off
-  bool fromBytes(const uint8_t* in, int len) {
+  template<class R> bool load(R& r) {
     reset();
-    int n = 0;
-    if (len < 1 + (int)sizeof(MailboxConfig) + 2 || in[n++] != MAILBOX_FILE_VER) return false;
+    uint8_t ver = 0, cnt[2];
     MailboxConfig c;
-    memcpy(&c, &in[n], sizeof(c)); n += sizeof(c);
-    if (c.num_owners > MAILBOX_MAX_OWNERS) return false;
-    int cnt = in[n] | (in[n + 1] << 8); n += 2;
-    if (cnt > MAILBOX_MAX) return false;
-    for (int i = 0; i < cnt; i++) {
-      if (n + 6 + MAILBOX_HASH_SIZE > len) { _count = 0; return false; }
+    if (r.read(&ver, 1) != 1 || ver != MAILBOX_FILE_VER) return false;
+    if (r.read((uint8_t*)&c, sizeof(c)) != (int)sizeof(c) || c.num_owners > MAILBOX_MAX_OWNERS) return false;
+    if (r.read(cnt, 2) != 2) return false;
+    int n = cnt[0] | (cnt[1] << 8);
+    if (n > MAILBOX_MAX) return false;
+    for (int i = 0; i < n; i++) {
       MailboxEntry& e = _items[i];
-      memcpy(&e.stored_at, &in[n], 4); n += 4;
-      e.owner = in[n++];
-      e.len = in[n++];
-      memcpy(e.hash, &in[n], MAILBOX_HASH_SIZE); n += MAILBOX_HASH_SIZE;
-      if (e.owner >= c.num_owners || !isMessage(0x02, e.len) || n + e.len > len) { _count = 0; return false; }
-      memcpy(e.payload, &in[n], e.len); n += e.len;
-      _count = i + 1;
+      if (r.read((uint8_t*)&e.stored_at, 4) != 4 || r.read(&e.owner, 1) != 1 || r.read(&e.len, 1) != 1
+          || r.read(e.hash, MAILBOX_HASH_SIZE) != MAILBOX_HASH_SIZE
+          || e.owner >= c.num_owners || !isMessage(0x02, e.len) || r.read(e.payload, e.len) != e.len) {
+        _count = 0;
+        return false;
+      }
     }
+    _count = n;
     _cfg = c;
     return true;
   }
