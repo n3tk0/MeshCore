@@ -311,6 +311,18 @@ TEST_F(LoraOtaTest, OtherUpdateDropsThePausedOne) {
   EXPECT_EQ(0, out[3]);   // from the start
 }
 
+TEST_F(LoraOtaTest, TurningOffStopsTheUpdate) {
+  send(ADMIN, beginArgs());
+  ota.takeAction();
+  sendData(fixture_patch, sizeof(fixture_patch), 0);
+  ota.setEnabled(false);
+  EXPECT_EQ(LoraOta::ACT_RESTORE_RADIO, ota.takeAction());
+  EXPECT_FALSE(ota.isActive());
+  EXPECT_TRUE(target.aborted);
+  send(ADMIN, { OTA_OP_STATUS });
+  EXPECT_EQ(OTA_STATE_IDLE, out[2]);
+}
+
 TEST_F(LoraOtaTest, OffUntilTurnedOn) {
   ota.setEnabled(false);
   send(ADMIN, beginArgs());

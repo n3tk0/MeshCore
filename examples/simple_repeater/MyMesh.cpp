@@ -727,7 +727,6 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
 #ifdef WITH_LORA_OTA
       if (len > 5 && data[4] == OTA_REQ_TYPE) {
         if (!client->isAdmin()) return;
-        ota_target.confirm();
         client->last_timestamp = timestamp;
         client->last_activity = getRTCClock()->getCurrentTime();
         // a direct packet has no path left when it gets here, however many hops it took: the
@@ -736,6 +735,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
                         && client->out_path_len != OUT_PATH_UNKNOWN && (client->out_path_len & 63) == 0;
         memcpy(reply_data, &timestamp, 4);
         int n = lora_ota.handleRequest(client->id.pub_key, zero_hop, &data[4], len - 4, &reply_data[4], millis());
+        ota_target.confirm();   // after the reply: INFO still tells the app it was not confirmed before
         applyOtaAction();
         if (ota_on_side && revert_radio_at) revert_radio_at = futureMillis(OTA_MAX_SIDE_MILLIS);   // still busy
         if (n == 0) return;   // DATA: no reply, the admin asks for STATUS now and then
@@ -1403,7 +1403,8 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     } else {
       _fs->remove(OTA_ON_FILE);
     }
-    lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
+    lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));   // off also stops an update under way
+    applyOtaAction();
     strcpy(reply, lora_ota.isEnabled() == on ? "OK" : "Err - could not save");
   #ifdef ESP32
   } else if (strcmp(command, "ota rollback") == 0) {
@@ -1431,7 +1432,14 @@ void MyMesh::loop() {
 
   mesh::Mesh::loop();
 
-  if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
+#ifdef WITH_LORA_OTA
+  bool hold_adverts = ota_on_side;   // they would go out on the OTA side channel; sent once back
+#else
+  bool hold_adverts = false;
+#endif
+  if (hold_adverts) {
+    // later
+  } else if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
     mesh::Packet *pkt = createSelfAdvert();
     uint32_t delay_millis = 0;
     if (pkt) sendFloodScoped(default_scope, pkt, delay_millis, _prefs.path_hash_mode + 1);
@@ -1735,7 +1743,7 @@ void MyMesh::otaLoop() {
   }
   if (ota_commit_at && millisHasNowPassed(ota_commit_at)) {
     ota_commit_at = 0;
-    if (dirty_contacts_expiry) acl.save(_fs);   // nothing is lost by the reboot
+    acl.save(_fs);   // nothing is lost by the reboot, also the route back to the admin (not always marked dirty)
   #ifdef WITH_MAILBOX
     if (mailbox_save_at) saveMailbox();
   #endif

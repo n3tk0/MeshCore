@@ -71,6 +71,8 @@
     <string name="err_no_answer">Repeater-ът не отговаря. Той трябва да е до теб, без hop.</string>
     <string name="err_no_side">Repeater-ът не се чува на страничния канал.</string>
     <string name="err_not_started">Repeater-ът не започна обновяването.</string>
+    <string name="err_air_too_small">Лимитът за време в ефир е твърде малък за дори един пакет. Провери настройките на страничния канал.</string>
+    <string name="err_end_lost">Краят на обновяването не стигна до repeater-а. Той пази всичко 30 минути: натисни „Продължи“.</string>
     <string name="err_lost">Връзката с repeater-а се изгуби. Repeater-ът пази докъде е стигнал 30 минути: натисни „Продължи“.</string>
     <string name="err_dropped">Repeater-ът прекрати обновяването.</string>
     <string name="err_paused">Обновяването прекъсна (%1$s). Repeater-ът пази докъде е стигнал 30 минути: натисни „Продължи“.</string>

@@ -349,7 +349,16 @@ public:
   }
 
   void setIdent(const char* ident) { _ident = ident; }
-  void setEnabled(bool on) { _enabled = on; }
+  // turning it off also drops an update under way (and a reboot into an image already checked)
+  void setEnabled(bool on) {
+    _enabled = on;
+    if (on || _state == OTA_STATE_IDLE || _state == OTA_STATE_FAILED) return;
+    if (_state == OTA_STATE_RECEIVING || _state == OTA_STATE_PAUSED) _target->abortNew();
+    _action = ACT_RESTORE_RADIO;
+    _on_side = false;
+    _state = OTA_STATE_IDLE;
+    memset(_owner, 0, sizeof(_owner));
+  }
   bool isEnabled() const { return _enabled; }
   void setRadioCheck(OtaRadioCheck check, void* ctx) { _radio_check = check; _radio_ctx = ctx; }
   bool isOnSideRadio() const { return _on_side; }

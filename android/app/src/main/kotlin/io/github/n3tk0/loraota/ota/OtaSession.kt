@@ -115,9 +115,14 @@ class OtaSession(
             var next = st.nextSeq
             progress(next, total)
             while (next < total) {
-                val end = minOf(total, next + WINDOW)
-                val packets = (next until end).map { seq -> patch.copyOfRange(seq * CHUNK, minOf(patch.size, (seq + 1) * CHUNK)) }
-                val need = packets.sumOf { radio.airtime(requestPacketSize(4 + it.size)) } + radio.airtime(requestPacketSize(2))
+                val all = (next until minOf(total, next + WINDOW)).map { seq -> patch.copyOfRange(seq * CHUNK, minOf(patch.size, (seq + 1) * CHUNK)) }
+                fun needFor(n: Int) = all.take(n).sumOf { radio.airtime(requestPacketSize(4 + it.size)) } + radio.airtime(requestPacketSize(2))
+                // a window must fit in one hour's budget, or the wait for it never ends
+                var count = all.size
+                while (count > 1 && needFor(count) > budget.limitSecs) count--
+                val need = needFor(count)
+                if (need > budget.limitSecs) throw OtaFailed(R.string.err_air_too_small)
+                val packets = all.take(count)
                 val wait = budget.waitMs(need)
                 if (wait > PAUSE_AFTER_MS) {
                     pauseFor(wait)
@@ -137,7 +142,7 @@ class OtaSession(
                     companion.sendRequest(repeater, OtaProtocol.data(next + i, bytes))
                     delay((t * PACKET_GAP * 1000).toLong())
                 }
-                st = status() ?: throw OtaFailed(R.string.err_lost, resumable = true)
+                st = status() ?: lost()
                 if (st.state != OtaProtocol.STATE_RECEIVING) throw OtaFailed(R.string.err_dropped)
                 if (st.nextSeq < next) log("resending from ${st.nextSeq}")
                 next = st.nextSeq
@@ -146,7 +151,15 @@ class OtaSession(
 
             phase(Phase.FINISH, 0)
             log("END")
-            val e = request(OtaProtocol.end(), statusTimeoutMs(), 2)
+            var e: OtaProtocol.Reply? = null
+            for (attempt in 1..3) {
+                e = request(OtaProtocol.end(), statusTimeoutMs(), 2)
+                if (e != null) break
+                // the END or its reply was lost: READY means it got there, RECEIVING means send it again
+                val s = status() ?: break
+                if (s.state != OtaProtocol.STATE_RECEIVING) break
+                log("END again")
+            }
             if (e != null && e.status != 0) {
                 stopped = true   // the repeater gave up on this one
                 throw OtaFailed(OtaProtocol.statusRes(e.status))
@@ -158,6 +171,8 @@ class OtaSession(
             delay(30_000)
             val i = runCatching { info(30_000) }.getOrNull() ?: runCatching { info(30_000) }.getOrNull()
                 ?: throw OtaFailed(R.string.err_after_restart)
+            // the END never got there: the repeater paused the update and keeps it
+            if (i.state == OtaProtocol.STATE_PAUSED) throw OtaFailed(R.string.err_end_lost, resumable = true)
             if (!i.imageSha.contentEquals(newSha)) throw OtaFailed(R.string.err_old_still_runs, listOf(i.ident))
             log("the repeater runs the new firmware")
         } catch (e: Throwable) {
@@ -171,6 +186,18 @@ class OtaSession(
         } finally {
             if (onSide) normalRadio()
         }
+    }
+
+    /**
+     * No answer on the side channel. A repeater that gave up (patch or flash error) is back on the
+     * normal channel: ask there, so such an error is not offered as one to go on with.
+     */
+    private suspend fun lost(): Nothing {
+        normalRadio()
+        val r = request(OtaProtocol.status(), 20_000, 1)
+        if (r != null && OtaProtocol.parseStatus(r).state == OtaProtocol.STATE_FAILED)
+            throw OtaFailed(OtaProtocol.statusRes(r.status))
+        throw OtaFailed(R.string.err_lost, resumable = true)
     }
 
     private suspend fun status(): OtaProtocol.Status? {
