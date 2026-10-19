@@ -37,9 +37,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # the runner image has the Android SDK (ANDROID_HOME); android-actions/setup-android@v3 fails
+      # there now, asking sdkmanager for the 'tools' package that no longer exists
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
