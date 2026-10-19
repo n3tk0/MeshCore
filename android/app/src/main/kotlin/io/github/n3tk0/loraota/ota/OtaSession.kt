@@ -114,11 +114,11 @@ class OtaSession(
         }
     }
 
-    suspend fun run(old: ByteArray, new: ByteArray, patch: ByteArray) {
+    suspend fun run(old: ByteArray, new: ByteArray, patch: ByteArray, inPlace: Boolean = false) {
         val oldSha = io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(old)
         val newSha = io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(new)
         val total = (patch.size + CHUNK - 1) / CHUNK
-        val begin = OtaProtocol.begin(patch.size, new.size, newSha, oldSha, CHUNK, radio, SESSION_TIMEOUT_SECS)
+        val begin = OtaProtocol.begin(patch.size, new.size, newSha, oldSha, CHUNK, radio, SESSION_TIMEOUT_SECS, inPlace)
         var stopped = false
         try {
             var st = start(begin)

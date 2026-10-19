@@ -360,6 +360,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cr.toIntOrNull() ?: 5,
     )
 
+    /** The new image only goes "in place" on this repeater: a power cut while it copies needs a visit. */
+    fun inPlace(): Boolean {
+        val n = newImage?.data?.size ?: return false
+        return info?.inPlace(n) == true
+    }
+
     fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
 
     fun estimateMinutes(): Double? {
@@ -381,7 +387,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val old = oldImage ?: return@work
             val new = newImage ?: return@work
             val i = info
-            if (i != null && new.data.size > i.maxNew) throw Exception(str(R.string.msg_too_big))
+            if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
             patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
         }
         confirmUpdate = true
@@ -398,7 +404,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             log.clear()
             OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
             try {
-                session(r).run(old.data, new.data, p)
+                session(r).run(old.data, new.data, p, inPlace())
             } catch (e: OtaFailed) {
                 resumable = e.resumable
                 throw e

@@ -13,6 +13,7 @@ class SHA256 {
   size_t _len;
 public:
   SHA256() : _len(0) { memset(_state, 0, sizeof(_state)); }
+  void reset() { _len = 0; memset(_state, 0, sizeof(_state)); }
 
   void update(const void* data, size_t len) {
     const uint8_t* bytes = static_cast<const uint8_t*>(data);

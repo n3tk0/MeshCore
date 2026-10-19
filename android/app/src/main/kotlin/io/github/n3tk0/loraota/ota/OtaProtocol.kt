@@ -26,6 +26,8 @@ object OtaProtocol {
     const val FLAG_ENABLED = 1
     const val FLAG_UNCONFIRMED = 2
 
+    const val BEGIN_IN_PLACE = 1   // the admin agrees to an update "in place" (see Info.inPlace)
+
     const val PLATFORM_NRF52 = 1
     const val PLATFORM_ESP32 = 2
 
@@ -43,12 +45,19 @@ object OtaProtocol {
         10 -> R.string.st_old_image
         11 -> R.string.st_bad_image
         12 -> R.string.st_disabled
+        13 -> R.string.st_no_ram
         else -> R.string.st_unknown
     }
 
     class Info(val platform: Int, val state: Int, val flags: Int, val imageSize: Int, val imageSha: ByteArray,
-               val maxNew: Int, val ident: String) {
+               val maxNew: Int, val maxInPlace: Int, val ident: String) {
         val enabled get() = flags and FLAG_ENABLED != 0
+        /**
+         * An image this big only goes "in place": the repeater has no room for the old and the new one
+         * together, so a power cut while it copies leaves it with no firmware.
+         */
+        fun inPlace(newSize: Int) = newSize > maxNew && newSize <= maxInPlace
+        fun fits(newSize: Int) = newSize <= maxNew || newSize <= maxInPlace
         val unconfirmed get() = flags and FLAG_UNCONFIRMED != 0
     }
     class Status(val state: Int, val nextSeq: Int, val received: Int, val written: Int)
@@ -63,13 +72,14 @@ object OtaProtocol {
     fun pause() = byteArrayOf(REQ_TYPE.toByte(), OP_PAUSE.toByte())
 
     fun begin(patchSize: Int, newSize: Int, newSha: ByteArray, oldSha: ByteArray, chunk: Int,
-              radio: SideRadio?, timeoutSecs: Int): ByteArray {
-        val b = le(2 + 4 + 4 + 32 + 32 + 1 + 4 + 4 + 1 + 1 + 2)
+              radio: SideRadio?, timeoutSecs: Int, inPlace: Boolean = false): ByteArray {
+        val b = le(2 + 4 + 4 + 32 + 32 + 1 + 4 + 4 + 1 + 1 + 2 + 1)
         b.put(REQ_TYPE.toByte()).put(OP_BEGIN.toByte())
         b.putInt(patchSize).putInt(newSize).put(newSha).put(oldSha).put(chunk.toByte())
         b.putInt(radio?.freqKhz ?: 0).putInt(radio?.bwHz ?: 0)
         b.put((radio?.sf ?: 0).toByte()).put((radio?.cr ?: 0).toByte())
         b.putShort(timeoutSecs.toShort())
+        b.put((if (inPlace) BEGIN_IN_PLACE else 0).toByte())
         return b.array()
     }
 
@@ -93,9 +103,10 @@ object OtaProtocol {
         val size = b.int
         val sha = ByteArray(32).also { b.get(it) }
         val maxNew = b.int
+        val maxInPlace = b.int
         val rest = ByteArray(b.remaining()).also { b.get(it) }
         val end = rest.indexOf(0).let { if (it < 0) rest.size else it }
-        return Info(platform, state, flags, size, sha, maxNew, String(rest, 0, end, Charsets.UTF_8))
+        return Info(platform, state, flags, size, sha, maxNew, maxInPlace, String(rest, 0, end, Charsets.UTF_8))
     }
 
     fun parseStatus(r: Reply): Status {

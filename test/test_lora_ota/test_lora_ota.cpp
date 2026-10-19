@@ -7,7 +7,8 @@
 class RamTarget : public OtaTarget {
 public:
   std::vector<uint8_t> image, next;
-  uint32_t max_new = 100000;
+  uint32_t max_new = 100000, max_in_place = 0, head_cfg = 1024, head = 0, pos = 0;
+  std::vector<uint8_t> patch, committed_head;
   bool committed = false, aborted = false, fail_write = false;
 
   uint8_t platform() const override { return OTA_PLATFORM_NRF52; }
@@ -18,14 +19,31 @@ public:
     return true;
   }
   uint32_t maxNewSize() override { return max_new; }
-  bool beginNew(uint32_t) override { next.clear(); aborted = false; return true; }
+  bool beginNew(uint32_t) override { next.clear(); aborted = false; head = 0; return true; }
+  // in place: like the nRF one, the start of the new image is dropped and the delta kept
+  uint32_t maxInPlaceSize() override { return max_in_place; }
+  bool beginInPlace(uint32_t size, uint32_t) override {
+    next.clear(); patch.clear(); aborted = false; pos = 0;
+    head = head_cfg < size ? head_cfg : size;
+    return true;
+  }
+  uint32_t headSize() override { return head; }
+  bool writePatch(const uint8_t* src, size_t len) override { patch.insert(patch.end(), src, src + len); return true; }
+  bool readPatch(uint32_t off, uint8_t* dest, size_t len) override {
+    if (off + len > patch.size()) return false;
+    memcpy(dest, &patch[off], len);
+    return true;
+  }
+  void commitInPlace(const uint8_t* h) override { committed_head.assign(h, h + head); committed = true; }
   bool writeNew(const uint8_t* src, size_t len) override {
     if (fail_write) return false;
-    next.insert(next.end(), src, src + len);
+    for (size_t i = 0; i < len; i++, pos++) if (head == 0 || pos >= head) next.push_back(src[i]);
     return true;
   }
   bool finishNew() override { return true; }
   bool readNew(uint32_t off, uint8_t* dest, size_t len) override {
+    if (off < head) return false;
+    off -= head;
     if (off + len > next.size()) return false;
     memcpy(dest, &next[off], len);
     return true;
@@ -67,7 +85,7 @@ protected:
   static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; i++) v.push_back((x >> (8 * i)) & 0xff); }
 
   std::vector<uint8_t> beginArgs(uint32_t freq_khz = 869470, const uint8_t* old_img = fixture_old, size_t old_len = sizeof(fixture_old),
-                                 uint32_t patch_size = sizeof(fixture_patch)) {
+                                 uint32_t patch_size = sizeof(fixture_patch), uint8_t flags = 0) {
     std::vector<uint8_t> a = { OTA_OP_BEGIN };
     put32(a, patch_size);
     put32(a, sizeof(fixture_new));
@@ -82,6 +100,7 @@ protected:
     a.push_back(7);
     a.push_back(5);
     a.push_back(60); a.push_back(0);
+    a.push_back(flags);
     return a;
   }
 
@@ -110,7 +129,10 @@ TEST_F(LoraOtaTest, InfoTellsWhatRuns) {
   uint8_t h[32];
   sha(fixture_old, sizeof(fixture_old), h);
   EXPECT_EQ(0, memcmp(h, &out[9], 32));
-  EXPECT_EQ(std::string("v1 test|Board"), std::string((char*)&out[45], n - 45));
+  uint32_t in_place;
+  memcpy(&in_place, &out[45], 4);
+  EXPECT_EQ(0u, in_place);
+  EXPECT_EQ(std::string("v1 test|Board"), std::string((char*)&out[49], n - 49));
 }
 
 TEST_F(LoraOtaTest, WholeUpdate) {
@@ -331,6 +353,48 @@ TEST_F(LoraOtaTest, OffUntilTurnedOn) {
   send(ADMIN, { OTA_OP_INFO });
   EXPECT_EQ(OTA_OK, out[1]);
   EXPECT_EQ(0, out[4]);
+}
+
+TEST_F(LoraOtaTest, InPlaceOnlyWhenTheAdminAgrees) {
+  target.max_new = 100;
+  target.max_in_place = 100000;
+  send(ADMIN, beginArgs());
+  EXPECT_EQ(OTA_ERR_TOO_BIG, out[1]);
+  send(ADMIN, beginArgs(869470, fixture_old, sizeof(fixture_old), sizeof(fixture_patch), OTA_BEGIN_IN_PLACE));
+  EXPECT_EQ(OTA_OK, out[1]);
+}
+
+TEST_F(LoraOtaTest, InPlaceMakesTheStartAgainAtCommit) {
+  target.max_new = 100;
+  target.max_in_place = 100000;
+  send(ADMIN, beginArgs(0, fixture_old, sizeof(fixture_old), sizeof(fixture_patch), OTA_BEGIN_IN_PLACE));
+  for (int s = 0; s < chunks(sizeof(fixture_patch)); s++) sendData(fixture_patch, sizeof(fixture_patch), s);
+  ASSERT_EQ(2, send(ADMIN, { OTA_OP_END }));
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(LoraOta::ACT_COMMIT, ota.takeAction());
+  EXPECT_EQ(sizeof(fixture_new) - target.head, target.next.size());
+  EXPECT_EQ(sizeof(fixture_patch), target.patch.size());
+  ota.commit();
+  ASSERT_TRUE(target.committed);
+  std::vector<uint8_t> all = target.committed_head;
+  all.insert(all.end(), target.next.begin(), target.next.end());
+  ASSERT_EQ(sizeof(fixture_new), all.size());
+  EXPECT_EQ(0, memcmp(fixture_new, all.data(), all.size()));
+}
+
+TEST_F(LoraOtaTest, InPlaceBrokenTailNeverBoots) {
+  target.max_new = 100;
+  target.max_in_place = 100000;
+  send(ADMIN, beginArgs(0, fixture_old, sizeof(fixture_old), sizeof(fixture_patch), OTA_BEGIN_IN_PLACE));
+  for (int s = 0; s < chunks(sizeof(fixture_patch)); s++) sendData(fixture_patch, sizeof(fixture_patch), s);
+  send(ADMIN, { OTA_OP_END });
+  ota.takeAction();
+  target.next[10] ^= 0xff;   // the kept end of the image changed in flash
+  ota.commit();
+  EXPECT_FALSE(target.committed);
+  send(ADMIN, { OTA_OP_STATUS });
+  EXPECT_EQ(OTA_STATE_FAILED, out[2]);
+  EXPECT_EQ(OTA_ERR_HASH, out[1]);
 }
 
 int main(int argc, char **argv) {
