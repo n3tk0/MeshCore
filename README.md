@@ -90,6 +90,16 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 
 Build with PlatformIO, e.g. `pio run -e Faketec_v5_companion_radio_ble` (or `_usb`), then flash the UF2 by double-tapping reset and copying it to the bootloader drive.
 
+### Repeater mailbox (store & forward for direct messages)
+
+Repeaters built with `-D WITH_MAILBOX` (`Xiao_C3_repeater`, `Xiao_nrf52_repeater`) keep direct messages for up to 4 owner companions while they are away, and hand them over when the owner is heard again with no hop between. Nothing is flooded: messages are kept from traffic the repeater hears anyway, and handed over as zero-hop packets that nobody repeats.
+
+- **What is kept:** only `TXT_MSG` packets addressed to an owner (by the first public key byte, the only one in the packet), still encrypted to the owner; the repeater cannot read them. Channel messages and adverts are not kept. Up to 64 messages in flash (`/mailbox`), so they survive a restart; older than `ttl` hours are dropped; when full, the oldest goes.
+- **Only while away:** an owner heard with no hop (its advert, or a flood packet it just sent) in the last `away` minutes is present, and nothing is kept for it. A flood message the owner answered with a PATH reply in the next 2 minutes is dropped as delivered. A sender's automatic retries (same sender, same length, within 30 s) are kept once.
+- **Hand-over:** on a zero-hop advert from the owner (Quick menu > Send advert on the Faketec), the kept messages go out one every 2.5 s as zero-hop direct packets. The owner ACKs them as usual; a sender that is still on the mesh gets the late ACK, and the Faketec UI turns its "not delivered" into delivered.
+- **Shown once:** the companion firmware drops a direct message it already showed (same sender and timestamp, last 32), so a kept copy or a retry is not shown twice; the sender still gets its ACK.
+- **CLI** (serial or remote admin): `mailbox` (state), `mailbox on|off`, `mailbox learn` (the next companion advert with no hop in 2 minutes becomes an owner), `mailbox add <64-hex key>`, `mailbox del <key prefix>`, `mailbox list`, `mailbox ttl <hours>` (default 72), `mailbox away <minutes>` (default 10), `mailbox clear`.
+
 ### Fixes to upstream MeshCore
 
 These are in shared code and apply to every board.

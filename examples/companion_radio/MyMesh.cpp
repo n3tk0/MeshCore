@@ -607,9 +607,22 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
   }
 }
 
+bool MyMesh::isRepeatedMsg(const ContactInfo &from, uint32_t sender_timestamp) {
+  for (int i = 0; i < RECENT_MSG_TABLE_SIZE; i++) {
+    if (recent_msgs[i].timestamp == sender_timestamp && memcmp(recent_msgs[i].key, from.id.pub_key, 4) == 0) return true;
+  }
+  RecentMsg& r = recent_msgs[next_recent_msg];
+  next_recent_msg = (next_recent_msg + 1) % RECENT_MSG_TABLE_SIZE;
+  memcpy(r.key, from.id.pub_key, 4);
+  r.timestamp = sender_timestamp;
+  return false;
+}
+
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+  // shown once; the sender still gets its ACK (sent by the caller)
+  if (isRepeatedMsg(from, sender_timestamp)) return;
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -1031,6 +1044,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 #endif
   cli_command[0] = 0;
   offline_queue_len = 0;
+  memset(recent_msgs, 0, sizeof(recent_msgs));
+  next_recent_msg = 0;
   app_target_ver = 0;
   clearPendingReqs();
   next_ack_idx = 0;
