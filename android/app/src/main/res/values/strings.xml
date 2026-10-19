@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LoRa OTA</string>
+    <string name="companion_hint">Обновяване на repeater по LoRa през твоя companion. Включи companion-а и го намери.</string>
+    <string name="scan">Търси companion</string>
+    <string name="scanning">Търся…</string>
+    <string name="connected_to">Свързан с %1$s</string>
+    <string name="disconnect">Прекъсни</string>
+    <string name="repeater_hint">Избери repeater. Той трябва да е до теб: обновяването е само без hop.</string>
+    <string name="no_repeaters">Companion-ът няма repeater-и в контактите.</string>
+    <string name="admin_password">Admin парола</string>
+    <string name="login">Вход</string>
+    <string name="back">Назад</string>
+    <string name="platform">Платформа</string>
+    <string name="image">Firmware</string>
+    <string name="running_firmware">Текущ firmware (.bin)</string>
+    <string name="running_unknown">Не е намерен в изданията. Избери същия .bin файл, който е на repeater-а.</string>
+    <string name="pick_file">Избери файл</string>
+    <string name="new_firmware">Нов firmware</string>
+    <string name="chosen">Избран: %1$s</string>
+    <string name="reload_releases">Обнови изданията</string>
+    <string name="side_channel">Страничен канал</string>
+    <string name="side_channel_hint">Обновяването минава на друга честота, за да не спира мрежата. По подразбиране 869.470 MHz, BW 125, под основния 869.618 MHz. В 869.40–869.65 MHz важи 10% време в ефир.</string>
+    <string name="duty">Ефир %</string>
+    <string name="make_delta">Направи delta</string>
+    <string name="delta_size">Delta: %1$.1f KB (новият firmware е %2$.0f KB), около %3$.0f мин</string>
+    <string name="send">Изпрати</string>
+    <string name="stop">Спри</string>
+    <string name="verify_hint">Repeater-ът се рестартира в новия firmware. След половин минута провери кой firmware работи.</string>
+    <string name="verify">Провери</string>
+    <string name="msg_disconnected">Връзката с companion-а прекъсна.</string>
+    <string name="msg_stopped">Спряно. Repeater-ът остава на стария firmware.</string>
+    <string name="msg_bluetooth_off">Bluetooth е изключен.</string>
+    <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
+    <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
+    <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
+    <string name="msg_not_running_firmware">Това не е firmware-ът, който работи на repeater-а.</string>
+    <string name="msg_too_big">Новият firmware не се събира на repeater-а.</string>
+    <string name="msg_done">Готово: новият firmware е проверен на repeater-а.</string>
+    <string name="msg_verified">Repeater-ът работи с новия firmware: %1$s</string>
+    <string name="msg_not_verified">Repeater-ът още не е с новия firmware: %1$s</string>
+</resources>

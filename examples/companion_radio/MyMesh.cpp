@@ -1051,6 +1051,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
+  temp_radio_until = 0;
   memset(advert_paths, 0, sizeof(advert_paths));
   memset(send_scope.key, 0, sizeof(send_scope.key));
   send_unscoped = false;
@@ -2297,6 +2298,34 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     return true;
   }
 
+  // the LoRa OTA side channel: 'tempradio <freq> <bw> <sf> <cr> <secs>', back by itself after secs, or 'tempradio off'
+  if (strcmp(command, "tempradio off") == 0) {
+    temp_radio_until = 0;
+    radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+    strcpy(reply, "OK");
+    return true;
+  }
+  if (memcmp(command, "tempradio ", 10) == 0) {
+    char tmp[48];
+    StrHelper::strncpy(tmp, &command[10], sizeof(tmp));
+    const char *parts[5];
+    int num = mesh::Utils::parseTextParts(tmp, parts, 5);
+    float freq = num > 0 ? strtof(parts[0], nullptr) : 0.0f;
+    float bw = num > 1 ? strtof(parts[1], nullptr) : 0.0f;
+    uint8_t sf = num > 2 ? atoi(parts[2]) : 0;
+    uint8_t cr = num > 3 ? atoi(parts[3]) : 0;
+    int secs = num > 4 ? atoi(parts[4]) : 0;
+    if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f
+        && secs > 0 && secs <= 3600 && radio_driver.paramsSupported(freq, bw, sf, cr)) {
+      radio_driver.setParams(freq, bw, sf, cr);
+      temp_radio_until = futureMillis(secs * 1000UL);
+      sprintf(reply, "OK - temp params for %d secs", secs);
+    } else {
+      strcpy(reply, "Error, invalid params");
+    }
+    return true;
+  }
+
   if (memcmp(command, "set pin ", 8) == 0) {
     _prefs.ble_pin = atoi(&command[8]);
     savePrefs();
@@ -2609,6 +2638,11 @@ void MyMesh::loop() {
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     saveContacts();
     dirty_contacts_expiry = 0;
+  }
+
+  if (temp_radio_until && millisHasNowPassed(temp_radio_until)) {   // 'tempradio' ran out
+    temp_radio_until = 0;
+    radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   }
 }
 

@@ -41,6 +41,11 @@
   #include <helpers/MailboxStore.h>
 #endif
 
+#if !defined(NO_LORA_OTA) && (defined(NRF52_PLATFORM) || defined(ESP32))
+  #define WITH_LORA_OTA          // firmware delta over LoRa from an admin with no hop between
+  #include <helpers/LoraOta.h>
+#endif
+
 #ifdef WITH_BRIDGE
 extern AbstractBridge* bridge;
 #endif
@@ -126,6 +131,13 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void onMailboxPacket(mesh::Packet* pkt);
   void mailboxLoop();
   void handleMailboxCommand(char* args, char* reply);
+#endif
+#ifdef WITH_LORA_OTA
+  LoraOta lora_ota;
+  unsigned long ota_commit_at;          // millis, 0 = no new image waiting
+  char ota_ident[64];
+  void applyOtaAction();
+  void otaLoop();
 #endif
 #if defined(WITH_RS232_BRIDGE)
   RS232Bridge bridge;
