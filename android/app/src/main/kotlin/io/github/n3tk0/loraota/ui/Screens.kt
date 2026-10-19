@@ -75,9 +75,9 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                 Step.REPEATER -> RepeaterStep(vm)
                 Step.UPDATE -> UpdateStep(vm)
             }
-            if (vm.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            if (vm.message.isNotEmpty()) {
-                Text(vm.message, color = MaterialTheme.colorScheme.primary)
+            if (vm.step != Step.UPDATE) {
+                if (vm.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Message(vm)
             }
         }
     }
@@ -151,6 +151,7 @@ private fun UpdateStep(vm: AppViewModel) {
     if (info != null) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
+                Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium)
                 Text(info.ident.replace('|', '\n'))
                 Text(stringResource(R.string.platform) + ": " + when (info.platform) {
                     OtaProtocol.PLATFORM_NRF52 -> "nRF52"
@@ -160,7 +161,8 @@ private fun UpdateStep(vm: AppViewModel) {
             }
         }
         if (!info.enabled) Warning(stringResource(R.string.ota_off))
-        if (info.state == OtaProtocol.STATE_PAUSED || vm.resumable) Text(stringResource(R.string.paused_hint))
+        // a message about the cut-short update already says what to do
+        if ((info.state == OtaProtocol.STATE_PAUSED || vm.resumable) && vm.message.isEmpty()) Text(stringResource(R.string.paused_hint))
     }
 
     Text(stringResource(R.string.new_firmware), style = MaterialTheme.typography.titleMedium)
@@ -172,8 +174,8 @@ private fun UpdateStep(vm: AppViewModel) {
             .clickable(enabled = !vm.busy) { vm.pickRelease(f) }) {
             RadioButton(selected = vm.newImage?.sha == f.sha256, onClick = { vm.pickRelease(f) }, enabled = !vm.busy)
             Column {
-                Text(f.release)
-                Text(f.env, style = MaterialTheme.typography.bodySmall)
+                Text(f.version.ifEmpty { f.release }, style = MaterialTheme.typography.titleMedium)
+                Text(f.env.replace('_', ' '), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -192,6 +194,8 @@ private fun UpdateStep(vm: AppViewModel) {
     }
 
     vm.phase?.let { PhaseView(vm, it) }
+    if (vm.busy && vm.phase == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    Message(vm)
     if (vm.done) Text(stringResource(R.string.done_hint))
 
     if (vm.confirmUpdate) {
@@ -239,6 +243,13 @@ private fun UpdateStep(vm: AppViewModel) {
         for (line in vm.log.takeLast(10)) Text(line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
     }
     Spacer(Modifier.height(24.dp))
+}
+
+@Composable
+private fun Message(vm: AppViewModel) {
+    if (vm.message.isNotEmpty()) {
+        Text(vm.message, color = if (vm.messageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+    }
 }
 
 @Composable

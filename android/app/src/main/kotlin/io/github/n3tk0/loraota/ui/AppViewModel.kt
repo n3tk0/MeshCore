@@ -58,6 +58,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var step by mutableStateOf(Step.COMPANION)
     var busy by mutableStateOf(false)
     var message by mutableStateOf("")
+    var messageIsError by mutableStateOf(false)
     val log = mutableStateListOf<String>()
 
     // companion
@@ -99,6 +100,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch {
                 if (step != Step.COMPANION) {
                     message = str(R.string.msg_disconnected)
+                    messageIsError = true
                     step = Step.COMPANION
                 }
             }
@@ -109,17 +111,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (busy) return
         busy = true
         message = ""
+        messageIsError = false
         job = viewModelScope.launch {
             try {
                 block()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 message = str(R.string.msg_stopped)
+                messageIsError = false
             } catch (e: OtaFailed) {
                 message = str(e.res, *e.args.toTypedArray())
+                messageIsError = true
             } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
                 message = str(R.string.err_companion, e.message ?: "")
+                messageIsError = true
             } catch (e: Exception) {
                 message = e.message ?: e.toString()
+                messageIsError = true
             } finally {
                 busy = false
                 job = null
@@ -143,6 +150,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
         if (scanner == null) {
             message = str(R.string.msg_bluetooth_off)
+            messageIsError = true
             return
         }
         devices.clear()
@@ -239,7 +247,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadReleases() = viewModelScope.launch {
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo) } }
         releases = list.getOrDefault(emptyList())
-        if (list.isFailure) message = str(R.string.msg_releases_failed, list.exceptionOrNull()?.message ?: "")
+        if (list.isFailure) {
+            message = str(R.string.msg_releases_failed, list.exceptionOrNull()?.message ?: "")
+            messageIsError = true
+        }
         // the firmware the repeater runs, if a release has it
         val i = info ?: return@launch
         val running = releases.firstOrNull { it.sha256 == hex(i.imageSha) }

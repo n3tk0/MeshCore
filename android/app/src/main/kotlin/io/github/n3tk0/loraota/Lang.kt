@@ -12,7 +12,9 @@ object Lang {
     fun get(ctx: Context): String = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "") ?: ""
 
     /** The one the screen shows now. */
-    fun current(ctx: Context): String = get(ctx).ifEmpty { if (Locale.getDefault().language == "en") "en" else "bg" }
+    fun current(ctx: Context): String = get(ctx).ifEmpty {
+        if (ctx.resources.configuration.locales[0].language == "en") "en" else "bg"
+    }
 
     fun set(ctx: Context, lang: String) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, lang).apply()

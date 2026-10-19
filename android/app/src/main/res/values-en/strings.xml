@@ -76,4 +76,5 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="err_old_still_runs">The repeater still runs the old firmware: %1$s</string>
     <string name="err_after_restart">The repeater did not answer after the restart. Log in to it again in a while.</string>
     <string name="err_companion">Companion error: %1$s</string>
+    <string name="running_now">Running now</string>
 </resources>
