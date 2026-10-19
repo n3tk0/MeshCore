@@ -17,7 +17,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.R
+import io.github.n3tk0.loraota.ota.AirtimeBudget
+import io.github.n3tk0.loraota.ota.OtaFailed
+import io.github.n3tk0.loraota.ota.Phase
+import io.github.n3tk0.loraota.ota.estimateMinutes
 import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.CompanionLink
 import io.github.n3tk0.loraota.ble.Contact
@@ -46,6 +51,7 @@ class Image(val name: String, val data: ByteArray, val env: String? = null) {
 @SuppressLint("MissingPermission")
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx: Context get() = getApplication()
+    private fun str(res: Int, vararg args: Any): String = Lang.wrap(ctx).getString(res, *args)
     private val link = CompanionLink(app)
     private val companion = CompanionRadio(link)
 
@@ -77,17 +83,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var sf by mutableStateOf("7")
     var cr by mutableStateOf("5")
     var dutyPercent by mutableStateOf("10")
+    private val budget = AirtimeBudget(0.1)   // the companion's time on air over the last hour
 
     var sent by mutableStateOf(0)
     var total by mutableStateOf(0)
     var done by mutableStateOf(false)
+    var phase by mutableStateOf<Phase?>(null)
+    var waitUntil by mutableStateOf(0L)
+    var confirmUpdate by mutableStateOf(false)   // the 'are you sure' dialog
+    var resumable by mutableStateOf(false)       // the repeater keeps an update cut short: 'Continue'
     private var job: Job? = null
 
     init {
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION) {
-                    message = ctx.getString(R.string.msg_disconnected)
+                    message = str(R.string.msg_disconnected)
                     step = Step.COMPANION
                 }
             }
@@ -102,7 +113,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 block()
             } catch (e: kotlinx.coroutines.CancellationException) {
-                message = ctx.getString(R.string.msg_stopped)
+                message = str(R.string.msg_stopped)
+            } catch (e: OtaFailed) {
+                message = str(e.res, *e.args.toTypedArray())
+            } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+                message = str(R.string.err_companion, e.message ?: "")
             } catch (e: Exception) {
                 message = e.message ?: e.toString()
             } finally {
@@ -127,7 +142,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun scan() {
         val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
         if (scanner == null) {
-            message = ctx.getString(R.string.msg_bluetooth_off)
+            message = str(R.string.msg_bluetooth_off)
             return
         }
         devices.clear()
@@ -148,7 +163,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             scanning = false
         }
-        if (!link.connect(device)) throw Exception(ctx.getString(R.string.msg_connect_failed))
+        if (!link.connect(device)) throw Exception(str(R.string.msg_connect_failed))
         companion.start()
         runCatching { companion.cli("tempradio off") }   // left on the side channel by an update cut short
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
@@ -172,27 +187,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // log in by flood, so both sides learn the route: the update only goes when it has no hop
         companion.resetPath(contact)
         try {
-            if (!companion.login(contact, password)) throw Exception(ctx.getString(R.string.msg_not_admin))
+            if (!companion.login(contact, password)) throw Exception(str(R.string.msg_not_admin))
             delay(4000)   // the companion sends its route back to the repeater
             val hops = companion.contact(contact.publicKey)?.outPathLen ?: 0xFF
             if (hops == 0xFF || (hops and 63) != 0) {
-                throw Exception(if (hops == 0xFF) ctx.getString(R.string.msg_no_route) else ctx.getString(R.string.msg_not_direct, hops and 63))
+                throw Exception(if (hops == 0xFF) str(R.string.msg_no_route) else str(R.string.msg_not_direct, hops and 63))
             }
         } catch (e: Exception) {
             runCatching { companion.restorePath(contact) }
             throw e
         }
         repeater = contact
-        val session = OtaSession(companion, contact, sideRadio(), duty(), {}, { _, _ -> })
-        val i = session.info()
+        val i = session(contact).info()
         info = i
         oldImage = null
         newImage = null
         patch = null
         done = false
+        sent = 0
+        total = 0
+        phase = null
+        resumable = i.state == OtaProtocol.STATE_PAUSED
         log.clear()
         step = Step.UPDATE
         loadReleases()
+    }
+
+    private fun session(contact: Contact) = OtaSession(companion, contact, sideRadio(), budget.also { it.duty = duty() },
+        { log.add(it) }, { p, until -> phase = p; waitUntil = until }) { s, t ->
+        sent = s
+        total = t
     }
 
     private suspend fun restorePath() {
@@ -215,7 +239,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadReleases() = viewModelScope.launch {
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo) } }
         releases = list.getOrDefault(emptyList())
-        if (list.isFailure) message = ctx.getString(R.string.msg_releases_failed, list.exceptionOrNull()?.message ?: "")
+        if (list.isFailure) message = str(R.string.msg_releases_failed, list.exceptionOrNull()?.message ?: "")
         // the firmware the repeater runs, if a release has it
         val i = info ?: return@launch
         val running = releases.firstOrNull { it.sha256 == hex(i.imageSha) }
@@ -248,20 +272,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val img = Image(name, data)
         if (isOld) {
             val i = info
-            if (i != null && img.sha != hex(i.imageSha)) throw Exception(ctx.getString(R.string.msg_not_running_firmware))
+            if (i != null && img.sha != hex(i.imageSha)) throw Exception(str(R.string.msg_not_running_firmware))
             oldImage = img
         } else {
             newImage = img
         }
         patch = null
-    }
-
-    fun makeDelta() = work {
-        val old = oldImage ?: return@work
-        val new = newImage ?: return@work
-        val i = info
-        if (i != null && new.data.size > i.maxNew) throw Exception(ctx.getString(R.string.msg_too_big))
-        patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
     }
 
     fun sideRadio(): SideRadio = SideRadio(
@@ -275,35 +291,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun estimateMinutes(): Double? {
         val p = patch ?: return null
-        val r = repeater ?: return null
-        return OtaSession(companion, r, sideRadio(), duty(), {}, { _, _ -> }).estimateMinutes(p.size)
+        budget.duty = duty()
+        return estimateMinutes(sideRadio(), budget, p.size)
     }
 
-    fun send() = work {
-        val r = repeater ?: return@work
-        val p = patch ?: return@work
-        val old = oldImage ?: return@work
-        val new = newImage ?: return@work
-        done = false
-        log.clear()
-        val session = OtaSession(companion, r, sideRadio(), duty(), { log.add(it) }) { s, t ->
-            sent = s
-            total = t
+    fun remainingMinutes(): Int {
+        val p = patch ?: return 0
+        budget.duty = duty()
+        val left = ((total - sent).coerceAtLeast(0) * OtaSession.CHUNK).coerceAtMost(p.size)
+        return kotlin.math.ceil(estimateMinutes(sideRadio(), budget, left)).toInt()
+    }
+
+    /** 'Update' / 'Continue': makes the delta if needed, then asks before it starts. */
+    fun update() = work {
+        if (patch == null) {
+            val old = oldImage ?: return@work
+            val new = newImage ?: return@work
+            val i = info
+            if (i != null && new.data.size > i.maxNew) throw Exception(str(R.string.msg_too_big))
+            patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
         }
-        session.run(old.data, new.data, p)
-        done = true
-        message = ctx.getString(R.string.msg_done)
+        confirmUpdate = true
     }
 
-    /** After the restart: asks the repeater on the normal channel which firmware it runs now. */
-    fun verify() = work {
-        val r = repeater ?: return@work
-        val i = OtaSession(companion, r, sideRadio(), duty(), {}, { _, _ -> }).info()
-        info = i
-        message = if (newImage != null && hex(i.imageSha) == newImage!!.sha) {
-            ctx.getString(R.string.msg_verified, i.ident)
-        } else {
-            ctx.getString(R.string.msg_not_verified, i.ident)
+    fun send() {
+        confirmUpdate = false
+        work {
+            val r = repeater ?: return@work
+            val p = patch ?: return@work
+            val old = oldImage ?: return@work
+            val new = newImage ?: return@work
+            done = false
+            log.clear()
+            try {
+                session(r).run(old.data, new.data, p)
+            } catch (e: OtaFailed) {
+                resumable = e.resumable
+                throw e
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                resumable = false
+                throw e
+            } finally {
+                phase = null
+            }
+            resumable = false
+            done = true
+            info = runCatching { session(r).info() }.getOrNull() ?: info
+            message = str(R.string.msg_verified, info?.ident?.replace('|', ' ') ?: "")
         }
     }
 

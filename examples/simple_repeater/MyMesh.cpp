@@ -10,11 +10,15 @@
   #elif defined(ESP32)
     #include <helpers/esp32/ESP32OtaTarget.h>
     static ESP32OtaTarget ota_target;
+    // the Arduino core leaves a new image 'pending verify' instead of keeping it at once (see otaLoop)
+    extern "C" bool verifyRollbackLater() { return true; }
   #endif
   #define OTA_SIDE_RADIO_DELAY   2500                 // the BEGIN reply goes out on the normal radio first
   #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
   #define OTA_COMMIT_DELAY       10000                // the END reply goes out (and is repeated if lost) before the reboot
   #define OTA_MAX_SIDE_MILLIS    (60 * 60 * 1000UL)   // hard limit on the side radio, whatever happens
+  #define OTA_CONFIRM_MILLIS     (10 * 60 * 1000UL)   // a new image that ran this long is kept
+  #define OTA_ON_FILE            "/ota_on"            // `set ota on`: OTA is off until then
 #endif
 
 /* ------------------------------ Config -------------------------------- */
@@ -159,6 +163,9 @@ uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secr
   reply_data[4] = RESP_SERVER_LOGIN_OK;
   reply_data[5] = 0;  // Legacy: was recommended keep-alive interval (secs / 16)
   reply_data[6] = client->isAdmin() ? 1 : 0;
+#ifdef WITH_LORA_OTA
+  if (client->isAdmin()) ota_target.confirm();   // an admin got in: the new firmware works
+#endif
   reply_data[7] = client->permissions;
   getRNG()->random(&reply_data[8], 4);   // random blob to help packet-hash uniqueness
   reply_data[12] = FIRMWARE_VER_LEVEL;  // New field
@@ -720,6 +727,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
 #ifdef WITH_LORA_OTA
       if (len > 5 && data[4] == OTA_REQ_TYPE) {
         if (!client->isAdmin()) return;
+        ota_target.confirm();
         client->last_timestamp = timestamp;
         client->last_activity = getRTCClock()->getCurrentTime();
         // a direct packet has no path left when it gets here, however many hops it took: the
@@ -1045,6 +1053,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #ifdef WITH_LORA_OTA
   snprintf(ota_ident, sizeof(ota_ident), "%s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, board.getManufacturerName());
   lora_ota.setIdent(ota_ident);
+  lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
   lora_ota.setRadioCheck([](void*, const OtaRadioParams& p) {
     return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
   }, NULL);
@@ -1379,9 +1388,23 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
 #endif
 #ifdef WITH_LORA_OTA
   } else if (strcmp(command, "ota status") == 0) {
-    static const char* states[] = { "idle", "receiving", "ready", "failed" };
+    static const char* states[] = { "idle", "receiving", "ready", "failed", "paused" };
     uint8_t st = lora_ota.getState();
-    sprintf(reply, "> %s, %s", st < 4 ? states[st] : "?", ota_ident);
+    sprintf(reply, "> %s, %s%s, %s", lora_ota.isEnabled() ? "on" : "off", st < 5 ? states[st] : "?",
+            ota_target.isUnconfirmed() ? ", new firmware not confirmed yet" : "", ota_ident);
+  } else if (strcmp(command, "set ota on") == 0 || strcmp(command, "set ota off") == 0) {
+    bool on = command[9] == 'n';
+    if (on) {
+      File f = openAppend(OTA_ON_FILE);
+      if (f) {
+        f.write((const uint8_t*)"1", 1);
+        f.close();
+      }
+    } else {
+      _fs->remove(OTA_ON_FILE);
+    }
+    lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
+    strcpy(reply, lora_ota.isEnabled() == on ? "OK" : "Err - could not save");
   #ifdef ESP32
   } else if (strcmp(command, "ota rollback") == 0) {
     if (lora_ota.isActive() || !ESP32OtaTarget::rollback()) strcpy(reply, "Err - no previous firmware");
@@ -1705,6 +1728,7 @@ void MyMesh::applyOtaAction() {
 }
 
 void MyMesh::otaLoop() {
+  if (millis() > OTA_CONFIRM_MILLIS) ota_target.confirm();   // cheap when there is nothing to confirm
   if (lora_ota.checkTimeout(millis())) {
     MESH_DEBUG_PRINTLN("LoRa OTA: session timed out");
     applyOtaAction();

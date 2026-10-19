@@ -16,11 +16,24 @@ android {
         versionName = "0.1.0"
     }
 
+    // the release key: from the environment (GitHub Secrets in CI), so every version installs over the last
+    val keystore = System.getenv("LORAOTA_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = keystore
+                storePassword = System.getenv("LORAOTA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("LORAOTA_KEY_ALIAS")
+                keyPassword = System.getenv("LORAOTA_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // signed with the debug key so the CI build installs as is; for a store build use your own key
-            signingConfig = signingConfigs.getByName("debug")
+            // no key given (a local build, a fork): the debug key, so it still installs
+            signingConfig = signingConfigs.getByName(if (keystore != null) "release" else "debug")
         }
     }
     compileOptions {
