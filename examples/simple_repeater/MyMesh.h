@@ -36,6 +36,10 @@
 #include <helpers/RegionMap.h>
 #include <helpers/RoutingPolicy.h>
 #include "RateLimiter.h"
+#ifndef NO_MAILBOX
+  #define WITH_MAILBOX           // every repeater of this fork; off until 'mailbox learn' / 'mailbox on'
+  #include <helpers/MailboxStore.h>
+#endif
 
 #ifdef WITH_BRIDGE
 extern AbstractBridge* bridge;
@@ -110,6 +114,19 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t pending_sf;
   uint8_t pending_cr;
   int  matching_peer_indexes[MAX_CLIENTS];
+#ifdef WITH_MAILBOX
+  MailboxStore mailbox;
+  int mailbox_deliver_owner;            // -1 = not delivering
+  unsigned long mailbox_next_send;      // millis
+  unsigned long mailbox_save_at;        // millis, 0 = nothing to save
+  unsigned long mailbox_next_expire;    // millis
+  unsigned long mailbox_learn_until;    // millis, 0 = not learning: the next companion advert with no hop is an owner
+  void loadMailbox();
+  void saveMailbox();
+  void onMailboxPacket(mesh::Packet* pkt);
+  void mailboxLoop();
+  void handleMailboxCommand(char* args, char* reply);
+#endif
 #if defined(WITH_RS232_BRIDGE)
   RS232Bridge bridge;
 #elif defined(WITH_ESPNOW_BRIDGE)
