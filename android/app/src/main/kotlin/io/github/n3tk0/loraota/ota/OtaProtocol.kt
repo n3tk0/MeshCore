@@ -100,6 +100,8 @@ object OtaProtocol {
 
     fun parseStatus(r: Reply): Status {
         val b = r.data
+        // BUSY, NOT_DIRECT and the like come with no state
+        if (b.remaining() < 11) throw OtaFailed(statusRes(r.status))
         return Status(b.get().toInt() and 0xff, b.short.toInt() and 0xffff, b.int, b.int)
     }
 }

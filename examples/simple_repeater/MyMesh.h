@@ -136,6 +136,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   LoraOta lora_ota;
   unsigned long ota_commit_at;          // millis, 0 = no new image waiting
   bool ota_on_side;                     // on the OTA side channel radio settings
+  bool ota_radio_away;                  // the radio is not back on the normal settings yet (it waits for the queue)
   char ota_ident[64];
   void applyOtaAction();
   void otaLoop();

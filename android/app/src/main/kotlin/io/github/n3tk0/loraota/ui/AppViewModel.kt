@@ -156,9 +156,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         devices.clear()
-        scanning = true
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(CompanionLink.SERVICE)).build()
-        scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
+        try {
+            scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
+        } catch (e: SecurityException) {   // 'Nearby devices' not allowed
+            message = str(R.string.msg_no_bt_permission)
+            messageIsError = true
+            return
+        }
+        scanning = true
         viewModelScope.launch {
             delay(10_000)
             runCatching { scanner.stopScan(scanCallback) }
@@ -186,10 +192,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() {
         step = Step.COMPANION
+        devices.clear()   // a new connect waits for a new scan, after the clean-up
         viewModelScope.launch {
             job?.cancelAndJoin()   // the update's own clean-up (ABORT, normal radio) goes first
-            restorePath()
-            link.close()
+            busy = true
+            try {
+                restorePath()
+                link.close()
+            } finally {
+                busy = false
+            }
         }
     }
 

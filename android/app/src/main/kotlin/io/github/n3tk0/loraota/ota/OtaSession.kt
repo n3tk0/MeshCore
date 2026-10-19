@@ -5,6 +5,8 @@ import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.Contact
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.ceil
@@ -33,13 +35,14 @@ class OtaSession(
         const val WINDOW = 8
         const val SESSION_TIMEOUT_SECS = 90           // repeater pauses the session after this much silence
         const val SIDE_RADIO_DELAY_MS = 3500L         // repeater switches 2.5 s after its BEGIN reply
-        const val COMPANION_LEASE_MINS = 2            // renewed with every window; back by itself if the app is gone
+        const val MIN_LEASE_MINS = 2                  // renewed with every window; back by itself if the app is gone
         const val PAUSE_AFTER_MS = 45_000L            // a longer wait for time on air goes back to the normal channel
         const val KEEP_PAUSED_EVERY_MS = 15 * 60_000L // the repeater keeps a paused update 30 min from the last request
         const val PACKET_GAP = 2.0                    // the companion waits as long as a packet took (airtime factor 1)
     }
 
     private var onSide = false
+    private var begun = false   // the repeater took the BEGIN: a Stop drops the update there too
 
     private suspend fun request(data: ByteArray, timeoutMs: Long, tries: Int): OtaProtocol.Reply? {
         repeat(tries) {
@@ -55,13 +58,19 @@ class OtaSession(
     }
 
     private suspend fun sideLease() {
-        val r = companion.cli("tempradio ${radio.cliArgs()} $COMPANION_LEASE_MINS")
+        val r = companion.cli("tempradio ${radio.cliArgs()} ${leaseMins()}")
         if (!r.contains("OK")) throw OtaFailed(R.string.err_side_channel, listOf(r.trim()), resumable = onSide)
     }
 
     private suspend fun normalRadio() {
         withContext(NonCancellable) { runCatching { companion.cli("tempradio off") } }
         onSide = false
+    }
+
+    /** Long enough for a whole window and its STATUS tries, also with slow side channel settings. */
+    private fun leaseMins(): Int {
+        val windowSecs = WINDOW * radio.airtime(requestPacketSize(4 + CHUNK)) * PACKET_GAP + 4 * statusTimeoutMs() / 1000.0
+        return ceil((windowSecs + 30) / 60).toInt().coerceIn(MIN_LEASE_MINS, 60)
     }
 
     private fun statusTimeoutMs(): Long = (radio.airtime(40) * 2 * 1000).toLong() + 4000
@@ -78,6 +87,7 @@ class OtaSession(
         log("BEGIN")
         val r = request(begin, 20_000, 2)
         if (r != null && r.status != 0) throw OtaFailed(OtaProtocol.statusRes(r.status))
+        begun = true
         // no reply may only mean the reply was lost, or the repeater is still on the side channel
         phase(Phase.SWITCH, 0)
         delay(SIDE_RADIO_DELAY_MS)
@@ -150,6 +160,7 @@ class OtaSession(
             }
 
             phase(Phase.FINISH, 0)
+            sideLease()
             log("END")
             var e: OtaProtocol.Reply? = null
             for (attempt in 1..3) {
@@ -164,6 +175,7 @@ class OtaSession(
                 stopped = true   // the repeater gave up on this one
                 throw OtaFailed(OtaProtocol.statusRes(e.status))
             }
+            if (e != null) begun = false   // the repeater has the new image: a Stop now must not drop it
             phase(Phase.RESTART, System.currentTimeMillis() + 30_000)
             normalRadio()
             if (e == null) log("no answer to END, asking the repeater on the normal channel")
@@ -176,9 +188,18 @@ class OtaSession(
             if (!i.imageSha.contentEquals(newSha)) throw OtaFailed(R.string.err_old_still_runs, listOf(i.ident))
             log("the repeater runs the new firmware")
         } catch (e: Throwable) {
-            if (e is CancellationException && onSide) {
-                // stopped by the user: drop it on the repeater too
-                withContext(NonCancellable) { runCatching { request(OtaProtocol.abort(), statusTimeoutMs(), 2) } }
+            // stopped by the user (the job is cancelled, not a timeout): drop it on the repeater too
+            if (e is CancellationException && !currentCoroutineContext().isActive && begun) {
+                withContext(NonCancellable) {
+                    runCatching {
+                        // a paused repeater is on the normal channel; one that is switching is on the side channel
+                        if (request(OtaProtocol.abort(), statusTimeoutMs(), 2) == null && !onSide) {
+                            sideLease()
+                            onSide = true
+                            request(OtaProtocol.abort(), statusTimeoutMs(), 2)
+                        }
+                    }
+                }
                 stopped = true
             }
             throw if (e is OtaFailed || e is CancellationException || stopped) e

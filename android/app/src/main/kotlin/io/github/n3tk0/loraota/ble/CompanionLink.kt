@@ -14,6 +14,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /**
@@ -124,7 +125,8 @@ class CompanionLink(private val context: Context) {
             @Suppress("DEPRECATION")
             g.writeCharacteristic(c)
         }
-        if (!ok || !withTimeout(10_000) { done.await() }) throw IllegalStateException("Bluetooth write failed")
+        // a timeout here is an error, not a cancellation: it must not look like the user's Stop
+        if (!ok || withTimeoutOrNull(10_000) { done.await() } != true) throw IllegalStateException("Bluetooth write failed")
     }
 
     fun close() {

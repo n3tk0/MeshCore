@@ -2316,7 +2316,9 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     uint8_t sf = num > 2 ? atoi(parts[2]) : 0;
     uint8_t cr = num > 3 ? atoi(parts[3]) : 0;
     int mins = num > 4 ? atoi(parts[4]) : 0;
-    if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f
+    if (!_serial->isConnected()) {
+      strcpy(reply, "Error, only from the connected app");   // it goes back when the app is gone
+    } else if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f
         && mins > 0 && mins <= 60 && radio_driver.paramsSupported(freq, bw, sf, cr)) {
       radio_driver.setParams(freq, bw, sf, cr);
       temp_radio_until = futureMillis(mins * 60000UL);

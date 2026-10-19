@@ -16,9 +16,10 @@ class ESP32OtaTarget : public OtaTarget {
   uint32_t _img_size, _new_size;
   bool _open;
   int8_t _pending;   // running image waits for confirm(): -1 not read yet
+  bool _overwritten; // an update wrote the other partition: it no longer holds the firmware that ran before
 
 public:
-  ESP32OtaTarget() : _next(NULL), _handle(0), _img_size(0), _new_size(0), _open(false), _pending(-1) { }
+  ESP32OtaTarget() : _next(NULL), _handle(0), _img_size(0), _new_size(0), _open(false), _pending(-1), _overwritten(false) { }
 
   uint8_t platform() const override { return OTA_PLATFORM_ESP32; }
 
@@ -57,6 +58,7 @@ public:
   }
 
   bool beginNew(uint32_t size) override {
+    _overwritten = true;
     abortNew();
     confirm();   // the next image goes over the previous one, which is then no way back
     _next = esp_ota_get_next_update_partition(NULL);
@@ -94,7 +96,8 @@ public:
   }
 
   // boot the image in the other partition again (the one that ran before the last update)
-  static bool rollback() {
+  bool rollback() {
+    if (_overwritten) return false;
     const esp_partition_t* other = esp_ota_get_next_update_partition(NULL);
     esp_app_desc_t desc;
     if (other == NULL || esp_ota_get_partition_description(other, &desc) != ESP_OK) return false;
