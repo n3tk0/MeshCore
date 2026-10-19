@@ -94,4 +94,5 @@
     <string name="notif_title">Обновяване на %1$s</string>
     <string name="ignore_air_limit">Игнорирай лимита за ефир</string>
     <string name="ignore_air_limit_warning">Без лимита обновяването не спира да чака, но в 869.4–869.65 MHz законът позволява 10% време в ефир на час. Ползвай го само ако знаеш, че е допустимо.</string>
+    <string name="msg_no_bt_permission">Приложението няма разрешение за „Устройства наблизо“. Разреши го в настройките на телефона.</string>
 </resources>

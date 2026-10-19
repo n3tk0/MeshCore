@@ -787,6 +787,9 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
       MESH_DEBUG_PRINTLN("onPeerDataRecv: possible replay attack detected");
     }
   } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5 && client->isAdmin()) { // a CLI command
+#ifdef WITH_LORA_OTA
+    ota_target.confirm();   // an admin reaches the console: the new firmware works (also before a 'reboot')
+#endif
     uint32_t sender_timestamp;
     memcpy(&sender_timestamp, data, 4); // timestamp (by sender's RTC clock - which could be wrong)
     uint8_t flags = (data[4] >> 2);        // message attempt number, and other flags
@@ -1037,6 +1040,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 #ifdef WITH_LORA_OTA
   ota_commit_at = 0;
   ota_on_side = false;
+  ota_radio_away = false;
   ota_ident[0] = 0;
 #endif
 }
@@ -1408,7 +1412,7 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     strcpy(reply, lora_ota.isEnabled() == on ? "OK" : "Err - could not save");
   #ifdef ESP32
   } else if (strcmp(command, "ota rollback") == 0) {
-    if (lora_ota.isActive() || !ESP32OtaTarget::rollback()) strcpy(reply, "Err - no previous firmware");
+    if (lora_ota.isActive() || !ota_target.rollback()) strcpy(reply, "Err - no previous firmware");
   #endif
 #endif
   } else if (memcmp(command, "discover.neighbors", 18) == 0) {
@@ -1433,7 +1437,7 @@ void MyMesh::loop() {
   mesh::Mesh::loop();
 
 #ifdef WITH_LORA_OTA
-  bool hold_adverts = ota_on_side;   // they would go out on the OTA side channel; sent once back
+  bool hold_adverts = ota_radio_away;   // they would go out on the OTA side channel; sent once back
 #else
   bool hold_adverts = false;
 #endif
@@ -1470,6 +1474,9 @@ void MyMesh::loop() {
     revert_radio_at = 0;                                        // clear timer
     radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
     MESH_DEBUG_PRINTLN("Radio params restored");
+#ifdef WITH_LORA_OTA
+    ota_radio_away = false;
+#endif
   }
 
 #ifdef WITH_LORA_OTA
@@ -1569,7 +1576,7 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
 void MyMesh::mailboxLoop() {
   bool on_side_radio = false;
 #ifdef WITH_LORA_OTA
-  on_side_radio = ota_on_side;   // the owner would not hear it there
+  on_side_radio = ota_radio_away;   // the owner would not hear it there
 #endif
   if (mailbox_deliver_owner >= 0 && !on_side_radio && millisHasNowPassed(mailbox_next_send)) {
     int i = mailbox.nextFor(mailbox_deliver_owner);
@@ -1711,6 +1718,7 @@ void MyMesh::applyOtaAction() {
   case LoraOta::ACT_SIDE_RADIO: {
     const OtaRadioParams& side = lora_ota.sideRadio();
     ota_on_side = true;
+    ota_radio_away = true;
     pending_freq = side.freq;
     pending_bw = side.bw;
     pending_sf = side.sf;

@@ -28,8 +28,14 @@ class OtaService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val n = notification(this, intent?.getStringExtra(EXTRA_TITLE) ?: "", intent?.getStringExtra(EXTRA_TEXT) ?: "", 0, 0)
+        // always first, also for STOP: a service started for the foreground and stopped before this crashes the app
         ServiceCompat.startForeground(this, ID, n,
             if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
+        if (intent?.action == ACTION_STOP) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (wake == null) {
             wake = (getSystemService(POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "loraota:update")
@@ -48,6 +54,7 @@ class OtaService : Service() {
         private const val CHANNEL = "update"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_TEXT = "text"
+        private const val ACTION_STOP = "stop"
         private const val MAX_HOLD_MS = 12 * 3600_000L   // a big update with waits for time on air
         private var active = false   // no progress after stop: it would leave a notification behind
 
@@ -93,9 +100,12 @@ class OtaService : Service() {
             }
         }
 
+        /** Through the service itself: it may not have called startForeground yet. */
         fun stop(ctx: Context) {
+            if (!active) return
             active = false
-            ctx.stopService(Intent(ctx, OtaService::class.java))
+            runCatching { ctx.startService(Intent(ctx, OtaService::class.java).setAction(ACTION_STOP)) }
+                .onFailure { ctx.stopService(Intent(ctx, OtaService::class.java)) }
         }
     }
 }

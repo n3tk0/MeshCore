@@ -1,9 +1,8 @@
 package io.github.n3tk0.loraota.ble
 
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -59,7 +58,7 @@ class CompanionRadio(private val link: CompanionLink) {
     // one command and its reply at a time: a second caller would take the first one's reply
     private val lock = Mutex()
 
-    private suspend fun await(timeoutMs: Long, match: (ByteArray) -> Boolean): ByteArray {
+    private suspend fun await(timeoutMs: Long, match: (ByteArray) -> Boolean): ByteArray? {
         val it = pending.iterator()
         while (it.hasNext()) {
             val f = it.next()
@@ -68,10 +67,11 @@ class CompanionRadio(private val link: CompanionLink) {
                 return f
             }
         }
-        return withTimeout(timeoutMs) {
+        // null on a timeout: a TimeoutCancellationException would look like the user's Stop
+        return withTimeoutOrNull(timeoutMs) {
             while (true) {
                 val f = link.frames.receive()
-                if (match(f)) return@withTimeout f
+                if (match(f)) return@withTimeoutOrNull f
                 if ((f[0].toInt() and 0xff) == PUSH_BINARY_RESPONSE) {
                     pending.addLast(f)
                     while (pending.size > 32) pending.removeFirst()
@@ -86,7 +86,7 @@ class CompanionRadio(private val link: CompanionLink) {
 
     private suspend fun command(frame: ByteArray, timeoutMs: Long = 5000, vararg codes: Int): ByteArray = lock.withLock {
         link.send(frame)
-        val f = await(timeoutMs) { code(it) in codes || code(it) == RESP_ERR }
+        val f = await(timeoutMs) { code(it) in codes || code(it) == RESP_ERR } ?: throw CompanionError("no reply from the companion")
         if (code(f) == RESP_ERR) throw CompanionError("companion error ${if (f.size > 1) f[1].toInt() else 0}")
         f
     }
@@ -106,6 +106,7 @@ class CompanionRadio(private val link: CompanionLink) {
         var end = false
         while (!end) {
             val f = await(10_000) { code(it) in intArrayOf(2, RESP_CONTACT, RESP_END_OF_CONTACTS, RESP_ERR) }
+                ?: throw CompanionError("contacts")
             when (code(f)) {
                 RESP_CONTACT -> if (f.size >= 148) out.add(Contact(f))
                 RESP_END_OF_CONTACTS -> end = true
@@ -119,14 +120,10 @@ class CompanionRadio(private val link: CompanionLink) {
     suspend fun login(contact: Contact, password: String): Boolean {
         command(byteArrayOf(CMD_SEND_LOGIN.toByte()) + contact.publicKey + password.toByteArray(), 5000, RESP_SENT)
         val prefix = contact.publicKey.copyOfRange(0, 6)
-        val f = try {
-            lock.withLock { await(30_000) {
-                (code(it) == PUSH_LOGIN_SUCCESS || code(it) == PUSH_LOGIN_FAIL) && it.size >= 8 &&
-                    it.copyOfRange(2, 8).contentEquals(prefix)
-            } }
-        } catch (e: TimeoutCancellationException) {
-            throw CompanionError("no answer from the repeater")
-        }
+        val f = lock.withLock { await(30_000) {
+            (code(it) == PUSH_LOGIN_SUCCESS || code(it) == PUSH_LOGIN_FAIL) && it.size >= 8 &&
+                it.copyOfRange(2, 8).contentEquals(prefix)
+        } } ?: throw CompanionError("no answer from the repeater")
         // byte 1 is 'is admin'; newer repeaters also send the permissions (byte 7 of their reply, here 12)
         return code(f) == PUSH_LOGIN_SUCCESS &&
             (f[1].toInt() == 1 || (f.size > 12 && (f[12].toInt() and 0x03) == 3))
@@ -166,16 +163,14 @@ class CompanionRadio(private val link: CompanionLink) {
     }
 
     /** The response to a request: the data after its tag, or null if none came in time. */
-    suspend fun awaitResponse(tag: Int, timeoutMs: Long): ByteArray? = try {
+    suspend fun awaitResponse(tag: Int, timeoutMs: Long): ByteArray? {
         val f = lock.withLock {
             await(timeoutMs) {
                 code(it) == PUSH_BINARY_RESPONSE && it.size >= 6 &&
                     ByteBuffer.wrap(it, 2, 4).order(ByteOrder.LITTLE_ENDIAN).int == tag
             }
-        }
-        f.copyOfRange(6, f.size)
-    } catch (e: TimeoutCancellationException) {
-        null
+        } ?: return null
+        return f.copyOfRange(6, f.size)
     }
 
     /**
