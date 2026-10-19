@@ -18,6 +18,8 @@ class Contact(val frame: ByteArray) {
             return String(raw, 0, end, Charsets.UTF_8)
         }
     val isRepeater: Boolean get() = type == 2
+    /** Hops on the route the companion knows; null: no route yet (messages flood). */
+    val hops: Int? get() = if (outPathLen == 0xFF) null else outPathLen and 63
 }
 
 class CompanionError(msg: String) : Exception(msg)
@@ -26,6 +28,7 @@ class CompanionError(msg: String) : Exception(msg)
 class CompanionRadio(private val link: CompanionLink) {
     private companion object {
         const val CMD_APP_START = 1
+        const val CMD_SEND_TXT_MSG = 2
         const val CMD_GET_CONTACTS = 4
         const val CMD_ADD_UPDATE_CONTACT = 9
         const val CMD_RESET_PATH = 13
@@ -33,6 +36,8 @@ class CompanionRadio(private val link: CompanionLink) {
         const val CMD_SEND_LOGIN = 26
         const val CMD_SEND_BINARY_REQ = 50
         const val CMD_RUN_CLI_COMMAND = 66
+
+        const val TXT_TYPE_CLI_DATA = 1
 
         const val RESP_OK = 0
         const val RESP_ERR = 1
@@ -171,6 +176,17 @@ class CompanionRadio(private val link: CompanionLink) {
         f.copyOfRange(6, f.size)
     } catch (e: TimeoutCancellationException) {
         null
+    }
+
+    /**
+     * A command for the repeater's console (as an admin). Its reply goes to the companion's message
+     * queue like any console reply, so the caller checks the result another way.
+     */
+    suspend fun sendRemoteCli(contact: Contact, text: String) {
+        // the companion puts its own time on console commands
+        val f = byteArrayOf(CMD_SEND_TXT_MSG.toByte(), TXT_TYPE_CLI_DATA.toByte(), 0, 0, 0, 0, 0) +
+            contact.publicKey.copyOfRange(0, 6) + text.toByteArray()
+        command(f, 5000, RESP_SENT)
     }
 
     suspend fun cli(command: String): String {

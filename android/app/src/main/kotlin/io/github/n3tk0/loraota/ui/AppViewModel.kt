@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.n3tk0.loraota.Lang
+import io.github.n3tk0.loraota.OtaService
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.ota.AirtimeBudget
 import io.github.n3tk0.loraota.ota.OtaFailed
@@ -176,7 +177,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { companion.cli("tempradio off") }   // left on the side channel by an update cut short
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
         repeaters.clear()
-        repeaters.addAll(companion.contacts().filter { it.isRepeater }.sortedBy { it.name.lowercase() })
+        // the ones next to us first: only those can be updated
+        repeaters.addAll(companion.contacts().filter { it.isRepeater }
+            .sortedWith(compareBy<Contact>({ it.hops ?: Int.MAX_VALUE }, { it.name.lowercase() })))
         step = Step.REPEATER
     }
 
@@ -205,6 +208,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { companion.restorePath(contact) }
             throw e
         }
+        savePassword(contact, password)
         repeater = contact
         val i = session(contact).info()
         info = i
@@ -221,10 +225,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         loadReleases()
     }
 
+    // admin passwords, per repeater, only on this phone (the app has no backup)
+    private val passwords get() = ctx.getSharedPreferences("passwords", Context.MODE_PRIVATE)
+
+    fun savedPassword(contact: Contact): String? = passwords.getString(hex(contact.publicKey), null)
+
+    private fun savePassword(contact: Contact, password: String) {
+        passwords.edit().putString(hex(contact.publicKey), password).apply()
+    }
+
+    fun forgetPassword(contact: Contact) {
+        passwords.edit().remove(hex(contact.publicKey)).apply()
+    }
+
+    /** `set ota on` in the repeater's console, then INFO to see that it took. */
+    fun enableOta() = work {
+        val r = repeater ?: return@work
+        companion.sendRemoteCli(r, "set ota on")
+        var i: OtaProtocol.Info? = null
+        for (attempt in 1..3) {
+            delay(3000)
+            i = runCatching { session(r).info() }.getOrNull()
+            if (i?.enabled == true) break
+        }
+        if (i != null) info = i
+        if (i?.enabled != true) throw Exception(str(R.string.msg_ota_on_failed))
+        message = str(R.string.msg_ota_on)
+    }
+
     private fun session(contact: Contact) = OtaSession(companion, contact, sideRadio(), budget.also { it.duty = duty() },
-        { log.add(it) }, { p, until -> phase = p; waitUntil = until }) { s, t ->
+        { log.add(it) }, { p, until -> phase = p; waitUntil = until; notifyProgress() }) { s, t ->
         sent = s
         total = t
+        notifyProgress()
+    }
+
+    private fun notifyTitle() = str(R.string.notif_title, repeater?.name ?: "")
+
+    /** The phase in the notification, for when the app is not on screen. */
+    private fun notifyProgress() {
+        val text = when (phase) {
+            Phase.START -> str(R.string.phase_start)
+            Phase.SWITCH -> str(R.string.phase_switch)
+            Phase.SEND -> str(R.string.phase_send, if (total > 0) sent * 100 / total else 0, remainingMinutes())
+            Phase.WAIT_AIR -> str(R.string.phase_wait_air, ((waitUntil - System.currentTimeMillis()).coerceAtLeast(0) + 59_999) / 60_000)
+            Phase.FINISH -> str(R.string.phase_finish)
+            Phase.RESTART -> str(R.string.phase_restart)
+            null -> return
+        }
+        OtaService.update(ctx, notifyTitle(), text, if (phase == Phase.RESTART) 0 else sent, if (phase == Phase.RESTART) 0 else total)
     }
 
     private suspend fun restorePath() {
@@ -334,6 +383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val new = newImage ?: return@work
             done = false
             log.clear()
+            OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
             try {
                 session(r).run(old.data, new.data, p)
             } catch (e: OtaFailed) {
@@ -344,6 +394,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } finally {
                 phase = null
+                OtaService.stop(ctx)
             }
             resumable = false
             done = true
@@ -353,6 +404,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        OtaService.stop(ctx)
         link.close()
     }
 }

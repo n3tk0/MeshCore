@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -112,12 +113,28 @@ private fun RepeaterStep(vm: AppViewModel) {
     }
     Text(stringResource(R.string.repeater_hint))
     if (vm.repeaters.isEmpty()) Text(stringResource(R.string.no_repeaters))
+    fun choose(i: Int) {
+        selected = i
+        password = vm.savedPassword(vm.repeaters[i]) ?: ""
+    }
     vm.repeaters.forEachIndexed { i, c ->
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
             .fillMaxWidth()
-            .clickable { selected = i }) {
-            RadioButton(selected = selected == i, onClick = { selected = i })
-            Text(c.name)
+            .clickable { choose(i) }) {
+            RadioButton(selected = selected == i, onClick = { choose(i) })
+            Column {
+                Text(c.name)
+                val hops = c.hops
+                Text(
+                    when (hops) {
+                        null -> stringResource(R.string.route_unknown)
+                        0 -> stringResource(R.string.route_direct)
+                        else -> pluralStringResource(R.plurals.route_hops, hops, hops)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (hops == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
     OutlinedTextField(
@@ -127,10 +144,18 @@ private fun RepeaterStep(vm: AppViewModel) {
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         singleLine = true, modifier = Modifier.fillMaxWidth()
     )
-    Button(
-        onClick = { selected?.let { vm.login(vm.repeaters[it], password) } },
-        enabled = selected != null && !vm.busy
-    ) { Text(stringResource(R.string.login)) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Button(
+            onClick = { selected?.let { vm.login(vm.repeaters[it], password) } },
+            enabled = selected != null && !vm.busy
+        ) { Text(stringResource(R.string.login)) }
+        val chosen = selected?.let { vm.repeaters.getOrNull(it) }
+        if (chosen != null && vm.savedPassword(chosen) != null) {
+            TextButton(onClick = { vm.forgetPassword(chosen); password = "" }, enabled = !vm.busy) {
+                Text(stringResource(R.string.forget_password))
+            }
+        }
+    }
 }
 
 @Composable
@@ -160,7 +185,10 @@ private fun UpdateStep(vm: AppViewModel) {
                 }, style = MaterialTheme.typography.bodySmall)
             }
         }
-        if (!info.enabled) Warning(stringResource(R.string.ota_off))
+        if (!info.enabled) {
+            Warning(stringResource(R.string.ota_off))
+            Button(onClick = { vm.enableOta() }, enabled = !vm.busy) { Text(stringResource(R.string.enable_ota)) }
+        }
         // a message about the cut-short update already says what to do
         if ((info.state == OtaProtocol.STATE_PAUSED || vm.resumable) && vm.message.isEmpty()) Text(stringResource(R.string.paused_hint))
     }

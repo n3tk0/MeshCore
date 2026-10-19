@@ -116,7 +116,7 @@ class CompanionLink(private val context: Context) {
         val done = CompletableDeferred<Boolean>()
         written = done
         val ok = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(c, frame, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothGatt.GATT_SUCCESS
+            g.writeCharacteristic(c, frame, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == android.bluetooth.BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             c.value = frame
