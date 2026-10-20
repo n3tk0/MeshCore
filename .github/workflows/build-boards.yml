@@ -1,0 +1,161 @@
+name: Build Firmware for Boards
+
+# Manual build for any boards: Actions > "Build Firmware for Boards" > Run workflow.
+# - boards: env names from platformio.ini (space or comma separated), e.g. "Xiao_C3_repeater Heltec_v3_repeater"
+# - group:  or every repeater / companion / room server, optionally only those whose name contains `filter`
+# - the files are attached to the run (Actions > run > Artifacts); with `release` also a GitHub pre-release
+# Repeaters on nRF52 / ESP32 also get the app image .bin and its .ota.json for the LoRa OTA app.
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: 'Платки: имена на env от platformio.ini, с интервал или запетая (за "listed")'
+        type: string
+        default: 'Faketec_v5_companion_radio_ble Faketec_v5_companion_radio_usb Xiao_C3_repeater Xiao_nrf52_repeater'
+      group:
+        description: 'Кои: listed = изброените горе; иначе всички от групата'
+        type: choice
+        default: listed
+        options:
+          - listed
+          - all-repeaters
+          - all-companions
+          - all-room-servers
+      filter:
+        description: 'Само платки, чието име съдържа това (напр. Xiao, Heltec, RAK); празно = всички'
+        type: string
+        default: ''
+      release:
+        description: 'Публикувай и GitHub pre-release с файловете'
+        type: boolean
+        default: false
+
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Boards to Build
+        id: list
+        env:
+          BOARDS: ${{ inputs.boards }}
+          GROUP: ${{ inputs.group }}
+          FILTER: ${{ inputs.filter }}
+        run: |
+          ALL=$(bash build.sh list)
+          case "$GROUP" in
+            all-repeaters)    LIST=$(bash build.sh get-repeater-firmwares-to-build) ;;
+            all-companions)   LIST=$(bash build.sh get-companion-firmwares-to-build) ;;
+            all-room-servers) LIST=$(bash build.sh get-room-server-firmwares-to-build) ;;
+            *)                LIST=$(echo "$BOARDS" | tr ', ' '\n\n' | sed '/^$/d') ;;
+          esac
+          if [ -n "$FILTER" ]; then
+            LIST=$(echo "$LIST" | grep -i -F -- "$FILTER" || true)
+          fi
+          BAD=""
+          for b in $LIST; do
+            echo "$ALL" | grep -qx -- "$b" || BAD="$BAD $b"
+          done
+          if [ -n "$BAD" ]; then
+            echo "::error::Unknown boards:$BAD (see 'bash build.sh list' or platformio.ini)"
+            exit 1
+          fi
+          if [ -z "$LIST" ]; then
+            echo "::error::No boards to build"
+            exit 1
+          fi
+          JSON=$(echo "$LIST" | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "targets=$JSON" >> "$GITHUB_OUTPUT"
+          echo "Boards: $JSON"
+
+  build:
+    needs: targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.targets.outputs.targets) }}
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build ${{ matrix.target }}
+        env:
+          FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
+        run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
+
+      - name: App Image for LoRa OTA
+        if: endsWith(matrix.target, '_repeater')
+        run: |
+          ELF=.pio/build/${{ matrix.target }}/firmware.elf
+          NAME=$(basename "$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
+          NAME="${NAME%.uf2}"
+          NAME="${NAME%-merged.bin}"
+          if [ -z "$NAME" ] || [ ! -f "$ELF" ]; then exit 0; fi
+          # LoRa OTA is on nRF52 (has a DFU .zip) and ESP32 (has a -merged.bin) only
+          compgen -G "out/*.zip" >/dev/null || compgen -G "out/*-merged.bin" >/dev/null || exit 0
+          if [ ! -f "out/${NAME}.bin" ]; then
+            # nRF52: the app image is the .elf's loadable sections, as the repeater measures it
+            OBJCOPY=$(find ~/.platformio/packages -name arm-none-eabi-objcopy -type f | head -1)
+            "$OBJCOPY" -O binary "$ELF" "out/${NAME}.bin"
+          fi
+          jq -n --arg env "${{ matrix.target }}" --arg version "${{ env.GIT_TAG_VERSION }}" \
+                --arg file "${NAME}.bin" --arg sha256 "$(sha256sum "out/${NAME}.bin" | cut -d' ' -f1)" \
+                --argjson size "$(stat -c %s "out/${NAME}.bin")" \
+                '{env: $env, version: $version, file: $file, size: $size, sha256: $sha256}' > "out/${NAME}.ota.json"
+
+      - name: Summary
+        run: |
+          echo "### ${{ matrix.target }}" >> "$GITHUB_STEP_SUMMARY"
+          ls -1 out | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: out
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ inputs.release && !cancelled() }}
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+          path: out
+
+      - name: OTA Manifest
+        run: |
+          if ls out/*.ota.json >/dev/null 2>&1; then
+            jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
+            rm out/*.ota.json
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: boards-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: "Boards build ${{ github.run_number }} (${{ github.ref_name }})"
+          prerelease: true
+          body: |
+            Firmware built by hand for: ${{ needs.build.result == 'success' && 'all chosen boards' || 'the boards that built (some failed, see the run)' }}.
+            - nRF52: copy the `.uf2` to the bootloader drive (double-tap RST); `.zip` is for OTA DFU.
+            - ESP32: flash `-merged.bin` at 0x0 for a first install; `.bin` is the app image (OTA).
+          files: out/*

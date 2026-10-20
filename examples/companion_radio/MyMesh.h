@@ -327,6 +327,7 @@ private:
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
+  unsigned long temp_radio_until;   // millis, 0 = normal radio settings (see 'tempradio')
 
   TransportKey send_scope;
 

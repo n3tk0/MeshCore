@@ -1,0 +1,97 @@
+name: Build Xiao Repeaters (LoRa OTA)
+
+# Builds our repeaters (Xiao ESP32-C3 + Wio SX1262, Xiao nRF52840 + Wio SX1262) and, for each, the
+# app image .bin the LoRa OTA Android app makes its delta from, plus ota-manifest.json (board, version,
+# size and SHA-256 of every .bin) so the app can tell which firmware a repeater runs.
+# - push to main / manual run: files are attached to the workflow run (Actions > run > Artifacts)
+# - tag "xiao-repeater-v1.2.3": also publishes a GitHub release with the files
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags:
+      - 'xiao-repeater-*'
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'examples/simple_repeater/**'
+      - 'variants/xiao_c3/**'
+      - 'variants/xiao_nrf52/**'
+      - 'platformio.ini'
+      - 'build.sh'
+      - '.github/workflows/build-xiao-repeaters.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - Xiao_C3_repeater
+          - Xiao_nrf52_repeater
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build ${{ matrix.target }}
+        env:
+          FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
+        run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
+
+      - name: App Image and OTA Manifest
+        run: |
+          NAME=$(basename "$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
+          NAME="${NAME%.uf2}"
+          NAME="${NAME%-merged.bin}"
+          if [ ! -f "out/${NAME}.bin" ]; then
+            # nRF52: the app image is the .elf's loadable sections, as the repeater measures it
+            OBJCOPY=$(find ~/.platformio/packages -name arm-none-eabi-objcopy -type f | head -1)
+            "$OBJCOPY" -O binary .pio/build/${{ matrix.target }}/firmware.elf "out/${NAME}.bin"
+          fi
+          jq -n --arg env "${{ matrix.target }}" --arg version "${{ env.GIT_TAG_VERSION }}" \
+                --arg file "${NAME}.bin" --arg sha256 "$(sha256sum "out/${NAME}.bin" | cut -d' ' -f1)" \
+                --argjson size "$(stat -c %s "out/${NAME}.bin")" \
+                '{env: $env, version: $version, file: $file, size: $size, sha256: $sha256}' > "out/${NAME}.ota.json"
+          cat "out/${NAME}.ota.json"
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: out
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+          path: out
+
+      - name: OTA Manifest
+        run: |
+          jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
+          rm out/*.ota.json
+          cat out/ota-manifest.json
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Xiao Repeaters ${{ github.ref_name }}"
+          body: |
+            Repeater firmware for Xiao ESP32-C3 + Wio SX1262 and Xiao nRF52840 + Wio SX1262.
+            - First install: nRF52 `.uf2` on the bootloader drive (double-tap RST); ESP32-C3 `-merged.bin` at 0x0.
+            - Update over LoRa: the LoRa OTA Android app makes a delta from the `.bin` the repeater runs
+              to the new `.bin` (`ota-manifest.json` lists them) and sends it through the companion.
+          files: out/*
