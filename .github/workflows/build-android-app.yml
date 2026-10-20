@@ -1,0 +1,93 @@
+name: Build LoRa OTA Android App
+
+# The Android app that updates our repeaters over LoRa through a companion (android/).
+# - push / pull request: unit tests (delta generator, protocol) and the APK as a workflow artifact
+# - tag "lora-ota-app-v1.2.3": also publishes a GitHub release with the APK
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android-app.yml'
+  push:
+    branches: [main]
+    tags:
+      - 'lora-ota-app-*'
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android-app.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # the runner image has the Android SDK (ANDROID_HOME); android-actions/setup-android@v3 fails
+      # there now, asking sdkmanager for the 'tools' package that no longer exists
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit Tests
+        run: ./gradlew --no-daemon :delta:test :app:testDebugUnitTest
+
+      # the release key from the repository secrets (Settings > Secrets and variables > Actions):
+      # LORAOTA_KEYSTORE_BASE64, LORAOTA_KEYSTORE_PASSWORD, LORAOTA_KEY_ALIAS, LORAOTA_KEY_PASSWORD.
+      # Without them the APK is signed with a throwaway debug key (each new version needs a reinstall).
+      - name: Release Key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.LORAOTA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "LORAOTA_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No LORAOTA_KEYSTORE_BASE64 secret: the APK is signed with a debug key"
+          fi
+
+      - name: Build APK
+        env:
+          LORAOTA_KEYSTORE_PASSWORD: ${{ secrets.LORAOTA_KEYSTORE_PASSWORD }}
+          LORAOTA_KEY_ALIAS: ${{ secrets.LORAOTA_KEY_ALIAS }}
+          LORAOTA_KEY_PASSWORD: ${{ secrets.LORAOTA_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Check Signature
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | head -3
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk "out/LoraOta-${GITHUB_REF_NAME//\//-}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: LoraOta-apk
+          path: android/out
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "LoRa OTA app ${{ github.ref_name }}"
+          body: |
+            Android app that updates the Xiao repeaters over LoRa (delta, no hop, side channel) through a companion.
+            Install the APK (allow installs from this source).
+          files: android/out/*.apk
