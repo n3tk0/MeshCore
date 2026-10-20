@@ -27,6 +27,7 @@
     <string name="msg_connect_failed">Could not connect to the companion.</string>
     <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
     <string name="msg_releases_failed">Releases did not load: %1$s</string>
+    <string name="msg_releases_offline">No connection (%1$s): showing the releases kept on this phone.</string>
     <string name="msg_not_running_firmware">This is not the firmware the repeater runs.</string>
     <string name="msg_too_big">The new firmware does not fit on the repeater.</string>
     <string name="msg_verified">The repeater runs the new firmware: %1$s</string>

@@ -28,6 +28,7 @@
     <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
     <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
     <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
+    <string name="msg_releases_offline">Няма връзка (%1$s): показвам изданията, запазени на телефона.</string>
     <string name="msg_not_running_firmware">Това не е firmware-ът, който работи на repeater-а.</string>
     <string name="msg_too_big">Новият firmware не се събира на repeater-а.</string>
     <string name="msg_verified">Repeater-ът работи с новия firmware: %1$s</string>

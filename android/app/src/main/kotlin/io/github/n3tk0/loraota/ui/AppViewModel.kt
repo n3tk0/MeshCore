@@ -310,17 +310,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- firmware ----
 
     fun loadReleases() = viewModelScope.launch {
-        val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo) } }
-        releases = list.getOrDefault(emptyList())
+        val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo, ctx.filesDir) } }
+        releases = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
         if (list.isFailure) {
-            message = str(R.string.msg_releases_failed, list.exceptionOrNull()?.message ?: "")
-            messageIsError = true
+            val why = list.exceptionOrNull()?.message ?: ""
+            if (releases.isNotEmpty()) {
+                message = str(R.string.msg_releases_offline, why)   // no internet on site: the list kept last time
+                messageIsError = false
+            } else {
+                message = str(R.string.msg_releases_failed, why)
+                messageIsError = true
+            }
         }
         // the firmware the repeater runs, if a release has it
         val i = info ?: return@launch
         val running = releases.firstOrNull { it.sha256 == hex(i.imageSha) }
         if (running != null && oldImage == null) {
-            runCatching { withContext(Dispatchers.IO) { Releases.download(running) } }
+            runCatching { withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) } }
                 .onSuccess { oldImage = Image(running.file, it, running.env) }
         }
     }
@@ -337,7 +343,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun pickRelease(f: FirmwareFile) = work {
-        val data = withContext(Dispatchers.IO) { Releases.download(f) }
+        val data = withContext(Dispatchers.IO) { Releases.download(f, ctx.filesDir) }
         newImage = Image(f.file, data, f.env)
         patch = null
     }
