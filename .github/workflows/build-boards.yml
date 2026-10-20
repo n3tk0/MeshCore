@@ -1,10 +1,13 @@
 name: Build Firmware for Boards
 
-# Manual build for any boards: Actions > "Build Firmware for Boards" > Run workflow.
-# - boards: env names from platformio.ini (space or comma separated), e.g. "Xiao_C3_repeater Heltec_v3_repeater"
-# - group:  or every repeater / companion / room server, optionally only those whose name contains `filter`
+# Manual build for chosen boards: Actions > "Build Firmware for Boards" > Run workflow.
+# - pick a board from the Repeater / Companion / Room server lists (one from each at most), and/or
+#   type more env names from platformio.ini in `boards`, or build a whole group (optionally with `filter`)
+# - light by default: each part is left out unless its box is ticked (mailbox and LoRa OTA stay unless
+#   unticked); files then get "-lite" after the board name and the run summary lists what was left out
 # - the files are attached to the run (Actions > run > Artifacts); with `release` also a GitHub pre-release
 # Repeaters on nRF52 / ESP32 also get the app image .bin and its .ota.json for the LoRa OTA app.
+# The lists come from platformio.ini: run `bash tools/gen-board-choices.sh` after new boards arrive.
 
 permissions:
   contents: write
@@ -12,12 +15,392 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      repeater:
+        description: 'Repeater'
+        type: choice
+        default: '-'
+        options:
+          - '-'
+          # repeater boards begin
+          - Ebyte_EoRa-S3_Repeater
+          - GAT562_30S_Mesh_Kit_repeater
+          - GAT562_Mesh_EVB_Pro_repeater
+          - GAT562_Mesh_Tracker_Pro_repeater
+          - Generic_E22_sx1262_repeater
+          - Generic_E22_sx1268_repeater
+          - Heltec_ct62_repeater
+          - Heltec_E213_repeater
+          - Heltec_E290_repeater
+          - Heltec_mesh_solar_repeater
+          - heltec_rc32_repeater
+          - heltec_rc32_without_display_repeater
+          - Heltec_t096_repeater
+          - Heltec_t114_repeater
+          - Heltec_t114_without_display_repeater
+          - Heltec_t1_repeater
+          - Heltec_tower_v2_repeater
+          - heltec_tracker_v2_repeater
+          - Heltec_v2_repeater
+          - Heltec_v3_repeater
+          - heltec_v4_expansionkit_repeater
+          - heltec_v4_r8_repeater
+          - heltec_v4_r8_tft_repeater
+          - heltec_v4_repeater
+          - heltec_v4_tft_repeater
+          - Heltec_Wireless_Paper_repeater
+          - Heltec_Wireless_Tracker_repeater
+          - Heltec_WSL3_repeater
+          - ikoka_handheld_nrf_e22_30dbm_repeater
+          - ikoka_nano_nrf_22dbm_repeater
+          - ikoka_nano_nrf_30dbm_repeater
+          - ikoka_nano_nrf_33dbm_repeater
+          - ikoka_stick_nrf_22dbm_repeater
+          - ikoka_stick_nrf_30dbm_repeater
+          - ikoka_stick_nrf_33dbm_repeater
+          - KeepteenLT1_repeater
+          - LilyGo_T-Echo-Lite_repeater
+          - LilyGo_T-Echo_Card_repeater
+          - LilyGo_T-Echo_repeater
+          - LilyGo_T3S3_sx1262_repeater
+          - LilyGo_T3S3_sx1276_repeater
+          - LilyGo_TBeam_1W_repeater
+          - LilyGo_TDeck_repeater
+          - LilyGo_TETH_Elite_sx1262_repeater
+          - LilyGo_TLora_V2_1_1_6_repeater
+          - LilyGo_T_Impulse_Plus_repeater
+          - M5Stack_Unit_C6L_repeater
+          - Meshadventurer_sx1262_repeater
+          - Meshadventurer_sx1268_repeater
+          - meshnology_w12_repeater
+          - MeshTracker_X1_repeater
+          - Mesh_pocket_repeater
+          - Minewsemi_me25ls01_repeater
+          - muzi_base_duo_repeater
+          - muzi_base_uno_repeater
+          - Nano_G2_Ultra_repeater
+          - PicoW_repeater
+          - ProMicro_repeater
+          - R1Neo_repeater
+          - RAK_11310_repeater
+          - RAK_3112_repeater
+          - RAK_3401_repeater
+          - RAK_3x72_repeater
+          - RAK_4631_repeater
+          - RAK_WisMesh_Tag_repeater
+          - SenseCap_Solar_repeater
+          - Station_G2_logging_repeater
+          - Station_G2_repeater
+          - Station_G3_ESP32_logging_repeater
+          - Station_G3_ESP32_repeater
+          - t1000e_repeater
+          - Tbeam_SX1262_repeater
+          - Tbeam_SX1276_repeater
+          - Tenstar_C3_sx1262_repeater
+          - Tenstar_C3_sx1268_repeater
+          - ThinkNode_M1_repeater
+          - ThinkNode_M2_Repeater
+          - ThinkNode_M3_repeater
+          - ThinkNode_M4_repeater
+          - ThinkNode_M5_Repeater
+          - ThinkNode_M6_repeater
+          - ThinkNode_M7_repeater
+          - ThinkNode_M8_repeater
+          - Tiny_Relay_repeater
+          - T_Beam_S3_Supreme_SX1262_repeater
+          - waveshare_rp2040_lora_repeater
+          - Waveshare_S3_LR1121_repeater
+          - wio-e5-mini_repeater
+          - wio-e5_repeater
+          - WioTrackerL1-1W_repeater
+          - WioTrackerL1_repeater
+          - wio_wm1110_repeater
+          - Xiao_C3_repeater
+          - Xiao_nrf52_repeater
+          - Xiao_rp2040_repeater
+          - Xiao_S3_repeater
+          - Xiao_S3_WIO_repeater
+          # repeater boards end
+      companion:
+        description: 'Companion'
+        type: choice
+        default: '-'
+        options:
+          - '-'
+          # companion boards begin
+          - Ebyte_EoRa-S3_companion_radio_ble
+          - Ebyte_EoRa-S3_companion_radio_usb
+          - Faketec_v5_companion_radio_ble
+          - Faketec_v5_companion_radio_usb
+          - GAT562_30S_Mesh_Kit_companion_radio_ble
+          - GAT562_30S_Mesh_Kit_companion_radio_usb
+          - GAT562_Mesh_Tracker_Pro_companion_radio_ble
+          - GAT562_Mesh_Tracker_Pro_companion_radio_usb
+          - GAT562_Mesh_Watch13_companion_radio_ble
+          - Heltec_ct62_companion_radio_ble
+          - Heltec_ct62_companion_radio_usb
+          - Heltec_E213_companion_radio_ble
+          - Heltec_E213_companion_radio_usb
+          - Heltec_mesh_solar_companion_radio_ble
+          - Heltec_mesh_solar_companion_radio_usb
+          - heltec_rc32_companion_radio_ble
+          - heltec_rc32_companion_radio_usb
+          - heltec_rc32_without_display_companion_radio_ble
+          - heltec_rc32_without_display_companion_radio_usb
+          - Heltec_t096_companion_radio_ble
+          - Heltec_t096_companion_radio_usb
+          - Heltec_t114_companion_radio_ble
+          - Heltec_t114_companion_radio_usb
+          - Heltec_t114_without_display_companion_radio_ble
+          - Heltec_t114_without_display_companion_radio_usb
+          - Heltec_t1_companion_radio_ble
+          - Heltec_t1_companion_radio_usb
+          - Heltec_tower_v2_companion_radio_ble
+          - Heltec_tower_v2_companion_radio_usb
+          - heltec_tracker_v2_companion_radio_ble
+          - heltec_tracker_v2_companion_radio_usb
+          - Heltec_v2_companion_radio_ble
+          - Heltec_v2_companion_radio_usb
+          - Heltec_v3_companion_radio_ble
+          - Heltec_v3_companion_radio_usb
+          - heltec_v4_companion_radio_ble
+          - heltec_v4_companion_radio_usb
+          - heltec_v4_r8_companion_radio_ble
+          - heltec_v4_r8_companion_radio_usb
+          - heltec_v4_r8_tft_companion_radio_ble
+          - heltec_v4_r8_tft_companion_radio_usb
+          - heltec_v4_tft_companion_radio_ble
+          - heltec_v4_tft_companion_radio_usb
+          - Heltec_Wireless_Paper_companion_radio_ble
+          - Heltec_Wireless_Paper_companion_radio_usb
+          - Heltec_Wireless_Tracker_companion_radio_ble
+          - Heltec_Wireless_Tracker_companion_radio_usb
+          - Heltec_WSL3_companion_radio_ble
+          - Heltec_WSL3_companion_radio_usb
+          - ikoka_handheld_nrf_e22_30dbm_096_companion_radio_ble
+          - ikoka_handheld_nrf_e22_30dbm_096_companion_radio_usb
+          - ikoka_handheld_nrf_e22_30dbm_096_rotated_companion_radio_ble
+          - ikoka_handheld_nrf_e22_30dbm_096_rotated_companion_radio_usb
+          - ikoka_nano_nrf_22dbm_companion_radio_ble
+          - ikoka_nano_nrf_22dbm_companion_radio_usb
+          - ikoka_nano_nrf_30dbm_companion_radio_ble
+          - ikoka_nano_nrf_30dbm_companion_radio_usb
+          - ikoka_nano_nrf_33dbm_companion_radio_ble
+          - ikoka_nano_nrf_33dbm_companion_radio_usb
+          - ikoka_stick_nrf_22dbm_companion_radio_ble
+          - ikoka_stick_nrf_22dbm_companion_radio_usb
+          - ikoka_stick_nrf_30dbm_companion_radio_ble
+          - ikoka_stick_nrf_30dbm_companion_radio_usb
+          - ikoka_stick_nrf_33dbm_companion_radio_ble
+          - ikoka_stick_nrf_33dbm_companion_radio_usb
+          - KeepteenLT1_companion_radio_ble
+          - KeepteenLT1_companion_radio_usb
+          - LilyGo_T-Echo-Lite_companion_radio_ble
+          - LilyGo_T-Echo-Lite_companion_radio_usb
+          - LilyGo_T-Echo-Lite_non_shell_companion_radio_ble
+          - LilyGo_T-Echo-Lite_non_shell_companion_radio_usb
+          - LilyGo_T-Echo_Card_companion_radio_ble
+          - LilyGo_T-Echo_Card_companion_radio_usb
+          - LilyGo_T-Echo_companion_radio_ble
+          - LilyGo_T-Echo_companion_radio_usb
+          - LilyGo_T3S3_sx1262_companion_radio_ble
+          - LilyGo_T3S3_sx1262_companion_radio_usb
+          - LilyGo_T3S3_sx1276_companion_radio_ble
+          - LilyGo_T3S3_sx1276_companion_radio_usb
+          - LilyGo_TBeam_1W_companion_radio_ble
+          - LilyGo_TBeam_1W_companion_radio_usb
+          - LilyGo_TDeck_companion_radio_ble
+          - LilyGo_TDeck_companion_radio_usb
+          - LilyGo_TETH_Elite_sx1262_companion_radio_ble
+          - LilyGo_TETH_Elite_sx1262_companion_radio_usb
+          - LilyGo_TLora_V2_1_1_6_companion_radio_ble
+          - LilyGo_TLora_V2_1_1_6_companion_radio_usb
+          - LilyGo_T_Impulse_Plus_companion_radio_ble
+          - M5Stack_Unit_C6L_companion_radio_ble
+          - M5Stack_Unit_C6L_companion_radio_usb
+          - Meshadventurer_sx1262_companion_radio_ble
+          - Meshadventurer_sx1262_companion_radio_usb
+          - Meshadventurer_sx1268_companion_radio_ble
+          - Meshadventurer_sx1268_companion_radio_usb
+          - meshnology_w12_companion_radio_ble
+          - meshnology_w12_companion_radio_usb
+          - Meshtiny_companion_radio_ble
+          - Meshtiny_companion_radio_usb
+          - MeshTracker_X1_companion_radio_ble
+          - MeshTracker_X1_companion_radio_usb
+          - Mesh_pocket_companion_radio_ble
+          - Mesh_pocket_companion_radio_usb
+          - Minewsemi_me25ls01_companion_radio_ble
+          - Minewsemi_me25ls01_companion_radio_usb
+          - muzi_base_duo_companion_radio_ble
+          - muzi_base_duo_companion_radio_usb
+          - muzi_base_duo_superIO_companion_radio_ble
+          - muzi_base_uno_companion_radio_ble
+          - muzi_base_uno_companion_radio_usb
+          - muzi_base_uno_superIO_companion_radio_ble
+          - Nano_G2_Ultra_companion_radio_ble
+          - Nano_G2_Ultra_companion_radio_usb
+          - PicoW_companion_radio_ble
+          - PicoW_companion_radio_usb
+          - ProMicro_companion_radio_ble
+          - ProMicro_companion_radio_usb
+          - R1Neo_companion_radio_ble
+          - R1Neo_companion_radio_usb
+          - RAK_11310_companion_radio_usb
+          - RAK_3112_companion_radio_ble
+          - RAK_3112_companion_radio_usb
+          - RAK_3401_companion_radio_ble
+          - RAK_3401_companion_radio_usb
+          - RAK_3x72_companion_radio_usb
+          - RAK_4631_companion_radio_ble
+          - RAK_4631_companion_radio_usb
+          - RAK_WisMesh_Tag_companion_radio_ble
+          - RAK_WisMesh_Tag_companion_radio_usb
+          - SenseCap_Solar_companion_radio_ble
+          - SenseCap_Solar_companion_radio_usb
+          - Station_G2_companion_radio_ble
+          - Station_G2_companion_radio_usb
+          - Station_G3_ESP32_companion_radio_ble
+          - Station_G3_ESP32_companion_radio_usb
+          - t1000e_companion_radio_ble
+          - t1000e_companion_radio_usb
+          - Tbeam_SX1262_companion_radio_ble
+          - Tbeam_SX1276_companion_radio_ble
+          - ThinkNode_M1_companion_radio_ble
+          - ThinkNode_M1_companion_radio_usb
+          - ThinkNode_M2_companion_radio_ble
+          - ThinkNode_M2_companion_radio_usb
+          - ThinkNode_M3_companion_radio_ble
+          - ThinkNode_M3_companion_radio_usb
+          - ThinkNode_M4_companion_radio_ble
+          - ThinkNode_M4_companion_radio_usb
+          - ThinkNode_M5_companion_radio_ble
+          - ThinkNode_M5_companion_radio_usb
+          - ThinkNode_M6_companion_radio_ble
+          - ThinkNode_M6_companion_radio_usb
+          - ThinkNode_M7_companion_radio_ble
+          - ThinkNode_M7_companion_radio_usb
+          - ThinkNode_M8_companion_radio_ble
+          - ThinkNode_M8_companion_radio_usb
+          - Tiny_Relay_companion_radio_usb
+          - T_Beam_S3_Supreme_SX1262_companion_radio_ble
+          - waveshare_rp2040_lora_companion_radio_usb
+          - Waveshare_S3_LR1121_companion_radio_ble
+          - Waveshare_S3_LR1121_companion_radio_usb
+          - wio-e5-mini_companion_radio_usb
+          - wio-e5_companion_radio_usb
+          - WioTrackerL1-1W_companion_radio_ble
+          - WioTrackerL1-1W_companion_radio_usb
+          - WioTrackerL1Eink_companion_radio_ble
+          - WioTrackerL1_companion_radio_ble
+          - WioTrackerL1_companion_radio_usb
+          - wio_wm1110_companion_radio_ble
+          - Xiao_C3_companion_radio_ble
+          - Xiao_C3_companion_radio_usb
+          - Xiao_nrf52_companion_radio_ble
+          - Xiao_nrf52_companion_radio_usb
+          - Xiao_rp2040_companion_radio_usb
+          - Xiao_S3_companion_radio_ble
+          - Xiao_S3_companion_radio_usb
+          - Xiao_S3_WIO_companion_radio_ble
+          - Xiao_S3_WIO_companion_radio_usb
+          # companion boards end
+      room_server:
+        description: 'Room server'
+        type: choice
+        default: '-'
+        options:
+          - '-'
+          # room-server boards begin
+          - Ebyte_EoRa-S3_room_server
+          - GAT562_30S_Mesh_Kit_room_server
+          - GAT562_Mesh_EVB_Pro_room_server
+          - GAT562_Mesh_Tracker_Pro_room_server
+          - Heltec_E213_room_server
+          - Heltec_E290_room_server
+          - Heltec_mesh_solar_room_server
+          - heltec_rc32_room_server
+          - heltec_rc32_without_display_room_server
+          - Heltec_t096_room_server
+          - Heltec_t114_room_server
+          - Heltec_t114_without_display_room_server
+          - Heltec_t1_room_server
+          - Heltec_tower_v2_room_server
+          - heltec_tracker_v2_room_server
+          - Heltec_v2_room_server
+          - Heltec_v3_room_server
+          - heltec_v4_r8_room_server
+          - heltec_v4_r8_tft_room_server
+          - heltec_v4_room_server
+          - heltec_v4_tft_room_server
+          - Heltec_Wireless_Paper_room_server
+          - Heltec_Wireless_Tracker_room_server
+          - Heltec_WSL3_room_server
+          - ikoka_handheld_nrf_e22_30dbm_room_server
+          - ikoka_nano_nrf_22dbm_room_server
+          - ikoka_nano_nrf_30dbm_room_server
+          - ikoka_nano_nrf_33dbm_room_server
+          - ikoka_stick_nrf_22dbm_room_server
+          - ikoka_stick_nrf_30dbm_room_server
+          - ikoka_stick_nrf_33dbm_room_server
+          - KeepteenLT1_room_server
+          - LilyGo_T-Echo-Lite_room_server
+          - LilyGo_T-Echo_Card_room_server
+          - LilyGo_T-Echo_room_server
+          - LilyGo_T3S3_sx1262_room_server
+          - LilyGo_T3S3_sx1276_room_server
+          - LilyGo_TBeam_1W_room_server
+          - LilyGo_TETH_Elite_sx1262_room_server
+          - LilyGo_TLora_V2_1_1_6_room_server
+          - M5Stack_Unit_C6L_room_server
+          - Meshadventurer_sx1262_room_server
+          - Meshadventurer_sx1268_room_server
+          - meshnology_w12_room_server
+          - MeshTracker_X1_room_server
+          - Mesh_pocket_room_server
+          - Minewsemi_me25ls01_room_server
+          - muzi_base_duo_room_server
+          - muzi_base_uno_room_server
+          - Nano_G2_Ultra_room_server
+          - PicoW_room_server
+          - ProMicro_room_server
+          - R1Neo_room_server
+          - RAK_11310_room_server
+          - RAK_3112_room_server
+          - RAK_3401_room_server
+          - RAK_4631_room_server
+          - RAK_WisMesh_Tag_room_server
+          - SenseCap_Solar_room_server
+          - Station_G2_room_server
+          - Station_G3_ESP32_room_server
+          - t1000e_room_server
+          - Tbeam_SX1262_room_server
+          - Tbeam_SX1276_room_server
+          - ThinkNode_M1_room_server
+          - ThinkNode_M2_room_server
+          - ThinkNode_M3_room_server
+          - ThinkNode_M4_room_server
+          - ThinkNode_M5_room_server
+          - ThinkNode_M6_room_server
+          - ThinkNode_M7_room_server
+          - ThinkNode_M8_room_server
+          - T_Beam_S3_Supreme_SX1262_room_server
+          - waveshare_rp2040_lora_room_server
+          - Waveshare_S3_LR1121_room_server
+          - WioTrackerL1-1W_room_server
+          - WioTrackerL1_room_server
+          - wio_wm1110_room_server
+          - Xiao_C3_room_server
+          - Xiao_nrf52_room_server
+          - Xiao_rp2040_room_server
+          - Xiao_S3_room_server
+          - Xiao_S3_WIO_room_server
+          # room-server boards end
       boards:
-        description: 'Платки: имена на env от platformio.ini, с интервал или запетая (за "listed")'
+        description: 'Още платки: имена на env от platformio.ini, с интервал или запетая (по желание)'
         type: string
-        default: 'Faketec_v5_companion_radio_ble Faketec_v5_companion_radio_usb Xiao_C3_repeater Xiao_nrf52_repeater'
+        default: ''
       group:
-        description: 'Кои: listed = изброените горе; иначе всички от групата'
+        description: 'Кои: listed = избраните горе; иначе всички от групата'
         type: choice
         default: listed
         options:
@@ -29,6 +412,42 @@ on:
         description: 'Само платки, чието име съдържа това (напр. Xiao, Heltec, RAK); празно = всички'
         type: string
         default: ''
+      rtc:
+        description: 'RTC часовник (DS3231, RV3028, PCF8563)'
+        type: boolean
+        default: false
+      climate:
+        description: 'Сензори за температура/влажност/налягане (BME280, BMP280, AHTX0, SHTC3, SHT4X, LPS22HB, BME680, BMP085, MLX90614)'
+        type: boolean
+        default: false
+      power_meters:
+        description: 'Измерване на ток/напрежение (INA219, INA226, INA260, INA3221)'
+        type: boolean
+        default: false
+      other_sensors:
+        description: 'Други сензори (VL53L0X разстояние, RAK12035 почва)'
+        type: boolean
+        default: false
+      gps:
+        description: 'GPS'
+        type: boolean
+        default: false
+      display:
+        description: 'Дисплей (без него companion няма меню на устройството, само през телефона)'
+        type: boolean
+        default: false
+      mailbox:
+        description: 'Mailbox за лични съобщения (repeater)'
+        type: boolean
+        default: true
+      lora_ota:
+        description: 'LoRa OTA (repeater)'
+        type: boolean
+        default: true
+      debug:
+        description: 'Debug логове'
+        type: boolean
+        default: false
       release:
         description: 'Публикувай и GitHub pre-release с файловете'
         type: boolean
@@ -49,6 +468,7 @@ jobs:
       - name: Boards to Build
         id: list
         env:
+          PICKED: ${{ inputs.repeater }} ${{ inputs.companion }} ${{ inputs.room_server }}
           BOARDS: ${{ inputs.boards }}
           GROUP: ${{ inputs.group }}
           FILTER: ${{ inputs.filter }}
@@ -58,7 +478,7 @@ jobs:
             all-repeaters)    LIST=$(bash build.sh get-repeater-firmwares-to-build) ;;
             all-companions)   LIST=$(bash build.sh get-companion-firmwares-to-build) ;;
             all-room-servers) LIST=$(bash build.sh get-room-server-firmwares-to-build) ;;
-            *)                LIST=$(echo "$BOARDS" | tr ', ' '\n\n' | sed '/^$/d') ;;
+            *)                LIST=$(echo "$PICKED $BOARDS" | tr ', ' '\n\n' | sed '/^-$/d;/^$/d') ;;
           esac
           if [ -n "$FILTER" ]; then
             LIST=$(echo "$LIST" | grep -i -F -- "$FILTER" || true)
@@ -72,12 +492,20 @@ jobs:
             exit 1
           fi
           if [ -z "$LIST" ]; then
-            echo "::error::No boards to build"
+            echo "::error::No boards to build: pick one from the lists, type it in 'boards' or choose a group"
             exit 1
           fi
           JSON=$(echo "$LIST" | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "targets=$JSON" >> "$GITHUB_OUTPUT"
           echo "Boards: $JSON"
+
+      - name: Board Lists Up to Date
+        run: |
+          cp .github/workflows/build-boards.yml /tmp/before.yml
+          bash tools/gen-board-choices.sh >/dev/null
+          if ! cmp -s /tmp/before.yml .github/workflows/build-boards.yml; then
+            echo "::warning::The board lists in build-boards.yml are out of date: run 'bash tools/gen-board-choices.sh' (you can still type any board in 'boards')"
+          fi
 
   build:
     needs: targets
@@ -96,7 +524,26 @@ jobs:
       - name: Build ${{ matrix.target }}
         env:
           FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
-        run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
+          WITH_RTC: ${{ inputs.rtc }}
+          WITH_CLIMATE: ${{ inputs.climate }}
+          WITH_POWER_METERS: ${{ inputs.power_meters }}
+          WITH_OTHER_SENSORS: ${{ inputs.other_sensors }}
+          WITH_GPS: ${{ inputs.gps }}
+          WITH_DISPLAY: ${{ inputs.display }}
+          WITH_MAILBOX: ${{ inputs.mailbox }}
+          WITH_LORA_OTA: ${{ inputs.lora_ota }}
+          WITH_DEBUG: ${{ inputs.debug }}
+        run: |
+          export LITE_REMOVED=/tmp/lite-removed.txt
+          source tools/lite-flags.sh
+          echo "Extra flags: $PLATFORMIO_BUILD_FLAGS $PLATFORMIO_BUILD_SRC_FILTER"
+          /usr/bin/env bash build.sh build-firmware ${{ matrix.target }} 2>&1 | tee /tmp/pio-size.txt
+          if [ -s "$LITE_REMOVED" ]; then
+            # Xiao_C3_repeater-v1.18.0-abc1234.bin -> Xiao_C3_repeater-lite-v1.18.0-abc1234.bin
+            for f in out/${{ matrix.target }}-*; do
+              mv "$f" "out/${{ matrix.target }}-lite-${f#out/${{ matrix.target }}-}"
+            done
+          fi
 
       - name: App Image for LoRa OTA
         if: endsWith(matrix.target, '_repeater')
@@ -121,6 +568,11 @@ jobs:
       - name: Summary
         run: |
           echo "### ${{ matrix.target }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s /tmp/lite-removed.txt ]; then
+            echo "Left out: $(paste -sd, /tmp/lite-removed.txt | sed 's/,/, /g')" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+          fi
+          grep -hE '^(RAM|Flash):' /tmp/pio-size.txt 2>/dev/null | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY" || true
           ls -1 out | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Workflow Artifacts
