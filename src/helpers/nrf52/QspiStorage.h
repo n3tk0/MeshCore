@@ -65,6 +65,7 @@ public:
   void off() {
     if (!_on || _hold) return;
     waitIdle(1000);
+    nrfx_qspi_cinstr_quick_send(0xB9, NRF_QSPI_CINSTR_LEN_1B, NULL);   // deep power down: under 1 uA instead of ~15 uA standby
     nrfx_qspi_uninit();
     _on = false;
   }

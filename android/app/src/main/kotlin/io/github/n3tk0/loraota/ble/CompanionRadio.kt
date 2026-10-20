@@ -129,14 +129,6 @@ class CompanionRadio(private val link: CompanionLink) {
             (f[1].toInt() == 1 || (f.size > 12 && (f[12].toInt() and 0x03) == 3))
     }
 
-    /** Requests to this contact go with no hop: only a repeater next to us hears them, nobody repeats them. */
-    suspend fun setZeroHop(contact: Contact) {
-        val f = contact.frame.copyOf()
-        f[0] = CMD_ADD_UPDATE_CONTACT.toByte()
-        f[35] = 0
-        command(f, 5000, RESP_OK)
-    }
-
     /** Forgets the route to the contact: the next message (the login) floods, and the route is learned again. */
     suspend fun resetPath(contact: Contact) {
         command(byteArrayOf(CMD_RESET_PATH.toByte()) + contact.publicKey, 5000, RESP_OK)

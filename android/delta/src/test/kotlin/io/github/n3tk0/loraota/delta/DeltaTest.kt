@@ -69,6 +69,25 @@ class DeltaTest {
         }
     }
 
+    /** Long padding runs made the suffix sort recurse very deep: it now works on a normal (small) stack. */
+    @Test
+    fun longPaddingOnASmallStack() {
+        val rnd = Random(4)
+        val old = ByteArray(120_000) { 0xff.toByte() }.also { rnd.nextBytes(it, 0, 30_000) }
+        val new = old.copyOf().also { rnd.nextBytes(it, 30_000, 40_000) }
+        var error: Throwable? = null
+        val t = Thread(null, {
+            try {
+                assertContentEquals(new, DetoolsPatch.apply(old, DetoolsPatch.create(old, new)))
+            } catch (e: Throwable) {
+                error = e
+            }
+        }, "small-stack", 256L shl 10)
+        t.start()
+        t.join()
+        error?.let { throw it }
+    }
+
     /** Writes a small old/new/patch set for the firmware's unit test (test/test_lora_ota). */
     @Test
     fun writeFirmwareFixture() {

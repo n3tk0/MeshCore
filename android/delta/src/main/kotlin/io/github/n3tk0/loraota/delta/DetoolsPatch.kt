@@ -16,6 +16,7 @@ import java.security.MessageDigest
 object DetoolsPatch {
     private const val PATCH_TYPE_SEQUENTIAL = 0
     private const val COMPRESSION_HEATSHRINK = 4
+    private const val MAX_TO_SIZE = 16 shl 20   // no repeater image comes near this
 
     class CorruptPatch(msg: String) : Exception(msg)
 
@@ -66,16 +67,20 @@ object DetoolsPatch {
         var p = 1
         var toSize = 0
         run {
+            if (p >= patch.size) throw CorruptPatch("size")
             var b = patch[p++].toInt() and 0xff
             toSize = b and 0x3f
             var shift = 6
             while (b and 0x80 != 0) {
+                if (p >= patch.size || shift > 27) throw CorruptPatch("size")
                 b = patch[p++].toInt() and 0xff
                 toSize = toSize or ((b and 0x7f) shl shift)
                 shift += 7
             }
+            if (toSize < 0 || toSize > MAX_TO_SIZE) throw CorruptPatch("size")
         }
         if (toSize == 0) return ByteArray(0)
+        if (p >= patch.size) throw CorruptPatch("short")
         val hs = patch[p++].toInt() and 0xff
         if ((hs ushr 4) + 4 != Heatshrink.WINDOW_BITS || (hs and 0xf) + 3 != Heatshrink.LOOKAHEAD_BITS) {
             throw CorruptPatch("heatshrink parameters")
@@ -118,26 +123,11 @@ object DetoolsPatch {
     fun sha256(data: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(data)
 }
 
-/**
- * Makes the delta on a thread with a large stack: the suffix sort recurses deeply on repetitive data
- * (padding in firmware images).
- */
+/** Makes the delta and checks that it gives the new image back. */
 object DeltaGenerator {
     fun create(old: ByteArray, new: ByteArray): ByteArray {
-        var result: ByteArray? = null
-        var error: Throwable? = null
-        val t = Thread(null, {
-            try {
-                val patch = DetoolsPatch.create(old, new)
-                if (!DetoolsPatch.apply(old, patch).contentEquals(new)) throw IllegalStateException("delta check failed")
-                result = patch
-            } catch (e: Throwable) {
-                error = e
-            }
-        }, "delta", 256L shl 20)
-        t.start()
-        t.join()
-        error?.let { throw it }
-        return result!!
+        val patch = DetoolsPatch.create(old, new)
+        if (!DetoolsPatch.apply(old, patch).contentEquals(new)) throw IllegalStateException("delta check failed")
+        return patch
     }
 }
