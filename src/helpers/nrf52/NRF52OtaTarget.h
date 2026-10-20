@@ -261,7 +261,7 @@ public:
     while (len > 0) {
       uint32_t used = _patch_len % NRF52_OTA_PAGE;
       size_t n = NRF52_OTA_PAGE - used < len ? NRF52_OTA_PAGE - used : len;
-      if (staging() + _patch_len + n > _tail) return false;
+      if (_patch_page == NULL || staging() + _patch_len + n > _tail) return false;
       memcpy(&_patch_page[used], src, n);
       _patch_len += n;
       src += n; len -= n;
@@ -315,7 +315,13 @@ public:
 #ifdef QSPI_STORAGE
     if (onQspi() && _head == 0 && !qspiFlush()) return false;
 #endif
-    if (_head > 0 && !flushPatchPage()) return false;
+    if (_head > 0) {
+      if (!flushPatchPage()) return false;
+      if (_pos == _new_size) {   // the whole delta is in: its page goes back to the heap before makeHead()
+        free(_patch_page);
+        _patch_page = NULL;
+      }
+    }
     flash_nrf5x_flush();
     return _pos == _new_size;
   }

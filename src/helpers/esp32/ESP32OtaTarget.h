@@ -58,11 +58,11 @@ public:
   }
 
   bool beginNew(uint32_t size) override {
-    _overwritten = true;
     abortNew();
     confirm();   // the next image goes over the previous one, which is then no way back
     _next = esp_ota_get_next_update_partition(NULL);
     if (_next == NULL || size > _next->size) return false;
+    _overwritten = true;
     // erase as the data comes in: erasing the whole partition up front would block for seconds
     if (esp_ota_begin(_next, OTA_WITH_SEQUENTIAL_WRITES, &_handle) != ESP_OK) return false;
     _new_size = size;

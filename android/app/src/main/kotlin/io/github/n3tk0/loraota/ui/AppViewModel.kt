@@ -210,19 +210,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun login(contact: Contact, password: String) = work {
         // log in by flood, so both sides learn the route: the update only goes when it has no hop
         companion.resetPath(contact)
-        try {
+        val learned = try {
             if (!companion.login(contact, password)) throw Exception(str(R.string.msg_not_admin))
             delay(4000)   // the companion sends its route back to the repeater
-            val hops = companion.contact(contact.publicKey)?.outPathLen ?: 0xFF
-            if (hops == 0xFF || (hops and 63) != 0) {
+            val now = companion.contact(contact.publicKey)
+            val hops = now?.outPathLen ?: 0xFF
+            if (now == null || hops == 0xFF || (hops and 63) != 0) {
                 throw Exception(if (hops == 0xFF) str(R.string.msg_no_route) else str(R.string.msg_not_direct, hops and 63))
             }
+            now
         } catch (e: Exception) {
             runCatching { companion.restorePath(contact) }
             throw e
         }
         savePassword(contact, password)
-        repeater = contact
+        // the direct route just learned is the one to keep afterwards, not the older (longer) one
+        repeater = learned
         val i = session(contact).info()
         info = i
         oldImage = null
@@ -365,6 +368,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val n = newImage?.data?.size ?: return false
         return info?.inPlace(n) == true
     }
+
+    /** Any other nRF52 update: the same final copy, so the same (smaller) risk note. */
+    fun nrfCopy(): Boolean = newImage != null && info?.platform == OtaProtocol.PLATFORM_NRF52 && !inPlace()
 
     fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
 

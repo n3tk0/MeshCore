@@ -215,6 +215,7 @@ private fun UpdateStep(vm: AppViewModel) {
     }
     if (vm.oldImage == null && info != null) Warning(stringResource(R.string.running_unknown))
     if (vm.inPlace()) InPlaceWarning(detail = true)
+    if (vm.nrfCopy()) CopyNote()
 
     val ready = vm.oldImage != null && vm.newImage != null && info?.enabled == true
     val continuing = info?.state == OtaProtocol.STATE_PAUSED || vm.resumable
@@ -240,6 +241,7 @@ private fun UpdateStep(vm: AppViewModel) {
                     Text(stringResource(R.string.confirm_text, vm.newImage?.name ?: "", (p?.size ?: 0) / 1024.0,
                         vm.estimateMinutes() ?: 0.0, vm.sideRadio().cliArgs()))
                     if (vm.inPlace()) InPlaceWarning(detail = false)
+                    if (vm.nrfCopy()) CopyNote()
                     if (vm.ignoreAirLimit) Text(stringResource(R.string.ignore_air_limit_warning), color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -317,6 +319,20 @@ private fun InPlaceWarning(detail: Boolean) {
             Text(stringResource(R.string.in_place_text), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             if (detail) Text(stringResource(R.string.in_place_detail), style = MaterialTheme.typography.bodyMedium)
         }
+    }
+}
+
+/** Smaller: every nRF52 update ends with the same copy over the running firmware. */
+@Composable
+private fun CopyNote() {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        ),
+    ) {
+        Text(stringResource(R.string.copy_note), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
     }
 }
 

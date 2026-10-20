@@ -47,7 +47,43 @@ internal object Bsdiff {
         return i
     }
 
-    private fun split(I: IntArray, V: IntArray, start: Int, len: Int, h: Int) {
+    /**
+     * The qsufsort split, with its recursion on a heap stack: firmware padding (long runs of 0xFF) made
+     * it tens of thousands of calls deep. The work runs in the same order as the recursive version:
+     * left part, then the equal group's numbers, then the right part.
+     */
+    private fun split(I: IntArray, V: IntArray, start0: Int, len0: Int, h: Int) {
+        // entries of three ints: kind (0 = split [a, a+b), 1 = number the equal group [a, b)), a, b
+        var stack = IntArray(3 * 64)
+        var top = 0
+        fun push(kind: Int, a: Int, b: Int) {
+            if (top + 3 > stack.size) stack = stack.copyOf(stack.size * 2)
+            stack[top] = kind; stack[top + 1] = a; stack[top + 2] = b
+            top += 3
+        }
+        push(0, start0, len0)
+        while (top > 0) {
+            top -= 3
+            if (stack[top] == 1) {
+                val jj = stack[top + 1]
+                val kk = stack[top + 2]
+                for (q in 0 until kk - jj) V[I[jj + q]] = kk - 1
+                if (jj == kk - 1) I[jj] = -1
+                continue
+            }
+            val start = stack[top + 1]
+            val len = stack[top + 2]
+            splitStep(I, V, start, len, h)?.let { (jj, kk) ->
+                // pushed in reverse: popped left first, as the recursion ran them
+                if (start + len > kk) push(0, kk, start + len - kk)
+                push(1, jj, kk)
+                if (jj > start) push(0, start, jj - start)
+            }
+        }
+    }
+
+    /** One split level: sorts a small group in place (null), or partitions a large one and returns its equal range. */
+    private fun splitStep(I: IntArray, V: IntArray, start: Int, len: Int, h: Int): Pair<Int, Int>? {
         if (len < 16) {
             var k = start
             while (k < start + len) {
@@ -69,7 +105,7 @@ internal object Bsdiff {
                 if (j == 1) I[k] = -1
                 k += j
             }
-            return
+            return null
         }
 
         val x = V[I[start + len / 2] + h]
@@ -105,10 +141,7 @@ internal object Bsdiff {
             }
         }
 
-        if (jj > start) split(I, V, start, jj - start, h)
-        for (q in 0 until kk - jj) V[I[jj + q]] = kk - 1
-        if (jj == kk - 1) I[jj] = -1
-        if (start + len > kk) split(I, V, kk, start + len - kk, h)
+        return Pair(jj, kk)
     }
 
     private fun matchLen(old: ByteArray, oldPos: Int, new: ByteArray, newPos: Int): Int {

@@ -29,8 +29,15 @@ class OtaService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val n = notification(this, intent?.getStringExtra(EXTRA_TITLE) ?: "", intent?.getStringExtra(EXTRA_TEXT) ?: "", 0, 0)
         // always first, also for STOP: a service started for the foreground and stopped before this crashes the app
-        ServiceCompat.startForeground(this, ID, n,
-            if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
+        try {
+            ServiceCompat.startForeground(this, ID, n,
+                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
+        } catch (e: Exception) {
+            // Android refused the foreground (app went to the background in between, Bluetooth permission
+            // lost): the update goes on without the notification rather than the app crashing mid-update
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_STOP) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
