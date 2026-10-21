@@ -165,7 +165,9 @@ static bool copy(uint32_t flags, uint32_t src, uint32_t size) {
   uint32_t dst = DFU_BANK_0_REGION_START;
   for (uint32_t off = 0; off < size; off += PAGE) {
     wdt_feed();
-    if (!src_read(flags, src + off, PAGE)) return false;
+    uint32_t n = size - off < PAGE ? size - off : PAGE;
+    if (!src_read(flags, src + off, (n + 3) & ~3u)) return false;
+    for (uint32_t w = (n + 3) / 4; w < PAGE / 4; w++) buf[w] = 0xFFFFFFFFu;   // after the image: erased
     volatile uint32_t* to = (volatile uint32_t*)(uintptr_t)(dst + off);
     bool same = true;
     for (uint32_t w = 0; w < PAGE / 4 && same; w++) same = to[w] == buf[w];

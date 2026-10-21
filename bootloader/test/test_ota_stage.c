@@ -127,9 +127,11 @@ static void test_internal(void) {
   reset_node();
   uint32_t src = APP + 0x50000;
   memcpy(mem(src), img_new, sizeof(img_new));
+  memset(mem(src + sizeof(img_new)), 0xAA, 2048);   // whatever follows the image in its last page
   const ota_stage_t* r = write_record(0, src);
   boot(-1);
   CHECK(app_is(img_new, sizeof(img_new)));
+  for (int i = 0; i < 2048; i++) CHECK(mem(APP + sizeof(img_new))[i] == 0xFF);
   CHECK(r->installed == OTA_STAGE_SET && r->failed == OTA_STAGE_UNSET);
   CHECK(settings0() == 0x00000001u);   // valid, CRC check off
   boot(-1);   // nothing more: no backup, no trial
@@ -195,6 +197,21 @@ static void test_confirmed(void) {
   r->rb_request = OTA_STAGE_SET;
   boot(-1);
   CHECK(app_is(img_old, sizeof(img_old)) && r->rb_done == OTA_STAGE_SET);
+}
+
+static void test_half_written_record(void) {
+  printf("half-written newer record: the older one is not acted on\n");
+  reset_node();
+  stage_qspi(1);
+  const ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
+  boot(-1);   // installed, on trial
+  ota_stage_t* half = ota_stage_free_slot();
+  half->magic = OTA_STAGE_MAGIC;   // power cut right after the first word
+  CHECK(ota_stage_find() == 0);
+  for (uint32_t i = 0; i <= OTA_STAGE_TRIAL_BOOTS; i++) boot(-1);
+  CHECK(app_is(img_new, sizeof(img_new)) && r->boots == OTA_STAGE_UNSET && r->rb_started == OTA_STAGE_UNSET);
+  const ota_stage_t* next = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);   // the next update
+  CHECK(next != half && ota_stage_find() == next);
 }
 
 static void test_app_changed(void) {
@@ -275,6 +292,7 @@ int main(void) {
   test_wrong_dst();
   test_trial_and_rollback();
   test_confirmed();
+  test_half_written_record();
   test_app_changed();
   test_both_sources_bad();
   test_power_cuts("install from internal flash", 0, 0);
