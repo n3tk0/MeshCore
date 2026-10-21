@@ -2,7 +2,8 @@ name: Build Firmware for Boards
 
 # Manual build for chosen boards: Actions > "Build Firmware for Boards" > Run workflow.
 # - pick a board from the Repeater / Companion / Room server lists (one from each at most), and/or
-#   type more env names from platformio.ini in `boards`, or build a whole group (optionally with `filter`)
+#   type more env names from platformio.ini in `boards`; a group adds all its boards (`filter` narrows only
+#   the group, the picked boards are always built)
 # - light by default: each part is left out unless its box is ticked (mailbox and LoRa OTA stay unless
 #   unticked); files then get "-lite" after the board name and the run summary lists what was left out
 # - the files are attached to the run (Actions > run > Artifacts); with `release` also a GitHub pre-release
@@ -400,7 +401,7 @@ on:
         type: string
         default: ''
       group:
-        description: 'Кои: listed = избраните горе; иначе всички от групата'
+        description: 'Група: listed = само избраните; иначе и всички от групата'
         type: choice
         default: listed
         options:
@@ -409,7 +410,7 @@ on:
           - all-companions
           - all-room-servers
       filter:
-        description: 'Само платки, чието име съдържа това (напр. Xiao, Heltec, RAK); празно = всички'
+        description: 'Само платки от групата, чието име съдържа това (напр. Xiao, Heltec, RAK); избраните горе не се филтрират'
         type: string
         default: ''
       rtc:
@@ -474,15 +475,18 @@ jobs:
           FILTER: ${{ inputs.filter }}
         run: |
           ALL=$(bash build.sh list)
+          # the boards picked or typed are always built; a group adds all its boards, `filter` narrows the group
+          LIST=$(echo "$PICKED $BOARDS" | tr ', ' '\n\n' | sed '/^-$/d;/^$/d')
           case "$GROUP" in
-            all-repeaters)    LIST=$(bash build.sh get-repeater-firmwares-to-build) ;;
-            all-companions)   LIST=$(bash build.sh get-companion-firmwares-to-build) ;;
-            all-room-servers) LIST=$(bash build.sh get-room-server-firmwares-to-build) ;;
-            *)                LIST=$(echo "$PICKED $BOARDS" | tr ', ' '\n\n' | sed '/^-$/d;/^$/d') ;;
+            all-repeaters)    GROUP_LIST=$(bash build.sh get-repeater-firmwares-to-build) ;;
+            all-companions)   GROUP_LIST=$(bash build.sh get-companion-firmwares-to-build) ;;
+            all-room-servers) GROUP_LIST=$(bash build.sh get-room-server-firmwares-to-build) ;;
+            *)                GROUP_LIST="" ;;
           esac
-          if [ -n "$FILTER" ]; then
-            LIST=$(echo "$LIST" | grep -i -F -- "$FILTER" || true)
+          if [ -n "$FILTER" ] && [ -n "$GROUP_LIST" ]; then
+            GROUP_LIST=$(echo "$GROUP_LIST" | grep -i -F -- "$FILTER" || true)
           fi
+          LIST=$(printf '%s\n%s\n' "$LIST" "$GROUP_LIST" | sed '/^$/d')
           BAD=""
           for b in $LIST; do
             echo "$ALL" | grep -qx -- "$b" || BAD="$BAD $b"
