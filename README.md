@@ -1,15 +1,18 @@
 > **This is a fork of [meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore).**
-> It tracks upstream and adds a Faketec v5 companion build with its own encoder-driven UI (read and write messages without a phone), plus robustness fixes to the shared MeshCore code.
+> It tracks upstream and adds a Faketec v5 companion build with its own encoder-driven UI (read and write messages without a phone), a mailbox and LoRa OTA updates for repeaters (with an Android app and an nRF52 bootloader that survives power cuts), light builds of any board, plus robustness fixes to the shared MeshCore code.
 > Everything below "About MeshCore" is the upstream README. For general MeshCore support, issues and contributions, please use the upstream repository.
 
 ## 🍴 What this fork adds
 
 - [Faketec v5 companion with encoder UI](#faketec-v5-companion-with-encoder-ui): hardware, wiring, controls, writing messages, settings, build flags
+- [Repeater mailbox](#repeater-mailbox-store--forward-for-direct-messages): keeps direct messages for owners who are away
+- [LoRa OTA for repeaters](#lora-ota-for-repeaters-nrf52-esp32): delta updates over the air from an Android app
+- [nRF52 bootloader for LoRa OTA](#nrf52-bootloader-for-lora-ota): staged install that survives a power cut, rollback on boards with QSPI flash
 - [Fixes to upstream MeshCore](#fixes-to-upstream-meshcore): crash and hang fixes that apply to every board
 - [New shared components](#new-shared-components): reusable drivers and hooks added under `src/` and `examples/companion_radio/`
 - [Builds and CI](#builds-and-ci)
 
-> Status: the Faketec v5 firmware compiles and boots with BLE. The UI has been checked in the screen simulator (`tools/ui-sim`); the latest changes (network tools, channels from the device, learned words, hardware check) have not been tested on hardware yet.
+> Status: the Faketec v5 firmware compiles and boots with BLE. The UI has been checked in the screen simulator (`tools/ui-sim`); the latest changes (network tools, channels from the device, learned words, hardware check, buttons instead of the encoder, repeat) have not been tested on hardware yet. The repeater mailbox, LoRa OTA and the bootloader pass their unit and host tests and build in CI, but have not been tested on hardware yet either.
 
 ### Faketec v5 companion with encoder UI
 
@@ -20,7 +23,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 | MCU | Nice!Nano v2 / nRF52840 Pro Micro clone |
 | Radio | Heltec HT-RA62 (SX1262) |
 | Display | 128x64 SSD1306 I2C OLED (e.g. WINSTAR WEA012864) |
-| Encoder | Quadrature rotary encoder with push switch (e.g. ZIPPY AN-P1S-2SP-Z) |
+| Encoder | Quadrature rotary encoder with push switch (e.g. ZIPPY AN-P1S-2SP-Z), or three buttons instead (see below) |
 | Buttons | User button (Back) and reset; use 2-pin switches, a 4-pin switch shorts on the SW1/SW2 footprint |
 | Haptics | 3 V coin vibration motor on the board's T2 MOSFET footprint (optional) |
 | Power | 1S LiPo straight from the controller's charger, battery read through a divider |
@@ -31,6 +34,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 |---|---|
 | Encoder A / B | P1.01 / P1.02 (common to GND) |
 | Encoder push | P1.07 |
+| Buttons instead of the encoder | Up P1.01, Down P1.02, Enter P1.07 (each to GND) |
 | User button (Back) | P1.00 |
 | OLED SDA / SCL | P1.04 / P0.11 (board I2C) |
 | Vibration motor | T2 gate = P0.08, motor between B+ and drain pad J7, flyback diode across the motor |
@@ -70,11 +74,15 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 
 | Group | Settings |
 |---|---|
-| Display | screen timeout (15 s – 5 min), brightness, page dots, menu font and text font size (large / medium / small / tiny) |
-| Controls | vibration, encoder direction, encoder steps per detent (2 / 4), keyboard jump to the likely next letter, key lock (by hand / automatic when the screen goes off) |
+| Display | menu font and text font size (large / medium / small / tiny), screen timeout (15 s – 5 min), brightness, page dots |
+| Hardware | encoder direction, encoder steps per detent (2 / 4; hidden with buttons), vibration, keyboard jump to the likely next letter, key lock (by hand / automatic when the screen goes off), input test, vibration test, screen test, readings (battery raw/ADC, USB, reset reason, noise floor, uptime) |
 | Messages | alerts (without phone / always / never), wake the screen for (direct and mentions / all / never), confirm deletes, contacts sort, 10 quick replies (stored in `/ui_quick`), learned words (count, clear) |
-| Radio | transmit on/off, TX power, antenna question (after a new battery / every boot / never), preset (EU/UK Narrow, EU/UK Deprecated; anything else shows as custom) |
-| System | node name (an advert with the new name is offered; the Bluetooth name changes after a restart), language BG / EN, time zone, EU summer time, battery calibration, about, hardware check (encoder, vibration and display tests; battery raw/ADC, USB, reset reason, noise floor, uptime), CLI rescue, firmware update over USB (UF2 drive) or BLE (DFU) |
+| Radio | transmit on/off, TX power, antenna question (after a new battery / every boot / never), preset (EU/UK Narrow, EU/UK Deprecated; anything else shows as custom), repeater |
+| System | node name (an advert with the new name is offered; the Bluetooth name changes after a restart), language BG / EN, time zone, EU summer time, battery calibration, about, CLI rescue, firmware update over USB (UF2 drive) or BLE (DFU) |
+
+**Buttons instead of the encoder:** Up on P1.01, Down on P1.02 and Enter on P1.07, each to GND. The firmware is the same: after a new battery, the first turn or press at the antenna question shows which is fitted, and that is remembered across restarts and power off. A held button repeats. A wrong guess fixes itself: two full encoder clicks in one direction within 1 s switch to the encoder, two presses of one button within 2 s switch to buttons.
+
+**Repeater (emergency only):** Settings > Radio > Repeater (or the phone app) makes the companion repeat other nodes' packets. It loads the mesh and the battery, so it asks "Emergency only! Turn on?" first, and a tower icon shows in the status row while it is on. It is allowed on 433.000, 869.495, 869.618 (EU/UK Narrow) and 918.000 MHz (`-D ALLOWED_REPEAT_FREQ_RANGE` in the Faketec ini); while it is on, a preset on another frequency is refused.
 
 **Battery calibration:** Settings > System > Battery shows the measured voltage; set it to what a multimeter shows at the battery and the divider factor is saved in prefs. The shown value is averaged, and the node powers off only after three low readings in a row, so a transmit pulse does not switch it off.
 
@@ -87,6 +95,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 - `-D AUTO_SHUTDOWN_MILLIVOLTS=3300`: there is no BMS, so the node hibernates below this voltage. Calibrate in Settings > System > Battery (or set `-D ADC_MULTIPLIER` for your divider).
 - `-D ENCODER_STEPS_PER_DETENT=2`, `-D ENCODER_REVERSE=true`: build defaults for the encoder; both can also be changed in Settings.
 - `-D DISABLE_RTC_AUTODISCOVERY`, `-D DISABLE_ENV_SENSORS`: recommended when no RTC or sensors are fitted (see below).
+- `-D ALLOWED_REPEAT_FREQ_RANGE=...`: the frequencies where the repeater setting may be turned on (upstream allows 433.000, 869.495 and 918.000 MHz; this build adds 869.618).
 
 Build with PlatformIO, e.g. `pio run -e Faketec_v5_companion_radio_ble` (or `_usb`), then flash the UF2 by double-tapping reset and copying it to the bootloader drive.
 
@@ -107,12 +116,30 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 - **Cut short:** the repeater goes back to its normal channel and keeps its progress for 30 minutes; the same update in the app continues where it stopped.
 - **Time on air:** the app keeps to 10 % of each hour; a bigger delta waits for the next part of the hour on the normal channel.
 - **nRF52 storage:** the new image goes to the free internal flash after the running one, then is copied over it just before the restart. Repeaters with a QSPI flash (Xiao nRF52840, T-Echo, ThinkNode M1/M6, Wio Tracker L1, SenseCAP Solar; `-D QSPI_STORAGE`) keep it there instead, together with the mailbox (a ring of 32 slots). Boards where the old and the new image do not fit together (e.g. RAK4631, about 460 KB) update **in place**: the repeater keeps the delta and the end of the image, and makes the start again in RAM just before the copy. The app shows a big warning for it.
-- **Our bootloader (nRF52):** [`bootloader/`](./bootloader) is OTAFIX with a staged install, built for every OTAFIX board. With it the bootloader does the final copy from an untouched source, so a power cut only makes it start again. On QSPI boards the old image is kept too and the new one runs on trial: without an admin login, an INFO from the app or 10 minutes of uptime in 3 restarts it goes back to the old one (`ota rollback` does it by hand). Without QSPI the image must be up to 396 KB (use a light build on RAK4631/3401, T114 with display, T096, T1). Install once per node: double-tap RST, copy its `update-*.uf2`.
+- **Our bootloader (nRF52):** with [our bootloader](#nrf52-bootloader-for-lora-ota) the final copy survives a power cut, and boards with QSPI flash get rollback.
 - **Power cut on nRF52 without it:** during the final copy (about 20 s) a power cut leaves the repeater in the bootloader with no firmware; it has to be updated on site (USB or BLE DFU). The stock bootloader then at least checks the image's CRC at every start. ESP32 has two app slots and is not at risk.
 - **Low battery:** the final copy waits while the repeater runs on a battery below 3.7 V (`-D OTA_MIN_BATT_MV`); the update is paused and the app offers to continue.
 - **Watchdog on nRF52 repeaters:** 60 s (`-D REPEATER_WATCHDOG_SECS`, 0 = off). It cannot be stopped: after loading firmware that does not feed it, press RST once.
 - **ESP32 rollback:** a new image that does not get an admin login or 10 minutes of uptime before a restart goes back to the previous one; `ota rollback` does it by hand.
 - **APK signing:** CI signs with the key from the secrets `LORAOTA_KEYSTORE_BASE64`, `LORAOTA_KEYSTORE_PASSWORD`, `LORAOTA_KEY_ALIAS`, `LORAOTA_KEY_PASSWORD` (a debug key when they are not set).
+
+### nRF52 bootloader for LoRa OTA
+
+[`bootloader/`](./bootloader) is the [OTAFIX bootloader](https://github.com/oltaco/Adafruit_nRF52_Bootloader_OTAFIX) (pinned commit) with one addition, a **staged install**. Details, layout and build: [bootloader/README.md](./bootloader/README.md).
+
+- **What it changes:** the repeater puts the whole new image where the copy does not touch it (the QSPI flash, or the internal flash after the running image), writes a small record in the bootloader settings page and restarts. The bootloader checks the image (CRC-32), copies it, checks the result and marks the record. The source is never written, so a power cut during the copy only makes it start again.
+- **Rollback (boards with QSPI flash):** the running image is also kept in the QSPI flash and the new one runs on trial. It is confirmed by an admin login, an INFO from the LoRa OTA app or 10 minutes of uptime; after 3 restarts without that (a crash, or a hang caught by the watchdog) the bootloader copies the old image back. `ota rollback` on the repeater does it by hand.
+- **Old bootloader:** firmware from this fork still updates the old way (RAM copy), and now also stores the image's CRC16, which the stock bootloader checks at every start.
+
+| What a repeater gets | Boards |
+|---|---|
+| staged install + rollback (`-D QSPI_STORAGE` in the repeater env) | Xiao nRF52840, LilyGo T-Echo, ThinkNode M1, ThinkNode M6, Wio Tracker L1, SenseCAP Solar P1 |
+| staged install, normal build (image up to 396 KB) | ProMicro / Faketec, T1000-E, ThinkNode M3, Heltec T114 without display, RAK WisMesh Tag, Minewsemi ME25LS01 |
+| staged install only with a light build (`build-boards.yml`, about 310-336 KB) | RAK4631, RAK3401, Heltec T114 with display, Heltec T096, Heltec T1 |
+
+Bigger images still update over LoRa, the old way. T114 and T1000-E have QSPI flash, but its pins are not known yet; RAK boards have at most 1 MB of QSPI flash, too small for the layout.
+
+**Install** (once per node): get `update-<board>_bootloader-…-mcota1_nosd.uf2` from a `bootloader-v*` release or the Build Bootloader workflow's artifacts, double-tap RST and copy it to the drive. `INFO_UF2.TXT` on the drive names your board; on a Xiao pick the Sense file only if it says `SeeedXiaoSense`. The firmware finds the new bootloader by itself; nothing else needs changing.
 
 ### Fixes to upstream MeshCore
 
@@ -251,6 +278,8 @@ To run unit tests, run the following command:
 ```bash
 pio test --environment native --verbose
 ```
+
+This fork also has a host test of the bootloader's staged install, with simulated power cuts at every step (`sh bootloader/test/run.sh`), the UI screen tests (`sh tools/ui-sim/build.sh`), and the Android app's tests (`cd android && ./gradlew :delta:test :app:testDebugUnitTest`). CI runs the first three in `run-unit-tests.yml`, and the app's in `build-android-app.yml`.
 
 ## Road-Map / To-Do
 
