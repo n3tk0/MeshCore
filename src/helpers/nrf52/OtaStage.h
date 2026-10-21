@@ -1,6 +1,6 @@
 #pragma once
 
-// "Staged" LoRa OTA install, done by our OTAFIX bootloader fork (n3tk0/Adafruit_nRF52_Bootloader_OTAFIX).
+// "Staged" LoRa OTA install, done by our OTAFIX bootloader (bootloader/ in this repo).
 // The same file is in the bootloader as src/ota_stage.h: keep both the same.
 //
 // The app puts the whole new image somewhere the copy does not touch (the QSPI flash, or the internal
