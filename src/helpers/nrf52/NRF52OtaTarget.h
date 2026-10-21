@@ -55,9 +55,10 @@ static void nrf52OtaCopyAndReset(uint32_t dst, const Nrf52OtaPiece* pieces, uint
   volatile uint32_t* settings = (volatile uint32_t*) NRF52_BL_SETTINGS;
   uint32_t saved[NRF52_BL_SETTINGS_WORDS];
   for (uint32_t w = 0; w < NRF52_BL_SETTINGS_WORDS; w++) saved[w] = settings[w];
-  // only when the rest of the page is empty: it is erased and rewritten at the end
+  // only when nothing else is before our bootloader's records (OtaStage.h): the page is erased and the
+  // settings rewritten at the end (records of finished installs are not needed any more)
   bool marked = (saved[0] & 0xFFFF) == 0x0001;
-  for (uint32_t w = NRF52_BL_SETTINGS_WORDS; marked && w < NRF52_OTA_PAGE / 4; w++) {
+  for (uint32_t w = NRF52_BL_SETTINGS_WORDS; marked && w < OTA_STAGE_FIRST / 4; w++) {
     if (settings[w] != 0xFFFFFFFF) marked = false;
   }
   if (marked) {
@@ -159,6 +160,7 @@ static void nrf52FeedWatchdog() {
 class NRF52OtaTarget : public OtaTarget {
   uint32_t _new_size, _pos;
   uint32_t _stage;        // the new image in the internal flash (not in place)
+  int8_t _trial;          // the running image is on trial (our bootloader may still go back): -1 not read yet
   // in place: [staging] the delta, then [_tail] the new image from _head on
   uint32_t _head, _tail, _patch_len;
   uint8_t* _patch_page;   // the delta's last page, until full (two pages written in turns would wear)
@@ -315,7 +317,7 @@ class NRF52OtaTarget : public OtaTarget {
 
 #ifdef QSPI_STORAGE
   // the new image is at QSPI_OTA_ADDR: keep the running one at QSPI_BACKUP_ADDR, then let the bootloader
-  // copy (the new one runs on trial). Returns only when that failed.
+  // copy (the new one runs on trial). Returns only when the new image could not be read.
   void commitStagedQspi() {
     uint8_t* buf = (uint8_t*) malloc(NRF52_OTA_PAGE);
     if (buf == NULL) return;
@@ -324,7 +326,7 @@ class NRF52OtaTarget : public OtaTarget {
     for (uint32_t off = 0; ok && off < _new_size; off += NRF52_OTA_PAGE) {
       uint32_t n = _new_size - off < NRF52_OTA_PAGE ? _new_size - off : NRF52_OTA_PAGE;
       ok = _qspi->read(QSPI_OTA_ADDR + off, buf, n);
-      crc = ota_stage_crc32(crc, buf, n);
+      if (ok) crc = ota_stage_crc32(crc, buf, n);
       nrf52FeedWatchdog();
     }
     ota_stage_t t;
@@ -343,7 +345,7 @@ class NRF52OtaTarget : public OtaTarget {
       for (uint32_t off = 0; saved && off < old_size; off += NRF52_OTA_PAGE) {
         uint32_t n = old_size - off < NRF52_OTA_PAGE ? old_size - off : NRF52_OTA_PAGE;
         saved = _qspi->read(QSPI_BACKUP_ADDR + off, buf, n);
-        back = ota_stage_crc32(back, buf, n);
+        if (saved) back = ota_stage_crc32(back, buf, n);
         nrf52FeedWatchdog();
       }
       if (saved && back == old_crc) {
@@ -359,12 +361,13 @@ class NRF52OtaTarget : public OtaTarget {
     _qspi->hold(false);
     _qspi->off();   // the bootloader takes it over
     stopSoftDevice();
-    if (writeRecord(t)) resetNow();
+    writeRecord(t);
+    resetNow();   // also when that failed: the SoftDevice is off; the old image runs again
   }
 #endif
 
 public:
-  NRF52OtaTarget() : _new_size(0), _pos(0), _stage(0), _head(0), _tail(0), _patch_len(0), _patch_page(NULL) {
+  NRF52OtaTarget() : _new_size(0), _pos(0), _stage(0), _trial(-1), _head(0), _tail(0), _patch_len(0), _patch_page(NULL) {
     _vec[0] = _vec[1] = 0;
 #ifdef QSPI_STORAGE
     _qspi = NULL;
@@ -580,8 +583,8 @@ public:
       fillRecord(t, 0, _stage, internalCrc32(_stage, _new_size));
       t.head_crc = ota_stage_head_crc(&t);
       stopSoftDevice();
-      if (writeRecord(t)) resetNow();
-      return;
+      writeRecord(t);
+      resetNow();   // also when that failed: the SoftDevice is off; the old image runs again
     }
     piece.src = _stage;
     piece.qspi = 0;
@@ -610,13 +613,16 @@ public:
   }
 
   bool isUnconfirmed() override {
-    const ota_stage_t* r = lastInstall();
-    return r != NULL && ota_stage_on_trial(r);
+    if (_trial < 0) {   // read once: only confirm() changes it while this image runs
+      const ota_stage_t* r = lastInstall();
+      _trial = r != NULL && ota_stage_on_trial(r);
+    }
+    return _trial == 1;
   }
 
   void confirm() override {
-    const ota_stage_t* r = lastInstall();
-    if (r != NULL && ota_stage_on_trial(r)) markWord(&r->confirmed);
+    if (!isUnconfirmed()) return;
+    if (markWord(&lastInstall()->confirmed)) _trial = 0;
   }
 
   // the image that ran before the last update (kept in the QSPI flash): the bootloader copies it back
@@ -625,6 +631,7 @@ public:
     if (r == NULL || !(r->flags & OTA_STAGE_BACKUP) || r->rb_started == OTA_STAGE_SET || r->failed == OTA_STAGE_SET) {
       return false;
     }
+    if (r->size != imageSize() || internalCrc32(appStart(), r->size) != r->crc) return false;   // flashed some other way since
     if (r->rb_request != OTA_STAGE_SET && !markWord(&r->rb_request)) return false;
     resetNow();
     return true;

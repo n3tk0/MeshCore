@@ -190,7 +190,8 @@ static bool fits(uint32_t size) {
 // the old image back from the QSPI flash (only with OTA_STAGE_BACKUP)
 static void roll_back(const ota_stage_t* r) {
   if (!fits(r->backup_size) || !src_crc(r->flags, r->backup, r->backup_size, r->backup_crc)) {
-    if (r->rb_started == OTA_STAGE_SET) no_valid_app();   // half way and the backup is gone
+    // the backup is gone: fine if the new image is in place, not when either copy stopped half way
+    if (r->rb_started == OTA_STAGE_SET || r->installed != OTA_STAGE_SET) no_valid_app();
     mark(&r->failed);
     return;
   }

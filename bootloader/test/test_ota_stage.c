@@ -209,6 +209,23 @@ static void test_app_changed(void) {
   CHECK(mem(APP)[100] == (img_new[100] ^ 0xFF));
 }
 
+static void test_both_sources_bad(void) {
+  printf("QSPI: source and backup go bad half way: no app, DFU\n");
+  reset_node();
+  stage_qspi(1);
+  ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
+  long total = count_ops();   // a full install, to cut it half way
+  reset_node();
+  stage_qspi(1);
+  r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
+  CHECK(boot(total / 2) == 1 && r->started == OTA_STAGE_SET);
+  qflash[100] ^= 1;
+  qflash[BACKUP_AT + 100] ^= 1;
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET);
+  CHECK((settings0() & 0xFFFF) == 0);   // the stock code stays in DFU
+}
+
 // a power cut at every step of a run (sampled), then normal starts: always ends with the expected app
 static void test_power_cuts(const char* name, int qspi_src, int rollback) {
   printf("power cuts: %s\n", name);
@@ -259,6 +276,7 @@ int main(void) {
   test_trial_and_rollback();
   test_confirmed();
   test_app_changed();
+  test_both_sources_bad();
   test_power_cuts("install from internal flash", 0, 0);
   test_power_cuts("install from QSPI", 1, 0);
   test_power_cuts("rollback from QSPI", 1, 1);
