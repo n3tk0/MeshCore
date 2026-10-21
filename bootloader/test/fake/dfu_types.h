@@ -1,0 +1,3 @@
+#pragma once
+#define DFU_BANK_0_REGION_START 0x27000u   // S140 7.x
+#define BOOTLOADER_REGION_START 0xF4000u

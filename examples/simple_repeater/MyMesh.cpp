@@ -22,6 +22,9 @@
   #define OTA_MAX_SIDE_MILLIS    (60 * 60 * 1000UL)   // hard limit on the side radio, whatever happens
   #define OTA_CONFIRM_MILLIS     (10 * 60 * 1000UL)   // a new image that ran this long is kept
   #define OTA_ON_FILE            "/ota_on"            // `set ota on`: OTA is off until then
+  #ifndef OTA_MIN_BATT_MV
+    #define OTA_MIN_BATT_MV      3700                 // below this (on battery) the copy at the end waits
+  #endif
 #endif
 
 /* ------------------------------ Config -------------------------------- */
@@ -1067,6 +1070,10 @@ void MyMesh::begin(FILESYSTEM *fs) {
   lora_ota.setRadioCheck([](void*, const OtaRadioParams& p) {
     return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
   }, NULL);
+  lora_ota.setPowerCheck([](void*) {
+    uint16_t mv = board.getBattMilliVolts();   // 0 or very low: the board cannot measure it
+    return board.isExternalPowered() || mv < 1000 || mv >= OTA_MIN_BATT_MV;
+  }, NULL);
 #endif
   // TODO: key_store.begin();
   region_map.load(_fs);
@@ -1416,10 +1423,8 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));   // off also stops an update under way
     applyOtaAction();
     strcpy(reply, lora_ota.isEnabled() == on ? "OK" : "Err - could not save");
-  #ifdef ESP32
-  } else if (strcmp(command, "ota rollback") == 0) {
+  } else if (strcmp(command, "ota rollback") == 0) {   // nRF52: needs our bootloader and the QSPI flash
     if (lora_ota.isActive() || !ota_target.rollback()) strcpy(reply, "Err - no previous firmware");
-  #endif
 #endif
   } else if (memcmp(command, "discover.neighbors", 18) == 0) {
     const char* sub = command + 18;

@@ -35,6 +35,34 @@ static unsigned long userBtnDownAt = 0;
 #define USER_BTN_HOLD_OFF_MILLIS 1500
 #endif
 
+// nRF52 hardware watchdog: a hang restarts the repeater. Once started it cannot be stopped and it keeps
+// running through a reset (the bootloader feeds it). Together with our bootloader it also undoes an OTA
+// update that hangs: the new image restarts until the bootloader puts the old one back.
+#if defined(NRF52_PLATFORM) && !defined(REPEATER_WATCHDOG_SECS)
+  #define REPEATER_WATCHDOG_SECS 60
+#endif
+
+static void watchdogStart() {
+#if defined(NRF52_PLATFORM) && REPEATER_WATCHDOG_SECS > 0
+  if (!(NRF_WDT->RUNSTATUS & WDT_RUNSTATUS_RUNSTATUS_Msk)) {
+    NRF_WDT->CONFIG = (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) | (WDT_CONFIG_HALT_Pause << WDT_CONFIG_HALT_Pos);
+    NRF_WDT->CRV = REPEATER_WATCHDOG_SECS * 32768UL - 1;
+    NRF_WDT->RREN = WDT_RREN_RR0_Msk;
+    NRF_WDT->TASKS_START = 1;
+  }
+#endif
+}
+
+static void watchdogFeed() {
+#if defined(NRF52_PLATFORM)
+  if (NRF_WDT->RUNSTATUS & WDT_RUNSTATUS_RUNSTATUS_Msk) {   // also one a board started, any registers
+    for (uint32_t r = 0; r < 8; r++) {
+      if (NRF_WDT->RREN & (1UL << r)) NRF_WDT->RR[r] = WDT_RR_RR_Reload;
+    }
+  }
+#endif
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -120,9 +148,12 @@ void setup() {
 #endif
 
   board.onBootComplete();
+  watchdogStart();
 }
 
 void loop() {
+  watchdogFeed();
+
   // Handle Serial CLI
   int len = strlen(command);
   // `command` must stay NUL-terminated within its bounds. If it ever isn't,
