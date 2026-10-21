@@ -30,6 +30,7 @@ extern "C" {
 //   DATA   [seq u16][chunk bytes]                                    -> no reply
 //   STATUS                                                           -> [state][next_seq u16][received u32][written u32]
 //   END    (all data sent)                                           -> boots into the new image when status is OK
+//          OTA_ERR_LOW_BATTERY: the battery is too low for the copy; the update is paused (BEGIN goes on)
 //   ABORT                                                            -> back to idle and the normal radio settings
 //   PAUSE  (the admin waits for its time on air)                     -> back to the normal radio settings, progress
 //          kept for OTA_PAUSE_KEEP_MS (any request of the admin starts that again), BEGIN goes on
@@ -58,6 +59,7 @@ extern "C" {
 #define OTA_ERR_BAD_IMAGE      11   // the new image is not an app for this board
 #define OTA_ERR_DISABLED       12   // `set ota on` first
 #define OTA_ERR_NO_RAM         13   // in place: not enough RAM for the start of the new image
+#define OTA_ERR_LOW_BATTERY    14   // at END: too little battery for the copy; paused, go on with BEGIN later
 
 #define OTA_BEGIN_IN_PLACE     0x01
 
@@ -111,6 +113,7 @@ struct OtaRadioParams {
 };
 
 typedef bool (*OtaRadioCheck)(void* ctx, const OtaRadioParams& p);   // can this node's radio do it?
+typedef bool (*OtaPowerCheck)(void* ctx);                            // enough power to copy the new image?
 
 class LoraOta {
 public:
@@ -136,6 +139,8 @@ private:
   unsigned long _paused_at;
   OtaRadioCheck _radio_check;
   void* _radio_ctx;
+  OtaPowerCheck _power_check;
+  void* _power_ctx;
   detools_apply_patch_t _patch;
   SHA256 _out_sha;                    // of the new image as the patch makes it (in place: the start is not kept)
   uint8_t* _head;                     // in place, at commit: the start of the new image made again
@@ -387,10 +392,16 @@ private:
     _next_seq++;
   }
 
-  int handleEnd(uint8_t* out) {
+  int handleEnd(uint8_t* out, unsigned long now_ms) {
     if (_state == OTA_STATE_READY) return reply(out, OTA_OP_END, OTA_OK);   // reply was lost, say it again
     if (_state != OTA_STATE_RECEIVING) return reply(out, OTA_OP_END, _state == OTA_STATE_FAILED ? _err : OTA_ERR_STATE);
     if (_received != _patch_size) return reply(out, OTA_OP_END, OTA_ERR_STATE);   // still missing data
+    if (_power_check && !_power_check(_power_ctx)) {   // a power cut in the copy is the one risk left: wait
+      _state = OTA_STATE_PAUSED;
+      _paused_at = now_ms;
+      restoreRadio();
+      return reply(out, OTA_OP_END, OTA_ERR_LOW_BATTERY);
+    }
 
     int res = detools_apply_patch_finalize(&_patch);
     if (res < 0 || (uint32_t)res != _new_size || _written != _new_size) {
@@ -420,7 +431,8 @@ public:
                                _next_seq(0), _img_size(0), _img_sha_ok(false), _last_activity(0),
                                _timeout_ms(OTA_DEFAULT_TIMEOUT * 1000), _action(ACT_NONE), _on_side(false),
                                _enabled(false), _paused_at(0),
-                               _radio_check(NULL), _radio_ctx(NULL), _head(NULL), _head_pos(0) {
+                               _radio_check(NULL), _radio_ctx(NULL), _power_check(NULL), _power_ctx(NULL),
+                               _head(NULL), _head_pos(0) {
     memset(_owner, 0, sizeof(_owner));
     memset(&_side, 0, sizeof(_side));
   }
@@ -438,6 +450,7 @@ public:
   }
   bool isEnabled() const { return _enabled; }
   void setRadioCheck(OtaRadioCheck check, void* ctx) { _radio_check = check; _radio_ctx = ctx; }
+  void setPowerCheck(OtaPowerCheck check, void* ctx) { _power_check = check; _power_ctx = ctx; }
   bool isOnSideRadio() const { return _on_side; }
   bool isActive() const { return _state == OTA_STATE_RECEIVING || _state == OTA_STATE_READY; }
   uint8_t getState() const { return _state; }
@@ -537,7 +550,7 @@ public:
       return n;
     }
     case OTA_OP_END:
-      return handleEnd(out);
+      return handleEnd(out, now_ms);
     case OTA_OP_PAUSE:
       if (_state != OTA_STATE_RECEIVING) return reply(out, op, _state == OTA_STATE_PAUSED ? OTA_OK : OTA_ERR_STATE);
       _state = OTA_STATE_PAUSED;

@@ -401,3 +401,28 @@ int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+TEST_F(LoraOtaTest, LowBatteryPausesBeforeTheCopy) {
+  static bool power_ok;
+  power_ok = false;
+  ota.setPowerCheck([](void*) { return power_ok; }, NULL);
+  send(ADMIN, beginArgs());
+  ota.takeAction();
+  for (int s = 0; s < chunks(sizeof(fixture_patch)); s++) sendData(fixture_patch, sizeof(fixture_patch), s);
+
+  ASSERT_EQ(2, send(ADMIN, { OTA_OP_END }));
+  EXPECT_EQ(OTA_ERR_LOW_BATTERY, out[1]);
+  EXPECT_EQ(LoraOta::ACT_RESTORE_RADIO, ota.takeAction());   // back on the normal radio, no reboot
+  EXPECT_EQ(OTA_STATE_PAUSED, ota.getState());
+  EXPECT_FALSE(target.committed);
+
+  power_ok = true;   // charged: the same BEGIN goes on, nothing is missing, END boots
+  now += 5 * 60 * 1000UL;
+  send(ADMIN, beginArgs());
+  EXPECT_EQ(OTA_OK, out[1]);
+  ota.takeAction();
+  send(ADMIN, { OTA_OP_END });
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(LoraOta::ACT_COMMIT, ota.takeAction());
+  EXPECT_EQ(0, memcmp(fixture_new, target.next.data(), sizeof(fixture_new)));
+}

@@ -1,0 +1,7 @@
+#pragma once
+#define OTA_STAGE_QSPI_SCK 21
+#define OTA_STAGE_QSPI_CSN 25
+#define OTA_STAGE_QSPI_IO0 20
+#define OTA_STAGE_QSPI_IO1 24
+#define OTA_STAGE_QSPI_IO2 22
+#define OTA_STAGE_QSPI_IO3 23

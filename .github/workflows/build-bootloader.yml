@@ -1,0 +1,65 @@
+name: Build Bootloader (LoRa OTA)
+
+# The OTAFIX nRF52 bootloader with our staged LoRa OTA install (bootloader/, see its README.md),
+# for every board OTAFIX has.
+# - pull request / push to main that touches it, manual run: files on the workflow run (Artifacts)
+# - tag "bootloader-v1": also publishes a GitHub release with the files
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'bootloader/**'
+      - 'src/helpers/nrf52/OtaStage.h'
+      - '.github/workflows/build-bootloader.yml'
+  push:
+    branches: [main]
+    tags:
+      - 'bootloader-v*'
+    paths:
+      - 'bootloader/**'
+      - 'src/helpers/nrf52/OtaStage.h'
+      - '.github/workflows/build-bootloader.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Install ARM GCC
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '12.3.Rel1'   # as OTAFIX's own CI
+
+      - name: Install Tools
+        run: pip3 install intelhex
+
+      - name: Staged Install Test
+        run: sh bootloader/test/run.sh
+
+      - name: Build
+        run: bash bootloader/build.sh
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: bootloader
+          path: bootloader/_out
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Bootloader ${{ github.ref_name }}"
+          body: |
+            OTAFIX nRF52 bootloader with the staged LoRa OTA install (see bootloader/README.md).
+            - Install: double-tap RST, copy `update-<board>_bootloader-…_nosd.uf2` to the drive. Pick the
+              file for your board (INFO_UF2.TXT names it; Xiao: Sense only if it says SeeedXiaoSense).
+            - Which boards get rollback and which need a light build: bootloader/README.md.
+            - Without it repeaters still update over LoRa, the old way.
+          files: bootloader/_out/*/*
