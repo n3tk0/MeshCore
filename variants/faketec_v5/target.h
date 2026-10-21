@@ -12,6 +12,7 @@
 #endif
 #if defined(UI_HAS_ROTARY_INPUT)
   #include <helpers/ui/QuadratureRotaryInput.h>
+  #include <helpers/ui/MomentaryButton.h>
 #endif
 
 #include <helpers/sensors/EnvironmentSensorManager.h>
