@@ -22,6 +22,10 @@ jobs:
       - name: Run Unit Tests
         run: pio test -e native -e native_kiss_modem -vv
 
+      - name: Bootloader Staged Install Test
+        # bootloader/ota_stage.c on the host: install, rollback, power cuts at every step (sampled)
+        run: sh bootloader/test/run.sh
+
       - name: Build Screen Simulator
         # Renders the encoder UI screens (BG and EN) to PNG; fails if the UI no longer compiles natively.
         run: sh tools/ui-sim/build.sh

@@ -171,6 +171,9 @@ class OtaSession(
                 if (s.state != OtaProtocol.STATE_RECEIVING) break
                 log("END again")
             }
+            // too little battery for the copy: the repeater paused it and keeps everything
+            if (e != null && e.status == OtaProtocol.ERR_LOW_BATTERY)
+                throw OtaFailed(R.string.st_low_battery, resumable = true)
             if (e != null && e.status != 0) {
                 stopped = true   // the repeater gave up on this one
                 throw OtaFailed(OtaProtocol.statusRes(e.status))

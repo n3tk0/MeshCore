@@ -4,6 +4,7 @@
 //   0x000000 - 0x0FFFFF  LoRa OTA: the new image (the internal flash then needs no room for it)
 //   0x100000 - 0x17FFFF  mailbox: a ring of 16 KB slots, each save goes to the next (wear spread, and
 //                        a power cut mid-save keeps the slot before)
+//   0x180000 - 0x1FFFFF  LoRa OTA: the image that ran before (rollback by our bootloader, see OtaStage.h)
 // The peripheral is turned on for each use and off again after a short idle time: it draws current.
 
 #include <Arduino.h>
@@ -17,6 +18,8 @@
 #define QSPI_MAILBOX_ADDR    0x100000
 #define QSPI_MAILBOX_SLOT    0x4000
 #define QSPI_MAILBOX_SLOTS   32
+#define QSPI_BACKUP_ADDR     0x180000
+#define QSPI_BACKUP_SIZE     0x080000
 #define QSPI_SECTOR          4096
 #define QSPI_IDLE_OFF_MS     2000
 

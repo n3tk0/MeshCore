@@ -28,6 +28,8 @@ object OtaProtocol {
 
     const val BEGIN_IN_PLACE = 1   // the admin agrees to an update "in place" (see Info.inPlace)
 
+    const val ERR_LOW_BATTERY = 14   // END: paused until the repeater has power for the copy
+
     const val PLATFORM_NRF52 = 1
     const val PLATFORM_ESP32 = 2
 
@@ -46,6 +48,7 @@ object OtaProtocol {
         11 -> R.string.st_bad_image
         12 -> R.string.st_disabled
         13 -> R.string.st_no_ram
+        14 -> R.string.st_low_battery
         else -> R.string.st_unknown
     }
 
