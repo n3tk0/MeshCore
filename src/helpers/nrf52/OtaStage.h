@@ -12,7 +12,7 @@
 // (`ota rollback`), the bootloader copies the old image back.
 //
 // Records: slots of 128 bytes in the bootloader settings page, after bootloader_settings_t. Each is
-// written once; its state words only go from 0xFFFFFFFF to 0 (no erase). The last valid slot counts.
+// written once; its state words only go from 0xFFFFFFFF to 0 (no erase). The last slot counts, when valid.
 // A normal DFU (UF2, BLE) erases the page and with it every record.
 
 #include <stdint.h>
@@ -79,13 +79,13 @@ static inline int ota_stage_valid(const ota_stage_t* r) {
   return r->magic == OTA_STAGE_MAGIC && r->version == OTA_STAGE_VERSION && r->head_crc == ota_stage_head_crc(r);
 }
 
-// the slot in use (last valid one), or 0
+// the slot in use (the last one started, when it is valid), or 0
 static inline const ota_stage_t* ota_stage_find(void) {
   const ota_stage_t* found = 0;
   for (uint32_t i = 0; i < OTA_STAGE_SLOTS; i++) {
     const ota_stage_t* r = (const ota_stage_t*)(uintptr_t)(OTA_STAGE_PAGE + OTA_STAGE_FIRST + i * OTA_STAGE_SLOT);
     if (r->magic == 0xFFFFFFFFu) break;   // slots are used in order
-    if (ota_stage_valid(r)) found = r;
+    found = ota_stage_valid(r) ? r : 0;   // a half-written record (power cut) ends the older ones too
   }
   return found;
 }
