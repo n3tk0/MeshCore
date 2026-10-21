@@ -7,7 +7,12 @@ WF=.github/workflows/build-boards.yml
 tmp=$(mktemp)
 cp "$WF" "$tmp"
 for kind in repeater companion room-server; do
-  list=$(bash build.sh get-$kind-firmwares-to-build | sort -f)
+  list=$(bash build.sh get-$kind-firmwares-to-build)
+  list=$(echo "$list" | LC_ALL=C sort -f)
+  if [ -z "$list" ]; then
+    echo "no $kind boards from build.sh: is pio installed and platformio.ini fine?" >&2
+    exit 1
+  fi
   # replace the lines between "# <kind> boards begin" and "# <kind> boards end"
   awk -v kind="$kind" -v list="$list" '
     $0 ~ "# " kind " boards begin" { print; ind = $0; sub(/#.*/, "", ind); n = split(list, a, "\n");
@@ -16,5 +21,6 @@ for kind in repeater companion room-server; do
     !skip { print }' "$tmp" > "$tmp.new"
   mv "$tmp.new" "$tmp"
 done
-mv "$tmp" "$WF"
+cat "$tmp" > "$WF"
+rm -f "$tmp"
 echo "updated $WF"

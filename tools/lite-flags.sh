@@ -15,7 +15,9 @@
 #   WITH_DEBUG           debug logs (MESH_DEBUG etc.)
 # Source it before build.sh: it adds to PLATFORMIO_BUILD_FLAGS / PLATFORMIO_BUILD_SRC_FILTER;
 # the parts left out go one per line to the file $LITE_REMOVED, if set.
-#   WITH_GPS=true; source tools/lite-flags.sh; bash build.sh build-firmware Xiao_nrf52_repeater
+# LITE_ENV is the env being built (some boards cannot drop a part). Use a subshell, so the flags do not
+# stay in your shell for later builds:
+#   ( WITH_GPS=true LITE_ENV=Xiao_nrf52_repeater; source tools/lite-flags.sh; bash build.sh build-firmware $LITE_ENV )
 
 flags=()
 src_filter=()
@@ -50,7 +52,10 @@ if ! keep WITH_GPS; then
   undef GPS
   removed+=("GPS")
 fi
-if ! keep WITH_DISPLAY; then
+if ! keep WITH_DISPLAY && [[ "$LITE_ENV" == R1Neo_* ]]; then
+  # R1Neo defines DISPLAY_CLASS in R1NeoBoard.h and its target.h needs it
+  echo "display kept: $LITE_ENV needs it" >&2
+elif ! keep WITH_DISPLAY; then
   # a companion without a screen has no on-device menu either (phone only), like the headless boards
   flags+=("-UDISPLAY_CLASS")
   src_filter+=("-<../examples/companion_radio/ui-*/*.cpp>")
@@ -74,7 +79,8 @@ if ! keep WITH_DEBUG; then
 fi
 
 if [ -n "$LITE_REMOVED" ]; then
-  printf '%s\n' "${removed[@]}" > "$LITE_REMOVED"
+  : > "$LITE_REMOVED"
+  if [ ${#removed[@]} -gt 0 ]; then printf '%s\n' "${removed[@]}" > "$LITE_REMOVED"; fi
 fi
 export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:+$PLATFORMIO_BUILD_FLAGS }${flags[*]}"
 if [ ${#src_filter[@]} -gt 0 ]; then

@@ -534,12 +534,14 @@ jobs:
           WITH_LORA_OTA: ${{ inputs.lora_ota }}
           WITH_DEBUG: ${{ inputs.debug }}
         run: |
-          export LITE_REMOVED=/tmp/lite-removed.txt
+          set -o pipefail
+          export LITE_REMOVED=/tmp/lite-removed.txt LITE_ENV=${{ matrix.target }}
           source tools/lite-flags.sh
           echo "Extra flags: $PLATFORMIO_BUILD_FLAGS $PLATFORMIO_BUILD_SRC_FILTER"
           /usr/bin/env bash build.sh build-firmware ${{ matrix.target }} 2>&1 | tee /tmp/pio-size.txt
           if [ -s "$LITE_REMOVED" ]; then
             # Xiao_C3_repeater-v1.18.0-abc1234.bin -> Xiao_C3_repeater-lite-v1.18.0-abc1234.bin
+            shopt -s nullglob
             for f in out/${{ matrix.target }}-*; do
               mv "$f" "out/${{ matrix.target }}-lite-${f#out/${{ matrix.target }}-}"
             done
