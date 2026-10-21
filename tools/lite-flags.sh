@@ -9,18 +9,17 @@
 #   WITH_POWER_METERS    current / voltage meters (INA3221, INA219, INA226, INA260)
 #   WITH_OTHER_SENSORS   VL53L0X distance, RAK12035 soil moisture
 #   WITH_GPS             GPS module
-#   WITH_DISPLAY         screen
+#   WITH_DISPLAY         screen (without it the screen is a no-op; buttons, LED, buzzer still work)
 #   WITH_MAILBOX         repeater mailbox for direct messages
 #   WITH_LORA_OTA        repeater LoRa OTA
 #   WITH_DEBUG           debug logs (MESH_DEBUG etc.)
-# Source it before build.sh: it adds to PLATFORMIO_BUILD_FLAGS / PLATFORMIO_BUILD_SRC_FILTER;
+# Source it before build.sh: it adds to PLATFORMIO_BUILD_FLAGS;
 # the parts left out go one per line to the file $LITE_REMOVED, if set.
-# LITE_ENV is the env being built (some boards cannot drop a part). Use a subshell, so the flags do not
+# LITE_ENV is the env being built (some boards cannot drop their GPS); run it from the repo root. Use a subshell, so the flags do not
 # stay in your shell for later builds:
 #   ( WITH_GPS=true LITE_ENV=Xiao_nrf52_repeater; source tools/lite-flags.sh; bash build.sh build-firmware $LITE_ENV )
 
 flags=()
-src_filter=()
 removed=()
 
 keep() { [ "${!1}" = "true" ]; }
@@ -49,16 +48,36 @@ if ! keep WITH_CLIMATE && ! keep WITH_POWER_METERS && ! keep WITH_OTHER_SENSORS;
   flags+=("-DDISABLE_ENV_SENSORS")
 fi
 if ! keep WITH_GPS; then
-  undef GPS
-  removed+=("GPS")
+  # boards whose own sensor code starts a GPS with no ENV_INCLUDE_GPS check keep it: undefining it would
+  # break the build (Heltec Tower v2, T-Deck) or leave the GPS running anyway (T1000-E, Tracker, ...)
+  gps_kept=""
+  if [ -n "$LITE_ENV" ]; then
+    vdirs=$(pio project config --json-output 2>/dev/null | python3 -c '
+import json, re, sys
+for name, opts in json.load(sys.stdin):
+    if name == "env:" + sys.argv[1]:
+        text = json.dumps(opts)
+        print("\n".join(sorted(set(re.findall(r"variants/([A-Za-z0-9_.-]+)", text)))))
+' "$LITE_ENV")
+    for v in $vdirs; do
+      f=$(ls "variants/$v"/*.cpp "variants/$v"/*.h 2>/dev/null)
+      [ -n "$f" ] || continue
+      if grep -qE "LocationProvider|MicroNMEA" $f && ! grep -q "ENV_INCLUDE_GPS" $f; then
+        gps_kept="$v"
+      fi
+    done
+  fi
+  if [ -n "$gps_kept" ]; then
+    echo "GPS kept: variants/$gps_kept starts it in its own code" >&2
+  else
+    undef GPS
+    removed+=("GPS")
+  fi
+  unset gps_kept vdirs v f
 fi
-if ! keep WITH_DISPLAY && [[ "$LITE_ENV" == R1Neo_* ]]; then
-  # R1Neo defines DISPLAY_CLASS in R1NeoBoard.h and its target.h needs it
-  echo "display kept: $LITE_ENV needs it" >&2
-elif ! keep WITH_DISPLAY; then
-  # a companion without a screen has no on-device menu either (phone only), like the headless boards
-  flags+=("-UDISPLAY_CLASS")
-  src_filter+=("-<../examples/companion_radio/ui-*/*.cpp>")
+if ! keep WITH_DISPLAY; then
+  # the screen becomes a no-op (LiteNullDisplay); the UI task stays for the buttons, LED, buzzer and power off
+  flags+=("-DLITE_NO_DISPLAY" "-include" "$PWD/src/helpers/ui/LiteNullDisplay.h")
   removed+=("display")
 fi
 if drop WITH_MAILBOX; then
@@ -83,8 +102,5 @@ if [ -n "$LITE_REMOVED" ]; then
   if [ ${#removed[@]} -gt 0 ]; then printf '%s\n' "${removed[@]}" > "$LITE_REMOVED"; fi
 fi
 export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:+$PLATFORMIO_BUILD_FLAGS }${flags[*]}"
-if [ ${#src_filter[@]} -gt 0 ]; then
-  export PLATFORMIO_BUILD_SRC_FILTER="${PLATFORMIO_BUILD_SRC_FILTER:+$PLATFORMIO_BUILD_SRC_FILTER }${src_filter[*]}"
-fi
-unset flags src_filter removed
+unset flags removed
 unset -f keep drop undef

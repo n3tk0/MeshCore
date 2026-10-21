@@ -434,7 +434,7 @@ on:
         type: boolean
         default: false
       display:
-        description: 'Дисплей (без него companion няма меню на устройството, само през телефона)'
+        description: 'Дисплей (без него екранът е изключен; бутони, LED, зумер и изключване работят)'
         type: boolean
         default: false
       mailbox:
@@ -541,7 +541,7 @@ jobs:
           set -o pipefail
           export LITE_REMOVED=/tmp/lite-removed.txt LITE_ENV=${{ matrix.target }}
           source tools/lite-flags.sh
-          echo "Extra flags: $PLATFORMIO_BUILD_FLAGS $PLATFORMIO_BUILD_SRC_FILTER"
+          echo "Extra flags: $PLATFORMIO_BUILD_FLAGS"
           /usr/bin/env bash build.sh build-firmware ${{ matrix.target }} 2>&1 | tee /tmp/pio-size.txt
           if [ -s "$LITE_REMOVED" ]; then
             # Xiao_C3_repeater-v1.18.0-abc1234.bin -> Xiao_C3_repeater-lite-v1.18.0-abc1234.bin
