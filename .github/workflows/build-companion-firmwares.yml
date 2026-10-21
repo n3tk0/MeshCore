@@ -1,5 +1,7 @@
 name: Build Companion Firmwares
 
+# Builds every board of this kind. For one board (and a lighter image) use "Build Firmware for Boards".
+
 permissions:
   contents: write
 
