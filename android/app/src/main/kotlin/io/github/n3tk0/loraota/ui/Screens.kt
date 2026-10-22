@@ -824,7 +824,16 @@ private fun StatusCard(vm: AppViewModel) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(stringResource(R.string.status_title), style = MaterialTheme.typography.labelMedium)
-            Text(stringResource(R.string.status_batt_uptime, s.battMv / 1000.0, duration(s.upTimeSecs)))
+            val sb = vm.sensorBattery
+            Text(stringResource(R.string.status_batt_uptime, sb?.volts ?: (s.battMv / 1000.0), duration(s.upTimeSecs)))
+            if (sb != null) {
+                val ma = Math.round(Math.abs(sb.amps) * 1000).toInt()
+                Text(when {
+                    !sb.signed -> stringResource(R.string.status_batt_current, ma)
+                    sb.amps < 0 -> stringResource(R.string.status_batt_charging, ma)
+                    else -> stringResource(R.string.status_batt_discharging, ma)
+                }, style = MaterialTheme.typography.bodySmall)
+            }
             Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi) +
                 (s.lastSnr?.let { ", SNR %.1f dB".format(it) } ?: ""), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)), style = MaterialTheme.typography.bodySmall)

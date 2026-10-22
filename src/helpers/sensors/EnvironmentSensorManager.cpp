@@ -383,9 +383,12 @@ static uint8_t init_ina219(TwoWire* wire, uint8_t) {
   return INA219.begin(wire) ? 1 : 0;
 }
 static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
+  float amps = INA219.getCurrent_mA() / 1000.0f;
   lpp.addVoltage(ch, INA219.getBusVoltage_V());
-  lpp.addCurrent(ch, INA219.getCurrent_mA() / 1000.0f);
+  lpp.addCurrent(ch, amps);
   lpp.addPower(ch, INA219.getPower_mW() / 1000.0f);
+  // LPP current has no sign: the direction (charge / discharge in a battery line) as a signed analog value too
+  lpp.addAnalogInput(ch, amps);
 }
 #endif
 
@@ -672,12 +675,27 @@ bool EnvironmentSensorManager::begin() {
     }
     MESH_DEBUG_PRINTLN("Found %s at address: %02X", def.name, def.address);
     detected[def.address] = false;  // consumed; later entries must not re-claim this device
+    #if ENV_INCLUDE_INA219
+    if (def.init == init_ina219) _ina219_found = true;
+    #endif
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
       _active_sensors[_active_sensor_count++] = { def.query, sub };
     }
   }
 
   return true;
+}
+
+// An INA219 sits in the battery line (battery on Vin+, the load and charger on Vin-): the battery is the
+// bus voltage plus the drop over the shunt. 0 without one: the board's own reading counts.
+uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
+  #if ENV_INCLUDE_INA219
+  if (_ina219_found) {
+    float mv = INA219.getBusVoltage_V() * 1000.0f + INA219.getShuntVoltage_mV();
+    if (mv > 0 && mv < 65535) return (uint16_t)mv;
+  }
+  #endif
+  return 0;
 }
 
 // ============================================================

@@ -243,6 +243,12 @@ uint8_t MyMesh::handleAnonClockReq(const mesh::Identity& sender, uint32_t sender
   return 0;
 }
 
+// the battery: from a sensor that measures it (INA219) when there is one, else the board's own reading
+static uint16_t battMilliVolts() {
+  uint16_t mv = sensors.getBatteryMilliVolts();
+  return mv ? mv : board.getBattMilliVolts();
+}
+
 int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t *payload, size_t payload_len) {
   // uint32_t now = getRTCClock()->getCurrentTimeUnique();
   // memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
@@ -250,7 +256,7 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
 
   if (payload[0] == REQ_TYPE_GET_STATUS) {  // guests can also access this now
     RepeaterStats stats;
-    stats.batt_milli_volts = board.getBattMilliVolts();
+    stats.batt_milli_volts = battMilliVolts();
     stats.curr_tx_queue_len = _mgr->getOutboundTotal();
     stats.noise_floor = (int16_t)_radio->getNoiseFloor();
     stats.last_rssi = (int16_t)radio_driver.getLastRSSI();
@@ -276,7 +282,7 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
     uint8_t perm_mask = ~(payload[1]); // NEW: first reserved byte (of 4), is now inverse mask to apply to permissions
 
     telemetry.reset();
-    telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
+    telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)battMilliVolts() / 1000.0f);
 
     // query other sensors -- target specific
     if ((sender->permissions & PERM_ACL_ROLE_MASK) == PERM_ACL_GUEST) {
@@ -1071,7 +1077,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
     return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
   }, NULL);
   lora_ota.setPowerCheck([](void*) {
-    uint16_t mv = board.getBattMilliVolts();   // 0 or very low: the board cannot measure it
+    uint16_t mv = battMilliVolts();   // 0 or very low: the board cannot measure it
     return board.isExternalPowered() || mv < 1000 || mv >= OTA_MIN_BATT_MV;
   }, NULL);
 #endif

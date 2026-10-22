@@ -327,4 +327,7 @@
     <string name="flash_log_title">Log of the last Bluetooth flash</string>
     <string name="flash_log_copy">Copy</string>
     <string name="err_flash_uf2">This .uf2 cannot be flashed over Bluetooth: %1$s</string>
+    <string name="status_batt_current">Battery from its sensor (INA219): %1$d mA</string>
+    <string name="status_batt_charging">Battery from its sensor (INA219): charging at %1$d mA</string>
+    <string name="status_batt_discharging">Battery from its sensor (INA219): discharging at %1$d mA</string>
 </resources>

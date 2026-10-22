@@ -18,6 +18,7 @@ protected:
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
   int          _active_sensor_count = 0;
   uint8_t      next_available_channel = TELEM_CHANNEL_SELF + 1;
+  bool         _ina219_found = false;   // its bus is taken as the battery
 
   bool     gps_detected = false;
   bool     gps_active = false;
@@ -44,6 +45,7 @@ public:
   #endif
   bool begin() override;
   bool querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) override;
+  uint16_t getBatteryMilliVolts() override;
   #if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC)
   void loop() override;
   #endif
