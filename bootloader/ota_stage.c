@@ -85,8 +85,24 @@ static bool qspi_cmd(uint8_t opcode, uint32_t len) {   // len: opcode + data byt
 
 static bool qspi_on;
 
+// boards that switch the flash's supply: on, as the app does at start (after a reset the pins float)
+static void qspi_power(void) {
+#ifdef OTA_STAGE_QSPI_PWR_1
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_PWR_1);
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_PWR_1);
+#endif
+#ifdef OTA_STAGE_QSPI_PWR_2
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_PWR_2);
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_PWR_2);
+#endif
+#if defined(OTA_STAGE_QSPI_PWR_1) || defined(OTA_STAGE_QSPI_PWR_2)
+  NRFX_DELAY_US(5000);   // the supply comes up, then the flash (well under 1 ms)
+#endif
+}
+
 static bool qspi_begin(void) {
   if (qspi_on) return true;
+  qspi_power();
   NRF_QSPI->PSEL.SCK = OTA_STAGE_QSPI_SCK;
   NRF_QSPI->PSEL.CSN = OTA_STAGE_QSPI_CSN;
   NRF_QSPI->PSEL.IO0 = OTA_STAGE_QSPI_IO0;
