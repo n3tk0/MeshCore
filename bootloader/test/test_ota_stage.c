@@ -27,6 +27,19 @@ static uint8_t* qflash;
 static long ops, cut_at = -1;
 static jmp_buf cut;
 static int failures;
+static int qspi_asleep;   // the flash in deep power down: ACTIVATE never gets READY until 0xAB
+
+// the flash's SPI pins as qspi_wake() drives them: 0xAB with CSN low wakes it
+static uint8_t gpio[64], wake_byte, wake_bits;
+void nrf_gpio_cfg_output(uint32_t pin) { (void) pin; }
+void nrf_gpio_pin_write(uint32_t pin, uint32_t v) {
+  if (pin == 21 && v && !gpio[21] && !gpio[25]) { wake_byte = (uint8_t)(wake_byte << 1 | gpio[20]); wake_bits++; }   // SCK rises
+  if (pin == 25 && v && !gpio[25] && wake_bits == 8 && wake_byte == 0xAB) qspi_asleep = 0;                       // CSN rises
+  if (pin == 25 && !v) wake_bits = 0;
+  gpio[pin] = v ? 1 : 0;
+}
+void nrf_gpio_pin_set(uint32_t pin) { nrf_gpio_pin_write(pin, 1); }
+void nrf_gpio_pin_clear(uint32_t pin) { nrf_gpio_pin_write(pin, 0); }
 
 fake_nvmc_t* fake_nvmc(void) {
   if (nvmc.ERASEPAGE) {
@@ -39,7 +52,7 @@ fake_nvmc_t* fake_nvmc(void) {
 }
 
 fake_qspi_t* fake_qspi(void) {
-  if (qspi.TASKS_ACTIVATE) { qspi.TASKS_ACTIVATE = 0; qspi.EVENTS_READY = 1; }
+  if (qspi.TASKS_ACTIVATE) { qspi.TASKS_ACTIVATE = 0; if (!qspi_asleep) qspi.EVENTS_READY = 1; }
   if (qspi.CINSTRCONF) { qspi.CINSTRCONF = 0; qspi.CINSTRDAT0 = 0; qspi.EVENTS_READY = 1; }
   if (qspi.TASKS_READSTART) {
     qspi.TASKS_READSTART = 0;
@@ -166,6 +179,16 @@ static void test_wrong_dst(void) {
   CHECK(app_is(img_old, sizeof(img_old)) && r->failed == OTA_STAGE_SET);
 }
 
+static void test_flash_asleep(void) {
+  printf("QSPI flash in deep power down (the app leaves it so)\n");
+  reset_node();
+  stage_qspi(1);
+  const ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
+  qspi_asleep = 1;
+  boot(-1);
+  CHECK(!qspi_asleep && app_is(img_new, sizeof(img_new)) && r->installed == OTA_STAGE_SET);
+}
+
 static void test_trial_and_rollback(void) {
   printf("QSPI: trial starts, then back to the old image\n");
   reset_node();
@@ -290,6 +313,7 @@ int main(void) {
   test_internal();
   test_bad_source();
   test_wrong_dst();
+  test_flash_asleep();
   test_trial_and_rollback();
   test_confirmed();
   test_half_written_record();

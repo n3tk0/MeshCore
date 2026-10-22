@@ -31,6 +31,31 @@ class QspiStorage {
   unsigned long _used;
   uint32_t _buf[64];   // word aligned bounce buffer: the DMA wants RAM, words and 4 byte addresses
 
+  // off() leaves the flash in deep power down, where it ignores everything but 0xAB: also the status
+  // reads the QSPI peripheral makes on ACTIVATE, so nrfx_qspi_init() would time out (after a restart
+  // too: "qspi none"). 0xAB goes out by hand on the pins first (SPI mode 0, WP and HOLD high).
+  static void wake() {
+    uint32_t sck = g_ADigitalPinMap[PIN_QSPI_SCK], cs = g_ADigitalPinMap[PIN_QSPI_CS];
+    uint32_t io0 = g_ADigitalPinMap[PIN_QSPI_IO0];
+    nrf_gpio_pin_set(cs);
+    nrf_gpio_cfg_output(cs);
+    nrf_gpio_pin_clear(sck);
+    nrf_gpio_cfg_output(sck);
+    nrf_gpio_cfg_output(io0);
+    nrf_gpio_pin_set(g_ADigitalPinMap[PIN_QSPI_IO2]);
+    nrf_gpio_cfg_output(g_ADigitalPinMap[PIN_QSPI_IO2]);
+    nrf_gpio_pin_set(g_ADigitalPinMap[PIN_QSPI_IO3]);
+    nrf_gpio_cfg_output(g_ADigitalPinMap[PIN_QSPI_IO3]);
+    nrf_gpio_pin_clear(cs);
+    for (int b = 7; b >= 0; b--) {
+      nrf_gpio_pin_write(io0, (0xAB >> b) & 1);
+      nrf_gpio_pin_set(sck);
+      nrf_gpio_pin_clear(sck);
+    }
+    nrf_gpio_pin_set(cs);
+    delayMicroseconds(50);   // tRES1: well under 50 us
+  }
+
   bool waitIdle(uint32_t timeout_ms) {
     unsigned long start = millis();
     while (nrfx_qspi_mem_busy_check() == NRFX_ERROR_BUSY) {
@@ -61,9 +86,11 @@ public:
         g_ADigitalPinMap[PIN_QSPI_SCK], g_ADigitalPinMap[PIN_QSPI_CS], g_ADigitalPinMap[PIN_QSPI_IO0],
         g_ADigitalPinMap[PIN_QSPI_IO1], g_ADigitalPinMap[PIN_QSPI_IO2], g_ADigitalPinMap[PIN_QSPI_IO3]);
     cfg.phy_if.sck_freq = NRF_QSPI_FREQ_32MDIV4;
-    if (nrfx_qspi_init(&cfg, NULL, NULL) != NRFX_SUCCESS) return false;   // NULL handler: blocking calls
-    nrfx_qspi_cinstr_quick_send(0xAB, NRF_QSPI_CINSTR_LEN_1B, NULL);       // out of deep power down
-    delayMicroseconds(50);
+    wake();
+    if (nrfx_qspi_init(&cfg, NULL, NULL) != NRFX_SUCCESS) {   // NULL handler: blocking calls
+      nrfx_qspi_uninit();   // a timed out init stays "initialized": the next try would be refused
+      return false;
+    }
     _on = true;
     return true;
   }
