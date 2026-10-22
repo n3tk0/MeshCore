@@ -247,7 +247,7 @@
     <string name="backup_hint_companion_short">Настройките, каналите, контактите и ключът на companion-а, на този телефон.</string>
     <string name="backup_hint_companion">Пази име, радио, мощност, местоположение, PIN, автоматично добавяне, scope, сензори, каналите, контактите и личния ключ (шифрован с ключ на телефона). Не пази настройките на екрана и бутоните на Faketec (те остават при всеки flash). Прави се сам преди всеки flash.</string>
     <string name="backup_hint_repeater_short">Настройките на repeater-а, прочетени през конзолата му, на този телефон.</string>
-    <string name="backup_hint_repeater">Пази име, радио, мощност, местоположение, препращане, интервали на advert, flood, гост парола, информация за собственика, закъснения и OTA. Не може да прочете admin паролата, списъка с достъп, личния ключ и регионите (те остават при всеки flash). Чете се около минута. Прави се сам преди всеки flash и LoRa update.</string>
+    <string name="backup_hint_repeater">Пази име, радио, мощност, местоположение, препращане, интервали на advert, flood, гост и admin паролата (тази, с която влизаш), информация за собственика, закъснения и OTA. Не може да прочете списъка с достъп, личния ключ и регионите (те остават при всеки flash). Чете се около минута. Прави се сам преди всеки flash и LoRa update.</string>
     <string name="backup_now">Направи backup</string>
     <string name="backup_import">Внеси от файл</string>
     <string name="backup_none">Още няма backup за това устройство.</string>
@@ -275,7 +275,7 @@
     <string name="restore_title">Възстановяване от %1$s</string>
     <string name="restore_other_device">Този backup е с друг ключ (%1$s): от друго устройство или от това преди изтриване. Настройките му ще се копират тук.</string>
     <string name="restore_same">Няма разлики: устройството е като в backup-а.</string>
-    <string name="restore_hint">Отметнатите неща ще станат като в backup-а. Нещата, които ги няма в backup-а, остават.</string>
+    <string name="restore_hint">Отметнатите неща ще станат като в backup-а. Нещата, които ги няма в backup-а, остават. Самоличността се отмята само ръчно.</string>
     <string name="restore_now_missing">няма го сега</string>
     <string name="restore_key_warning">Сменя самоличността на устройството: другите го познават по този ключ.</string>
     <string name="restore_restart_note">Важи след рестарт на repeater-а.</string>
@@ -284,16 +284,15 @@
     <string name="restore_partly">Възстановено: %1$d. Не стана: %2$s.</string>
     <string name="restore_restart">Радиото на repeater-а се сменя след рестарт.</string>
     <string name="export_title">Запази като файл</string>
-    <string name="export_text">Файлът може да излезе от телефона. Личният ключ влиза в него само с парола; без парола файлът е без ключа.</string>
-    <string name="export_password">Парола за ключа (по желание)</string>
+    <string name="export_text">С парола целият файл е шифрован: настройките, каналите, паролите и личният ключ. Без парола във файла остава само това, което не е тайна: без ключа, каналите и паролите.</string>
+    <string name="export_password">Парола (по желание)</string>
     <string name="export_save">Избери къде</string>
     <string name="import_title">Парола на файла</string>
-    <string name="import_text">Файлът има личен ключ под парола. Без паролата се внася без ключа.</string>
+    <string name="import_text">Файлът е шифрован. Въведи паролата, с която е запазен.</string>
     <string name="import_password">Парола</string>
-    <string name="import_without_key">Без ключа</string>
     <string name="import_ok">Внеси</string>
     <string name="msg_export_done">Файлът е запазен.</string>
-    <string name="msg_export_no_key">Файлът е запазен без личния ключ.</string>
+    <string name="msg_export_no_key">Файлът е запазен без ключа, каналите и паролите.</string>
     <string name="msg_import_done">Внесен backup на %1$s.</string>
     <string name="err_backup_file">Това не е файл с backup от приложението.</string>
     <string name="err_backup_password">Грешна парола.</string>
@@ -325,4 +324,5 @@
     <string name="none_value">няма</string>
     <string name="repeat_on">репийтър вкл.</string>
     <string name="restore_now">сега: %1$s</string>
+    <string name="set_admin_password">Admin парола</string>
 </resources>

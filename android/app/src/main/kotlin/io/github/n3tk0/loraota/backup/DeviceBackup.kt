@@ -122,6 +122,9 @@ object RepeaterBackup {
     )
     const val OTA = "ota"
 
+    /** The admin password: not readable from the repeater, the app keeps the one it logs in with. */
+    const val PASSWORD = "password"
+
     /** Settings the repeater takes only after a restart. */
     val NEEDS_RESTART = setOf("radio")
 
@@ -173,12 +176,14 @@ object RepeaterBackup {
         val failed = ArrayList<Pair<BackupItem, String>>()
         var done = 0
         try {
-            for ((i, item) in items.withIndex()) {
+            // the admin password last: the rest still goes with the one logged in with
+            for ((i, item) in items.sortedBy { it.id == PASSWORD }.withIndex()) {
                 progress(i + 1, items.size)
-                val reply = ask(c, r, "set ${item.id} ${item.value}")
+                val pw = item.id == PASSWORD
+                val reply = ask(c, r, if (pw) "password ${item.value}" else "set ${item.id} ${item.value}")
                 when {
                     reply == null -> failed.add(item to "")
-                    reply.startsWith("OK") -> done++
+                    reply.startsWith(if (pw) "password now" else "OK") -> done++
                     else -> failed.add(item to reply)
                 }
             }

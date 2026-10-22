@@ -246,7 +246,7 @@
     <string name="backup_hint_companion_short">The companion\'s settings, channels, contacts and key, on this phone.</string>
     <string name="backup_hint_companion">Keeps name, radio, power, location, PIN, auto add, scope, sensors, the channels, the contacts and the private key (encrypted with a key of this phone). Not the Faketec screen and button settings (those stay through every flash). Made by itself before each flash.</string>
     <string name="backup_hint_repeater_short">The repeater\'s settings, read through its console, on this phone.</string>
-    <string name="backup_hint_repeater">Keeps name, radio, power, location, forwarding, advert intervals, flood, guest password, owner info, delays and OTA. It cannot read the admin password, the access list, the private key or the regions (those stay through every flash). Reading takes about a minute. Made by itself before each flash and LoRa update.</string>
+    <string name="backup_hint_repeater">Keeps name, radio, power, location, forwarding, advert intervals, flood, the guest and admin passwords (the one you log in with), owner info, delays and OTA. It cannot read the access list, the private key or the regions (those stay through every flash). Reading takes about a minute. Made by itself before each flash and LoRa update.</string>
     <string name="backup_now">Back up now</string>
     <string name="backup_import">Import a file</string>
     <string name="backup_none">No backup of this device yet.</string>
@@ -274,7 +274,7 @@
     <string name="restore_title">Restore from %1$s</string>
     <string name="restore_other_device">This backup has another key (%1$s): another device, or this one before an erase. Its settings are copied here.</string>
     <string name="restore_same">No differences: the device is as in the backup.</string>
-    <string name="restore_hint">The ticked things become as in the backup. Things the backup does not have stay.</string>
+    <string name="restore_hint">The ticked things become as in the backup. Things the backup does not have stay. The identity is only ticked by hand.</string>
     <string name="restore_now_missing">not there now</string>
     <string name="restore_key_warning">Changes the device\'s identity: others know it by this key.</string>
     <string name="restore_restart_note">Takes effect after the repeater restarts.</string>
@@ -283,16 +283,15 @@
     <string name="restore_partly">Restored: %1$d. Did not take: %2$s.</string>
     <string name="restore_restart">The repeater\'s radio changes after a restart.</string>
     <string name="export_title">Save as a file</string>
-    <string name="export_text">The file can leave the phone. The private key goes in only under a password; without one the file has no key.</string>
-    <string name="export_password">Password for the key (optional)</string>
+    <string name="export_text">With a password the whole file is encrypted: settings, channels, passwords and the private key. Without one the file keeps only what is no secret: no key, channels or passwords.</string>
+    <string name="export_password">Password (optional)</string>
     <string name="export_save">Choose where</string>
     <string name="import_title">The file\'s password</string>
-    <string name="import_text">The file has a private key under a password. Without the password it is imported without the key.</string>
+    <string name="import_text">The file is encrypted. Enter the password it was saved with.</string>
     <string name="import_password">Password</string>
-    <string name="import_without_key">Without the key</string>
     <string name="import_ok">Import</string>
     <string name="msg_export_done">The file is saved.</string>
-    <string name="msg_export_no_key">The file is saved without the private key.</string>
+    <string name="msg_export_no_key">The file is saved without the key, channels and passwords.</string>
     <string name="msg_import_done">Imported a backup of %1$s.</string>
     <string name="err_backup_file">This is not a backup file of the app.</string>
     <string name="err_backup_password">Wrong password.</string>
@@ -324,4 +323,5 @@
     <string name="none_value">none</string>
     <string name="repeat_on">repeat on</string>
     <string name="restore_now">now: %1$s</string>
+    <string name="set_admin_password">Admin password</string>
 </resources>
