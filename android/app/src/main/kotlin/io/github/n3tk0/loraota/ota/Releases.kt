@@ -114,6 +114,7 @@ object Releases {
     private val ASSET_NAME = Regex("""(.+?)-(v\d[^/]*?)\.(zip|bin)""")
 
     /** Kept .bin files no list (any repository's releases, the app's builds) has any more are deleted. */
+    @Synchronized   // not between a build's files and its list (see addBuild)
     fun cleanUp(cache: File) {
         val keep = HashSet<String>()
         val lists = cache.listFiles { f -> f.name.startsWith("releases-") && f.name.endsWith(".json") }.orEmpty().toList() +
@@ -136,6 +137,7 @@ object Releases {
      * A build's files: [data] by file name, checked against the entries' checksums, kept on the phone
      * under their checksum (so [download] finds them with no URL) and listed by [builds].
      */
+    @Synchronized
     fun addBuild(cache: File, entries: List<FirmwareFile>, data: Map<String, ByteArray>) {
         for (f in entries) {
             for ((name, size, sha) in listOf(Triple(f.file, f.size, f.sha256), Triple(f.dfu, f.dfuSize, f.dfuSha256))) {
