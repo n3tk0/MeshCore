@@ -147,6 +147,7 @@ static bool qspi_begin(void) {
       }
     }
   }
+  NRF_QSPI->TASKS_DEACTIVATE = 1;
   NRF_QSPI->ENABLE = 0;
   return false;
 }
