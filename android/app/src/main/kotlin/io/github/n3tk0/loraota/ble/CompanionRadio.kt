@@ -29,6 +29,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val CMD_APP_START = 1
         const val CMD_SEND_TXT_MSG = 2
         const val CMD_GET_CONTACTS = 4
+        const val CMD_DEVICE_QUERY = 22
         const val CMD_ADD_UPDATE_CONTACT = 9
         const val CMD_RESET_PATH = 13
         const val CMD_GET_CONTACT_BY_KEY = 30
@@ -44,6 +45,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val RESP_END_OF_CONTACTS = 4
         const val RESP_SELF_INFO = 5
         const val RESP_SENT = 6
+        const val RESP_DEVICE_INFO = 13
         const val RESP_CLI_REPLY = 29
         const val PUSH_LOGIN_SUCCESS = 0x85
         const val PUSH_LOGIN_FAIL = 0x86
@@ -98,6 +100,19 @@ class CompanionRadio(private val link: CompanionLink) {
         val f = command(byteArrayOf(CMD_APP_START.toByte(), 3, 0, 0, 0, 0, 0, 0) + name, 5000, RESP_SELF_INFO)
         // self info: ... name at the end (after the fixed fields)
         nodeName = if (f.size > 58) String(f, 58, f.size - 58, Charsets.UTF_8).trimEnd('\u0000') else ""
+    }
+
+    /** The companion's board (manufacturer name) and firmware version; empty when it does not say. */
+    suspend fun deviceInfo(): Pair<String, String> {
+        val f = command(byteArrayOf(CMD_DEVICE_QUERY.toByte(), 3), 5000, RESP_DEVICE_INFO)
+        // [code][ver][contacts/2][channels][pin 4][build date 12][manufacturer 40][version 20]
+        fun text(from: Int, len: Int): String {
+            if (f.size <= from) return ""
+            val raw = f.copyOfRange(from, minOf(f.size, from + len))
+            val end = raw.indexOf(0).let { if (it < 0) raw.size else it }
+            return String(raw, 0, end, Charsets.UTF_8)
+        }
+        return text(20, 40) to text(60, 20)
     }
 
     suspend fun contacts(): List<Contact> = lock.withLock {

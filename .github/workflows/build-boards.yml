@@ -7,7 +7,7 @@ name: Build Firmware for Boards
 # - light by default: each part is left out unless its box is ticked (mailbox and LoRa OTA stay unless
 #   unticked); files then get "-lite" after the board name and the run summary lists what was left out
 # - the files are attached to the run (Actions > run > Artifacts); with `release` also a GitHub pre-release
-# Repeaters on nRF52 / ESP32 also get the app image .bin and its .ota.json for the LoRa OTA app.
+# nRF52 / ESP32 boards get an .ota.json for the LoRa OTA app (the DFU file it flashes; repeaters also the app image .bin).
 # The lists come from platformio.ini: run `bash tools/gen-board-choices.sh` after new boards arrive.
 
 permissions:
@@ -551,25 +551,12 @@ jobs:
             done
           fi
 
-      - name: App Image for LoRa OTA
-        if: endsWith(matrix.target, '_repeater')
+      - name: App Image and DFU File for the LoRa OTA App
         run: |
-          ELF=.pio/build/${{ matrix.target }}/firmware.elf
-          NAME=$(basename "$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
-          NAME="${NAME%.uf2}"
-          NAME="${NAME%-merged.bin}"
-          if [ -z "$NAME" ] || [ ! -f "$ELF" ]; then exit 0; fi
-          # LoRa OTA is on nRF52 (has a DFU .zip) and ESP32 (has a -merged.bin) only
-          compgen -G "out/*.zip" >/dev/null || compgen -G "out/*-merged.bin" >/dev/null || exit 0
-          if [ ! -f "out/${NAME}.bin" ]; then
-            # nRF52: the app image is the .elf's loadable sections, as the repeater measures it
-            OBJCOPY=$(find ~/.platformio/packages -name arm-none-eabi-objcopy -type f | head -1)
-            "$OBJCOPY" -O binary "$ELF" "out/${NAME}.bin"
-          fi
-          jq -n --arg env "${{ matrix.target }}" --arg version "${{ env.GIT_TAG_VERSION }}" \
-                --arg file "${NAME}.bin" --arg sha256 "$(sha256sum "out/${NAME}.bin" | cut -d' ' -f1)" \
-                --argjson size "$(stat -c %s "out/${NAME}.bin")" \
-                '{env: $env, version: $version, file: $file, size: $size, sha256: $sha256}' > "out/${NAME}.ota.json"
+          ELF=""
+          # only repeaters get LoRa OTA (the delta from their app image); every board can be flashed (dfu)
+          case "${{ matrix.target }}" in *_repeater) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
+          tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" $ELF
 
       - name: Summary
         run: |
