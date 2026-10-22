@@ -14,7 +14,7 @@ class BackupTest {
 
     private val key = ByteArray(64) { it.toByte() }
     private val backup = Backup(DeviceKind.COMPANION, "ab".repeat(32), "Petko", 1_760_000_000_000, true, "Faketec · v1.18.0",
-        listOf(s("name", "Petko, the 1st"), s("radio", "869618,62500,8,8,1"), contact("01", "aa"),
+        listOf(s("name", "Petko, the 1st"), s("radio", "869618,62500,8,8,1"), s("guest.password", "g"), contact("01", "aa"),
             BackupItem(BackupItem.GROUP_CHANNEL, "0", "Public", "00".repeat(48))), key)
 
     @Test
@@ -29,19 +29,26 @@ class BackupTest {
     }
 
     @Test
-    fun exportKeepsTheKeyOnlyUnderAPassword() {
+    fun withAPasswordAllIsEncryptedWithoutOneNoSecrets() {
         val withPw = PasswordBox.export(backup, "secret")
-        assertTrue(PasswordBox.hasKey(withPw))
-        assertArrayEquals(key, PasswordBox.import(withPw, "secret").privateKey)
-        assertNull(PasswordBox.import(withPw, "").privateKey)   // "without the key"
-        try {
-            PasswordBox.import(withPw, "wrong")
-            throw AssertionError("a wrong password must fail")
-        } catch (e: WrongPassword) {
+        assertTrue(PasswordBox.needsPassword(withPw))
+        assertFalse(withPw.contains("Public"))   // nothing readable inside
+        val back = PasswordBox.import(withPw, "secret")
+        assertArrayEquals(key, back.privateKey)
+        assertEquals(backup.items, back.items)
+        for (pw in listOf("wrong", "")) {
+            try {
+                PasswordBox.import(withPw, pw)
+                throw AssertionError("a wrong password must fail")
+            } catch (e: WrongPassword) {
+            }
         }
-        val noPw = PasswordBox.export(backup, "")
-        assertFalse(PasswordBox.hasKey(noPw))
-        assertEquals(backup.items, PasswordBox.import(noPw, "").items)
+        val noPw = PasswordBox.export(backup.with(key), "")
+        assertFalse(PasswordBox.needsPassword(noPw))
+        val open = PasswordBox.import(noPw, "")
+        assertNull(open.privateKey)
+        // no channels (their keys) and no passwords
+        assertEquals(listOf("setting/name", "setting/radio", "contact/01"), open.items.map { it.ref })
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -55,9 +62,9 @@ class BackupTest {
             s("tx", "22"))
         val rows = BackupDiff.diff(backup.items, now)
         // the name changed, the channel is gone; the contact is there (its frame changes all the time); tx is not in the backup
-        assertEquals(listOf("setting/name", "channel/0"), rows.map { it.item.ref })
+        assertEquals(listOf("setting/name", "setting/guest.password", "channel/0"), rows.map { it.item.ref })
         assertEquals("Other", rows[0].current)
-        assertNull(rows[1].current)
+        assertNull(rows[2].current)
         assertEquals(listOf("contact/01"), BackupDiff.diff(backup.items, emptyList()).filter { it.item.group == BackupItem.GROUP_CONTACT }.map { it.item.ref })
     }
 }

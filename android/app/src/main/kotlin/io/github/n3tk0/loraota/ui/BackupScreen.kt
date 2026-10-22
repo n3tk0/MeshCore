@@ -9,17 +9,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -47,6 +44,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /** The device's backups: make one, restore one (after its differences), save one as a file, import one. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BackupScreen(vm: AppViewModel) {
     val restoring = vm.restoreFrom
@@ -91,13 +89,30 @@ fun BackupScreen(vm: AppViewModel) {
     fun export(b: Backup) {
         exporting = b
         exportPassword = ""
-        // the password first (only for a private key), then where the file goes
-        if (b.privateKey == null) save.launch(fileName(b)) else askPassword = true
+        // the password first (none: the file has no secrets), then where the file goes
+        askPassword = true
     }
-    for (b in mine) BackupRow(vm, b, false, { vm.startRestore(b) }, { export(b) }, { deleting = b })
+    var actions by remember { mutableStateOf<Backup?>(null) }
+    for (b in mine) BackupRow(vm, b, false) { actions = b }
     if (others.isNotEmpty()) {
         Text(stringResource(R.string.backup_other_devices), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-        for (b in others) BackupRow(vm, b, true, { vm.startRestore(b) }, { export(b) }, { deleting = b })
+        for (b in others) BackupRow(vm, b, true) { actions = b }
+    }
+    // a tap opens what can be done with it: a restore reads the device first (a minute over LoRa)
+    actions?.let { b ->
+        ModalBottomSheet(onDismissRequest = { actions = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stamp(b), style = MaterialTheme.typography.titleLarge)
+                Text(summary(b), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = { actions = null; vm.startRestore(b) }, enabled = !vm.busy, modifier = Modifier.padding(top = 8.dp)) {
+                    Text(stringResource(R.string.backup_restore))
+                }
+                TextButton(onClick = { actions = null; export(b) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_export)) }
+                TextButton(onClick = { actions = null; deleting = b }, enabled = !vm.busy) {
+                    Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
     }
 
     exporting?.takeIf { askPassword }?.let { b ->
@@ -137,7 +152,7 @@ fun BackupScreen(vm: AppViewModel) {
                 }
             },
             confirmButton = { TextButton(onClick = { vm.importWithPassword(pw) }, enabled = pw.isNotEmpty() && !vm.busy) { Text(stringResource(R.string.import_ok)) } },
-            dismissButton = { TextButton(onClick = { vm.importWithPassword("") }, enabled = !vm.busy) { Text(stringResource(R.string.import_without_key)) } },
+            dismissButton = { TextButton(onClick = { vm.importText = null }, enabled = !vm.busy) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -155,22 +170,15 @@ private fun stamp(b: Backup): String {
 }
 
 @Composable
-private fun BackupRow(vm: AppViewModel, b: Backup, other: Boolean, onRestore: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    Card(Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).clickable(enabled = !vm.busy, onClick = onRestore), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+private fun BackupRow(vm: AppViewModel, b: Backup, other: Boolean, onOpen: () -> Unit) {
+    Card(Modifier.fillMaxWidth().clickable(enabled = !vm.busy, onClick = onOpen)) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(stamp(b), style = MaterialTheme.typography.titleMedium)
                 Text((if (other) b.deviceName + " · " else "") +
                     stringResource(if (b.auto) R.string.backup_auto else R.string.backup_manual), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(summary(b), style = MaterialTheme.typography.bodySmall)
-            }
-            IconButton(onClick = { menu = true }, enabled = !vm.busy) { Icon(Icons.Default.MoreVert, stringResource(R.string.menu)) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.backup_restore)) }, onClick = { menu = false; onRestore() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.backup_export)) }, onClick = { menu = false; onExport() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.backup_delete)) }, onClick = { menu = false; onDelete() })
             }
         }
     }
@@ -213,8 +221,13 @@ private fun RestoreView(vm: AppViewModel, b: Backup) {
         Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         for (r in rows) DiffLine(vm, b, r)
     }
+}
+
+/** At the bottom of the screen, always in sight: restore the ticked ones, or cancel. */
+@Composable
+internal fun RestoreBar(vm: AppViewModel) {
     val n = vm.restoreRows.count { vm.restoreChecked[it.item.ref] == true }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Button(onClick = { vm.applyRestore() }, enabled = n > 0 && !vm.busy) { Text(stringResource(R.string.restore_apply, n)) }
         TextButton(onClick = { vm.closeRestore() }, enabled = !vm.busy) { Text(stringResource(R.string.cancel)) }
     }
@@ -270,6 +283,7 @@ private fun itemLabel(i: BackupItem): String = when (i.group) {
         "advert.interval" -> stringResource(R.string.set_advert_interval)
         "flood.advert.interval" -> stringResource(R.string.set_flood_advert_interval)
         "guest.password" -> stringResource(R.string.set_guest_password)
+        RepeaterBackup.PASSWORD -> stringResource(R.string.set_admin_password)
         "owner.info" -> stringResource(R.string.set_owner_info)
         "flood.max" -> stringResource(R.string.set_flood_max)
         RepeaterBackup.OTA -> stringResource(R.string.set_ota)
@@ -295,7 +309,7 @@ private fun itemValue(i: BackupItem, v: String): String {
         i.id == "scope" -> if (v.isEmpty()) stringResource(R.string.none_value)
             else runCatching { String(ByteArray(minOf(31, v.length / 2)) { v.substring(it * 2, it * 2 + 2).toInt(16).toByte() }, Charsets.UTF_8).substringBefore('\u0000') }.getOrDefault(v)
         i.id == "pin" && v == "0" -> stringResource(R.string.none_value)
-        i.id == "guest.password" -> if (v.isEmpty()) stringResource(R.string.none_value) else "•".repeat(v.length.coerceAtMost(8))
+        i.id == "guest.password" || i.id == RepeaterBackup.PASSWORD -> if (v.isEmpty()) stringResource(R.string.none_value) else "•".repeat(v.length.coerceAtMost(8))
         v.isEmpty() -> stringResource(R.string.none_value)
         else -> v
     }

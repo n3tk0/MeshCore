@@ -212,11 +212,14 @@ private fun BottomStatus(vm: AppViewModel) {
     val showBusy = vm.busy && !vm.running
     // the login sheet shows them itself, not twice
     if (vm.step == Step.REPEATER && vm.loginSheet != null) return
-    if (!showBusy && vm.message.isEmpty()) return
+    // the restore's button stays in sight however long the list of differences
+    val restoreBar = vm.step == Step.BACKUP && vm.restoreFrom != null && vm.restoreRows.isNotEmpty()
+    if (!showBusy && vm.message.isEmpty() && !restoreBar) return
     Surface(tonalElevation = 3.dp, modifier = Modifier.navigationBarsPadding()) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (showBusy) Busy(vm)
             Message(vm)
+            if (restoreBar) RestoreBar(vm)
         }
     }
 }

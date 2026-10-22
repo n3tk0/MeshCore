@@ -35,6 +35,7 @@ import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.backup.DiffRow
 import io.github.n3tk0.loraota.backup.NoAnswer
 import io.github.n3tk0.loraota.backup.PasswordBox
+import io.github.n3tk0.loraota.backup.BackupItem.Companion.GROUP_SETTING
 import io.github.n3tk0.loraota.backup.RepeaterBackup
 import io.github.n3tk0.loraota.backup.RestoreResult
 import io.github.n3tk0.loraota.backup.WrongPassword
@@ -94,9 +95,6 @@ class Image(val name: String, val data: ByteArray, val env: String? = null) {
 }
 
 private const val OTA_CHECK_MS = 15_000L
-
-/** A backup this recent is enough before a flash or an update: no second one. */
-private const val BACKUP_FRESH_MS = 30 * 60_000L
 
 /** The box the group APK does not show: its builds would pile up as pre-releases of the repository. */
 const val GROUP_HIDDEN = "release"
@@ -197,7 +195,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var restoreFrom by mutableStateOf<Backup?>(null)        // the backup whose differences are shown
     var restoreRows by mutableStateOf<List<DiffRow>>(emptyList())
     val restoreChecked = mutableStateMapOf<String, Boolean>()
-    var importText by mutableStateOf<String?>(null)         // a file with a private key: asks for its password
+    var importText by mutableStateOf<String?>(null)         // an encrypted file: asks for its password
     var updateBackupNote by mutableStateOf<String?>(null)   // in the update's 'are you sure': no backup, and why
     private var backupReturn = Step.REPEATER
 
@@ -919,11 +917,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     throw Exception(str(R.string.backup_no_capture))
                 }
                 canReadRepeater = true
-                val items = try {
-                    RepeaterBackup.read(companion, r, info != null) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
-                } catch (e: NoAnswer) {
-                    throw Exception(str(R.string.backup_no_answer))
-                }
+                val items = readRepeater(r)
                 Backup(kind, deviceKey(kind), r.name, System.currentTimeMillis(), auto, info?.ident?.replace('|', ' ') ?: "", items)
             }
         }
@@ -932,17 +926,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return saved
     }
 
+    /** Its console settings, and the admin password the app logged in with (the repeater does not give it). */
+    private suspend fun readRepeater(r: Contact): List<BackupItem> {
+        val items = try {
+            RepeaterBackup.read(companion, r, info != null) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
+        } catch (e: NoAnswer) {
+            throw Exception(str(R.string.backup_no_answer))
+        }
+        val pw = savedPassword(r) ?: return items
+        return items + BackupItem(GROUP_SETTING, RepeaterBackup.PASSWORD, RepeaterBackup.PASSWORD, pw)
+    }
+
     /**
-     * Before a flash or an update: a backup, unless one was made in the last half hour. Null when there is
-     * one; else why not (it goes on the 'are you sure', the flash itself still can go).
+     * Before every flash or update: a backup. Null when it is made; else why not (it goes on the
+     * 'are you sure', the flash itself still can go).
      */
     private suspend fun autoBackup(kind: DeviceKind): String? {
-        val dev = deviceKey(kind)
-        if (dev.isEmpty()) return null
-        val now = System.currentTimeMillis()
-        val fresh = withContext(Dispatchers.IO) { backupStore.all() }
-            .any { it.kind == kind && it.deviceKey == dev && now - it.time < BACKUP_FRESH_MS }
-        if (fresh) return null
+        if (deviceKey(kind).isEmpty()) return null
         return try {
             makeBackup(kind, true)
             null
@@ -963,17 +963,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             DeviceKind.REPEATER -> {
                 val r = repeater ?: return@work
                 if (!RepeaterBackup.supported(companion)) throw Exception(str(R.string.backup_no_capture))
-                try {
-                    RepeaterBackup.read(companion, r, info != null) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
-                } catch (e: NoAnswer) {
-                    throw Exception(str(R.string.backup_no_answer))
-                }
+                readRepeater(r)
             }
         }
         // the identity only with its private key (a file imported without its password has none)
         val rows = BackupDiff.diff(b.items, now).filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
         restoreChecked.clear()
-        for (r in rows) restoreChecked[r.item.ref] = true
+        // the identity only when the user ticks it: it changes who the device is for the network
+        for (r in rows) restoreChecked[r.item.ref] = r.item.group != BackupItem.GROUP_KEY
         restoreRows = rows
         restoreFrom = b
         if (rows.isEmpty()) message = str(R.string.restore_same)
@@ -1002,7 +999,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             DeviceKind.REPEATER -> {
                 val r = repeater ?: return@work
-                RepeaterBackup.apply(companion, r, items) { i, n -> working = str(R.string.working_restore_repeater, i, n) }
+                val res = RepeaterBackup.apply(companion, r, items) { i, n -> working = str(R.string.working_restore_repeater, i, n) }
+                // the next login is with the restored admin password
+                items.firstOrNull { it.id == RepeaterBackup.PASSWORD && res.failed.none { f -> f.first.id == it.id } }
+                    ?.let { savePassword(r, it.value) }
+                res
             }
         }
         restoreFrom = null
@@ -1021,24 +1022,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         loadBackups()
     }
 
-    /** 'Save as file': the private key in it only under [password] (empty: without the key). */
+    /** 'Save as file': with a [password] all of it encrypted; without one no key, channels or passwords. */
     fun exportBackup(b: Backup, uri: Uri, password: String) = work {
         val text = withContext(Dispatchers.Default) { PasswordBox.export(b, password) }
         withContext(Dispatchers.IO) {
             ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(text.toByteArray()) }
         }
-        message = str(if (b.privateKey != null && password.isEmpty()) R.string.msg_export_no_key else R.string.msg_export_done)
+        message = str(if (password.isEmpty()) R.string.msg_export_no_key else R.string.msg_export_done)
     }
 
-    /** A backup file: one with a private key waits for its password ([importText]). */
+    /** A backup file: an encrypted one waits for its password ([importText]). */
     fun pickImport(uri: Uri) = work {
         val text = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { String(it.readBytes()) } }
-        val hasKey = try {
-            PasswordBox.hasKey(text)
+        val locked = try {
+            PasswordBox.needsPassword(text)
         } catch (e: Exception) {
             throw Exception(str(R.string.err_backup_file))
         }
-        if (hasKey) importText = text else importBackup(text, "")
+        if (locked) importText = text else importBackup(text, "")
     }
 
     fun importWithPassword(password: String) = work {

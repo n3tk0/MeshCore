@@ -18,7 +18,11 @@ import javax.crypto.spec.SecretKeySpec
 
 class WrongPassword : Exception("wrong password")
 
-/** A private key in a file that leaves the phone: AES-GCM with a key from the user's password (PBKDF2). */
+/**
+ * A backup in a file that leaves the phone. With a password the whole backup is in it, encrypted (AES-GCM,
+ * key from the password with PBKDF2); without one only what is no secret: no private key, no channels
+ * (their keys), no passwords.
+ */
 object PasswordBox {
     private const val ITERATIONS = 120_000
     private val b64 = Base64.getEncoder()
@@ -55,23 +59,33 @@ object PasswordBox {
         }
     }
 
-    /** The file to share: the backup, and its private key only under a password (none: left out). */
+    /** Settings that are secrets: only in a file under a password. */
+    val SECRET_SETTINGS = setOf("guest.password", "password")
+
     fun export(b: Backup, password: String): String {
-        val o = b.toJson()
-        val k = b.privateKey
-        if (k != null && password.isNotEmpty()) o.put("keyPw", seal(k, password))
-        return o.toString(2)
+        if (password.isEmpty()) {
+            val open = Backup(b.kind, b.deviceKey, b.deviceName, b.time, b.auto, b.firmware,
+                b.items.filter { it.group != BackupItem.GROUP_CHANNEL && it.id !in SECRET_SETTINGS })
+            return open.toJson().toString(2)
+        }
+        val inner = b.toJson()
+        b.privateKey?.let { inner.put("key", b64.encodeToString(it)) }
+        // outside only what the import needs to say what it is
+        return JSONObject().put("format", Backup.FORMAT).put("kind", b.kind.name.lowercase()).put("name", b.deviceName)
+            .put("time", b.time).put("enc", seal(inner.toString().toByteArray(), password)).toString(2)
     }
 
-    /** True when the file has a private key, so the import asks for its password. */
-    fun hasKey(text: String) = JSONObject(text).has("keyPw")
+    /** True when the file is encrypted: the import needs its password. */
+    fun needsPassword(text: String) = JSONObject(text).has("enc")
 
-    /** A file of [export]; [password] empty: without its private key. */
+    /** A file of [export]; an encrypted one only with its [password] ([WrongPassword] otherwise). */
     fun import(text: String, password: String): Backup {
         val o = JSONObject(text)
-        val b = Backup.fromJson(o)
-        val k = if (o.has("keyPw") && password.isNotEmpty()) open(o.getJSONObject("keyPw"), password) else null
-        return b.with(k)
+        if (!o.has("enc")) return Backup.fromJson(o)
+        if (password.isEmpty()) throw WrongPassword()
+        val inner = JSONObject(String(open(o.getJSONObject("enc"), password)))
+        val k = inner.optString("key").takeIf { it.isNotEmpty() }?.let { unb64.decode(it) }
+        return Backup.fromJson(inner).with(k)
     }
 }
 
