@@ -12,6 +12,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.Color
 import io.github.n3tk0.loraota.ui.AppScreen
 import io.github.n3tk0.loraota.ui.AppViewModel
 
@@ -37,7 +38,7 @@ class MainActivity : ComponentActivity() {
             }
         )
         setContent {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors) {
                 AppScreen(vm) { lang ->
                     Lang.set(this, lang)
                     recreate()
@@ -46,3 +47,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+// the green of the launcher icon (#1B5E20)
+val LightColors = lightColorScheme(
+    primary = Color(0xFF2E7D32), onPrimary = Color.White,
+    primaryContainer = Color(0xFFB8F0B9), onPrimaryContainer = Color(0xFF002106),
+    secondary = Color(0xFF52634F), secondaryContainer = Color(0xFFD5E8CF), onSecondaryContainer = Color(0xFF101F10),
+    tertiary = Color(0xFF38656A), tertiaryContainer = Color(0xFFBCEBF0), onTertiaryContainer = Color(0xFF002023),
+)
+
+val DarkColors = darkColorScheme(
+    primary = Color(0xFF8BD68D), onPrimary = Color(0xFF00390F),
+    primaryContainer = Color(0xFF1B5E20), onPrimaryContainer = Color(0xFFA6F2A7),
+    secondary = Color(0xFFB9CCB4), secondaryContainer = Color(0xFF3B4B39), onSecondaryContainer = Color(0xFFD5E8CF),
+    tertiary = Color(0xFFA0CFD4), tertiaryContainer = Color(0xFF1F4D52), onTertiaryContainer = Color(0xFFBCEBF0),
+)
