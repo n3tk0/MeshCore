@@ -66,6 +66,8 @@
 #define CMD_GET_DEFAULT_FLOOD_SCOPE   64
 #define CMD_SEND_RAW_PACKET           65
 #define CMD_RUN_CLI_COMMAND           66  // v14+
+// our fork only (far from upstream's numbers): console replies straight to the app, see onCommandDataRecv
+#define CMD_CAPTURE_CLI_REPLIES       120
 
 // Stats sub-types for CMD_GET_STATS
 #define STATS_TYPE_CORE               0
@@ -136,6 +138,7 @@
 #define PUSH_CODE_CONTROL_DATA          0x8E   // v8+
 #define PUSH_CODE_CONTACT_DELETED       0x8F // used to notify client app of deleted contact when overwriting oldest
 #define PUSH_CODE_CONTACTS_FULL         0x90 // used to notify client app that contacts storage is full
+#define PUSH_CODE_CLI_REPLY_CAPTURED    0xC0 // our fork: [code][sender prefix 6][timestamp 4][text]
 
 #define ERR_CODE_UNSUPPORTED_CMD        1
 #define ERR_CODE_NOT_FOUND              2
@@ -628,6 +631,19 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp, const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+  // an app reading a server's settings (a backup) asked for its console replies directly, so the
+  // user's unread messages stay in the queue untouched
+  if (cli_capture_until && millisHasNowPassed(cli_capture_until)) cli_capture_until = 0;
+  if (cli_capture_until && _serial->isConnected()) {
+    int tlen = strlen(text);
+    if (tlen > MAX_FRAME_SIZE - 11) tlen = MAX_FRAME_SIZE - 11;
+    out_frame[0] = PUSH_CODE_CLI_REPLY_CAPTURED;
+    memcpy(&out_frame[1], from.id.pub_key, 6);
+    memcpy(&out_frame[7], &sender_timestamp, 4);
+    memcpy(&out_frame[11], text, tlen);
+    _serial->writeFrame(out_frame, 11 + tlen);
+    return;
+  }
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -1047,6 +1063,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   memset(recent_msgs, 0, sizeof(recent_msgs));
   next_recent_msg = 0;
   app_target_ver = 0;
+  cli_capture_until = 0;
   clearPendingReqs();
   next_ack_idx = 0;
   sign_data = NULL;
@@ -1232,6 +1249,7 @@ void MyMesh::handleCmdFrame(size_t len) {
   }
   if (cmd_frame[0] == CMD_DEVICE_QUERY && len >= 2) { // sent when app establishes connection
     app_target_ver = cmd_frame[1];                    // which version of protocol does app understand
+    cli_capture_until = 0;                            // a new app: replies to the queue again
 
     int i = 0;
     out_frame[i++] = RESP_CODE_DEVICE_INFO;
@@ -1279,10 +1297,10 @@ void MyMesh::handleCmdFrame(size_t len) {
                      (_prefs.telemetry_mode_base); // v5+
     out_frame[i++] = _prefs.manual_add_contacts;
 
-    uint32_t freq = _prefs.freq * 1000;
+    uint32_t freq = _prefs.freq * 1000 + 0.5f;   // rounded: 869.618 is 869.61798 as a float
     memcpy(&out_frame[i], &freq, 4);
     i += 4;
-    uint32_t bw = _prefs.bw * 1000;
+    uint32_t bw = _prefs.bw * 1000 + 0.5f;
     memcpy(&out_frame[i], &bw, 4);
     i += 4;
     out_frame[i++] = _prefs.sf;
@@ -1292,6 +1310,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&out_frame[i], _prefs.node_name, tlen);
     i += tlen;
     _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_CAPTURE_CLI_REPLIES && len >= 2) {
+    // [secs]: console replies come as PUSH_CODE_CLI_REPLY_CAPTURED for that long (at most 2 min); 0 = off
+    uint8_t secs = cmd_frame[1] > 120 ? 120 : cmd_frame[1];
+    cli_capture_until = secs ? futureMillis(secs * 1000UL) : 0;
+    writeOKFrame();
   } else if (cmd_frame[0] == CMD_RUN_CLI_COMMAND && len >= 3) { // V14+
     int i = 1;
     char *text = (char *)&cmd_frame[i];
