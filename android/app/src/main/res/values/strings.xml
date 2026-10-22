@@ -45,9 +45,7 @@
     <string name="advanced_hide">Скрий разширените</string>
     <string name="ota_off">OTA е изключено на този repeater. Натисни „Включи OTA“: приложението ще пусне `set ota on` в конзолата му.</string>
     <string name="paused_hint">Има прекъснато обновяване. Repeater-ът пази докъде е стигнал 30 минути. Избери същия firmware и натисни „Продължи“.</string>
-    <string name="confirm_text">Repeater-ът ще получи %1$s (delta %2$.1f KB) за около %3$.0f мин на страничния канал %4$s.
-
-През това време repeater-ът не препраща съобщения в мрежата. Стой до него, докато свърши.</string>
+    <string name="confirm_text">Repeater-ът ще получи %1$s (delta %2$.1f KB) за около %3$.0f мин на страничния канал %4$s.\n\nПрез това време repeater-ът не препраща съобщения в мрежата. Стой до него, докато свърши.</string>
     <string name="done_hint">Ако новият firmware не тръгне, ESP32 repeater-ите се връщат сами на стария след рестарт.</string>
     <string name="phase_start">Започвам…</string>
     <string name="phase_switch">Минавам на страничния канал…</string>
@@ -125,10 +123,7 @@
     <string name="flash_none">Няма подходящ firmware в изданията. Избери файл.</string>
     <string name="flash_from_file">От файл (.zip / .bin)</string>
     <string name="flash_start">Запиши</string>
-    <string name="flash_confirm_text">Файл: %1$s
-Устройство: %2$s
-
-Не спирай захранването и стой наблизо, докато свърши (1–3 минути).</string>
+    <string name="flash_confirm_text">Файл: %1$s\nУстройство: %2$s\n\nНе спирай захранването и стой наблизо, докато свърши (1–3 минути).</string>
     <string name="flash_progress">Записвам: %1$d%%</string>
     <string name="working_start_ota">Пускам режима за обновяване на repeater-а (start ota)…</string>
     <string name="working_scan">Търся repeater-а по Bluetooth…</string>
