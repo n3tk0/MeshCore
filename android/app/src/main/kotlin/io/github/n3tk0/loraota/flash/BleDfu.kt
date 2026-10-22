@@ -77,6 +77,10 @@ object BleDfu {
                 .setPacketsReceiptNotificationsEnabled(true)
                 .setPacketsReceiptNotificationsValue(8)
                 .setUnsafeExperimentalButtonlessServiceInSecureDfuEnabled(true)
+                // the Adafruit bootloader comes up on the address + 1 unless the phone is bonded (a repeater
+                // never is): without this the library waits on the old address, GATT CONN TIMEOUT
+                .setForceScanningForNewAddressInLegacyDfu(true)
+                .setScanTimeout(10_000)   // the bootloader starts its SoftDevice first
                 // a foreground service: Android does not stop it mid-write when the app goes to the background
                 .setForeground(true)
                 .setDisableNotification(false)
