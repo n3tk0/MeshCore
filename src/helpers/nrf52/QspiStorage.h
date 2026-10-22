@@ -87,8 +87,9 @@ public:
         g_ADigitalPinMap[PIN_QSPI_IO1], g_ADigitalPinMap[PIN_QSPI_IO2], g_ADigitalPinMap[PIN_QSPI_IO3]);
     cfg.phy_if.sck_freq = NRF_QSPI_FREQ_32MDIV4;
     wake();
-    if (nrfx_qspi_init(&cfg, NULL, NULL) != NRFX_SUCCESS) {   // NULL handler: blocking calls
-      nrfx_qspi_uninit();   // a timed out init stays "initialized": the next try would be refused
+    nrfx_err_t e = nrfx_qspi_init(&cfg, NULL, NULL);   // NULL handler: blocking calls
+    if (e != NRFX_SUCCESS) {
+      if (e == NRFX_ERROR_TIMEOUT) nrfx_qspi_uninit();   // it stays "initialized": the next try would be refused
       return false;
     }
     _on = true;
