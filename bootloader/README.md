@@ -36,7 +36,7 @@ Every board OTAFIX has is built. What a repeater gets from it:
 
 | | boards |
 | --- | --- |
-| staged install + rollback (QSPI flash, `-D QSPI_STORAGE` in the repeater env) | Xiao nRF52840, LilyGo T-Echo, ThinkNode M1, ThinkNode M6, Wio Tracker L1, SenseCAP Solar P1 |
+| staged install + rollback (QSPI flash, `-D QSPI_STORAGE` in the repeater env) | Xiao nRF52840 (also Ikoka Stick, Nano and Handheld, which use the Xiao bootloader), LilyGo T-Echo, ThinkNode M1, ThinkNode M6, Wio Tracker L1 (also L1 1W), SenseCAP Solar P1 |
 | staged install, normal build (image up to 396 KB) | ProMicro / Faketec, T1000-E, ThinkNode M3, Heltec T114 without display, RAK WisMesh Tag, Minewsemi ME25LS01 |
 | staged install with a light build only (`build-boards.yml`, about 310-336 KB) | RAK4631, RAK3401, Heltec T114 with display, Heltec T096, Heltec T1 |
 
@@ -48,8 +48,10 @@ The T-Echo Card and T-Echo Lite have no OTAFIX board of their own. RAK boards ha
 QSPI flash (too small for our layout). T114, T1000-E: the QSPI pins are not known yet, so no rollback.
 
 To give another board rollback: its QSPI pins (`OTA_STAGE_QSPI_*`, nRF pin numbers) in its `board.h`
-in `otafix.patch`, and `-D QSPI_STORAGE=1` in its repeater env. The flash must be at least 2 MB and
-powered without the app's help.
+in `otafix.patch`, and `-D QSPI_STORAGE=1` in its repeater env. The flash must be at least 2 MB. If the
+app switches the flash's supply on (a power-enable pin), name that pin as `OTA_STAGE_QSPI_PWR_1` (and
+`_2`): after a reset the pins float, so the bootloader drives them high itself (ThinkNode M6: P0.27
+and P0.21; T-Echo, ThinkNode M1: P0.12).
 
 ## Build
 

@@ -115,7 +115,7 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 - **Off by default:** run `set ota on` in the repeater's console first (`set ota off` turns it off again, `ota status` shows it).
 - **Cut short:** the repeater goes back to its normal channel and keeps its progress for 30 minutes; the same update in the app continues where it stopped.
 - **Time on air:** the app keeps to 10 % of each hour; a bigger delta waits for the next part of the hour on the normal channel.
-- **nRF52 storage:** the new image goes to the free internal flash after the running one, then is copied over it just before the restart. Repeaters with a QSPI flash (Xiao nRF52840, T-Echo, ThinkNode M1/M6, Wio Tracker L1, SenseCAP Solar; `-D QSPI_STORAGE`) keep it there instead, together with the mailbox (a ring of 32 slots). Boards where the old and the new image do not fit together (e.g. RAK4631, about 460 KB) update **in place**: the repeater keeps the delta and the end of the image, and makes the start again in RAM just before the copy. The app shows a big warning for it.
+- **nRF52 storage:** the new image goes to the free internal flash after the running one, then is copied over it just before the restart. Repeaters with a QSPI flash (Xiao nRF52840, Ikoka Stick/Nano/Handheld, T-Echo, ThinkNode M1/M6, Wio Tracker L1 and L1 1W, SenseCAP Solar; `-D QSPI_STORAGE`) keep it there instead, together with the mailbox (a ring of 32 slots). Boards where the old and the new image do not fit together (e.g. RAK4631, about 460 KB) update **in place**: the repeater keeps the delta and the end of the image, and makes the start again in RAM just before the copy. The app shows a big warning for it.
 - **Our bootloader (nRF52):** with [our bootloader](#nrf52-bootloader-for-lora-ota) the final copy survives a power cut, and boards with QSPI flash get rollback.
 - **Power cut on nRF52 without it:** during the final copy (about 20 s) a power cut leaves the repeater in the bootloader with no firmware; it has to be updated on site (USB or BLE DFU). The stock bootloader then at least checks the image's CRC at every start. ESP32 has two app slots and is not at risk.
 - **Low battery:** the final copy waits while the repeater runs on a battery below 3.7 V (`-D OTA_MIN_BATT_MV`); the update is paused and the app offers to continue.
@@ -134,7 +134,7 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 
 | What a repeater gets | Boards |
 |---|---|
-| staged install + rollback (`-D QSPI_STORAGE` in the repeater env) | Xiao nRF52840, LilyGo T-Echo, ThinkNode M1, ThinkNode M6, Wio Tracker L1, SenseCAP Solar P1 |
+| staged install + rollback (`-D QSPI_STORAGE` in the repeater env) | Xiao nRF52840, Ikoka Stick / Nano / Handheld (Xiao bootloader), LilyGo T-Echo, ThinkNode M1, ThinkNode M6, Wio Tracker L1 and L1 1W, SenseCAP Solar P1 |
 | staged install, normal build (image up to 396 KB) | ProMicro / Faketec, T1000-E, ThinkNode M3, Heltec T114 without display, RAK WisMesh Tag, Minewsemi ME25LS01 |
 | staged install only with a light build (`build-boards.yml`, about 310-336 KB) | RAK4631, RAK3401, Heltec T114 with display, Heltec T096, Heltec T1 |
 
