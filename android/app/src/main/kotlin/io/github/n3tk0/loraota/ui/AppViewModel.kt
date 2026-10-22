@@ -131,6 +131,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // a new build on GitHub ("Build Firmware for Boards")
     private val tokens = TokenStore(app)
     var hasToken by mutableStateOf(tokens.has)
+    var groupToken by mutableStateOf(tokens.usesGroup)   // the group APK's own token: nothing to enter
     var buildInputs by mutableStateOf<List<WorkflowInput>>(emptyList())
     private var buildInputsRole = ""   // the board list the form shows: repeater or companion
     private var buildFormFor = ""      // the device the board was picked for
@@ -849,13 +850,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         tokens.set(t)
         hasToken = true
+        groupToken = false
         message = str(R.string.msg_token_saved)
         readBuildForm()
     }
 
     fun forgetToken() {
         tokens.clear()
-        hasToken = false
+        hasToken = tokens.has   // the group's token stays
+        groupToken = tokens.usesGroup
         buildInputs = emptyList()
     }
 
