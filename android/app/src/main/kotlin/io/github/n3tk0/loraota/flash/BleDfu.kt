@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import no.nordicsemi.android.dfu.DfuBaseService
+import no.nordicsemi.android.dfu.DfuLogListener
 import no.nordicsemi.android.dfu.DfuProgressListenerAdapter
 import no.nordicsemi.android.dfu.DfuServiceInitiator
 import no.nordicsemi.android.dfu.DfuServiceListenerHelper
@@ -54,9 +55,9 @@ object BleDfu {
 
     /**
      * Flashes the DFU .zip: the device's application jumps to its bootloader (legacy buttonless DFU, the
-     * Adafruit BLEDfu service), then the image goes over. [progress] gets 0..100.
+     * Adafruit BLEDfu service), then the image goes over. [progress] gets 0..100, [log] the library's steps.
      */
-    suspend fun flash(ctx: Context, address: String, name: String, zip: File, progress: (Int) -> Unit) {
+    suspend fun flash(ctx: Context, address: String, name: String, zip: File, log: (String) -> Unit, progress: (Int) -> Unit) {
         val done = CompletableDeferred<Unit>()
         val listener = object : DfuProgressListenerAdapter() {
             override fun onProgressChanged(deviceAddress: String, percent: Int, speed: Float, avgSpeed: Float,
@@ -67,8 +68,10 @@ object BleDfu {
                 done.completeExceptionally(FlashFailed(message ?: "DFU error $error"))
             }
         }
+        val logs = DfuLogListener { _, _, message -> log(message) }
         // no address filter: the bootloader may come back on another address
         DfuServiceListenerHelper.registerProgressListener(ctx, listener)
+        DfuServiceListenerHelper.registerLogListener(ctx, logs)
         try {
             val starter = DfuServiceInitiator(address)
                 .setDeviceName(name)
@@ -95,6 +98,7 @@ object BleDfu {
             }
         } finally {
             DfuServiceListenerHelper.unregisterProgressListener(ctx, listener)
+            DfuServiceListenerHelper.unregisterLogListener(ctx, logs)
         }
     }
 }

@@ -324,4 +324,6 @@
     <string name="repeat_on">repeat on</string>
     <string name="restore_now">now: %1$s</string>
     <string name="set_admin_password">Admin password</string>
+    <string name="flash_log_title">Log of the last Bluetooth flash</string>
+    <string name="flash_log_copy">Copy</string>
 </resources>

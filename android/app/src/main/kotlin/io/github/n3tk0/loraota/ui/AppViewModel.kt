@@ -180,6 +180,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
     var flashDone by mutableStateOf(false)
+    /** The DFU library's steps of the last Bluetooth flash, seconds from its start first: kept after a failure. */
+    var flashLog by mutableStateOf<List<String>>(emptyList())
     var loginSheet by mutableStateOf<Contact?>(null)   // the repeater whose login sheet is open
     var firmwareTab by mutableStateOf(0)   // the repeater's firmware: 0 over LoRa, 1 over Bluetooth / Wi-Fi
     var companionModel by mutableStateOf("")
@@ -832,7 +834,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             delay(1500)
         }
         working = str(R.string.working_flash)
-        BleDfu.flash(ctx, address, p.name, zip) { flashPercent = it }
+        val t0 = System.currentTimeMillis()
+        flashLog = emptyList()
+        val log = { m: String ->
+            val line = "%.1f %s".format(java.util.Locale.ROOT, (System.currentTimeMillis() - t0) / 1000.0, m)
+            viewModelScope.launch { flashLog = (flashLog + line).takeLast(300) }
+            Unit
+        }
+        log("${p.name} $address, ${p.image.data.size} B")
+        BleDfu.flash(ctx, address, p.name, zip, log) { flashPercent = it }
     }
 
     private suspend fun flashWifi(img: FlashImage) {
