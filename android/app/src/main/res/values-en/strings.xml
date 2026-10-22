@@ -44,9 +44,7 @@
     <string name="advanced_hide">Hide advanced</string>
     <string name="ota_off">OTA is off on this repeater. Tap Turn on OTA: the app runs `set ota on` in its console.</string>
     <string name="paused_hint">An update was cut short. The repeater keeps its progress for 30 minutes. Choose the same firmware and tap Continue.</string>
-    <string name="confirm_text">The repeater gets %1$s (delta %2$.1f KB) in about %3$.0f min on the side channel %4$s.
-
-Meanwhile the repeater does not forward messages. Stay next to it until it is done.</string>
+    <string name="confirm_text">The repeater gets %1$s (delta %2$.1f KB) in about %3$.0f min on the side channel %4$s.\n\nMeanwhile the repeater does not forward messages. Stay next to it until it is done.</string>
     <string name="done_hint">If the new firmware does not start, ESP32 repeaters go back to the old one by themselves after a restart.</string>
     <string name="phase_start">Starting…</string>
     <string name="phase_switch">Moving to the side channel…</string>
@@ -124,10 +122,7 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="flash_none">No fitting firmware in the releases. Choose a file.</string>
     <string name="flash_from_file">From a file (.zip / .bin)</string>
     <string name="flash_start">Flash</string>
-    <string name="flash_confirm_text">File: %1$s
-Device: %2$s
-
-Do not cut the power and stay close until it is done (1–3 minutes).</string>
+    <string name="flash_confirm_text">File: %1$s\nDevice: %2$s\n\nDo not cut the power and stay close until it is done (1–3 minutes).</string>
     <string name="flash_progress">Writing: %1$d%%</string>
     <string name="working_start_ota">Putting the repeater in update mode (start ota)…</string>
     <string name="working_scan">Looking for the repeater over Bluetooth…</string>
