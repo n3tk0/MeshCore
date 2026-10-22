@@ -23,6 +23,7 @@ on:
       - 'variants/xiao_nrf52/**'
       - 'platformio.ini'
       - 'build.sh'
+      - 'tools/ota-manifest-entry.sh'
       - '.github/workflows/build-xiao-repeaters.yml'
 
 jobs:
@@ -47,20 +48,7 @@ jobs:
         run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
 
       - name: App Image and OTA Manifest
-        run: |
-          NAME=$(basename "$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
-          NAME="${NAME%.uf2}"
-          NAME="${NAME%-merged.bin}"
-          if [ ! -f "out/${NAME}.bin" ]; then
-            # nRF52: the app image is the .elf's loadable sections, as the repeater measures it
-            OBJCOPY=$(find ~/.platformio/packages -name arm-none-eabi-objcopy -type f | head -1)
-            "$OBJCOPY" -O binary .pio/build/${{ matrix.target }}/firmware.elf "out/${NAME}.bin"
-          fi
-          jq -n --arg env "${{ matrix.target }}" --arg version "${{ env.GIT_TAG_VERSION }}" \
-                --arg file "${NAME}.bin" --arg sha256 "$(sha256sum "out/${NAME}.bin" | cut -d' ' -f1)" \
-                --argjson size "$(stat -c %s "out/${NAME}.bin")" \
-                '{env: $env, version: $version, file: $file, size: $size, sha256: $sha256}' > "out/${NAME}.ota.json"
-          cat "out/${NAME}.ota.json"
+        run: tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" .pio/build/${{ matrix.target }}/firmware.elf
 
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v7
@@ -94,4 +82,5 @@ jobs:
             - First install: nRF52 `.uf2` on the bootloader drive (double-tap RST); ESP32-C3 `-merged.bin` at 0x0.
             - Update over LoRa: the LoRa OTA Android app makes a delta from the `.bin` the repeater runs
               to the new `.bin` (`ota-manifest.json` lists them) and sends it through the companion.
+            - Flash from the app: the nRF52 `.zip` over Bluetooth DFU, the ESP32-C3 `.bin` over Wi-Fi.
           files: out/*

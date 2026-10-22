@@ -6,9 +6,18 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** A repeater .bin listed in a release's ota-manifest.json (see .github/workflows/build-xiao-repeaters.yml). */
+/**
+ * A board's firmware listed in a release's ota-manifest.json (see tools/ota-manifest-entry.sh): [file] is the
+ * app image .bin for LoRa OTA (repeaters only, else empty), [dfu] what the app flashes over Bluetooth
+ * (nRF52 .zip) or Wi-Fi (ESP32 .bin), empty in older manifests.
+ */
 data class FirmwareFile(val release: String, val env: String, val version: String, val file: String,
-                        val size: Int, val sha256: String, val url: String)
+                        val size: Int, val sha256: String, val url: String,
+                        val dfu: String = "", val dfuSize: Int = 0, val dfuSha256: String = "", val dfuUrl: String = "") {
+    val hasLoraOta get() = file.isNotEmpty()
+    val hasDfu get() = dfu.isNotEmpty()
+    val dfuIsZip get() = dfu.endsWith(".zip", ignoreCase = true)
+}
 
 object Releases {
     const val DEFAULT_REPO = "n3tk0/MeshCore"
@@ -28,7 +37,7 @@ object Releases {
     }
 
     /**
-     * Every firmware .bin of the repository's recent releases, newest release first. With a cache folder
+     * Every firmware of the repository's recent releases, newest release first. With a cache folder
      * the list is kept there (for use with no internet, see [cached]) and kept .bin files no release
      * lists any more are deleted.
      */
@@ -49,14 +58,19 @@ object Releases {
             val files = runCatching { JSONObject(String(get(manifest))).getJSONArray("files") }.getOrNull() ?: continue
             for (f in 0 until files.length()) {
                 val e = files.getJSONObject(f)
-                val url = urls[e.getString("file")] ?: continue
+                val file = e.optString("file")
+                val url = if (file.isEmpty()) "" else urls[file] ?: continue
+                val dfu = e.optString("dfu")
+                val dfuUrl = if (dfu.isEmpty()) "" else urls[dfu] ?: ""
+                if (file.isEmpty() && dfuUrl.isEmpty()) continue
                 out.add(FirmwareFile(rel.optString("tag_name"), e.getString("env"), e.optString("version"),
-                    e.getString("file"), e.getInt("size"), e.getString("sha256").lowercase(), url))
+                    file, e.optInt("size"), e.optString("sha256").lowercase(), url,
+                    if (dfuUrl.isEmpty()) "" else dfu, e.optInt("dfu_size"), e.optString("dfu_sha256").lowercase(), dfuUrl))
             }
         }
         if (cache != null) runCatching {
             writeAtomic(listFile(cache, repo), toJson(out).toString().toByteArray())
-            val keep = out.map { "${it.sha256}.bin" }.toSet()
+            val keep = out.flatMap { listOf("${it.sha256}.bin", "${it.dfuSha256}.bin") }.toSet()
             binDir(cache).listFiles()?.forEach { if (it.name !in keep) it.delete() }
         }
         return out
@@ -67,26 +81,32 @@ object Releases {
         val a = JSONArray(String(listFile(cache, repo).readBytes()))
         (0 until a.length()).map { a.getJSONObject(it) }.map {
             FirmwareFile(it.getString("release"), it.getString("env"), it.getString("version"), it.getString("file"),
-                it.getInt("size"), it.getString("sha256"), it.getString("url"))
+                it.getInt("size"), it.getString("sha256"), it.getString("url"),
+                it.optString("dfu"), it.optInt("dfu_size"), it.optString("dfu_sha256"), it.optString("dfu_url"))
         }
     }.getOrDefault(emptyList())
 
     /** The .bin, from the phone when it was downloaded before; checked against its checksum either way. */
-    fun download(f: FirmwareFile, cache: File? = null): ByteArray {
-        val kept = cache?.let { File(binDir(it), "${f.sha256}.bin") }
+    fun download(f: FirmwareFile, cache: File? = null): ByteArray = download(f.file, f.size, f.sha256, f.url, cache)
+
+    /** The file the app flashes (DFU .zip or ESP32 .bin), like [download]. */
+    fun downloadDfu(f: FirmwareFile, cache: File? = null): ByteArray = download(f.dfu, f.dfuSize, f.dfuSha256, f.dfuUrl, cache)
+
+    private fun download(name: String, size: Int, sha256: String, url: String, cache: File?): ByteArray {
+        val kept = cache?.let { File(binDir(it), "$sha256.bin") }
         if (kept != null && kept.exists()) {
             val data = kept.readBytes()
-            if (matches(f, data)) return data
+            if (matches(size, sha256, data)) return data
             kept.delete()
         }
-        val data = get(f.url)
-        if (!matches(f, data)) throw java.io.IOException("${f.file}: download does not match its checksum")
+        val data = get(url)
+        if (!matches(size, sha256, data)) throw java.io.IOException("$name: download does not match its checksum")
         if (kept != null) runCatching { writeAtomic(kept, data) }
         return data
     }
 
-    private fun matches(f: FirmwareFile, data: ByteArray) =
-        data.size == f.size && hex(io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(data)) == f.sha256
+    private fun matches(size: Int, sha256: String, data: ByteArray) =
+        data.size == size && hex(io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(data)) == sha256
 
     private fun listFile(cache: File, repo: String) = File(cache, "releases-" + repo.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json")
 
@@ -100,7 +120,8 @@ object Releases {
 
     private fun toJson(files: List<FirmwareFile>) = JSONArray().apply {
         for (f in files) put(JSONObject().put("release", f.release).put("env", f.env).put("version", f.version)
-            .put("file", f.file).put("size", f.size).put("sha256", f.sha256).put("url", f.url))
+            .put("file", f.file).put("size", f.size).put("sha256", f.sha256).put("url", f.url)
+            .put("dfu", f.dfu).put("dfu_size", f.dfuSize).put("dfu_sha256", f.dfuSha256).put("dfu_url", f.dfuUrl))
     }
 }
 

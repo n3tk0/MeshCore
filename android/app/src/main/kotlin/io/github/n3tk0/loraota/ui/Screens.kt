@@ -1,6 +1,7 @@
 package io.github.n3tk0.loraota.ui
 
 import android.annotation.SuppressLint
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -12,26 +13,48 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +64,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -48,41 +72,139 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.R
-import io.github.n3tk0.loraota.ota.Phase
+import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.ota.OtaProtocol
+import io.github.n3tk0.loraota.ota.Phase
 import io.github.n3tk0.loraota.ota.hex
+import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
+    var askStop by remember { mutableStateOf(false) }      // Back during an update
+    var flashNoStop by remember { mutableStateOf(false) }  // Back during a flash
+    fun back() = when {
+        vm.running && vm.flashPercent >= 0 -> flashNoStop = true
+        vm.running -> askStop = true
+        vm.canStop -> vm.stop()   // a login, a scan for the device...: just stop waiting
+        vm.busy -> {}             // a disconnect's clean-up: it ends on its own
+        else -> vm.back()
+    }
+    BackHandler(enabled = vm.step != Step.COMPANION || vm.canStop) { back() }
+
+    Scaffold(
+        modifier = Modifier.imePadding(),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        when (vm.step) {
+                            Step.COMPANION -> stringResource(R.string.app_name)
+                            Step.REPEATER -> vm.companionName
+                            Step.UPDATE -> vm.repeater?.name ?: ""
+                            Step.FLASH -> stringResource(R.string.flash_title, vm.companionName)
+                        },
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                navigationIcon = {
+                    if (vm.step != Step.COMPANION) IconButton(onClick = { back() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
+                    }
+                },
+                actions = {
+                    if (vm.step == Step.REPEATER) IconButton(onClick = { vm.refreshRepeaters() }, enabled = !vm.busy) {
+                        Icon(Icons.Default.Refresh, stringResource(R.string.refresh))
+                    }
+                    LanguageMenu(enabled = !vm.busy, setLang)
+                },
+            )
+        },
+        bottomBar = { BottomStatus(vm) },
+    ) { pad ->
+        Surface(modifier = Modifier.fillMaxSize().padding(pad), color = MaterialTheme.colorScheme.background) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                when (vm.step) {
+                    Step.COMPANION -> CompanionStep(vm)
+                    Step.REPEATER -> RepeaterStep(vm)
+                    Step.UPDATE -> if (vm.running) RunningView(vm) else RepeaterHome(vm)
+                    Step.FLASH -> if (vm.running) RunningView(vm) else FlashContent(vm)
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    if (askStop) {
+        AlertDialog(
+            onDismissRequest = { askStop = false },
+            title = { Text(stringResource(R.string.back_stop_title)) },
+            text = { Text(stringResource(R.string.back_stop_text)) },
+            confirmButton = { TextButton(onClick = { askStop = false; vm.stop() }) { Text(stringResource(R.string.stop)) } },
+            dismissButton = { TextButton(onClick = { askStop = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    // on every screen: a tab change or a step must not hide it while the repeater waits in DFU mode
+    vm.flashPlan?.let { p ->
+        AlertDialog(
+            onDismissRequest = { vm.flashCancel() },
+            title = { Text(stringResource(R.string.flash_start)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.flash_confirm_text, p.image.label, p.device))
+                    for (w in p.warnings) Text(w, color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.flashStart() }) { Text(stringResource(R.string.flash_start)) } },
+            dismissButton = { TextButton(onClick = { vm.flashCancel() }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    if (flashNoStop) {
+        AlertDialog(
+            onDismissRequest = { flashNoStop = false },
+            title = { Text(stringResource(R.string.back_flash_title)) },
+            text = { Text(stringResource(R.string.back_flash_text)) },
+            confirmButton = { TextButton(onClick = { flashNoStop = false }) { Text(stringResource(R.string.ok)) } },
+        )
+    }
+}
+
+@Composable
+private fun LanguageMenu(enabled: Boolean, setLang: (String) -> Unit) {
     val ctx = LocalContext.current
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier
-                .safeDrawingPadding()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                // the other language, in its own words
-                val other = if (Lang.current(ctx) == "en") "bg" else "en"
-                TextButton(onClick = { setLang(other) }, enabled = !vm.busy) { Text(if (other == "en") "English" else "Български") }
-            }
-            when (vm.step) {
-                Step.COMPANION -> CompanionStep(vm)
-                Step.REPEATER -> RepeaterStep(vm)
-                Step.UPDATE -> UpdateStep(vm)
-            }
-            if (vm.step != Step.UPDATE) {
-                if (vm.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                Message(vm)
-            }
+    var open by remember { mutableStateOf(false) }
+    IconButton(onClick = { open = true }, enabled = enabled) { Icon(Icons.Default.MoreVert, stringResource(R.string.menu)) }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        val now = Lang.current(ctx)
+        // each language in its own words
+        for ((code, name) in listOf("bg" to "Български", "en" to "English")) {
+            DropdownMenuItem(
+                text = { Text(name) },
+                leadingIcon = { if (code == now) Icon(Icons.Default.Check, null) },
+                onClick = { open = false; if (code != now) setLang(code) },
+            )
+        }
+    }
+}
+
+/** Progress and the last result, always in sight at the bottom (a long list cannot hide them). */
+@Composable
+private fun BottomStatus(vm: AppViewModel) {
+    val showBusy = vm.busy && !vm.running
+    // the login sheet shows them itself, not twice
+    if (vm.step == Step.REPEATER && vm.loginSheet != null) return
+    if (!showBusy && vm.message.isEmpty()) return
+    Surface(tonalElevation = 3.dp, modifier = Modifier.navigationBarsPadding()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (showBusy) Busy(vm)
+            Message(vm)
         }
     }
 }
@@ -106,63 +228,157 @@ private fun CompanionStep(vm: AppViewModel) {
     }
 }
 
+// ---- repeaters ----
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RepeaterStep(vm: AppViewModel) {
-    var selected by remember { mutableStateOf<Int?>(null) }
-    var password by remember { mutableStateOf("") }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.connected_to, vm.companionName), modifier = Modifier.weight(1f))
-        TextButton(onClick = { vm.disconnect() }) { Text(stringResource(R.string.disconnect)) }
-    }
-    Text(stringResource(R.string.repeater_hint))
-    if (vm.repeaters.isEmpty()) Text(stringResource(R.string.no_repeaters))
-    fun choose(i: Int) {
-        selected = i
-        password = vm.savedPassword(vm.repeaters[i]) ?: ""
-    }
-    vm.repeaters.forEachIndexed { i, c ->
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
-            .fillMaxWidth()
-            .clickable { choose(i) }) {
-            RadioButton(selected = selected == i, onClick = { choose(i) })
-            Column {
-                Text(c.name)
-                val hops = c.hops
-                Text(
-                    when (hops) {
-                        null -> stringResource(R.string.route_unknown)
-                        0 -> stringResource(R.string.route_direct)
-                        else -> pluralStringResource(R.plurals.route_hops, hops, hops)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (hops == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    var query by rememberSaveable { mutableStateOf("") }
+
+    CompanionCard(vm)
     OutlinedTextField(
-        value = password, onValueChange = { password = it },
-        label = { Text(stringResource(R.string.admin_password)) },
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        singleLine = true, modifier = Modifier.fillMaxWidth()
+        value = query, onValueChange = { query = it }, singleLine = true,
+        leadingIcon = { Icon(Icons.Default.Search, null) },
+        placeholder = { Text(stringResource(R.string.search_repeater)) },
+        modifier = Modifier.fillMaxWidth(),
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(
-            onClick = { selected?.let { vm.login(vm.repeaters[it], password) } },
-            enabled = selected != null && !vm.busy
-        ) { Text(stringResource(R.string.login)) }
-        val chosen = selected?.let { vm.repeaters.getOrNull(it) }
-        if (chosen != null && vm.savedPassword(chosen) != null) {
-            TextButton(onClick = { vm.forgetPassword(chosen); password = "" }, enabled = !vm.busy) {
-                Text(stringResource(R.string.forget_password))
-            }
+    if (vm.repeaters.isEmpty()) Text(stringResource(R.string.no_repeaters))
+    val shown = vm.repeaters.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+    // next to you first: only those can be updated over LoRa
+    val groups = listOf(
+        R.string.section_direct to shown.filter { it.hops == 0 },
+        R.string.section_hops to shown.filter { (it.hops ?: 0) > 0 },
+        R.string.section_unknown to shown.filter { it.hops == null },
+    )
+    for ((title, list) in groups) {
+        if (list.isEmpty()) continue
+        Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        for (c in list) RepeaterRow(vm, c) { vm.message = ""; vm.loginSheet = c }
+    }
+
+    vm.loginSheet?.let { c ->
+        val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(onDismissRequest = { vm.loginSheet = null }, sheetState = sheet) {
+            LoginSheet(vm, c)
         }
     }
 }
 
 @Composable
-private fun UpdateStep(vm: AppViewModel) {
+private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+        .fillMaxWidth()
+        .clickable(enabled = !vm.busy, onClick = onClick)
+        .padding(vertical = 6.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(c.name, style = MaterialTheme.typography.bodyLarge)
+            RouteText(c.hops)
+        }
+        if (vm.hasSavedPassword(c)) {
+            Icon(Icons.Default.Lock, stringResource(R.string.password_saved), modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun RouteText(hops: Int?) {
+    Text(
+        when (hops) {
+            null -> stringResource(R.string.route_unknown)
+            0 -> stringResource(R.string.route_direct)
+            else -> pluralStringResource(R.plurals.route_hops, hops, hops)
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = if (hops == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** Name, route, password and Login together: the result shows here too, not under the list. */
+@Composable
+private fun LoginSheet(vm: AppViewModel, c: Contact) {
+    var password by remember(c) { mutableStateOf(vm.savedPassword(c) ?: "") }
+    Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(c.name, style = MaterialTheme.typography.titleLarge)
+        RouteText(c.hops)
+        OutlinedTextField(
+            value = password, onValueChange = { password = it },
+            label = { Text(stringResource(R.string.admin_password)) },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !vm.busy,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { vm.login(c, password) }, enabled = !vm.busy) { Text(stringResource(R.string.login)) }
+            if (vm.hasSavedPassword(c)) TextButton(onClick = { vm.forgetPassword(c); password = "" }, enabled = !vm.busy) {
+                Text(stringResource(R.string.forget_password))
+            }
+        }
+        if (vm.busy) Busy(vm)
+        Message(vm)
+    }
+}
+
+@Composable
+private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
+    if (!withFlashButton && vm.companionModel.isEmpty()) return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(if (withFlashButton) R.string.companion else R.string.running_now),
+                style = MaterialTheme.typography.labelMedium)
+            if (vm.companionModel.isNotEmpty()) Text("${vm.companionModel} · ${vm.companionVersion}")
+            if (!vm.companionOta) {
+                Text(stringResource(R.string.companion_stock), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (withFlashButton) TextButton(onClick = { vm.openFlash(FlashTarget.COMPANION) }, enabled = !vm.busy,
+                modifier = Modifier.padding(top = 2.dp)) { Text(stringResource(R.string.flash_open)) }
+        }
+    }
+}
+
+// ---- one repeater ----
+
+@Composable
+private fun RepeaterHome(vm: AppViewModel) {
+    StatusCard(vm)
+    vm.info?.let { RunningCard(it) }
+    TabRow(selectedTabIndex = vm.firmwareTab) {
+        Tab(selected = vm.firmwareTab == 0, onClick = { vm.firmwareTab = 0 }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
+        Tab(selected = vm.firmwareTab == 1, onClick = { vm.showFlashTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_flash)) })
+    }
+    if (vm.firmwareTab == 0) LoraTab(vm) else FlashContent(vm)
+}
+
+@Composable
+private fun RunningCard(info: OtaProtocol.Info) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium)
+            Text(info.ident.replace('|', '\n'))
+            Text(stringResource(R.string.platform) + ": " + when (info.platform) {
+                OtaProtocol.PLATFORM_NRF52 -> "nRF52"
+                OtaProtocol.PLATFORM_ESP32 -> "ESP32"
+                else -> "?"
+            }, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/** One condition for an update over LoRa: ✓ or ✗, and what to do about a ✗. */
+@Composable
+private fun ReadyRow(ok: Boolean, text: String, action: String? = null, enabled: Boolean = true, onAction: () -> Unit = {}) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Icon(if (ok) Icons.Default.Check else Icons.Default.Close, null, modifier = Modifier.size(20.dp),
+            tint = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(8.dp))
+        Text(text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        if (!ok && action != null) TextButton(onClick = onAction, enabled = enabled) { Text(action) }
+    }
+}
+
+@Composable
+private fun LoraTab(vm: AppViewModel) {
     val info = vm.info
     var advanced by rememberSaveable { mutableStateOf(false) }
     val pickOld = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -172,29 +388,37 @@ private fun UpdateStep(vm: AppViewModel) {
         if (uri != null) vm.pickFile(uri, false)
     }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(vm.repeater?.name ?: "", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-        TextButton(onClick = { vm.backToRepeaters() }, enabled = !vm.busy) { Text(stringResource(R.string.back)) }
-    }
-    if (info != null) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp)) {
-                Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium)
-                Text(info.ident.replace('|', '\n'))
-                Text(stringResource(R.string.platform) + ": " + when (info.platform) {
-                    OtaProtocol.PLATFORM_NRF52 -> "nRF52"
-                    OtaProtocol.PLATFORM_ESP32 -> "ESP32"
-                    else -> "?"
-                }, style = MaterialTheme.typography.bodySmall)
+    if (info == null) {
+        // a stock repeater (or the answer got lost): login and status only
+        if (vm.busy && !vm.otaChecked) return
+        ReadyRow(false, stringResource(R.string.ready_supported), stringResource(R.string.recheck), !vm.busy) { vm.recheck() }
+        if (vm.otaChecked) {
+            Hint(stringResource(R.string.no_ota_short), stringResource(R.string.no_ota))
+            OutlinedButton(onClick = { vm.showFlashTab() }, enabled = !vm.busy) {
+                Text(stringResource(R.string.tab_flash))
             }
         }
-        if (!info.enabled) {
-            Warning(stringResource(R.string.ota_off))
-            Button(onClick = { vm.enableOta() }, enabled = !vm.busy) { Text(stringResource(R.string.enable_ota)) }
-        }
-        // a message about the cut-short update already says what to do
-        if ((info.state == OtaProtocol.STATE_PAUSED || vm.resumable) && vm.message.isEmpty()) Text(stringResource(R.string.paused_hint))
+        return
     }
+
+    Text(stringResource(R.string.ready_title), style = MaterialTheme.typography.titleSmall)
+    ReadyRow(info.enabled, stringResource(R.string.ready_ota_on), stringResource(R.string.enable_ota), !vm.busy) { vm.enableOta() }
+    val hops = vm.routeHops
+    // short lines: the action next to a ✗ says what to do
+    ReadyRow(vm.direct, when (hops) {
+        null -> stringResource(R.string.ready_no_route)
+        0 -> stringResource(R.string.ready_direct)
+        else -> pluralStringResource(R.plurals.ready_hops, hops, hops)
+    }, stringResource(R.string.recheck), !vm.busy) { vm.recheck() }
+    ReadyRow(vm.companionOta, stringResource(R.string.ready_companion),
+        stringResource(R.string.flash_open), !vm.busy) { vm.openFlash(FlashTarget.COMPANION) }
+    ReadyRow(vm.oldImage != null, stringResource(R.string.ready_running),
+        stringResource(R.string.pick_running_short), !vm.busy) { pickOld.launch(arrayOf("*/*")) }
+    ReadyRow(vm.newImage != null, stringResource(R.string.ready_new))
+
+    val continuing = info.state == OtaProtocol.STATE_PAUSED || vm.resumable
+    // a message about the cut-short update already says what to do
+    if (continuing && vm.message.isEmpty()) InfoCard(stringResource(R.string.paused_hint))
 
     Text(stringResource(R.string.new_firmware), style = MaterialTheme.typography.titleMedium)
     val candidates = vm.newCandidates()
@@ -213,23 +437,14 @@ private fun UpdateStep(vm: AppViewModel) {
     if (vm.newImage != null && candidates.none { it.sha256 == vm.newImage?.sha }) {
         Text(stringResource(R.string.chosen, vm.newImage!!.name))
     }
-    if (vm.oldImage == null && info != null) Warning(stringResource(R.string.running_unknown))
     if (vm.inPlace()) InPlaceWarning(detail = true)
     if (vm.nrfCopy()) CopyNote()
 
-    val ready = vm.oldImage != null && vm.newImage != null && info?.enabled == true
-    val continuing = info?.state == OtaProtocol.STATE_PAUSED || vm.resumable
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { vm.update() }, enabled = ready && !vm.busy) {
-            Text(stringResource(if (continuing) R.string.resume else R.string.update))
-        }
-        if (vm.busy && vm.phase != null) OutlinedButton(onClick = { vm.stop() }) { Text(stringResource(R.string.stop)) }
+    val ready = vm.oldImage != null && vm.newImage != null && info.enabled && vm.direct && vm.companionOta
+    Button(onClick = { vm.update() }, enabled = ready && !vm.busy) {
+        Text(stringResource(if (continuing) R.string.resume else R.string.update))
     }
-
-    vm.phase?.let { PhaseView(vm, it) }
-    if (vm.busy && vm.phase == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-    Message(vm)
-    if (vm.done) Text(stringResource(R.string.done_hint))
+    if (vm.done) InfoCard(stringResource(R.string.done_hint))
 
     if (vm.confirmUpdate) {
         val p = vm.patch
@@ -255,10 +470,8 @@ private fun UpdateStep(vm: AppViewModel) {
         Text(stringResource(if (advanced) R.string.advanced_hide else R.string.advanced))
     }
     if (advanced) {
-        if (info != null) {
-            Text(stringResource(R.string.image) + ": ${info.imageSize} B, SHA-256 ${hex(info.imageSha).take(12)}…",
-                fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-        }
+        Text(stringResource(R.string.image) + ": ${info.imageSize} B, SHA-256 ${hex(info.imageSha).take(12)}…",
+            fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.running_firmware), style = MaterialTheme.typography.titleSmall)
         Text(vm.oldImage?.name ?: "—", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -284,23 +497,146 @@ private fun UpdateStep(vm: AppViewModel) {
             Text(stringResource(R.string.ignore_air_limit), modifier = Modifier.weight(1f))
             Switch(checked = vm.ignoreAirLimit, onCheckedChange = { vm.ignoreAirLimit = it }, enabled = !vm.busy)
         }
-        if (vm.ignoreAirLimit) Warning(stringResource(R.string.ignore_air_limit_warning))
+        if (vm.ignoreAirLimit) DangerCard(stringResource(R.string.ignore_air_limit_warning))
         for (line in vm.log.takeLast(10)) Text(line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
     }
-    Spacer(Modifier.height(24.dp))
 }
 
+// ---- flash over Bluetooth / Wi-Fi ----
+
+@Composable
+private fun FlashContent(vm: AppViewModel) {
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.pickFlashFile(uri)
+    }
+    val toCompanion = vm.flashTarget == FlashTarget.COMPANION
+    if (toCompanion) CompanionCard(vm, withFlashButton = false)
+    Hint(
+        stringResource(if (toCompanion) R.string.flash_hint_companion_short else R.string.flash_hint_repeater_short),
+        stringResource(if (toCompanion) R.string.flash_hint_companion else R.string.flash_hint_repeater),
+    )
+    if (vm.flashDone) {
+        Button(onClick = { vm.closeFlash() }) {
+            Text(stringResource(if (toCompanion) R.string.reconnect else R.string.back_to_list))
+        }
+        return
+    }
+    val candidates = vm.flashCandidates()
+    if (candidates.isEmpty()) Text(stringResource(R.string.flash_none))
+    for (f in candidates) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !vm.busy) { vm.pickFlashRelease(f) }) {
+            RadioButton(selected = vm.flashImage?.name == f.dfu && vm.flashImage?.env == f.env,
+                onClick = { vm.pickFlashRelease(f) }, enabled = !vm.busy)
+            Column {
+                Text(f.version.ifEmpty { f.release }, style = MaterialTheme.typography.titleMedium)
+                Text(f.env.replace('_', ' ') + if (f.dfuIsZip) " · Bluetooth" else " · Wi-Fi", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+    OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_from_file)) }
+    vm.flashImage?.let { if (it.env == null) Text(stringResource(R.string.chosen, it.name)) }
+    Button(onClick = { vm.flashCheck() }, enabled = vm.flashImage != null && !vm.busy) { Text(stringResource(R.string.flash_start)) }
+}
+
+/** While an update or a flash writes: only its progress (a stray tap cannot start anything else). */
+@Composable
+private fun RunningView(vm: AppViewModel) {
+    val name = if (vm.step == Step.FLASH) vm.companionName else vm.repeater?.name ?: ""
+    val flashing = vm.flashPercent >= 0
+    Text(stringResource(if (flashing) R.string.running_flash else R.string.running_update, name),
+        style = MaterialTheme.typography.headlineSmall)
+    if (flashing) {
+        Text(stringResource(R.string.flash_progress, vm.flashPercent), style = MaterialTheme.typography.titleMedium)
+        LinearProgressIndicator(progress = { vm.flashPercent / 100f }, modifier = Modifier.fillMaxWidth())
+        vm.flashImage?.let { Text(it.label, style = MaterialTheme.typography.bodySmall) }
+    } else {
+        vm.phase?.let { PhaseView(vm, it) }
+        vm.newImage?.let { Text(it.name, style = MaterialTheme.typography.bodySmall) }
+    }
+    InfoCard(stringResource(R.string.power_note))
+    // no Stop for a flash: a cut-short DFU leaves the device in its bootloader
+    if (!flashing) OutlinedButton(onClick = { vm.stop() }) { Text(stringResource(R.string.stop)) }
+}
+
+// ---- small parts ----
+
+@Composable
+private fun Busy(vm: AppViewModel) {
+    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    if (vm.working.isNotEmpty()) Text(vm.working, style = MaterialTheme.typography.bodyMedium)
+}
+
+/** One sentence, the rest on 'More'. */
+@Composable
+private fun Hint(short: String, long: String) {
+    var open by rememberSaveable(long) { mutableStateOf(false) }
+    Column {
+        Text(if (open) long else short)
+        TextButton(onClick = { open = !open }) { Text(stringResource(if (open) R.string.less else R.string.more)) }
+    }
+}
+
+/** What every repeater tells an admin, also one with stock firmware. */
+@Composable
+private fun StatusCard(vm: AppViewModel) {
+    val s = vm.status
+    if (s == null) {
+        if (!vm.busy) Text(stringResource(R.string.status_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(R.string.status_title), style = MaterialTheme.typography.labelMedium)
+            Text(stringResource(R.string.status_batt_uptime, s.battMv / 1000.0, duration(s.upTimeSecs)))
+            Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi) +
+                (s.lastSnr?.let { ", SNR %.1f dB".format(it) } ?: ""), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun duration(secs: Long): String {
+    val mins = secs / 60
+    return when {
+        mins >= 24 * 60 -> stringResource(R.string.dur_days, (mins / (24 * 60)).toInt(), (mins / 60 % 24).toInt())
+        mins >= 60 -> stringResource(R.string.dur_hours, (mins / 60).toInt(), (mins % 60).toInt())
+        else -> stringResource(R.string.dur_mins, mins.toInt())
+    }
+}
+
+/** The last result: red only for an error. */
 @Composable
 private fun Message(vm: AppViewModel) {
     if (vm.message.isNotEmpty()) {
-        Text(vm.message, color = if (vm.messageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+        Text(vm.message, color = if (vm.messageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
     }
 }
 
+/** Information, not danger: a neutral card with an icon. */
 @Composable
-private fun Warning(text: String) {
-    Card(Modifier.fillMaxWidth()) {
-        Text(text, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
+private fun InfoCard(text: String) = NoteCard(text, Icons.Default.Info, danger = false)
+
+/** Danger (power cuts, the air time law): red. */
+@Composable
+private fun DangerCard(text: String) = NoteCard(text, Icons.Default.Warning, danger = true)
+
+@Composable
+private fun NoteCard(text: String, icon: ImageVector, danger: Boolean) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (danger) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = if (danger) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+        ),
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+            Icon(icon, null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
