@@ -221,7 +221,10 @@ object BuildWatcher {
         ZipInputStream(ByteArrayInputStream(zip)).use { z ->
             while (true) {
                 val e = z.nextEntry ?: break
-                if (!e.isDirectory) out[e.name.substringAfterLast('/')] = z.readBytes()
+                val name = e.name.substringAfterLast('/')
+                // only what an .ota.json can name: not the .uf2, -merged.bin, .hex
+                val wanted = name.endsWith(".ota.json") || name.endsWith(".zip") || (name.endsWith(".bin") && !name.endsWith("-merged.bin"))
+                if (!e.isDirectory && wanted) out[name] = z.readBytes()
             }
         }
         return out
