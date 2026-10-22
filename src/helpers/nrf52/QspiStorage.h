@@ -1,10 +1,13 @@
 #pragma once
 
 // The external QSPI flash of boards like the Xiao nRF52840 (2 MB): raw sectors for the repeater.
-//   0x000000 - 0x0FFFFF  LoRa OTA: the new image (the internal flash then needs no room for it)
-//   0x100000 - 0x17FFFF  mailbox: a ring of 16 KB slots, each save goes to the next (wear spread, and
+//   0x000000 - 0x0CFFFF  LoRa OTA: the new image (the internal flash then needs no room for it)
+//   0x0D0000 - 0x12FFFF  mailbox: a ring of 16 KB slots, each save goes to the next (wear spread, and
 //                        a power cut mid-save keeps the slot before)
-//   0x180000 - 0x1FFFFF  LoRa OTA: the image that ran before (rollback by our bootloader, see OtaStage.h)
+//   0x130000 - 0x1FFFFF  LoRa OTA: the image that ran before (rollback by our bootloader, see OtaStage.h)
+// Both images get 832 KB, more than the whole app area (792 KB), so rollback never has to be skipped.
+// Before 2026-10-22: 1 MB / 512 KB / 512 KB. A record written then keeps its own backup address, and
+// old mailbox slots that now fall in the ring still load (each has its magic and CRC).
 // The peripheral is turned on for each use and off again after a short idle time: it draws current.
 
 #include <Arduino.h>
@@ -14,12 +17,12 @@
 #include <nrfx_qspi.h>
 
 #define QSPI_OTA_ADDR        0x000000
-#define QSPI_OTA_SIZE        0x100000
-#define QSPI_MAILBOX_ADDR    0x100000
+#define QSPI_OTA_SIZE        0x0D0000
+#define QSPI_MAILBOX_ADDR    0x0D0000
 #define QSPI_MAILBOX_SLOT    0x4000
-#define QSPI_MAILBOX_SLOTS   32
-#define QSPI_BACKUP_ADDR     0x180000
-#define QSPI_BACKUP_SIZE     0x080000
+#define QSPI_MAILBOX_SLOTS   24
+#define QSPI_BACKUP_ADDR     0x130000
+#define QSPI_BACKUP_SIZE     0x0D0000
 #define QSPI_SECTOR          4096
 #define QSPI_IDLE_OFF_MS     2000
 
@@ -27,6 +30,31 @@ class QspiStorage {
   bool _on, _ok, _hold;
   unsigned long _used;
   uint32_t _buf[64];   // word aligned bounce buffer: the DMA wants RAM, words and 4 byte addresses
+
+  // off() leaves the flash in deep power down, where it ignores everything but 0xAB: also the status
+  // reads the QSPI peripheral makes on ACTIVATE, so nrfx_qspi_init() would time out (after a restart
+  // too: "qspi none"). 0xAB goes out by hand on the pins first (SPI mode 0, WP and HOLD high).
+  static void wake() {
+    uint32_t sck = g_ADigitalPinMap[PIN_QSPI_SCK], cs = g_ADigitalPinMap[PIN_QSPI_CS];
+    uint32_t io0 = g_ADigitalPinMap[PIN_QSPI_IO0];
+    nrf_gpio_pin_set(cs);
+    nrf_gpio_cfg_output(cs);
+    nrf_gpio_pin_clear(sck);
+    nrf_gpio_cfg_output(sck);
+    nrf_gpio_cfg_output(io0);
+    nrf_gpio_pin_set(g_ADigitalPinMap[PIN_QSPI_IO2]);
+    nrf_gpio_cfg_output(g_ADigitalPinMap[PIN_QSPI_IO2]);
+    nrf_gpio_pin_set(g_ADigitalPinMap[PIN_QSPI_IO3]);
+    nrf_gpio_cfg_output(g_ADigitalPinMap[PIN_QSPI_IO3]);
+    nrf_gpio_pin_clear(cs);
+    for (int b = 7; b >= 0; b--) {
+      nrf_gpio_pin_write(io0, (0xAB >> b) & 1);
+      nrf_gpio_pin_set(sck);
+      nrf_gpio_pin_clear(sck);
+    }
+    nrf_gpio_pin_set(cs);
+    delayMicroseconds(50);   // tRES1: well under 50 us
+  }
 
   bool waitIdle(uint32_t timeout_ms) {
     unsigned long start = millis();
@@ -58,9 +86,12 @@ public:
         g_ADigitalPinMap[PIN_QSPI_SCK], g_ADigitalPinMap[PIN_QSPI_CS], g_ADigitalPinMap[PIN_QSPI_IO0],
         g_ADigitalPinMap[PIN_QSPI_IO1], g_ADigitalPinMap[PIN_QSPI_IO2], g_ADigitalPinMap[PIN_QSPI_IO3]);
     cfg.phy_if.sck_freq = NRF_QSPI_FREQ_32MDIV4;
-    if (nrfx_qspi_init(&cfg, NULL, NULL) != NRFX_SUCCESS) return false;   // NULL handler: blocking calls
-    nrfx_qspi_cinstr_quick_send(0xAB, NRF_QSPI_CINSTR_LEN_1B, NULL);       // out of deep power down
-    delayMicroseconds(50);
+    wake();
+    nrfx_err_t e = nrfx_qspi_init(&cfg, NULL, NULL);   // NULL handler: blocking calls
+    if (e != NRFX_SUCCESS) {
+      if (e == NRFX_ERROR_TIMEOUT) nrfx_qspi_uninit();   // it stays "initialized": the next try would be refused
+      return false;
+    }
     _on = true;
     return true;
   }
@@ -119,3 +150,7 @@ public:
     return true;
   }
 };
+
+static_assert(QSPI_OTA_ADDR + QSPI_OTA_SIZE <= QSPI_MAILBOX_ADDR, "QSPI layout");
+static_assert(QSPI_MAILBOX_ADDR + QSPI_MAILBOX_SLOTS * QSPI_MAILBOX_SLOT <= QSPI_BACKUP_ADDR, "QSPI layout");
+static_assert(QSPI_BACKUP_ADDR + QSPI_BACKUP_SIZE <= 0x200000, "QSPI layout: 2 MB flash");
