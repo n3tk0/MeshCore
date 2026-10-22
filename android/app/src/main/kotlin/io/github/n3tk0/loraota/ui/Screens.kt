@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.R
+import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.github.BuildPhase
 import io.github.n3tk0.loraota.github.BuildService
@@ -116,6 +117,7 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                             Step.REPEATER -> vm.companionName
                             Step.UPDATE -> vm.repeater?.name ?: ""
                             Step.FLASH -> stringResource(R.string.flash_title, vm.companionName)
+                            Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
                         },
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
@@ -145,6 +147,7 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                     Step.REPEATER -> RepeaterStep(vm)
                     Step.UPDATE -> if (vm.running) RunningView(vm) else RepeaterHome(vm)
                     Step.FLASH -> if (vm.running) RunningView(vm) else FlashContent(vm)
+                    Step.BACKUP -> BackupScreen(vm)
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -209,11 +212,14 @@ private fun BottomStatus(vm: AppViewModel) {
     val showBusy = vm.busy && !vm.running
     // the login sheet shows them itself, not twice
     if (vm.step == Step.REPEATER && vm.loginSheet != null) return
-    if (!showBusy && vm.message.isEmpty()) return
+    // the restore's button stays in sight however long the list of differences
+    val restoreBar = vm.step == Step.BACKUP && vm.restoreFrom != null && vm.restoreRows.isNotEmpty()
+    if (!showBusy && vm.message.isEmpty() && !restoreBar) return
     Surface(tonalElevation = 3.dp, modifier = Modifier.navigationBarsPadding()) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (showBusy) Busy(vm)
             Message(vm)
+            if (restoreBar) RestoreBar(vm)
         }
     }
 }
@@ -340,8 +346,10 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
                 Text(stringResource(R.string.companion_stock), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (withFlashButton) TextButton(onClick = { vm.openFlash(FlashTarget.COMPANION) }, enabled = !vm.busy,
-                modifier = Modifier.padding(top = 2.dp)) { Text(stringResource(R.string.flash_open)) }
+            if (withFlashButton) Row(Modifier.padding(top = 2.dp)) {
+                TextButton(onClick = { vm.openFlash(FlashTarget.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_open)) }
+                TextButton(onClick = { vm.openBackup(DeviceKind.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
+            }
         }
     }
 }
@@ -352,6 +360,7 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
 private fun RepeaterHome(vm: AppViewModel) {
     StatusCard(vm)
     vm.info?.let { RunningCard(it) }
+    OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
     TabRow(selectedTabIndex = vm.firmwareTab) {
         Tab(selected = vm.firmwareTab == 0, onClick = { vm.firmwareTab = 0 }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
         Tab(selected = vm.firmwareTab == 1, onClick = { vm.showFlashTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_flash)) })
@@ -466,6 +475,7 @@ private fun LoraTab(vm: AppViewModel) {
                     if (vm.inPlace()) InPlaceWarning(detail = false)
                     if (vm.nrfCopy()) CopyNote()
                     if (vm.ignoreAirLimit) Text(stringResource(R.string.ignore_air_limit_warning), color = MaterialTheme.colorScheme.error)
+                    vm.updateBackupNote?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
             confirmButton = { TextButton(onClick = { vm.send() }) { Text(stringResource(R.string.start)) } },
@@ -768,7 +778,7 @@ private fun Busy(vm: AppViewModel) {
 
 /** One sentence, the rest on 'More'. */
 @Composable
-private fun Hint(short: String, long: String) {
+internal fun Hint(short: String, long: String) {
     var open by rememberSaveable(long) { mutableStateOf(false) }
     Column {
         Text(if (open) long else short)
@@ -815,11 +825,11 @@ private fun Message(vm: AppViewModel) {
 
 /** Information, not danger: a neutral card with an icon. */
 @Composable
-private fun InfoCard(text: String) = NoteCard(text, Icons.Default.Info, danger = false)
+internal fun InfoCard(text: String) = NoteCard(text, Icons.Default.Info, danger = false)
 
 /** Danger (power cuts, the air time law): red. */
 @Composable
-private fun DangerCard(text: String) = NoteCard(text, Icons.Default.Warning, danger = true)
+internal fun DangerCard(text: String) = NoteCard(text, Icons.Default.Warning, danger = true)
 
 @Composable
 private fun NoteCard(text: String, icon: ImageVector, danger: Boolean) {

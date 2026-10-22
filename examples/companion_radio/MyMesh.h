@@ -324,6 +324,7 @@ private:
   char cli_command[80];
   char reply_buf[166];
   uint8_t app_target_ver;
+  unsigned long cli_capture_until;   // millis, 0 = console replies go to the queue (CMD_CAPTURE_CLI_REPLIES)
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
