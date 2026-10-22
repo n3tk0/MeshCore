@@ -64,4 +64,5 @@ dependencies {
     implementation("no.nordicsemi.android:dfu:2.9.0")   // Bluetooth DFU of nRF52 boards (2.10+ needs compileSdk 36)
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")   // the real one: the Android stubs return nothing in unit tests
 }
