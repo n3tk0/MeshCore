@@ -55,12 +55,15 @@ enum class Step { COMPANION, REPEATER, UPDATE, FLASH }
 enum class FlashTarget { REPEATER, COMPANION }
 
 /** A file to flash: a DFU .zip (nRF52, Bluetooth) or an app image .bin (ESP32, Wi-Fi); [env] null: from a file. */
-class FlashImage(val name: String, val data: ByteArray, val env: String?) {
+class FlashImage(val name: String, val data: ByteArray, val env: String?, val version: String = "") {
     val isZip get() = name.endsWith(".zip", ignoreCase = true)
+    /** For people: "Xiao nrf52 repeater v1.3.0" (a file: its name). */
+    val label get() = if (env == null) name else "${env.replace('_', ' ')} $version".trim()
 }
 
 /** The 'are you sure' before a flash: where it goes and what did not check out. */
-class FlashPlan(val image: FlashImage, val device: String, val address: String?, val warnings: List<String>)
+class FlashPlan(val image: FlashImage, val device: String, val address: String?, val warnings: List<String>,
+                val name: String = device)   // the plain Bluetooth name, for the DFU library
 
 /** A firmware image the user has: from a release or from a file. */
 class Image(val name: String, val data: ByteArray, val env: String? = null) {
@@ -129,6 +132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
     var flashDone by mutableStateOf(false)
+    var firmwareTab by mutableStateOf(0)   // the repeater's firmware: 0 over LoRa, 1 over Bluetooth / Wi-Fi
     var companionModel by mutableStateOf("")
     var companionVersion by mutableStateOf("")
     private var companionDevice: BluetoothDevice? = null
@@ -178,6 +182,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         job?.cancel()
     }
 
+    /** A job that Stop (or Back) can end; a disconnect's own clean-up is not one. */
+    val canStop get() = busy && job != null
+
     // ---- companion ----
 
     private val scanCallback = object : ScanCallback() {
@@ -217,17 +224,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             scanning = false
         }
+        companionModel = ""
+        companionVersion = ""
         if (!link.connect(device)) throw Exception(str(R.string.msg_connect_failed))
         companion.start()
         companionDevice = device
         // left on the side channel by an update cut short; a stock companion has no such command
         companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
+        runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
+            companionModel = model
+            companionVersion = version
+        }
+        loadRepeaters()
+        step = Step.REPEATER
+    }
+
+    fun refreshRepeaters() = work { loadRepeaters() }
+
+    private suspend fun loadRepeaters() {
+        val list = companion.contacts().filter { it.isRepeater }
+            .sortedWith(compareBy<Contact>({ it.hops ?: Int.MAX_VALUE }, { it.name.lowercase() }))
         repeaters.clear()
         // the ones next to us first: only those can be updated
-        repeaters.addAll(companion.contacts().filter { it.isRepeater }
-            .sortedWith(compareBy<Contact>({ it.hops ?: Int.MAX_VALUE }, { it.name.lowercase() })))
-        step = Step.REPEATER
+        repeaters.addAll(list)
+    }
+
+    /** An update or a flash is writing: the screen shows only its progress, Back asks first. */
+    val running get() = busy && (phase != null || flashPercent >= 0)
+
+    /** The phone's Back and the arrow in the top bar. */
+    fun back() {
+        when (step) {
+            Step.FLASH -> closeFlash()
+            Step.UPDATE -> backToRepeaters()
+            Step.REPEATER -> disconnect()
+            Step.COMPANION -> {}
+        }
     }
 
     fun disconnect() {
@@ -273,6 +306,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         total = 0
         phase = null
         log.clear()
+        firmwareTab = 0
+        flashTarget = FlashTarget.REPEATER
+        flashImage = null
+        flashDone = false
         step = Step.UPDATE
         // not read back: the pre-login route (reset for the login) says nothing about now
         inspect(learned ?: contact, learned?.hops)
@@ -317,14 +354,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // admin passwords, per repeater, only on this phone (the app has no backup)
     private val passwords get() = ctx.getSharedPreferences("passwords", Context.MODE_PRIVATE)
 
+    // which repeaters have one, read once: the list asks for every row
+    private val savedKeys = mutableStateListOf<String>().apply { addAll(passwords.all.keys) }
+
+    fun hasSavedPassword(contact: Contact) = hex(contact.publicKey) in savedKeys
+
     fun savedPassword(contact: Contact): String? = passwords.getString(hex(contact.publicKey), null)
 
     private fun savePassword(contact: Contact, password: String) {
-        passwords.edit().putString(hex(contact.publicKey), password).apply()
+        val key = hex(contact.publicKey)
+        passwords.edit().putString(key, password).apply()
+        if (key !in savedKeys) savedKeys.add(key)
     }
 
     fun forgetPassword(contact: Contact) {
-        passwords.edit().remove(hex(contact.publicKey)).apply()
+        val key = hex(contact.publicKey)
+        passwords.edit().remove(key).apply()
+        savedKeys.remove(key)
     }
 
     /** `set ota on` in the repeater's console, then INFO to see that it took. */
@@ -521,20 +567,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- flash ----
 
+    /** The companion's own flash screen, or (repeater) the Bluetooth / Wi-Fi tab of the repeater's screen. */
     fun openFlash(target: FlashTarget) {
+        if (target == FlashTarget.COMPANION) flashReturn = step
         flashTarget = target
         flashImage = null
         flashPlan = null
         flashPercent = -1
         flashDone = false
         message = ""
-        step = Step.FLASH
+        if (target == FlashTarget.COMPANION) step = Step.FLASH
         if (releases.isEmpty()) loadReleases()
-        if (target == FlashTarget.COMPANION) work {
-            val (model, version) = companion.deviceInfo()
-            companionModel = model
-            companionVersion = version
-        }
+    }
+
+    private var flashReturn = Step.REPEATER   // where the companion's flash screen was opened from
+
+    /** The repeater's Bluetooth / Wi-Fi tab. */
+    fun showFlashTab() {
+        firmwareTab = 1
+        if (flashTarget != FlashTarget.REPEATER) openFlash(FlashTarget.REPEATER)
+        else if (releases.isEmpty()) loadReleases()
     }
 
     fun closeFlash() {
@@ -544,10 +596,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 flashingCompanion = false
                 devices.clear()
                 step = Step.COMPANION
-            } else step = Step.REPEATER
+            } else {
+                // back where it was opened: the repeater's screen keeps its login and route
+                flashTarget = FlashTarget.REPEATER
+                flashImage = null
+                step = flashReturn
+            }
         } else if (flashDone) {
             backToRepeaters()   // it restarted with other firmware: log in again
-        } else step = Step.UPDATE
+        }
     }
 
     /** Releases that fit: the right role, and for a repeater whose chip is known the right file type. */
@@ -573,7 +630,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pickFlashRelease(f: FirmwareFile) = work {
         val data = withContext(Dispatchers.IO) { Releases.downloadDfu(f, ctx.filesDir) }
-        flashImage = FlashImage(f.dfu, data, f.env)
+        flashImage = FlashImage(f.dfu, data, f.env, f.version.ifEmpty { f.release })
     }
 
     fun pickFlashFile(uri: Uri) = work {
@@ -598,7 +655,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (env != null && BoardCheck.matches(env, companionModel) == false) {
                 warnings.add(str(R.string.warn_board, companionModel, env))
             }
-            flashPlan = FlashPlan(img, "$companionName (${dev.address})", dev.address, warnings)
+            flashPlan = FlashPlan(img, "$companionName (${dev.address})", dev.address, warnings, companionName)
             return@work
         }
 
@@ -619,12 +676,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // nRF52: `start ota` over LoRa, then the repeater shows up over Bluetooth as <BOARD>_OTA
         var devices = emptyList<io.github.n3tk0.loraota.flash.DfuDevice>()
-        for (attempt in 1..2) {
-            working = str(R.string.working_start_ota)
-            companion.sendRemoteCli(r, "start ota")
-            working = str(R.string.working_scan)
-            devices = BleDfu.scan(ctx, if (attempt == 1) 12_000 else 15_000)
-            if (devices.isNotEmpty()) break
+        try {
+            for (attempt in 1..2) {
+                working = str(R.string.working_start_ota)
+                companion.sendRemoteCli(r, "start ota")
+                working = str(R.string.working_scan)
+                devices = BleDfu.scan(ctx, if (attempt == 1) 12_000 else 15_000)
+                if (devices.isNotEmpty()) break
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            leaveDfuMode()   // Stop or Back while it may already be in DFU mode
+            throw e
         }
         val d = devices.firstOrNull() ?: run {
             leaveDfuMode()   // it may have got the command and only be out of Bluetooth range
@@ -632,7 +694,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (devices.size > 1) warnings.add(str(R.string.warn_many_dfu, devices.size, d.name))
         if (env != null && BoardCheck.matches(env, d.name) == false) warnings.add(str(R.string.warn_board, d.name, env))
-        flashPlan = FlashPlan(img, "${d.name} (${d.address})", d.address, warnings)
+        flashPlan = FlashPlan(img, "${d.name} (${d.address})", d.address, warnings, d.name)
     }
 
     /** 'Cancel' on the dialog: an nRF52 repeater already advertises its DFU mode, a restart ends that. */
@@ -675,7 +737,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             delay(1500)
         }
         working = str(R.string.working_flash)
-        BleDfu.flash(ctx, address, p.device, zip) { flashPercent = it }
+        BleDfu.flash(ctx, address, p.name, zip) { flashPercent = it }
     }
 
     private suspend fun flashWifi(img: FlashImage) {
