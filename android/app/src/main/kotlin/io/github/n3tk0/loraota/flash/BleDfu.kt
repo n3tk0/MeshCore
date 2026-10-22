@@ -79,14 +79,17 @@ object BleDfu {
                 .setDeviceName(name)
                 .setForceDfu(false)
                 .setUnsafeExperimentalButtonlessServiceInSecureDfuEnabled(true)
+                // after the jump the Xiao's bootloader did not answer on the app's address (log: connect to
+                // the same address, GATT CONN TIMEOUT x3): it comes up on the address + 1 when it lost the
+                // app's peer data. Scan for both, then the same address as before
+                .setForceScanningForNewAddressInLegacyDfu(true)
                 .setScanTimeout(10_000)   // the bootloader starts its SoftDevice first
             if (bonded) {
                 starter.setKeepBond(true)   // the companion's PIN bond stays
                     .setPacketsReceiptNotificationsEnabled(true)
                     .setPacketsReceiptNotificationsValue(8)
             }
-            // a repeater (never bonded): the library's own defaults, as the nRF Device Firmware Update app uses
-            // them; with receipts every 8 packets and a forced scan a Xiao stopped at 0%, that app's flash went
+            // a repeater (never bonded): no receipts, no kept bond, as the nRF Device Firmware Update app
             starter
                 // a foreground service: Android does not stop it mid-write when the app goes to the background
                 .setForeground(true)
