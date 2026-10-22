@@ -28,10 +28,18 @@ class TokenStore(ctx: Context) {
         return gen.generateKey()
     }
 
-    val has get() = prefs.contains(KEY)
+    /** The user entered one (it can be forgotten; the group's cannot). */
+    val hasOwn get() = prefs.contains(KEY)
 
-    /** null: none kept, or the key is gone (e.g. the phone's lock screen was reset): enter it again. */
-    fun get(): String? {
+    val has get() = hasOwn || group != null
+
+    /** Only the group's token, built into the group APK (see build.gradle.kts). */
+    val usesGroup get() = !hasOwn && group != null
+
+    /** The user's own, else the group's; null: none (or the key is gone, e.g. the lock screen was reset). */
+    fun get(): String? = own() ?: group
+
+    private fun own(): String? {
         val stored = prefs.getString(KEY, null) ?: return null
         return runCatching {
             val bytes = Base64.decode(stored, Base64.NO_WRAP)
@@ -52,6 +60,14 @@ class TokenStore(ctx: Context) {
     fun clear() {
         prefs.edit().remove(KEY).apply()
     }
+
+    private val group: String? by lazy {
+        val a = unhex(io.github.n3tk0.loraota.BuildConfig.GROUP_TOKEN_A)
+        val b = unhex(io.github.n3tk0.loraota.BuildConfig.GROUP_TOKEN_B)
+        if (a.isEmpty() || a.size != b.size) null else String(ByteArray(a.size) { (a[it].toInt() xor b[it].toInt()).toByte() })
+    }
+
+    private fun unhex(s: String) = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
     private companion object {
         const val KEYSTORE = "AndroidKeyStore"

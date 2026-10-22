@@ -3,12 +3,19 @@ name: Build LoRa OTA Android App
 # The Android app that updates our repeaters over LoRa through a companion (android/).
 # - push / pull request: unit tests (delta generator, protocol) and the APK as a workflow artifact
 # - tag "lora-ota-app-v1.2.3": also publishes a GitHub release with the APK
+# - by hand with "group APK": also an APK with the group's GitHub token for New build (the secret
+#   LORAOTA_GITHUB_TOKEN), only as a short-lived artifact to pass on directly, never in a release
 
 permissions:
   contents: write
 
 on:
   workflow_dispatch:
+    inputs:
+      group_apk:
+        description: 'И APK с токена на групата (LORAOTA_GITHUB_TOKEN), само като artifact за 3 дни'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'android/**'
@@ -81,6 +88,31 @@ jobs:
         with:
           name: LoraOta-apk
           path: android/out
+
+      # after the public APK: that one never has the token
+      - name: Group APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.group_apk }}
+        env:
+          LORAOTA_GITHUB_TOKEN: ${{ secrets.LORAOTA_GITHUB_TOKEN }}
+          LORAOTA_KEYSTORE_PASSWORD: ${{ secrets.LORAOTA_KEYSTORE_PASSWORD }}
+          LORAOTA_KEY_ALIAS: ${{ secrets.LORAOTA_KEY_ALIAS }}
+          LORAOTA_KEY_PASSWORD: ${{ secrets.LORAOTA_KEY_PASSWORD }}
+        run: |
+          if [ -z "$LORAOTA_GITHUB_TOKEN" ]; then
+            echo "::error::No LORAOTA_GITHUB_TOKEN secret (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          ./gradlew --no-daemon :app:assembleRelease
+          mkdir -p out-group
+          cp app/build/outputs/apk/release/app-release.apk "out-group/LoraOta-group-${GITHUB_REF_NAME//\//-}.apk"
+
+      - name: Upload Group APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.group_apk }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: LoraOta-group-apk
+          path: android/out-group
+          retention-days: 3
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')

@@ -633,8 +633,10 @@ private fun BuildPanel(vm: AppViewModel) {
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(onClick = { vm.reloadBuildForm() }, enabled = !vm.busy) { Text(stringResource(R.string.build_reload)) }
-        TextButton(onClick = { vm.forgetToken() }, enabled = !vm.busy) { Text(stringResource(R.string.build_token_forget)) }
+        if (!vm.groupToken) TextButton(onClick = { vm.forgetToken() }, enabled = !vm.busy) { Text(stringResource(R.string.build_token_forget)) }
     }
+    if (vm.groupToken) Text(stringResource(R.string.build_token_group), style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (picking) BoardPicker(vm.boardChoices(), vm.buildBoard, { picking = false }) { vm.pickBuildBoard(it); picking = false }
 }
 

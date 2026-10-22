@@ -1,8 +1,17 @@
+import java.security.SecureRandom
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// The group's GitHub token for "New build" (Petko's choice, risk accepted 2026-10-22): from the environment,
+// the secret LORAOTA_GITHUB_TOKEN in CI, only for the group APK (never the public release). XOR-ed with a key
+// made for each build so it is not readable as text in the APK; anyone who takes the app apart can still get it.
+val groupToken = System.getenv("LORAOTA_GITHUB_TOKEN")?.trim().orEmpty().toByteArray()
+val groupKey = ByteArray(groupToken.size).also { SecureRandom().nextBytes(it) }
+fun hexOf(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
 
 android {
     namespace = "io.github.n3tk0.loraota"
@@ -14,6 +23,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "GROUP_TOKEN_A", "\"${hexOf(ByteArray(groupToken.size) { (groupToken[it].toInt() xor groupKey[it].toInt()).toByte() })}\"")
+        buildConfigField("String", "GROUP_TOKEN_B", "\"${hexOf(groupKey)}\"")
     }
 
     // the release key: from the environment (GitHub Secrets in CI), so every version installs over the last
@@ -45,6 +56,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         unitTests.isReturnDefaultValues = true

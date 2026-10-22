@@ -239,4 +239,5 @@
     <string name="opt_lora_ota">LoRa OTA</string>
     <string name="opt_debug">Debug логове</string>
     <string name="opt_release">И GitHub pre-release</string>
+    <string name="build_token_group">Ползва токена на групата, вграден в приложението.</string>
 </resources>
