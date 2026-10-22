@@ -613,7 +613,7 @@ private fun BuildPanel(vm: AppViewModel) {
         }
     }
     Text(stringResource(R.string.build_options), style = MaterialTheme.typography.titleSmall)
-    for (input in vm.buildInputs.filter { it.isBoolean }) {
+    for (input in vm.buildInputs.filter { it.isBoolean && !(vm.groupToken && it.name == GROUP_HIDDEN) }) {
         val on = vm.buildOptions[input.name] ?: input.defaultOn
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
             .fillMaxWidth()
