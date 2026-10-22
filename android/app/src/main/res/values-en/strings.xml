@@ -101,4 +101,18 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="in_place_title">WARNING</string>
     <string name="in_place_text">If the power goes off, someone has to go there.</string>
     <string name="in_place_detail">The new firmware does not fit next to the old one on this repeater, so it is written over it. The risky part is the last 20 seconds or so, while the repeater copies: a power cut then leaves it with no firmware, fixed only on site (USB or Bluetooth).</string>
+    <string name="working_login">Logging in… (up to 30 seconds)</string>
+    <string name="working_status">Reading the repeater\'s status…</string>
+    <string name="working_ota">Checking for LoRa OTA…</string>
+    <string name="status_title">Status</string>
+    <string name="status_batt_uptime">Battery %1$.2f V · up %2$s</string>
+    <string name="status_radio">Noise %1$d dBm · last packet RSSI %2$d dBm, SNR %3$.1f dB</string>
+    <string name="status_packets">Packets: received %1$d, sent %2$d · airtime %3$s</string>
+    <string name="status_none">The repeater sent no status.</string>
+    <string name="dur_days">%1$dd %2$dh</string>
+    <string name="dur_hours">%1$dh %2$dmin</string>
+    <string name="dur_mins">%1$d min</string>
+    <string name="no_ota">Logged in, but this repeater does not answer LoRa OTA. Most likely it runs stock MeshCore firmware: to update it over LoRa, flash our repeater firmware once (USB or Bluetooth). If it already runs ours, the answer may have been lost: tap "Check again".</string>
+    <string name="recheck">Check again</string>
+    <string name="companion_no_ota">The companion runs stock firmware and cannot switch to the side channel. LoRa updates need our companion firmware.</string>
 </resources>
