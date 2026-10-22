@@ -309,8 +309,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       const char* solar_state = _board->hasSolarChargerDetect()
                                     ? (_board->isSolarChargerActive() ? "yes" : "no")
                                     : "n/a";
+      uint16_t batt_mv = _sensors->getBatteryMilliVolts();  // an INA219 read: once
+      if (batt_mv == 0) batt_mv = _board->getBattMilliVolts();
       snprintf(reply, 160, "batt:%u mV usb:%s solar_chg:%s ext:%s charger:%s",
-              (unsigned)(_sensors->getBatteryMilliVolts() ? _sensors->getBatteryMilliVolts() : _board->getBattMilliVolts()),
+              (unsigned)batt_mv,
               usb_state,
               solar_state,
               _board->isExternalPowered() ? "yes" : "no",

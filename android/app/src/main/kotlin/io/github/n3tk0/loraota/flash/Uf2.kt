@@ -41,13 +41,14 @@ object Uf2 {
             val addr = b.getInt(off + 12)
             val size = b.getInt(off + 16)
             if (size <= 0 || size > 476) throw IllegalArgumentException("not a .uf2")
+            // a bootloader or SoftDevice .uf2 cannot go this way; checked per block so a stray
+            // address cannot make the image huge
+            if (addr < APP_MIN || addr > APP_END - size) throw IllegalArgumentException("not an application")
             parts.add(addr to uf2.copyOfRange(off + 32, off + 32 + size))
         }
         if (parts.isEmpty()) throw IllegalArgumentException("empty .uf2")
         val start = parts.minOf { it.first }
         val end = parts.maxOf { it.first + it.second.size }
-        // a bootloader or SoftDevice .uf2 cannot go this way
-        if (start < APP_MIN || end > APP_END) throw IllegalArgumentException("not an application")
         val out = ByteArray(end - start) { 0xFF.toByte() }
         for ((addr, data) in parts) data.copyInto(out, addr - start)
         return out
