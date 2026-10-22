@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.ParcelUuid
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -35,6 +36,13 @@ import io.github.n3tk0.loraota.flash.BoardCheck
 import io.github.n3tk0.loraota.flash.FlashFailed
 import io.github.n3tk0.loraota.flash.Role
 import io.github.n3tk0.loraota.flash.WifiOta
+import io.github.n3tk0.loraota.github.BuildJob
+import io.github.n3tk0.loraota.github.BuildPhase
+import io.github.n3tk0.loraota.github.BuildWatcher
+import io.github.n3tk0.loraota.github.GitHubApi
+import io.github.n3tk0.loraota.github.TokenStore
+import io.github.n3tk0.loraota.github.WorkflowInput
+import io.github.n3tk0.loraota.github.WorkflowInputs
 import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.OtaSession
@@ -64,6 +72,9 @@ class FlashImage(val name: String, val data: ByteArray, val env: String?, val ve
 /** The 'are you sure' before a flash: where it goes and what did not check out. */
 class FlashPlan(val image: FlashImage, val device: String, val address: String?, val warnings: List<String>,
                 val name: String = device)   // the plain Bluetooth name, for the DFU library
+
+/** Where the firmware to write comes from: a release (or a build made before), a new build, a file. */
+enum class Source { RELEASES, BUILD, FILE }
 
 /** A firmware image the user has: from a release or from a file. */
 class Image(val name: String, val data: ByteArray, val env: String? = null) {
@@ -107,6 +118,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var newImage by mutableStateOf<Image?>(null)
     var patch by mutableStateOf<ByteArray?>(null)
     var repo by mutableStateOf(Releases.DEFAULT_REPO)
+    var loraSource by mutableStateOf(Source.RELEASES)
+    var flashSource by mutableStateOf(Source.RELEASES)
+    var builds by mutableStateOf(Releases.builds(app.filesDir))   // made by the app's builds, kept on the phone
+    var upstream by mutableStateOf<List<FirmwareFile>>(emptyList())   // stock MeshCore releases (flash only)
+    var flashUpstream by mutableStateOf(false)
+
+    /** Our releases and the app's builds, the builds first (one file once: a build with `release` is both). */
+    val allFirmware: List<FirmwareFile>
+        get() = (builds + releases).distinctBy { it.env + it.sha256 + it.dfuSha256 }
+
+    // a new build on GitHub ("Build Firmware for Boards")
+    private val tokens = TokenStore(app)
+    var hasToken by mutableStateOf(tokens.has)
+    var buildInputs by mutableStateOf<List<WorkflowInput>>(emptyList())
+    private var buildInputsRole = ""   // the board list the form shows: repeater or companion
+    var buildBoard by mutableStateOf("")
+    var buildBoardAuto by mutableStateOf(false)   // picked by the app from the device, not by the user
+    val buildOptions = mutableStateMapOf<String, Boolean>()
+    var buildJob by mutableStateOf<BuildJob?>(null)
 
     // side channel
     var freqMhz by mutableStateOf("869.470")
@@ -140,6 +170,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var flashingCompanion = false   // its link drops on purpose
 
     init {
+        BuildWatcher.resume(app)
+        viewModelScope.launch {
+            BuildWatcher.state.collect { j ->
+                val before = buildJob
+                buildJob = j
+                if (j?.finished == true && before != null && !before.finished) buildFinished(j)
+                else if (j?.finished == true) builds = Releases.builds(ctx.filesDir)
+            }
+        }
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
@@ -451,7 +490,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // the firmware the repeater runs, if a release has it
         val i = info ?: return@launch
-        val running = releases.firstOrNull { it.sha256 == hex(i.imageSha) }
+        val running = allFirmware.firstOrNull { it.sha256 == hex(i.imageSha) }
         if (running != null && oldImage == null) {
             runCatching { withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) } }
                 .onSuccess { oldImage = Image(running.file, it, running.env) }
@@ -460,9 +499,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Releases for the same board as the one the repeater runs (all when that is not known). */
     fun newCandidates(): List<FirmwareFile> {
-        val env = oldImage?.env ?: releases.firstOrNull { it.sha256 == oldImage?.sha }?.env
+        val env = oldImage?.env ?: allFirmware.firstOrNull { it.sha256 == oldImage?.sha }?.env
         val nrf = info?.platform == OtaProtocol.PLATFORM_NRF52
-        return releases.filter {
+        return allFirmware.filter {
             // unknown board: at least the same chip family (the repeater also refuses an image for another chip)
             it.hasLoraOta &&
             (if (env != null) it.env == env else it.env.contains("nrf52", ignoreCase = true) == nrf) &&
@@ -615,7 +654,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun flashCandidates(): List<FirmwareFile> {
         val platform = info?.platform
         val running = oldImage?.env
-        return releases.filter {
+        return (if (flashUpstream) upstream else allFirmware).filter {
             it.hasDfu && when (flashTarget) {
                 FlashTarget.COMPANION -> BoardCheck.fitsCompanion(it.env) && it.dfuIsZip
                 FlashTarget.REPEATER -> BoardCheck.role(it.env) == Role.REPEATER && when (platform) {
@@ -629,6 +668,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val same = if (flashTarget == FlashTarget.COMPANION) BoardCheck.matches(it.env, companionModel) == true
                 else it.env == running
             if (same) 0 else 1
+        }
+    }
+
+    /** 'Ours' / 'Upstream' above the releases of the flash screen. */
+    fun showUpstream(on: Boolean) {
+        flashUpstream = on
+        if (on && upstream.isEmpty()) loadUpstream()
+    }
+
+    fun loadUpstream() = viewModelScope.launch {
+        val list = runCatching { withContext(Dispatchers.IO) { Releases.list(Releases.UPSTREAM_REPO, ctx.filesDir) } }
+        upstream = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(Releases.UPSTREAM_REPO, ctx.filesDir) }
+        if (list.isFailure) {
+            message = str(if (upstream.isEmpty()) R.string.msg_releases_failed else R.string.msg_releases_offline,
+                list.exceptionOrNull()?.message ?: "")
+            messageIsError = upstream.isEmpty()
         }
     }
 
@@ -764,6 +819,122 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             WifiOta.upload(network, img.data) { flashPercent = it }
         } finally {
             release()
+        }
+    }
+
+    // ---- a new build on GitHub ----
+
+    /** The workflow input the board is picked in: the companion's own flash screen builds a companion. */
+    val buildRole get() = if (step == Step.FLASH && flashTarget == FlashTarget.COMPANION) "companion" else "repeater"
+
+    private fun api(): GitHubApi = GitHubApi(tokens.get() ?: run {
+        hasToken = false
+        throw Exception(str(R.string.build_err_token))
+    }, repo)
+
+    /** Checks the token with GitHub (it must read the workflow and its runs), then keeps it encrypted. */
+    fun saveToken(token: String) = work {
+        val t = token.trim()
+        if (t.isEmpty()) return@work
+        working = str(R.string.working_token)
+        val a = GitHubApi(t, repo)
+        try {
+            withContext(Dispatchers.IO) {
+                a.file(GitHubApi.WORKFLOW_PATH, a.defaultBranch())
+                a.runs(GitHubApi.WORKFLOW)
+            }
+        } catch (e: io.github.n3tk0.loraota.github.GitHubError) {
+            throw Exception(str(R.string.build_err_access, e.message ?: ""))
+        }
+        tokens.set(t)
+        hasToken = true
+        message = str(R.string.msg_token_saved)
+        readBuildForm()
+    }
+
+    fun forgetToken() {
+        tokens.clear()
+        hasToken = false
+        buildInputs = emptyList()
+    }
+
+    /** The boards and boxes of the workflow on GitHub, once per screen (repeater or companion). */
+    fun loadBuildForm() {
+        if (!hasToken || (buildInputs.isNotEmpty() && buildInputsRole == buildRole)) return
+        work { readBuildForm() }
+    }
+
+    fun reloadBuildForm() = work { readBuildForm() }
+
+    private suspend fun readBuildForm() {
+        working = str(R.string.working_build_form)
+        val a = api()
+        val inputs = withContext(Dispatchers.IO) { WorkflowInputs.parse(a.file(GitHubApi.WORKFLOW_PATH, a.defaultBranch())) }
+        if (inputs.none { it.name == buildRole }) throw Exception(str(R.string.build_err_workflow))
+        buildInputs = inputs
+        buildInputsRole = buildRole
+        buildOptions.clear()
+        for (i in inputs) if (i.isBoolean) buildOptions[i.name] = i.defaultOn
+        buildBoard = autoBoard(boardChoices())
+        buildBoardAuto = buildBoard.isNotEmpty()
+    }
+
+    /** The boards of the workflow's list for this screen. */
+    fun boardChoices(): List<String> =
+        buildInputs.firstOrNull { it.name == buildRole }?.options.orEmpty().filter { it != "-" }
+
+    /** The board the device is: the one its firmware was built for, or the companion's model. */
+    private fun autoBoard(choices: List<String>): String {
+        if (buildRole == "companion") {
+            if (companionModel.isEmpty()) return ""
+            return choices.firstOrNull { BoardCheck.fitsCompanion(it) && BoardCheck.matches(it, companionModel) == true } ?: ""
+        }
+        val sha = info?.imageSha?.let { hex(it) }
+        val env = oldImage?.env ?: allFirmware.firstOrNull { it.sha256 == sha || it.sha256 == oldImage?.sha }?.env
+        return env?.takeIf { it in choices } ?: ""
+    }
+
+    fun pickBuildBoard(board: String) {
+        buildBoard = board
+        buildBoardAuto = false
+    }
+
+    /** 'Build on GitHub': starts the workflow for the board with the boxes as ticked, then follows it. */
+    fun startBuild() = work {
+        val board = buildBoard
+        if (board.isEmpty()) throw Exception(str(R.string.build_no_board))
+        if (buildJob?.finished == false) throw Exception(str(R.string.build_busy_other))
+        working = str(R.string.working_dispatch)
+        val a = api()
+        val withId = buildInputs.any { it.name == "request_id" }
+        val id = if (withId) hex(kotlin.random.Random.nextBytes(4)) else ""
+        val inputs = HashMap<String, String>()
+        inputs[buildRole] = board
+        for ((k, v) in buildOptions) inputs[k] = v.toString()
+        if (withId) inputs["request_id"] = id
+        val at = System.currentTimeMillis()
+        withContext(Dispatchers.IO) { a.dispatch(GitHubApi.WORKFLOW, a.defaultBranch(), inputs) }
+        BuildWatcher.begin(ctx, BuildJob(repo, buildRole, board, id, at))
+    }
+
+    fun closeBuild() = BuildWatcher.dismiss(ctx)
+
+    fun forgetBuild() = BuildWatcher.forget(ctx)
+
+    /** Its files are on the phone now: in the releases list, and chosen when this screen asked for them. */
+    private fun buildFinished(j: BuildJob) {
+        builds = Releases.builds(ctx.filesDir)
+        val made = builds.filter { it.release == FirmwareFile.BUILD_PREFIX + j.runNumber && it.env == j.board }
+        if (busy || j.role != buildRole) return
+        if (step == Step.UPDATE && firmwareTab == 0 && loraSource == Source.BUILD) {
+            val f = made.firstOrNull { it.hasLoraOta && it in newCandidates() } ?: return
+            loraSource = Source.RELEASES
+            pickRelease(f)
+        } else if (flashSource == Source.BUILD && (step == Step.FLASH || firmwareTab == 1)) {
+            val f = made.firstOrNull { it.hasDfu } ?: return
+            flashSource = Source.RELEASES
+            flashUpstream = false
+            if (f in flashCandidates()) pickFlashRelease(f)
         }
     }
 

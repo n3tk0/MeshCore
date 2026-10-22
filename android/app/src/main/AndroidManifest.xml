@@ -16,6 +16,8 @@
     <!-- an update goes on with the screen off: a foreground service with a notification -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- a build on GitHub is followed with the app in the background -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- ESP32 flash: the phone joins the repeater's "MeshCore-OTA" access point -->
@@ -45,6 +47,10 @@
             android:name=".OtaService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+        <service
+            android:name=".github.BuildService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <service
             android:name=".flash.DfuService"
             android:exported="false"
