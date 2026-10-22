@@ -133,6 +133,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var hasToken by mutableStateOf(tokens.has)
     var buildInputs by mutableStateOf<List<WorkflowInput>>(emptyList())
     private var buildInputsRole = ""   // the board list the form shows: repeater or companion
+    private var buildFormFor = ""      // the device the board was picked for
     var buildBoard by mutableStateOf("")
     var buildBoardAuto by mutableStateOf(false)   // picked by the app from the device, not by the user
     val buildOptions = mutableStateMapOf<String, Boolean>()
@@ -858,10 +859,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         buildInputs = emptyList()
     }
 
-    /** The boards and boxes of the workflow on GitHub, once per screen (repeater or companion). */
+    /** The device the form is for: another repeater (or the companion) gets its own board. */
+    private fun buildDevice() = if (buildRole == "companion") companionDevice?.address ?: ""
+        else repeater?.let { hex(it.publicKey) } ?: ""
+
+    /**
+     * The boards and boxes of the workflow on GitHub, once per screen (repeater or companion); the board
+     * again for another device, and when the running firmware (which names it) is found later.
+     */
     fun loadBuildForm() {
-        if (!hasToken || (buildInputs.isNotEmpty() && buildInputsRole == buildRole)) return
-        work { readBuildForm() }
+        if (!hasToken) return
+        if (buildInputs.isEmpty() || buildInputsRole != buildRole) {
+            work { readBuildForm() }
+        } else if (buildFormFor != buildDevice() || buildBoard.isEmpty() || buildBoardAuto) {
+            pickAutoBoard()
+        }
+    }
+
+    private fun pickAutoBoard() {
+        buildFormFor = buildDevice()
+        buildBoard = autoBoard(boardChoices())
+        buildBoardAuto = buildBoard.isNotEmpty()
     }
 
     fun reloadBuildForm() = work { readBuildForm() }
@@ -875,8 +893,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         buildInputsRole = buildRole
         buildOptions.clear()
         for (i in inputs) if (i.isBoolean) buildOptions[i.name] = i.defaultOn
-        buildBoard = autoBoard(boardChoices())
-        buildBoardAuto = buildBoard.isNotEmpty()
+        pickAutoBoard()
     }
 
     /** The boards of the workflow's list for this screen. */

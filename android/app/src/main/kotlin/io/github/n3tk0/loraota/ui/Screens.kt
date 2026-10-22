@@ -594,7 +594,7 @@ private fun BuildPanel(vm: AppViewModel) {
         return
     }
     vm.buildJob?.let { BuildCard(vm) }
-    LaunchedEffect(vm.buildRole) { vm.loadBuildForm() }
+    LaunchedEffect(vm.buildRole, vm.repeater, vm.oldImage, vm.companionModel) { vm.loadBuildForm() }
     if (vm.buildInputs.isEmpty()) {
         if (!vm.busy) OutlinedButton(onClick = { vm.reloadBuildForm() }) { Text(stringResource(R.string.build_reload)) }
         return

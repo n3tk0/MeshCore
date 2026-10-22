@@ -13,9 +13,11 @@ import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.Releases
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +73,9 @@ object BuildWatcher {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("build", Context.MODE_PRIVATE)
 
+    /** A build's files did not check out: waiting does not help (unlike no internet). */
+    private class Broken(message: String) : Exception(message)
+
     private fun save(ctx: Context, j: BuildJob?) {
         _state.value = j
         prefs(ctx).edit().apply { if (j == null) remove("job") else putString("job", j.toJson().toString()) }.apply()
@@ -110,7 +115,8 @@ object BuildWatcher {
     private fun start(ctx: Context) {
         val app = ctx.applicationContext
         if (follow?.isActive == true) return
-        follow = scope.launch {
+        // started once `follow` is set: run() checks it is still the current one
+        val j = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 run(app)
             } finally {
@@ -118,41 +124,52 @@ object BuildWatcher {
                 if (_state.value?.finished != false) BuildService.stop(app)
             }
         }
+        follow = j
         BuildService.start(app)
+        j.start()
     }
 
     private suspend fun run(ctx: Context) {
         var j = _state.value ?: return
-        val token = TokenStore(ctx).get() ?: return finish(ctx, j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_token)))
+        // a call to GitHub cannot be cut short: once this follow is cancelled (a new build, Stop following)
+        // nothing it learns afterwards may be saved over the newer state
+        val me = currentCoroutineContext()[Job]
+        val live = { follow === me && me?.isActive == true }
+        fun end(j: BuildJob) { if (live()) finish(ctx, j) }
+        val token = TokenStore(ctx).get() ?: return end(j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_token)))
         val api = GitHubApi(token, j.repo)
         while (true) {
             try {
-                j = step(ctx, api, j)
-                if (j.finished) return finish(ctx, j)
+                j = step(ctx, api, j, live)
+                if (j.finished) return end(j)
                 if (j.offline) j = j.copy(offline = false)
+            } catch (e: Broken) {
+                return end(j.copy(phase = BuildPhase.FAILED, step = "", error = e.message ?: ""))
             } catch (e: GitHubError) {
                 // a token taken back or without the right access: waiting does not help
                 if (e.code == 401 || e.code == 403 || e.code == 404) {
-                    return finish(ctx, j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_access, e.message ?: "")))
+                    return end(j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_access, e.message ?: "")))
                 }
                 j = j.copy(offline = true)
             } catch (e: IOException) {
                 j = j.copy(offline = true)   // no internet for now: try again
             }
             if (System.currentTimeMillis() - j.dispatchedAt > MAX_MS) {
-                return finish(ctx, j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_timeout)))
+                return end(j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_timeout)))
             }
+            if (!live()) return
             save(ctx, j)
             delay(POLL_MS)
         }
     }
 
-    private fun step(ctx: Context, api: GitHubApi, job: BuildJob): BuildJob {
+    private fun step(ctx: Context, api: GitHubApi, job: BuildJob, live: () -> Boolean): BuildJob {
         var j = job
         if (j.runId == 0L) {
             val runs = api.runs(GitHubApi.WORKFLOW)
-            val run = runs.firstOrNull { j.requestId in it.title }
-                ?: if (j.requestId.isEmpty()) runs.firstOrNull { created(it) >= j.dispatchedAt - 60_000 } else null
+            // an older workflow with no request_id: the newest run started since
+            val run = if (j.requestId.isNotEmpty()) runs.firstOrNull { j.requestId in it.title }
+                else runs.firstOrNull { created(it) >= j.dispatchedAt - 60_000 }
             if (run == null) {
                 if (System.currentTimeMillis() - j.dispatchedAt > FIND_RUN_MS) {
                     return j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_no_run))
@@ -167,7 +184,7 @@ object BuildWatcher {
             val step = if (phase == BuildPhase.RUNNING) runCatching { api.currentStep(j.runId) }.getOrDefault(j.step) else ""
             return j.copy(phase = phase, step = step)
         }
-        save(ctx, j.copy(phase = BuildPhase.DOWNLOADING, step = ""))
+        if (live()) save(ctx, j.copy(phase = BuildPhase.DOWNLOADING, step = ""))
         // a run with some boards failed still brings the ones that built
         val made = download(ctx, api, j)
         return if (run.succeeded && made > 0) j.copy(phase = BuildPhase.DONE, made = made, step = "")
@@ -182,11 +199,17 @@ object BuildWatcher {
         var made = 0
         for (a in api.artifacts(j.runId)) {
             if (a.expired) continue
-            val files = unzip(api.downloadArtifact(a.id))
-            val entries = entries(files, FirmwareFile.BUILD_PREFIX + j.runNumber)
-            if (entries.isEmpty()) continue
-            Releases.addBuild(ctx.filesDir, entries, files)
-            made += entries.size
+            val zip = api.downloadArtifact(a.id)
+            try {
+                val files = unzip(zip)
+                val entries = entries(files, FirmwareFile.BUILD_PREFIX + j.runNumber)
+                if (entries.isEmpty()) continue
+                Releases.addBuild(ctx.filesDir, entries, files)
+                made += entries.size
+            } catch (e: IOException) {
+                // a damaged zip or a file that does not match its .ota.json: the same again next time
+                throw Broken(e.message ?: e.toString())
+            }
         }
         return made
     }
