@@ -36,6 +36,27 @@ class CompanionRadio(private val link: CompanionLink) {
         const val CMD_SEND_LOGIN = 26
         const val CMD_SEND_BINARY_REQ = 50
         const val CMD_RUN_CLI_COMMAND = 66
+        // the companion's own settings (backup and restore)
+        const val CMD_SET_ADVERT_NAME = 8
+        const val CMD_SET_RADIO_PARAMS = 11
+        const val CMD_SET_RADIO_TX_POWER = 12
+        const val CMD_SET_ADVERT_LATLON = 14
+        const val CMD_SET_TUNING_PARAMS = 21
+        const val CMD_EXPORT_PRIVATE_KEY = 23
+        const val CMD_IMPORT_PRIVATE_KEY = 24
+        const val CMD_GET_CHANNEL = 31
+        const val CMD_SET_CHANNEL = 32
+        const val CMD_SET_OTHER_PARAMS = 38
+        const val CMD_GET_CUSTOM_VARS = 40
+        const val CMD_SET_CUSTOM_VAR = 41
+        const val CMD_GET_TUNING_PARAMS = 43
+        const val CMD_SET_AUTOADD_CONFIG = 58
+        const val CMD_GET_AUTOADD_CONFIG = 59
+        const val CMD_SET_DEFAULT_FLOOD_SCOPE = 63
+        const val CMD_GET_DEFAULT_FLOOD_SCOPE = 64
+        const val CMD_SET_DEVICE_PIN = 37
+        const val CMD_SET_PATH_HASH_MODE = 61
+        const val CMD_CAPTURE_CLI_REPLIES = 120   // our companion firmware only
 
         const val TXT_TYPE_CLI_DATA = 1
 
@@ -47,12 +68,32 @@ class CompanionRadio(private val link: CompanionLink) {
         const val RESP_SENT = 6
         const val RESP_DEVICE_INFO = 13
         const val RESP_CLI_REPLY = 29
+        const val RESP_PRIVATE_KEY = 14
+        const val RESP_DISABLED = 15
+        const val RESP_CHANNEL_INFO = 18
+        const val RESP_CUSTOM_VARS = 21
+        const val RESP_TUNING_PARAMS = 23
+        const val RESP_AUTOADD_CONFIG = 25
+        const val RESP_DEFAULT_FLOOD_SCOPE = 28
         const val PUSH_LOGIN_SUCCESS = 0x85
         const val PUSH_LOGIN_FAIL = 0x86
         const val PUSH_BINARY_RESPONSE = 0x8C
+        const val PUSH_CLI_REPLY_CAPTURED = 0xC0   // [code][sender prefix 6][timestamp 4][text]
     }
 
     var nodeName: String = ""
+        private set
+
+    /** The companion's answer to the app's start: its own settings (see [SelfInfo]). */
+    var selfInfo: ByteArray = ByteArray(0)
+        private set
+
+    /** The device query's answer: PIN, client repeat and path hash mode are in it (see [deviceInfo]). */
+    var deviceInfoRaw: ByteArray = ByteArray(0)
+        private set
+
+    /** The most channels it has (from the device query). */
+    var maxChannels: Int = 0
         private set
 
     // frames that came while waiting for something else (a late response, a push)
@@ -74,7 +115,7 @@ class CompanionRadio(private val link: CompanionLink) {
             while (true) {
                 val f = link.frames.receive()
                 if (match(f)) return@withTimeoutOrNull f
-                if ((f[0].toInt() and 0xff) == PUSH_BINARY_RESPONSE) {
+                if ((f[0].toInt() and 0xff) == PUSH_BINARY_RESPONSE || (f[0].toInt() and 0xff) == PUSH_CLI_REPLY_CAPTURED) {
                     pending.addLast(f)
                     while (pending.size > 32) pending.removeFirst()
                 }
@@ -98,6 +139,7 @@ class CompanionRadio(private val link: CompanionLink) {
         while (link.frames.tryReceive().isSuccess) { }
         val name = "LoRa OTA".toByteArray()
         val f = command(byteArrayOf(CMD_APP_START.toByte(), 3, 0, 0, 0, 0, 0, 0) + name, 5000, RESP_SELF_INFO)
+        selfInfo = f
         // self info: ... name at the end (after the fixed fields)
         nodeName = if (f.size > 58) String(f, 58, f.size - 58, Charsets.UTF_8).trimEnd('\u0000') else ""
     }
@@ -106,6 +148,8 @@ class CompanionRadio(private val link: CompanionLink) {
     suspend fun deviceInfo(): Pair<String, String> {
         val f = command(byteArrayOf(CMD_DEVICE_QUERY.toByte(), 3), 5000, RESP_DEVICE_INFO)
         // [code][ver][contacts/2][channels][pin 4][build date 12][manufacturer 40][version 20]
+        deviceInfoRaw = f
+        if (f.size > 3) maxChannels = f[3].toInt() and 0xff
         fun text(from: Int, len: Int): String {
             if (f.size <= from) return ""
             val raw = f.copyOfRange(from, minOf(f.size, from + len))
@@ -195,4 +239,125 @@ class CompanionRadio(private val link: CompanionLink) {
         val f = command(byteArrayOf(CMD_RUN_CLI_COMMAND.toByte()) + command.toByteArray(), 5000, RESP_CLI_REPLY)
         return String(f, 1, f.size - 1, Charsets.UTF_8)
     }
+
+    /**
+     * Console replies straight to the app for [secs] (0: back to the message queue), so reading a
+     * repeater's settings leaves the user's unread messages alone. False: the companion has no such
+     * command (stock firmware).
+     */
+    suspend fun captureCli(secs: Int): Boolean = try {
+        command(byteArrayOf(CMD_CAPTURE_CLI_REPLIES.toByte(), secs.coerceIn(0, 120).toByte()), 5000, RESP_OK)
+        true
+    } catch (e: CompanionError) {
+        false
+    }
+
+    /**
+     * The contact's console reply that starts with "[tag]|" (a repeater sends back the 2-letter tag a
+     * command starts with), while [captureCli] is on; without the tag. Null if none came in time.
+     */
+    suspend fun awaitCliReply(contact: Contact, tag: String, timeoutMs: Long): String? {
+        val prefix = contact.publicKey.copyOfRange(0, 6)
+        val head = "$tag|".toByteArray()
+        val f = lock.withLock {
+            await(timeoutMs) {
+                code(it) == PUSH_CLI_REPLY_CAPTURED && it.size >= 11 + head.size && it.copyOfRange(1, 7).contentEquals(prefix) &&
+                    it.copyOfRange(11, 11 + head.size).contentEquals(head)
+            }
+        } ?: return null
+        return String(f, 11 + head.size, f.size - 11 - head.size, Charsets.UTF_8)
+    }
+
+    /** Console replies that came late (to a command that timed out): dropped, they would only pile up. */
+    suspend fun dropCliReplies(contact: Contact) = lock.withLock {
+        val prefix = contact.publicKey.copyOfRange(0, 6)
+        fun his(f: ByteArray) = code(f) == PUSH_CLI_REPLY_CAPTURED && f.size >= 11 && f.copyOfRange(1, 7).contentEquals(prefix)
+        while (true) {
+            val f = link.frames.tryReceive().getOrNull() ?: break
+            if (code(f) == PUSH_BINARY_RESPONSE || (code(f) == PUSH_CLI_REPLY_CAPTURED && !his(f))) pending.addLast(f)
+        }
+        pending.removeAll { his(it) }
+    }
+
+    // ---- the companion's own settings: backup and restore ----
+
+    /** A command that answers OK (or an error). */
+    private suspend fun ok(frame: ByteArray) {
+        command(frame, 5000, RESP_OK)
+    }
+
+    private fun le(v: Int) = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
+
+    /** [rx delay, airtime factor], each x1000. */
+    suspend fun tuning(): Pair<Int, Int> {
+        val f = command(byteArrayOf(CMD_GET_TUNING_PARAMS.toByte()), 5000, RESP_TUNING_PARAMS)
+        val b = ByteBuffer.wrap(f, 1, 8).order(ByteOrder.LITTLE_ENDIAN)
+        return b.int to b.int
+    }
+
+    suspend fun setTuning(rx: Int, af: Int) = ok(byteArrayOf(CMD_SET_TUNING_PARAMS.toByte()) + le(rx) + le(af))
+
+    /** [config, max hops]. */
+    suspend fun autoAdd(): Pair<Int, Int> {
+        val f = command(byteArrayOf(CMD_GET_AUTOADD_CONFIG.toByte()), 5000, RESP_AUTOADD_CONFIG)
+        return (f[1].toInt() and 0xff) to (if (f.size > 2) f[2].toInt() and 0xff else 0)
+    }
+
+    suspend fun setAutoAdd(config: Int, maxHops: Int) =
+        ok(byteArrayOf(CMD_SET_AUTOADD_CONFIG.toByte(), config.toByte(), maxHops.toByte()))
+
+    /** The default flood scope: its name (31 bytes) and key (16), or empty for none. */
+    suspend fun floodScope(): ByteArray {
+        val f = command(byteArrayOf(CMD_GET_DEFAULT_FLOOD_SCOPE.toByte()), 5000, RESP_DEFAULT_FLOOD_SCOPE)
+        return f.copyOfRange(1, f.size)
+    }
+
+    suspend fun setFloodScope(nameAndKey: ByteArray) = ok(byteArrayOf(CMD_SET_DEFAULT_FLOOD_SCOPE.toByte()) + nameAndKey)
+
+    /** "name:value,name:value" (sensor and GPS settings). */
+    suspend fun customVars(): String {
+        val f = command(byteArrayOf(CMD_GET_CUSTOM_VARS.toByte()), 5000, RESP_CUSTOM_VARS)
+        return String(f, 1, f.size - 1, Charsets.UTF_8)
+    }
+
+    suspend fun setCustomVar(name: String, value: String) =
+        ok(byteArrayOf(CMD_SET_CUSTOM_VAR.toByte()) + "$name:$value".toByteArray())
+
+    /** A channel slot: [idx][name 32][secret 16]; null when there is no such slot. */
+    suspend fun channel(idx: Int): ByteArray? = try {
+        command(byteArrayOf(CMD_GET_CHANNEL.toByte(), idx.toByte()), 5000, RESP_CHANNEL_INFO).copyOfRange(1, 50)
+    } catch (e: CompanionError) {
+        null
+    }
+
+    suspend fun setChannel(slot: ByteArray) = ok(byteArrayOf(CMD_SET_CHANNEL.toByte()) + slot)
+
+    /** The 64-byte identity, or null when its firmware does not give it out. */
+    suspend fun privateKey(): ByteArray? {
+        val f = command(byteArrayOf(CMD_EXPORT_PRIVATE_KEY.toByte()), 5000, RESP_PRIVATE_KEY, RESP_DISABLED)
+        return if (code(f) == RESP_PRIVATE_KEY && f.size >= 65) f.copyOfRange(1, 65) else null
+    }
+
+    suspend fun setPrivateKey(key: ByteArray) = ok(byteArrayOf(CMD_IMPORT_PRIVATE_KEY.toByte()) + key)
+
+    suspend fun setName(name: String) = ok(byteArrayOf(CMD_SET_ADVERT_NAME.toByte()) + name.toByteArray())
+
+    /** [repeat]: the client repeat goes with the radio settings (left out it would be turned off). */
+    suspend fun setRadio(freqKhz: Int, bwHz: Int, sf: Int, cr: Int, repeat: Int) =
+        ok(byteArrayOf(CMD_SET_RADIO_PARAMS.toByte()) + le(freqKhz) + le(bwHz) + byteArrayOf(sf.toByte(), cr.toByte(), repeat.toByte()))
+
+    suspend fun setTxPower(dbm: Int) = ok(byteArrayOf(CMD_SET_RADIO_TX_POWER.toByte(), dbm.toByte()))
+
+    suspend fun setLatLon(lat: Int, lon: Int) = ok(byteArrayOf(CMD_SET_ADVERT_LATLON.toByte()) + le(lat) + le(lon))
+
+    /** [manual add, telemetry modes, advert location policy, multi acks]. */
+    suspend fun setOther(manualAdd: Int, telemetry: Int, locPolicy: Int, multiAcks: Int) =
+        ok(byteArrayOf(CMD_SET_OTHER_PARAMS.toByte(), manualAdd.toByte(), telemetry.toByte(), locPolicy.toByte(), multiAcks.toByte()))
+
+    suspend fun setPin(pin: Int) = ok(byteArrayOf(CMD_SET_DEVICE_PIN.toByte()) + le(pin))
+
+    suspend fun setHashMode(mode: Int) = ok(byteArrayOf(CMD_SET_PATH_HASH_MODE.toByte(), 0, mode.toByte()))
+
+    /** Adds (or updates) a contact from its frame as [contacts] gives it. */
+    suspend fun addContact(frame: ByteArray) = restorePath(Contact(frame))
 }

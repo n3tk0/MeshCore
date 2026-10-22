@@ -26,6 +26,19 @@ import io.github.n3tk0.loraota.ota.AirtimeBudget
 import io.github.n3tk0.loraota.ota.OtaFailed
 import io.github.n3tk0.loraota.ota.Phase
 import io.github.n3tk0.loraota.ota.estimateMinutes
+import io.github.n3tk0.loraota.backup.Backup
+import io.github.n3tk0.loraota.backup.BackupDiff
+import io.github.n3tk0.loraota.backup.BackupItem
+import io.github.n3tk0.loraota.backup.BackupStore
+import io.github.n3tk0.loraota.backup.CompanionBackup
+import io.github.n3tk0.loraota.backup.DeviceKind
+import io.github.n3tk0.loraota.backup.DiffRow
+import io.github.n3tk0.loraota.backup.NoAnswer
+import io.github.n3tk0.loraota.backup.PasswordBox
+import io.github.n3tk0.loraota.backup.BackupItem.Companion.GROUP_SETTING
+import io.github.n3tk0.loraota.backup.RepeaterBackup
+import io.github.n3tk0.loraota.backup.RestoreResult
+import io.github.n3tk0.loraota.backup.WrongPassword
 import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.CompanionLink
 import io.github.n3tk0.loraota.ble.Contact
@@ -57,7 +70,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Step { COMPANION, REPEATER, UPDATE, FLASH }
+enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP }
 
 /** What the flash screen writes: the repeater the app is logged in to, or the companion itself. */
 enum class FlashTarget { REPEATER, COMPANION }
@@ -174,6 +187,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var companionDevice: BluetoothDevice? = null
     private var flashingCompanion = false   // its link drops on purpose
 
+    // backups of the settings (the companion's or the repeater's), kept on the phone
+    private val backupStore = BackupStore(app)
+    var backupKind by mutableStateOf(DeviceKind.COMPANION)   // whose backups the backup screen shows
+    var backups by mutableStateOf<List<Backup>>(emptyList())
+    var canReadRepeater by mutableStateOf<Boolean?>(null)   // false: a stock companion cannot read its console
+    var restoreFrom by mutableStateOf<Backup?>(null)        // the backup whose differences are shown
+    var restoreRows by mutableStateOf<List<DiffRow>>(emptyList())
+    val restoreChecked = mutableStateMapOf<String, Boolean>()
+    var importText by mutableStateOf<String?>(null)         // an encrypted file: asks for its password
+    var updateBackupNote by mutableStateOf<String?>(null)   // in the update's 'are you sure': no backup, and why
+    private var backupReturn = Step.REPEATER
+
     init {
         BuildWatcher.resume(app)
         viewModelScope.launch {
@@ -272,6 +297,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         companionModel = ""
         companionVersion = ""
+        canReadRepeater = null   // another companion: asked again
         if (!link.connect(device)) throw Exception(str(R.string.msg_connect_failed))
         companion.start()
         companionDevice = device
@@ -303,6 +329,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun back() {
         when (step) {
             Step.FLASH -> closeFlash()
+            Step.BACKUP -> closeBackup()
             Step.UPDATE -> backToRepeaters()
             Step.REPEATER -> disconnect()
             Step.COMPANION -> {}
@@ -581,6 +608,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
             patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
         }
+        updateBackupNote = autoBackup(DeviceKind.REPEATER)
         confirmUpdate = true
     }
 
@@ -719,6 +747,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (env != null && BoardCheck.matches(env, companionModel) == false) {
                 warnings.add(str(R.string.warn_board, companionModel, env))
             }
+            autoBackup(DeviceKind.COMPANION)?.let { warnings.add(it) }
             flashPlan = FlashPlan(img, "$companionName (${dev.address})", dev.address, warnings, companionName)
             return@work
         }
@@ -731,6 +760,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (env != null && BoardCheck.role(env) != Role.REPEATER) warnings.add(str(R.string.warn_not_repeater, env))
         val running = oldImage?.env
         if (env != null && running != null && env != running) warnings.add(str(R.string.warn_not_running, running, env))
+        // before `start ota`: afterwards the repeater is in its bootloader
+        autoBackup(DeviceKind.REPEATER)?.let { warnings.add(it) }
 
         if (!img.isZip) {
             // ESP32: nothing tells the board before the write
@@ -825,6 +856,210 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             release()
         }
+    }
+
+    // ---- backups of the settings ----
+
+    /** The device the backup screen is for: its public key (hex), "" when not connected. */
+    private fun deviceKey(kind: DeviceKind): String = when (kind) {
+        DeviceKind.COMPANION -> companion.selfInfo.takeIf { it.size >= 36 }?.let { hex(it.copyOfRange(4, 36)) } ?: ""
+        DeviceKind.REPEATER -> repeater?.let { hex(it.publicKey) } ?: ""
+    }
+
+    val backupDevice get() = deviceKey(backupKind)
+
+    val backupDeviceName get() = if (backupKind == DeviceKind.COMPANION) companionName else repeater?.name ?: ""
+
+    fun openBackup(kind: DeviceKind) {
+        backupReturn = step
+        backupKind = kind
+        restoreFrom = null
+        message = ""
+        step = Step.BACKUP
+        loadBackups()
+        if (kind == DeviceKind.REPEATER && canReadRepeater == null) {
+            viewModelScope.launch { canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false) }
+        }
+    }
+
+    fun closeBackup() {
+        restoreFrom = null
+        importText = null
+        step = backupReturn
+    }
+
+    /** This device's backups first, then those of others of its kind (e.g. for a board that replaces one). */
+    private fun loadBackups() {
+        val dev = backupDevice
+        val kind = backupKind
+        viewModelScope.launch {
+            // the keys are decrypted as they are read: not on the main thread
+            val all = withContext(Dispatchers.IO) { backupStore.all() }
+            backups = all.filter { it.kind == kind }.sortedBy { if (it.deviceKey == dev) 0 else 1 }
+        }
+    }
+
+    fun backupNow() = work { makeBackup(backupKind, false) ; message = str(R.string.msg_backup_done) }
+
+    private suspend fun makeBackup(kind: DeviceKind, auto: Boolean): Backup {
+        val b = when (kind) {
+            DeviceKind.COMPANION -> {
+                working = str(R.string.working_backup_companion)
+                val items = CompanionBackup.read(companion)
+                Backup(kind, deviceKey(kind), companionName, System.currentTimeMillis(), auto,
+                    listOf(companionModel, companionVersion).filter { it.isNotEmpty() }.joinToString(" · "),
+                    items, CompanionBackup.privateKey(companion))
+            }
+            DeviceKind.REPEATER -> {
+                val r = repeater ?: throw Exception(str(R.string.msg_disconnected))
+                if (!RepeaterBackup.supported(companion)) {
+                    canReadRepeater = false
+                    throw Exception(str(R.string.backup_no_capture))
+                }
+                canReadRepeater = true
+                val items = readRepeater(r)
+                Backup(kind, deviceKey(kind), r.name, System.currentTimeMillis(), auto, info?.ident?.replace('|', ' ') ?: "", items)
+            }
+        }
+        val saved = withContext(Dispatchers.IO) { backupStore.save(b) }
+        if (step == Step.BACKUP) loadBackups()
+        return saved
+    }
+
+    /** Its console settings, and the admin password the app logged in with (the repeater does not give it). */
+    private suspend fun readRepeater(r: Contact): List<BackupItem> {
+        val items = try {
+            RepeaterBackup.read(companion, r, info != null) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
+        } catch (e: NoAnswer) {
+            throw Exception(str(R.string.backup_no_answer))
+        }
+        val pw = savedPassword(r) ?: return items
+        return items + BackupItem(GROUP_SETTING, RepeaterBackup.PASSWORD, RepeaterBackup.PASSWORD, pw)
+    }
+
+    /**
+     * Before every flash or update: a backup. Null when it is made; else why not (it goes on the
+     * 'are you sure', the flash itself still can go).
+     */
+    private suspend fun autoBackup(kind: DeviceKind): String? {
+        if (deviceKey(kind).isEmpty()) return null
+        return try {
+            makeBackup(kind, true)
+            null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            str(R.string.warn_no_backup, e.message ?: "")
+        }
+    }
+
+    /** 'Restore': reads the device now and shows what differs, all ticked. */
+    fun startRestore(b: Backup) = work {
+        val now = when (b.kind) {
+            DeviceKind.COMPANION -> {
+                working = str(R.string.working_backup_companion)
+                CompanionBackup.read(companion)
+            }
+            DeviceKind.REPEATER -> {
+                val r = repeater ?: return@work
+                if (!RepeaterBackup.supported(companion)) throw Exception(str(R.string.backup_no_capture))
+                readRepeater(r)
+            }
+        }
+        // the identity only with its private key (a file imported without its password has none)
+        val rows = BackupDiff.diff(b.items, now).filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+        restoreChecked.clear()
+        // the identity only when the user ticks it: it changes who the device is for the network
+        for (r in rows) restoreChecked[r.item.ref] = r.item.group != BackupItem.GROUP_KEY
+        restoreRows = rows
+        restoreFrom = b
+        if (rows.isEmpty()) message = str(R.string.restore_same)
+    }
+
+    fun closeRestore() {
+        restoreFrom = null
+        restoreRows = emptyList()
+    }
+
+    fun applyRestore() = work {
+        val b = restoreFrom ?: return@work
+        val items = restoreRows.map { it.item }.filter { restoreChecked[it.ref] == true }
+        if (items.isEmpty()) return@work
+        working = str(R.string.working_restore)
+        val res: RestoreResult = when (b.kind) {
+            DeviceKind.COMPANION -> {
+                val r = CompanionBackup.apply(companion, items, b.privateKey)
+                // a new identity or name: the companion as it is now
+                runCatching {
+                    companion.start()
+                    companionName = companion.nodeName.ifEmpty { companionName }
+                    loadRepeaters()
+                }
+                r
+            }
+            DeviceKind.REPEATER -> {
+                val r = repeater ?: return@work
+                val res = RepeaterBackup.apply(companion, r, items) { i, n -> working = str(R.string.working_restore_repeater, i, n) }
+                // the next login is with the restored admin password
+                items.firstOrNull { it.id == RepeaterBackup.PASSWORD && res.failed.none { f -> f.first.id == it.id } }
+                    ?.let { savePassword(r, it.value) }
+                res
+            }
+        }
+        restoreFrom = null
+        restoreRows = emptyList()
+        loadBackups()   // a restored identity makes other backups this device's
+        val restart = b.kind == DeviceKind.REPEATER && items.any { it.id in RepeaterBackup.NEEDS_RESTART } &&
+            res.failed.none { it.first.id in RepeaterBackup.NEEDS_RESTART }
+        message = if (res.failed.isEmpty()) str(R.string.restore_done, res.done)
+            else str(R.string.restore_partly, res.done, res.failed.joinToString(", ") { it.first.label.ifEmpty { it.first.id } })
+        if (restart) message += "\n" + str(R.string.restore_restart)
+        messageIsError = res.failed.isNotEmpty()
+    }
+
+    fun deleteBackup(b: Backup) {
+        backupStore.delete(b)
+        loadBackups()
+    }
+
+    /** 'Save as file': with a [password] all of it encrypted; without one no key, channels or passwords. */
+    fun exportBackup(b: Backup, uri: Uri, password: String) = work {
+        val text = withContext(Dispatchers.Default) { PasswordBox.export(b, password) }
+        withContext(Dispatchers.IO) {
+            ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(text.toByteArray()) }
+        }
+        message = str(if (password.isEmpty()) R.string.msg_export_no_key else R.string.msg_export_done)
+    }
+
+    /** A backup file: an encrypted one waits for its password ([importText]). */
+    fun pickImport(uri: Uri) = work {
+        val text = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { String(it.readBytes()) } }
+        val locked = try {
+            PasswordBox.needsPassword(text)
+        } catch (e: Exception) {
+            throw Exception(str(R.string.err_backup_file))
+        }
+        if (locked) importText = text else importBackup(text, "")
+    }
+
+    fun importWithPassword(password: String) = work {
+        val text = importText ?: return@work
+        importBackup(text, password)
+        importText = null
+    }
+
+    private suspend fun importBackup(text: String, password: String) {
+        val b = try {
+            withContext(Dispatchers.Default) { PasswordBox.import(text, password) }
+        } catch (e: WrongPassword) {
+            throw Exception(str(R.string.err_backup_password))
+        } catch (e: Exception) {
+            throw Exception(str(R.string.err_backup_file))
+        }
+        if (b.kind != backupKind) throw Exception(str(R.string.err_backup_kind))
+        withContext(Dispatchers.IO) { backupStore.save(b) }
+        loadBackups()
+        message = str(R.string.msg_import_done, b.deviceName)
     }
 
     // ---- a new build on GitHub ----
