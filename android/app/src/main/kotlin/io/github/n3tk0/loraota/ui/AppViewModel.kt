@@ -729,7 +729,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pickFlashFile(uri: Uri) = work {
         val data = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
-        flashImage = FlashImage(fileName(uri), data, null)
+        val name = fileName(uri)
+        flashImage = if (name.endsWith(".uf2", ignoreCase = true)) {
+            // the USB drive's file: made into the Bluetooth DFU .zip here
+            val zip = runCatching { withContext(Dispatchers.Default) { io.github.n3tk0.loraota.flash.Uf2.toDfuZip(data) } }
+                .getOrElse { throw Exception(str(R.string.err_flash_uf2, it.message ?: "")) }
+            FlashImage(name.dropLast(4) + ".zip", zip, null)
+        } else FlashImage(name, data, null)
     }
 
     /** 'Flash': checks the file, wakes the repeater's DFU mode and finds it, then asks before it writes. */
