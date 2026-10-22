@@ -18,7 +18,7 @@ void ota_stage_run(void);
 #define FLASH_HI   0x100000u
 #define APP        DFU_BANK_0_REGION_START
 #define QSPI_SIZE  0x200000u
-#define BACKUP_AT  0x180000u
+#define BACKUP_AT  0x130000u
 
 static fake_nvmc_t nvmc;
 static fake_qspi_t qspi;

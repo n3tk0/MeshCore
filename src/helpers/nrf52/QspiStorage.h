@@ -1,10 +1,13 @@
 #pragma once
 
 // The external QSPI flash of boards like the Xiao nRF52840 (2 MB): raw sectors for the repeater.
-//   0x000000 - 0x0FFFFF  LoRa OTA: the new image (the internal flash then needs no room for it)
-//   0x100000 - 0x17FFFF  mailbox: a ring of 16 KB slots, each save goes to the next (wear spread, and
+//   0x000000 - 0x0CFFFF  LoRa OTA: the new image (the internal flash then needs no room for it)
+//   0x0D0000 - 0x12FFFF  mailbox: a ring of 16 KB slots, each save goes to the next (wear spread, and
 //                        a power cut mid-save keeps the slot before)
-//   0x180000 - 0x1FFFFF  LoRa OTA: the image that ran before (rollback by our bootloader, see OtaStage.h)
+//   0x130000 - 0x1FFFFF  LoRa OTA: the image that ran before (rollback by our bootloader, see OtaStage.h)
+// Both images get 832 KB, more than the whole app area (792 KB), so rollback never has to be skipped.
+// Before 2026-10-22: 1 MB / 512 KB / 512 KB. A record written then keeps its own backup address, and
+// old mailbox slots that now fall in the ring still load (each has its magic and CRC).
 // The peripheral is turned on for each use and off again after a short idle time: it draws current.
 
 #include <Arduino.h>
@@ -14,12 +17,12 @@
 #include <nrfx_qspi.h>
 
 #define QSPI_OTA_ADDR        0x000000
-#define QSPI_OTA_SIZE        0x100000
-#define QSPI_MAILBOX_ADDR    0x100000
+#define QSPI_OTA_SIZE        0x0D0000
+#define QSPI_MAILBOX_ADDR    0x0D0000
 #define QSPI_MAILBOX_SLOT    0x4000
-#define QSPI_MAILBOX_SLOTS   32
-#define QSPI_BACKUP_ADDR     0x180000
-#define QSPI_BACKUP_SIZE     0x080000
+#define QSPI_MAILBOX_SLOTS   24
+#define QSPI_BACKUP_ADDR     0x130000
+#define QSPI_BACKUP_SIZE     0x0D0000
 #define QSPI_SECTOR          4096
 #define QSPI_IDLE_OFF_MS     2000
 
@@ -119,3 +122,7 @@ public:
     return true;
   }
 };
+
+static_assert(QSPI_OTA_ADDR + QSPI_OTA_SIZE <= QSPI_MAILBOX_ADDR, "QSPI layout");
+static_assert(QSPI_MAILBOX_ADDR + QSPI_MAILBOX_SLOTS * QSPI_MAILBOX_SLOT <= QSPI_BACKUP_ADDR, "QSPI layout");
+static_assert(QSPI_BACKUP_ADDR + QSPI_BACKUP_SIZE <= 0x200000, "QSPI layout: 2 MB flash");

@@ -22,7 +22,7 @@ the result and marks the record. The source is never written, so after a power c
 starts again.
 
 On boards with a QSPI flash (see below) the new image comes from there, and the running image is kept
-there too (0x180000). The new image then runs **on trial**: the firmware confirms it when an admin logs in, the
+there too (0x130000; both get 832 KB, more than the app area). The new image then runs **on trial**: the firmware confirms it when an admin logs in, the
 LoRa OTA app asks for INFO, or after 10 minutes. If it restarts 3 times without that (a crash, or a hang
 with the 60 s watchdog), the bootloader copies the old image back. `ota rollback` on the repeater does
 the same by hand.
@@ -79,6 +79,7 @@ free on a repeater; on a companion with ExtraFS do the erase that the OTAFIX REA
 | `0xFD7F8` | `"MOT1"` + features (1 staged install, 2 QSPI + rollback): the firmware reads it |
 | `0xFF000` | bootloader settings (28 bytes), then from `0x400` 24 record slots of 128 bytes |
 | QSPI `0x000000` | the new image (repeaters with `QSPI_STORAGE`) |
-| QSPI `0x180000` | the image that ran before (rollback) |
+| QSPI `0x0D0000` | the repeater's mailbox (24 slots of 16 KB) |
+| QSPI `0x130000` | the image that ran before (rollback) |
 
 A normal DFU (UF2, BLE) erases the settings page and with it every record.
