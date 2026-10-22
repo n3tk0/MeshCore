@@ -56,8 +56,10 @@ object BleDfu {
     /**
      * Flashes the DFU .zip: the device's application jumps to its bootloader (legacy buttonless DFU, the
      * Adafruit BLEDfu service), then the image goes over. [progress] gets 0..100, [log] the library's steps.
+     * [bonded]: a companion (PIN bond kept); a repeater is never bonded.
      */
-    suspend fun flash(ctx: Context, address: String, name: String, zip: File, log: (String) -> Unit, progress: (Int) -> Unit) {
+    suspend fun flash(ctx: Context, address: String, name: String, zip: File, bonded: Boolean, log: (String) -> Unit,
+              progress: (Int) -> Unit) {
         val done = CompletableDeferred<Unit>()
         val listener = object : DfuProgressListenerAdapter() {
             override fun onProgressChanged(deviceAddress: String, percent: Int, speed: Float, avgSpeed: Float,
@@ -75,15 +77,17 @@ object BleDfu {
         try {
             val starter = DfuServiceInitiator(address)
                 .setDeviceName(name)
-                .setKeepBond(true)   // the companion's PIN bond stays
                 .setForceDfu(false)
-                .setPacketsReceiptNotificationsEnabled(true)
-                .setPacketsReceiptNotificationsValue(8)
                 .setUnsafeExperimentalButtonlessServiceInSecureDfuEnabled(true)
-                // the Adafruit bootloader comes up on the address + 1 unless the phone is bonded (a repeater
-                // never is): without this the library waits on the old address, GATT CONN TIMEOUT
-                .setForceScanningForNewAddressInLegacyDfu(true)
                 .setScanTimeout(10_000)   // the bootloader starts its SoftDevice first
+            if (bonded) {
+                starter.setKeepBond(true)   // the companion's PIN bond stays
+                    .setPacketsReceiptNotificationsEnabled(true)
+                    .setPacketsReceiptNotificationsValue(8)
+            }
+            // a repeater (never bonded): the library's own defaults, as the nRF Device Firmware Update app uses
+            // them; with receipts every 8 packets and a forced scan a Xiao stopped at 0%, that app's flash went
+            starter
                 // a foreground service: Android does not stop it mid-write when the app goes to the background
                 .setForeground(true)
                 .setDisableNotification(false)

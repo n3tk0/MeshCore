@@ -842,7 +842,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Unit
         }
         log("${p.name} $address, ${p.image.data.size} B")
-        BleDfu.flash(ctx, address, p.name, zip, log) { flashPercent = it }
+        BleDfu.flash(ctx, address, p.name, zip, flashTarget == FlashTarget.COMPANION, log) { flashPercent = it }
     }
 
     private suspend fun flashWifi(img: FlashImage) {
