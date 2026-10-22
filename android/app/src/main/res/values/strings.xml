@@ -328,4 +328,7 @@
     <string name="flash_log_title">Лог на последния запис по Bluetooth</string>
     <string name="flash_log_copy">Копирай</string>
     <string name="err_flash_uf2">Този .uf2 не става за запис по Bluetooth: %1$s</string>
+    <string name="status_batt_current">Батерия от сензора (INA219): ток %1$d mA</string>
+    <string name="status_batt_charging">Батерия от сензора (INA219): зарежда с %1$d mA</string>
+    <string name="status_batt_discharging">Батерия от сензора (INA219): разрежда с %1$d mA</string>
 </resources>

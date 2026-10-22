@@ -124,6 +124,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var repeater by mutableStateOf<Contact?>(null)
     var info by mutableStateOf<OtaProtocol.Info?>(null)   // null: the repeater has no LoRa OTA (stock firmware)
     var status by mutableStateOf<RepeaterStatus?>(null)
+    /** The battery from a current sensor (INA219) in the repeater's telemetry; null without one. */
+    var sensorBattery by mutableStateOf<io.github.n3tk0.loraota.ota.RepeaterTelemetry.Battery?>(null)
     var routeHops by mutableStateOf<Int?>(null)   // hops on the route the login learned; null: none learned
     val direct get() = routeHops == 0   // only then the update can go
     var otaChecked by mutableStateOf(false)   // the OTA check got to its end (an answer or none)
@@ -373,6 +375,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         repeater = learned ?: contact
         info = null
         status = null
+        sensorBattery = null
         otaChecked = false
         oldImage = null
         newImage = null
@@ -409,6 +412,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         routeHops = hops
         working = str(R.string.working_status)
         status = readStatus(r)
+        // the battery from a sensor: a stock repeater reports its board's own reading (0.45 V on a Xiao without
+        // its battery pins) also when an INA219 measures the battery
+        if (status != null) sensorBattery = readSensorBattery(r)
         working = str(R.string.working_ota)
         val i = try {
             session(r).info(OTA_CHECK_MS, 1)
@@ -421,6 +427,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         resumable = i?.state == OtaProtocol.STATE_PAUSED
         if (i != null) loadReleases()   // a route with hops is shown on the screen (and keeps Update off)
     }
+
+    private suspend fun readSensorBattery(r: Contact): io.github.n3tk0.loraota.ota.RepeaterTelemetry.Battery? = runCatching {
+        val tag = companion.sendRequest(r, io.github.n3tk0.loraota.ota.RepeaterTelemetry.request())
+        companion.awaitResponse(tag, 12_000)?.let { io.github.n3tk0.loraota.ota.RepeaterTelemetry.parse(it).battery() }
+    }.getOrNull()
 
     /** One try: 'Check again' asks again, and a slow link should not hold the OTA check back. */
     private suspend fun readStatus(r: Contact): RepeaterStatus? {
@@ -501,6 +512,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             repeater = null
             info = null
             status = null
+            sensorBattery = null
         }
     }
 

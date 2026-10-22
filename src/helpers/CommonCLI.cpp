@@ -310,7 +310,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
                                     ? (_board->isSolarChargerActive() ? "yes" : "no")
                                     : "n/a";
       snprintf(reply, 160, "batt:%u mV usb:%s solar_chg:%s ext:%s charger:%s",
-              (unsigned)_board->getBattMilliVolts(),
+              (unsigned)(_sensors->getBatteryMilliVolts() ? _sensors->getBatteryMilliVolts() : _board->getBattMilliVolts()),
               usb_state,
               solar_state,
               _board->isExternalPowered() ? "yes" : "no",
