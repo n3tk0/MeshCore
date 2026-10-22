@@ -198,6 +198,8 @@ private fun LanguageMenu(enabled: Boolean, setLang: (String) -> Unit) {
 @Composable
 private fun BottomStatus(vm: AppViewModel) {
     val showBusy = vm.busy && !vm.running
+    // the login sheet shows them itself, not twice
+    if (vm.step == Step.REPEATER && vm.loginSheet != null) return
     if (!showBusy && vm.message.isEmpty()) return
     Surface(tonalElevation = 3.dp, modifier = Modifier.navigationBarsPadding()) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -232,7 +234,6 @@ private fun CompanionStep(vm: AppViewModel) {
 @Composable
 private fun RepeaterStep(vm: AppViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
-    var chosen by remember { mutableStateOf<Contact?>(null) }
 
     CompanionCard(vm)
     OutlinedTextField(
@@ -252,12 +253,12 @@ private fun RepeaterStep(vm: AppViewModel) {
     for ((title, list) in groups) {
         if (list.isEmpty()) continue
         Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-        for (c in list) RepeaterRow(vm, c) { vm.message = ""; chosen = c }
+        for (c in list) RepeaterRow(vm, c) { vm.message = ""; vm.loginSheet = c }
     }
 
-    chosen?.let { c ->
+    vm.loginSheet?.let { c ->
         val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(onDismissRequest = { chosen = null }, sheetState = sheet) {
+        ModalBottomSheet(onDismissRequest = { vm.loginSheet = null }, sheetState = sheet) {
             LoginSheet(vm, c)
         }
     }

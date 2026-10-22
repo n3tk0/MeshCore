@@ -132,6 +132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
     var flashDone by mutableStateOf(false)
+    var loginSheet by mutableStateOf<Contact?>(null)   // the repeater whose login sheet is open
     var firmwareTab by mutableStateOf(0)   // the repeater's firmware: 0 over LoRa, 1 over Bluetooth / Wi-Fi
     var companionModel by mutableStateOf("")
     var companionVersion by mutableStateOf("")
@@ -144,6 +145,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (step != Step.COMPANION && !flashingCompanion) {
                     message = str(R.string.msg_disconnected)
                     messageIsError = true
+                    loginSheet = null
                     step = Step.COMPANION
                 }
             }
@@ -264,6 +266,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        loginSheet = null
         step = Step.COMPANION
         devices.clear()   // a new connect waits for a new scan, after the clean-up
         viewModelScope.launch {
@@ -310,6 +313,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         flashTarget = FlashTarget.REPEATER
         flashImage = null
         flashDone = false
+        loginSheet = null
         step = Step.UPDATE
         // not read back: the pre-login route (reset for the login) says nothing about now
         inspect(learned ?: contact, learned?.hops)
