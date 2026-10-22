@@ -59,12 +59,17 @@ import io.github.n3tk0.loraota.ota.hex
 @Composable
 fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
     val ctx = LocalContext.current
+    val scroll = rememberScrollState()
+    // the list of repeaters is long: the login's progress and its result are below it, out of sight
+    LaunchedEffect(vm.busy, vm.message) {
+        if (vm.step == Step.REPEATER && (vm.busy || vm.message.isNotEmpty())) scroll.animateScrollTo(scroll.maxValue)
+    }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier
                 .safeDrawingPadding()
                 .imePadding()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -80,7 +85,7 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                 Step.UPDATE -> UpdateStep(vm)
             }
             if (vm.step != Step.UPDATE) {
-                if (vm.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (vm.busy) Busy(vm)
                 Message(vm)
             }
         }
@@ -194,6 +199,18 @@ private fun UpdateStep(vm: AppViewModel) {
         }
         // a message about the cut-short update already says what to do
         if ((info.state == OtaProtocol.STATE_PAUSED || vm.resumable) && vm.message.isEmpty()) Text(stringResource(R.string.paused_hint))
+        if (!vm.companionOta) Warning(stringResource(R.string.companion_no_ota))
+    }
+    StatusCard(vm)
+    if (info == null) {
+        // a stock repeater (or the answer got lost): login and status only
+        if (!vm.busy) {
+            Warning(stringResource(R.string.no_ota))
+            OutlinedButton(onClick = { vm.recheck() }) { Text(stringResource(R.string.recheck)) }
+        }
+        if (vm.busy) Busy(vm)
+        Message(vm)
+        return
     }
 
     Text(stringResource(R.string.new_firmware), style = MaterialTheme.typography.titleMedium)
@@ -217,7 +234,7 @@ private fun UpdateStep(vm: AppViewModel) {
     if (vm.inPlace()) InPlaceWarning(detail = true)
     if (vm.nrfCopy()) CopyNote()
 
-    val ready = vm.oldImage != null && vm.newImage != null && info?.enabled == true
+    val ready = vm.oldImage != null && vm.newImage != null && info.enabled && vm.direct && vm.companionOta
     val continuing = info?.state == OtaProtocol.STATE_PAUSED || vm.resumable
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Button(onClick = { vm.update() }, enabled = ready && !vm.busy) {
@@ -227,7 +244,7 @@ private fun UpdateStep(vm: AppViewModel) {
     }
 
     vm.phase?.let { PhaseView(vm, it) }
-    if (vm.busy && vm.phase == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    if (vm.busy && vm.phase == null) Busy(vm)
     Message(vm)
     if (vm.done) Text(stringResource(R.string.done_hint))
 
@@ -288,6 +305,40 @@ private fun UpdateStep(vm: AppViewModel) {
         for (line in vm.log.takeLast(10)) Text(line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
     }
     Spacer(Modifier.height(24.dp))
+}
+
+@Composable
+private fun Busy(vm: AppViewModel) {
+    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    if (vm.working.isNotEmpty()) Text(vm.working, style = MaterialTheme.typography.bodyMedium)
+}
+
+/** What every repeater tells an admin, also one with stock firmware. */
+@Composable
+private fun StatusCard(vm: AppViewModel) {
+    val s = vm.status
+    if (s == null) {
+        if (!vm.busy) Text(stringResource(R.string.status_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(R.string.status_title), style = MaterialTheme.typography.labelMedium)
+            Text(stringResource(R.string.status_batt_uptime, s.battMv / 1000.0, duration(s.upTimeSecs)))
+            Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi, s.lastSnr ?: 0.0), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun duration(secs: Long): String {
+    val mins = secs / 60
+    return when {
+        mins >= 24 * 60 -> stringResource(R.string.dur_days, (mins / (24 * 60)).toInt(), (mins / 60 % 24).toInt())
+        mins >= 60 -> stringResource(R.string.dur_hours, (mins / 60).toInt(), (mins % 60).toInt())
+        else -> stringResource(R.string.dur_mins, mins.toInt())
+    }
 }
 
 @Composable

@@ -33,6 +33,7 @@ import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.OtaSession
 import io.github.n3tk0.loraota.ota.Releases
+import io.github.n3tk0.loraota.ota.RepeaterStatus
 import io.github.n3tk0.loraota.ota.SideRadio
 import io.github.n3tk0.loraota.ota.hex
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +50,8 @@ class Image(val name: String, val data: ByteArray, val env: String? = null) {
     val sha: String = hex(DetoolsPatch.sha256(data))
 }
 
+private const val OTA_CHECK_MS = 15_000L
+
 @SuppressLint("MissingPermission")
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx: Context get() = getApplication()
@@ -60,17 +63,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var busy by mutableStateOf(false)
     var message by mutableStateOf("")
     var messageIsError by mutableStateOf(false)
+    var working by mutableStateOf("")   // what a long step does now, under the progress bar
     val log = mutableStateListOf<String>()
 
     // companion
     val devices = mutableStateListOf<BluetoothDevice>()
     var scanning by mutableStateOf(false)
     var companionName by mutableStateOf("")
+    var companionOta by mutableStateOf(true)   // our companion firmware: it can go to the side channel
 
     // repeater
     val repeaters = mutableStateListOf<Contact>()
     var repeater by mutableStateOf<Contact?>(null)
-    var info by mutableStateOf<OtaProtocol.Info?>(null)
+    var info by mutableStateOf<OtaProtocol.Info?>(null)   // null: the repeater has no LoRa OTA (stock firmware)
+    var status by mutableStateOf<RepeaterStatus?>(null)
+    var direct by mutableStateOf(false)   // the learned route has no hop: only then the update can go
 
     // firmware
     var releases by mutableStateOf<List<FirmwareFile>>(emptyList())
@@ -131,6 +138,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 messageIsError = true
             } finally {
                 busy = false
+                working = ""
                 job = null
             }
         }
@@ -181,7 +189,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!link.connect(device)) throw Exception(str(R.string.msg_connect_failed))
         companion.start()
-        runCatching { companion.cli("tempradio off") }   // left on the side channel by an update cut short
+        // left on the side channel by an update cut short; a stock companion has no such command
+        companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
         repeaters.clear()
         // the ones next to us first: only those can be updated
@@ -210,24 +219,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun login(contact: Contact, password: String) = work {
         // log in by flood, so both sides learn the route: the update only goes when it has no hop
         companion.resetPath(contact)
+        working = str(R.string.working_login)
         val learned = try {
             if (!companion.login(contact, password)) throw Exception(str(R.string.msg_not_admin))
             delay(4000)   // the companion sends its route back to the repeater
-            val now = companion.contact(contact.publicKey)
-            val hops = now?.outPathLen ?: 0xFF
-            if (now == null || hops == 0xFF || (hops and 63) != 0) {
-                throw Exception(if (hops == 0xFF) str(R.string.msg_no_route) else str(R.string.msg_not_direct, hops and 63))
-            }
-            now
+            companion.contact(contact.publicKey) ?: contact
         } catch (e: Exception) {
             runCatching { companion.restorePath(contact) }
             throw e
         }
         savePassword(contact, password)
-        // the direct route just learned is the one to keep afterwards, not the older (longer) one
+        // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned
-        val i = session(contact).info()
-        info = i
+        info = null
+        status = null
         oldImage = null
         newImage = null
         patch = null
@@ -235,10 +240,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         sent = 0
         total = 0
         phase = null
-        resumable = i.state == OtaProtocol.STATE_PAUSED
         log.clear()
         step = Step.UPDATE
+        inspect(learned)
+    }
+
+    /** Again the status and the OTA check, e.g. when an answer got lost. */
+    fun recheck() = work {
+        val r = repeater ?: return@work
+        inspect(companion.contact(r.publicKey) ?: r)
+    }
+
+    /**
+     * The status (any repeater answers it), then whether the repeater has LoRa OTA: a stock MeshCore
+     * repeater does not answer the OTA request at all, so one short try, and 'Check again' on the screen.
+     */
+    private suspend fun inspect(r: Contact) {
+        working = str(R.string.working_status)
+        status = readStatus(r)
+        working = str(R.string.working_ota)
+        val i = try {
+            session(r).info(OTA_CHECK_MS, 1)
+        } catch (e: OtaFailed) {
+            if (e.res != R.string.err_no_answer) throw e
+            null
+        }
+        info = i
+        resumable = i?.state == OtaProtocol.STATE_PAUSED
+        val hops = r.outPathLen
+        direct = hops != 0xFF && (hops and 63) == 0
+        if (i == null) return
+        if (!direct) {
+            message = if (hops == 0xFF) str(R.string.msg_no_route) else str(R.string.msg_not_direct, hops and 63)
+            messageIsError = true
+        }
         loadReleases()
+    }
+
+    private suspend fun readStatus(r: Contact): RepeaterStatus? {
+        repeat(2) {
+            val tag = companion.sendRequest(r, RepeaterStatus.request())
+            companion.awaitResponse(tag, 15_000)?.let { resp -> RepeaterStatus.parse(resp)?.let { return it } }
+        }
+        return null
     }
 
     // admin passwords, per repeater, only on this phone (the app has no backup)
@@ -304,6 +348,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             restorePath()
             repeater = null
             info = null
+            status = null
         }
     }
 

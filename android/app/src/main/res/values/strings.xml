@@ -102,4 +102,18 @@
     <string name="in_place_title">ВНИМАНИЕ</string>
     <string name="in_place_text">Ако спре токът, трябва да се ходи на място.</string>
     <string name="in_place_detail">Новият firmware не се събира до стария на този repeater и се записва върху него. Опасни са последните около 20 секунди, докато repeater-ът копира: ако тогава спре токът, той остава без firmware и се оправя само на място (USB или Bluetooth).</string>
+    <string name="working_login">Влизам… (до 30 секунди)</string>
+    <string name="working_status">Чета статуса на repeater-а…</string>
+    <string name="working_ota">Проверявам има ли OTA по LoRa…</string>
+    <string name="status_title">Статус</string>
+    <string name="status_batt_uptime">Батерия %1$.2f V · работи от %2$s</string>
+    <string name="status_radio">Шум %1$d dBm · последен пакет RSSI %2$d dBm, SNR %3$.1f dB</string>
+    <string name="status_packets">Пакети: приети %1$d, изпратени %2$d · време в ефир %3$s</string>
+    <string name="status_none">Repeater-ът не върна статус.</string>
+    <string name="dur_days">%1$d д %2$d ч</string>
+    <string name="dur_hours">%1$d ч %2$d мин</string>
+    <string name="dur_mins">%1$d мин</string>
+    <string name="no_ota">Входът е успешен, но този repeater не отговаря на OTA по LoRa. Най-вероятно е със стандартния MeshCore firmware: за обновяване по LoRa първо му запиши нашия repeater firmware веднъж (USB или Bluetooth). Ако вече е с нашия, отговорът може да се е изгубил: натисни „Провери пак“.</string>
+    <string name="recheck">Провери пак</string>
+    <string name="companion_no_ota">Companion-ът е със стандартен firmware и не може да мине на страничния канал. За обновяване по LoRa му трябва нашият companion firmware.</string>
 </resources>

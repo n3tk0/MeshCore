@@ -75,8 +75,8 @@ class OtaSession(
 
     private fun statusTimeoutMs(): Long = (radio.airtime(40) * 2 * 1000).toLong() + 4000
 
-    suspend fun info(timeoutMs: Long = 20_000): OtaProtocol.Info {
-        val r = request(OtaProtocol.info(), timeoutMs, 2) ?: throw OtaFailed(R.string.err_no_answer)
+    suspend fun info(timeoutMs: Long = 20_000, tries: Int = 2): OtaProtocol.Info {
+        val r = request(OtaProtocol.info(), timeoutMs, tries) ?: throw OtaFailed(R.string.err_no_answer)
         if (r.status != 0) throw OtaFailed(OtaProtocol.statusRes(r.status))
         return OtaProtocol.parseInfo(r)
     }
