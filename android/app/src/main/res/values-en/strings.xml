@@ -106,13 +106,49 @@ Meanwhile the repeater does not forward messages. Stay next to it until it is do
     <string name="working_ota">Checking for LoRa OTA…</string>
     <string name="status_title">Status</string>
     <string name="status_batt_uptime">Battery %1$.2f V · up %2$s</string>
-    <string name="status_radio">Noise %1$d dBm · last packet RSSI %2$d dBm, SNR %3$.1f dB</string>
+    <string name="status_radio">Noise %1$d dBm · last packet RSSI %2$d dBm</string>
     <string name="status_packets">Packets: received %1$d, sent %2$d · airtime %3$s</string>
     <string name="status_none">The repeater sent no status.</string>
     <string name="dur_days">%1$dd %2$dh</string>
     <string name="dur_hours">%1$dh %2$dmin</string>
     <string name="dur_mins">%1$d min</string>
-    <string name="no_ota">Logged in, but this repeater does not answer LoRa OTA. Most likely it runs stock MeshCore firmware: to update it over LoRa, flash our repeater firmware once (USB or Bluetooth). If it already runs ours, the answer may have been lost: tap "Check again".</string>
+    <string name="no_ota">Logged in, but this repeater does not answer LoRa OTA. Most likely it runs stock MeshCore firmware: to update it over LoRa, flash our repeater firmware once. If it already runs ours, the answer may have been lost: tap "Check again". "Flash firmware" above writes ours over Bluetooth or Wi-Fi.</string>
     <string name="recheck">Check again</string>
     <string name="companion_no_ota">The companion runs stock firmware and cannot switch to the side channel. LoRa updates need our companion firmware.</string>
+    <string name="flash_open">Flash firmware…</string>
+    <string name="flash_companion_open">Flash the companion\'s firmware…</string>
+    <string name="flash_title">Firmware for %1$s</string>
+    <string name="flash_hint_repeater">nRF52 repeaters are flashed over Bluetooth (.zip), ESP32 over Wi-Fi (.bin). The app runs `start ota` in the repeater\'s console over LoRa, so stay within 10–30 m of it.</string>
+    <string name="flash_hint_companion">The companion is flashed over Bluetooth (.zip). The link drops; connect again afterwards.</string>
+    <string name="flash_board">Board: %1$s, firmware %2$s</string>
+    <string name="flash_none">No fitting firmware in the releases. Choose a file.</string>
+    <string name="flash_from_file">From a file (.zip / .bin)</string>
+    <string name="flash_start">Flash</string>
+    <string name="flash_confirm_text">File: %1$s
+Device: %2$s
+
+Do not cut the power and stay close until it is done (1–3 minutes).</string>
+    <string name="flash_progress">Writing: %1$d%%</string>
+    <string name="working_start_ota">Putting the repeater in update mode (start ota)…</string>
+    <string name="working_scan">Looking for the repeater over Bluetooth…</string>
+    <string name="working_wifi">Joining the Wi-Fi "MeshCore-OTA" (confirm in the Android dialog)…</string>
+    <string name="working_flash">Writing the firmware…</string>
+    <string name="warn_board_unknown">The board this file is for cannot be checked. Make sure it is for this device.</string>
+    <string name="warn_board">The board does not match: the device is "%1$s", the firmware is for %2$s.</string>
+    <string name="warn_not_repeater">This firmware is not for a repeater (%1$s).</string>
+    <string name="warn_not_companion">This firmware is not a Bluetooth companion (%1$s). After it the phone may not connect to the device.</string>
+    <string name="warn_not_running">The repeater now runs firmware for %1$s; this one is for %2$s.</string>
+    <string name="warn_many_dfu">%1$d devices nearby are in update mode. The strongest was picked: %2$s.</string>
+    <string name="warn_wifi">For ESP32 the board cannot be checked before the write.</string>
+    <string name="err_flash_need_zip">The companion and nRF52 repeaters are flashed with a .zip file.</string>
+    <string name="err_flash_need_bin">ESP32 repeaters are flashed with the .bin file (not -merged.bin).</string>
+    <string name="err_flash_bad_file">The file is not what its name says (.zip or .bin).</string>
+    <string name="err_no_dfu">The repeater did not show up over Bluetooth. Get closer to it and try again.</string>
+    <string name="err_no_wifi">The Wi-Fi "MeshCore-OTA" did not show up. Get closer to the repeater and try again.</string>
+    <string name="err_no_wifi_manual">Join the Wi-Fi "MeshCore-OTA" in the phone\'s settings, then tap "Flash" again.</string>
+    <string name="err_flash">The flash failed: %1$s</string>
+    <string name="msg_flash_done">Done: the firmware is written and the repeater restarts.</string>
+    <string name="msg_flash_done_companion">Done: the companion restarts. Connect to it again.</string>
+    <string name="reconnect">Connect again</string>
+    <string name="err_flash_is_nrf">This is an nRF52 repeater (it showed up over Bluetooth): choose its .zip. It restarts to leave update mode.</string>
 </resources>

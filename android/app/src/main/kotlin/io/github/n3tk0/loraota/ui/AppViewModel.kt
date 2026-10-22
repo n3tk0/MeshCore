@@ -10,6 +10,7 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelUuid
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -29,6 +30,11 @@ import io.github.n3tk0.loraota.ble.CompanionLink
 import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.delta.DeltaGenerator
 import io.github.n3tk0.loraota.delta.DetoolsPatch
+import io.github.n3tk0.loraota.flash.BleDfu
+import io.github.n3tk0.loraota.flash.BoardCheck
+import io.github.n3tk0.loraota.flash.FlashFailed
+import io.github.n3tk0.loraota.flash.Role
+import io.github.n3tk0.loraota.flash.WifiOta
 import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.OtaSession
@@ -43,7 +49,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Step { COMPANION, REPEATER, UPDATE }
+enum class Step { COMPANION, REPEATER, UPDATE, FLASH }
+
+/** What the flash screen writes: the repeater the app is logged in to, or the companion itself. */
+enum class FlashTarget { REPEATER, COMPANION }
+
+/** A file to flash: a DFU .zip (nRF52, Bluetooth) or an app image .bin (ESP32, Wi-Fi); [env] null: from a file. */
+class FlashImage(val name: String, val data: ByteArray, val env: String?) {
+    val isZip get() = name.endsWith(".zip", ignoreCase = true)
+}
+
+/** The 'are you sure' before a flash: where it goes and what did not check out. */
+class FlashPlan(val image: FlashImage, val device: String, val address: String?, val warnings: List<String>)
 
 /** A firmware image the user has: from a release or from a file. */
 class Image(val name: String, val data: ByteArray, val env: String? = null) {
@@ -77,7 +94,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var repeater by mutableStateOf<Contact?>(null)
     var info by mutableStateOf<OtaProtocol.Info?>(null)   // null: the repeater has no LoRa OTA (stock firmware)
     var status by mutableStateOf<RepeaterStatus?>(null)
-    var direct by mutableStateOf(false)   // the learned route has no hop: only then the update can go
+    var routeHops by mutableStateOf<Int?>(null)   // hops on the route the login learned; null: none learned
+    val direct get() = routeHops == 0   // only then the update can go
+    var otaChecked by mutableStateOf(false)   // the OTA check got to its end (an answer or none)
 
     // firmware
     var releases by mutableStateOf<List<FirmwareFile>>(emptyList())
@@ -104,10 +123,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var resumable by mutableStateOf(false)       // the repeater keeps an update cut short: 'Continue'
     private var job: Job? = null
 
+    // flash over Bluetooth (nRF52 DFU) or Wi-Fi (ESP32)
+    var flashTarget by mutableStateOf(FlashTarget.REPEATER)
+    var flashImage by mutableStateOf<FlashImage?>(null)
+    var flashPlan by mutableStateOf<FlashPlan?>(null)
+    var flashPercent by mutableStateOf(-1)   // -1: not writing
+    var flashDone by mutableStateOf(false)
+    var companionModel by mutableStateOf("")
+    var companionVersion by mutableStateOf("")
+    private var companionDevice: BluetoothDevice? = null
+    private var flashingCompanion = false   // its link drops on purpose
+
     init {
         link.onDisconnect = {
             viewModelScope.launch {
-                if (step != Step.COMPANION) {
+                if (step != Step.COMPANION && !flashingCompanion) {
                     message = str(R.string.msg_disconnected)
                     messageIsError = true
                     step = Step.COMPANION
@@ -189,6 +219,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!link.connect(device)) throw Exception(str(R.string.msg_connect_failed))
         companion.start()
+        companionDevice = device
         // left on the side channel by an update cut short; a stock companion has no such command
         companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
@@ -223,16 +254,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val learned = try {
             if (!companion.login(contact, password)) throw Exception(str(R.string.msg_not_admin))
             delay(4000)   // the companion sends its route back to the repeater
-            companion.contact(contact.publicKey) ?: contact
+            companion.contact(contact.publicKey)
         } catch (e: Exception) {
             runCatching { companion.restorePath(contact) }
             throw e
         }
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
-        repeater = learned
+        repeater = learned ?: contact
         info = null
         status = null
+        otaChecked = false
         oldImage = null
         newImage = null
         patch = null
@@ -242,20 +274,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         phase = null
         log.clear()
         step = Step.UPDATE
-        inspect(learned)
+        // not read back: the pre-login route (reset for the login) says nothing about now
+        inspect(learned ?: contact, learned?.hops)
     }
 
     /** Again the status and the OTA check, e.g. when an answer got lost. */
     fun recheck() = work {
-        val r = repeater ?: return@work
-        inspect(companion.contact(r.publicKey) ?: r)
+        val old = repeater ?: return@work
+        val now = companion.contact(old.publicKey)
+        if (now != null) repeater = now
+        inspect(now ?: old, now?.hops)
     }
 
     /**
      * The status (any repeater answers it), then whether the repeater has LoRa OTA: a stock MeshCore
      * repeater does not answer the OTA request at all, so one short try, and 'Check again' on the screen.
      */
-    private suspend fun inspect(r: Contact) {
+    private suspend fun inspect(r: Contact, hops: Int?) {
+        otaChecked = false
+        routeHops = hops
         working = str(R.string.working_status)
         status = readStatus(r)
         working = str(R.string.working_ota)
@@ -266,23 +303,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
         info = i
+        otaChecked = true
         resumable = i?.state == OtaProtocol.STATE_PAUSED
-        val hops = r.outPathLen
-        direct = hops != 0xFF && (hops and 63) == 0
-        if (i == null) return
-        if (!direct) {
-            message = if (hops == 0xFF) str(R.string.msg_no_route) else str(R.string.msg_not_direct, hops and 63)
-            messageIsError = true
-        }
-        loadReleases()
+        if (i != null) loadReleases()   // a route with hops is shown on the screen (and keeps Update off)
     }
 
+    /** One try: 'Check again' asks again, and a slow link should not hold the OTA check back. */
     private suspend fun readStatus(r: Contact): RepeaterStatus? {
-        repeat(2) {
-            val tag = companion.sendRequest(r, RepeaterStatus.request())
-            companion.awaitResponse(tag, 15_000)?.let { resp -> RepeaterStatus.parse(resp)?.let { return it } }
-        }
-        return null
+        val tag = companion.sendRequest(r, RepeaterStatus.request())
+        return companion.awaitResponse(tag, 12_000)?.let { RepeaterStatus.parse(it) }
     }
 
     // admin passwords, per repeater, only on this phone (the app has no backup)
@@ -360,8 +389,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (list.isFailure) {
             val why = list.exceptionOrNull()?.message ?: ""
             if (releases.isNotEmpty()) {
-                message = str(R.string.msg_releases_offline, why)   // no internet on site: the list kept last time
-                messageIsError = false
+                // no internet on site: the list kept last time (an error on screen stays)
+                if (!messageIsError || message.isEmpty()) {
+                    message = str(R.string.msg_releases_offline, why)
+                    messageIsError = false
+                }
             } else {
                 message = str(R.string.msg_releases_failed, why)
                 messageIsError = true
@@ -382,6 +414,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val nrf = info?.platform == OtaProtocol.PLATFORM_NRF52
         return releases.filter {
             // unknown board: at least the same chip family (the repeater also refuses an image for another chip)
+            it.hasLoraOta &&
             (if (env != null) it.env == env else it.env.contains("nrf52", ignoreCase = true) == nrf) &&
                 it.sha256 != oldImage?.sha
         }
@@ -395,8 +428,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pickFile(uri: Uri, isOld: Boolean) = work {
         val data = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
-        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file.bin"
-        val img = Image(name, data)
+        val img = Image(fileName(uri), data)
         if (isOld) {
             val i = info
             if (i != null && img.sha != hex(i.imageSha)) throw Exception(str(R.string.msg_not_running_firmware))
@@ -406,6 +438,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         patch = null
     }
+
+    /** The name the file has for the user (a content URI's last segment can be just an id). */
+    private fun fileName(uri: Uri): String =
+        runCatching {
+            ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
 
     fun sideRadio(): SideRadio = SideRadio(
         ((freqMhz.toDoubleOrNull() ?: 869.47) * 1000).toInt(),
@@ -476,6 +516,188 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             done = true
             info = runCatching { session(r).info() }.getOrNull() ?: info
             message = str(R.string.msg_verified, info?.ident?.replace('|', ' ') ?: "")
+        }
+    }
+
+    // ---- flash ----
+
+    fun openFlash(target: FlashTarget) {
+        flashTarget = target
+        flashImage = null
+        flashPlan = null
+        flashPercent = -1
+        flashDone = false
+        message = ""
+        step = Step.FLASH
+        if (releases.isEmpty()) loadReleases()
+        if (target == FlashTarget.COMPANION) work {
+            val (model, version) = companion.deviceInfo()
+            companionModel = model
+            companionVersion = version
+        }
+    }
+
+    fun closeFlash() {
+        if (flashTarget == FlashTarget.COMPANION) {
+            // after a flash (or a failed one) the companion is gone: back to the start
+            if (flashDone || flashingCompanion) {
+                flashingCompanion = false
+                devices.clear()
+                step = Step.COMPANION
+            } else step = Step.REPEATER
+        } else if (flashDone) {
+            backToRepeaters()   // it restarted with other firmware: log in again
+        } else step = Step.UPDATE
+    }
+
+    /** Releases that fit: the right role, and for a repeater whose chip is known the right file type. */
+    fun flashCandidates(): List<FirmwareFile> {
+        val platform = info?.platform
+        val running = oldImage?.env
+        return releases.filter {
+            it.hasDfu && when (flashTarget) {
+                FlashTarget.COMPANION -> BoardCheck.fitsCompanion(it.env) && it.dfuIsZip
+                FlashTarget.REPEATER -> BoardCheck.role(it.env) == Role.REPEATER && when (platform) {
+                    OtaProtocol.PLATFORM_NRF52 -> it.dfuIsZip
+                    OtaProtocol.PLATFORM_ESP32 -> !it.dfuIsZip
+                    else -> true
+                }
+            }
+        }.sortedBy {
+            // the board it runs now first
+            val same = if (flashTarget == FlashTarget.COMPANION) BoardCheck.matches(it.env, companionModel) == true
+                else it.env == running
+            if (same) 0 else 1
+        }
+    }
+
+    fun pickFlashRelease(f: FirmwareFile) = work {
+        val data = withContext(Dispatchers.IO) { Releases.downloadDfu(f, ctx.filesDir) }
+        flashImage = FlashImage(f.dfu, data, f.env)
+    }
+
+    fun pickFlashFile(uri: Uri) = work {
+        val data = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
+        flashImage = FlashImage(fileName(uri), data, null)
+    }
+
+    /** 'Flash': checks the file, wakes the repeater's DFU mode and finds it, then asks before it writes. */
+    fun flashCheck() = work {
+        val img = flashImage ?: return@work
+        val warnings = ArrayList<String>()
+        val zipData = img.data.size > 2 && img.data[0] == 'P'.code.toByte() && img.data[1] == 'K'.code.toByte()
+        if (img.isZip != zipData) throw Exception(str(R.string.err_flash_bad_file))
+        if (img.name.endsWith("-merged.bin", ignoreCase = true)) throw Exception(str(R.string.err_flash_need_bin))
+        val env = img.env
+        if (env == null) warnings.add(str(R.string.warn_board_unknown))
+
+        if (flashTarget == FlashTarget.COMPANION) {
+            if (!img.isZip) throw Exception(str(R.string.err_flash_need_zip))
+            val dev = companionDevice ?: return@work
+            if (env != null && !BoardCheck.fitsCompanion(env)) warnings.add(str(R.string.warn_not_companion, env))
+            if (env != null && BoardCheck.matches(env, companionModel) == false) {
+                warnings.add(str(R.string.warn_board, companionModel, env))
+            }
+            flashPlan = FlashPlan(img, "$companionName (${dev.address})", dev.address, warnings)
+            return@work
+        }
+
+        val r = repeater ?: return@work
+        when (info?.platform) {
+            OtaProtocol.PLATFORM_NRF52 -> if (!img.isZip) throw Exception(str(R.string.err_flash_need_zip))
+            OtaProtocol.PLATFORM_ESP32 -> if (img.isZip) throw Exception(str(R.string.err_flash_need_bin))
+        }
+        if (env != null && BoardCheck.role(env) != Role.REPEATER) warnings.add(str(R.string.warn_not_repeater, env))
+        val running = oldImage?.env
+        if (env != null && running != null && env != running) warnings.add(str(R.string.warn_not_running, running, env))
+
+        if (!img.isZip) {
+            // ESP32: nothing tells the board before the write
+            if (running == null) warnings.add(str(R.string.warn_wifi))
+            flashPlan = FlashPlan(img, WifiOta.SSID, null, warnings)
+            return@work
+        }
+        // nRF52: `start ota` over LoRa, then the repeater shows up over Bluetooth as <BOARD>_OTA
+        var devices = emptyList<io.github.n3tk0.loraota.flash.DfuDevice>()
+        for (attempt in 1..2) {
+            working = str(R.string.working_start_ota)
+            companion.sendRemoteCli(r, "start ota")
+            working = str(R.string.working_scan)
+            devices = BleDfu.scan(ctx, if (attempt == 1) 12_000 else 15_000)
+            if (devices.isNotEmpty()) break
+        }
+        val d = devices.firstOrNull() ?: run {
+            leaveDfuMode()   // it may have got the command and only be out of Bluetooth range
+            throw Exception(str(R.string.err_no_dfu))
+        }
+        if (devices.size > 1) warnings.add(str(R.string.warn_many_dfu, devices.size, d.name))
+        if (env != null && BoardCheck.matches(env, d.name) == false) warnings.add(str(R.string.warn_board, d.name, env))
+        flashPlan = FlashPlan(img, "${d.name} (${d.address})", d.address, warnings)
+    }
+
+    /** 'Cancel' on the dialog: an nRF52 repeater already advertises its DFU mode, a restart ends that. */
+    fun flashCancel() {
+        val p = flashPlan ?: return
+        flashPlan = null
+        if (flashTarget == FlashTarget.REPEATER && p.address != null) leaveDfuMode()
+    }
+
+    private fun leaveDfuMode() {
+        val r = repeater ?: return
+        viewModelScope.launch { runCatching { companion.sendRemoteCli(r, "reboot") } }
+    }
+
+    fun flashStart() {
+        val p = flashPlan ?: return
+        flashPlan = null
+        work {
+            flashPercent = 0
+            try {
+                if (p.address != null) flashBle(p) else flashWifi(p.image)
+            } catch (e: FlashFailed) {
+                throw Exception(str(R.string.err_flash, e.message ?: ""))
+            } finally {
+                flashPercent = -1
+            }
+            flashDone = true
+            message = str(if (flashTarget == FlashTarget.COMPANION) R.string.msg_flash_done_companion else R.string.msg_flash_done)
+        }
+    }
+
+    private suspend fun flashBle(p: FlashPlan) {
+        val address = p.address ?: return
+        val zip = java.io.File(ctx.cacheDir, "flash.zip")
+        withContext(Dispatchers.IO) { zip.writeBytes(p.image.data) }
+        if (flashTarget == FlashTarget.COMPANION) {
+            // the DFU library needs the device to itself
+            flashingCompanion = true
+            link.close()
+            delay(1500)
+        }
+        working = str(R.string.working_flash)
+        BleDfu.flash(ctx, address, p.device, zip) { flashPercent = it }
+    }
+
+    private suspend fun flashWifi(img: FlashImage) {
+        val r = repeater ?: return
+        working = str(R.string.working_start_ota)
+        companion.sendRemoteCli(r, "start ota")
+        if (info == null) {
+            // a stock repeater does not say its chip: an nRF52 shows up over Bluetooth instead of Wi-Fi
+            working = str(R.string.working_scan)
+            if (BleDfu.scan(ctx, 8_000).isNotEmpty()) {
+                leaveDfuMode()
+                throw Exception(str(R.string.err_flash_is_nrf))
+            }
+        } else delay(5000)   // the access point comes up
+        working = str(R.string.working_wifi)
+        val (network, release) = WifiOta.join(ctx, 60_000)
+            ?: throw Exception(str(if (Build.VERSION.SDK_INT < 29) R.string.err_no_wifi_manual else R.string.err_no_wifi))
+        try {
+            working = str(R.string.working_flash)
+            WifiOta.upload(network, img.data) { flashPercent = it }
+        } finally {
+            release()
         }
     }
 

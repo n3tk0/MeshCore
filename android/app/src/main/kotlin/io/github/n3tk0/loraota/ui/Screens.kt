@@ -60,9 +60,11 @@ import io.github.n3tk0.loraota.ota.hex
 fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
     val ctx = LocalContext.current
     val scroll = rememberScrollState()
-    // the list of repeaters is long: the login's progress and its result are below it, out of sight
+    // the lists are long: the progress and the result are below them, out of sight
     LaunchedEffect(vm.busy, vm.message) {
-        if (vm.step == Step.REPEATER && (vm.busy || vm.message.isNotEmpty())) scroll.animateScrollTo(scroll.maxValue)
+        if ((vm.step == Step.REPEATER || vm.step == Step.FLASH) && (vm.busy || vm.message.isNotEmpty())) {
+            scroll.animateScrollTo(scroll.maxValue)
+        }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -83,8 +85,9 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                 Step.COMPANION -> CompanionStep(vm)
                 Step.REPEATER -> RepeaterStep(vm)
                 Step.UPDATE -> UpdateStep(vm)
+                Step.FLASH -> FlashStep(vm)
             }
-            if (vm.step != Step.UPDATE) {
+            if (vm.step != Step.UPDATE && vm.step != Step.FLASH) {
                 if (vm.busy) Busy(vm)
                 Message(vm)
             }
@@ -118,6 +121,9 @@ private fun RepeaterStep(vm: AppViewModel) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.connected_to, vm.companionName), modifier = Modifier.weight(1f))
         TextButton(onClick = { vm.disconnect() }) { Text(stringResource(R.string.disconnect)) }
+    }
+    OutlinedButton(onClick = { vm.openFlash(FlashTarget.COMPANION) }, enabled = !vm.busy) {
+        Text(stringResource(R.string.flash_companion_open))
     }
     Text(stringResource(R.string.repeater_hint))
     if (vm.repeaters.isEmpty()) Text(stringResource(R.string.no_repeaters))
@@ -200,12 +206,17 @@ private fun UpdateStep(vm: AppViewModel) {
         // a message about the cut-short update already says what to do
         if ((info.state == OtaProtocol.STATE_PAUSED || vm.resumable) && vm.message.isEmpty()) Text(stringResource(R.string.paused_hint))
         if (!vm.companionOta) Warning(stringResource(R.string.companion_no_ota))
+        vm.routeHops.let { hops ->
+            if (hops == null) Warning(stringResource(R.string.msg_no_route))
+            else if (hops > 0) Warning(stringResource(R.string.msg_not_direct, hops))
+        }
     }
     StatusCard(vm)
+    OutlinedButton(onClick = { vm.openFlash(FlashTarget.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_open)) }
     if (info == null) {
         // a stock repeater (or the answer got lost): login and status only
         if (!vm.busy) {
-            Warning(stringResource(R.string.no_ota))
+            if (vm.otaChecked) Warning(stringResource(R.string.no_ota))
             OutlinedButton(onClick = { vm.recheck() }) { Text(stringResource(R.string.recheck)) }
         }
         if (vm.busy) Busy(vm)
@@ -308,6 +319,67 @@ private fun UpdateStep(vm: AppViewModel) {
 }
 
 @Composable
+private fun FlashStep(vm: AppViewModel) {
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.pickFlashFile(uri)
+    }
+    val toCompanion = vm.flashTarget == FlashTarget.COMPANION
+    val writing = vm.busy && vm.flashPercent >= 0
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.flash_title, if (toCompanion) vm.companionName else vm.repeater?.name ?: ""),
+            style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        TextButton(onClick = { vm.closeFlash() }, enabled = !vm.busy) { Text(stringResource(R.string.back)) }
+    }
+    Text(stringResource(if (toCompanion) R.string.flash_hint_companion else R.string.flash_hint_repeater))
+    if (toCompanion && vm.companionModel.isNotEmpty()) {
+        Text(stringResource(R.string.flash_board, vm.companionModel, vm.companionVersion), style = MaterialTheme.typography.bodySmall)
+    }
+    if (!vm.flashDone) {
+        val candidates = vm.flashCandidates()
+        if (candidates.isEmpty()) Text(stringResource(R.string.flash_none))
+        for (f in candidates) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !vm.busy) { vm.pickFlashRelease(f) }) {
+                RadioButton(selected = vm.flashImage?.name == f.dfu && vm.flashImage?.env == f.env,
+                    onClick = { vm.pickFlashRelease(f) }, enabled = !vm.busy)
+                Column {
+                    Text(f.version.ifEmpty { f.release }, style = MaterialTheme.typography.titleMedium)
+                    Text(f.env.replace('_', ' ') + if (f.dfuIsZip) " · Bluetooth" else " · Wi-Fi", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_from_file)) }
+        vm.flashImage?.let { if (it.env == null) Text(stringResource(R.string.chosen, it.name)) }
+        // no Stop while it writes: a cut-short DFU leaves the device in its bootloader
+        Button(onClick = { vm.flashCheck() }, enabled = vm.flashImage != null && !vm.busy) { Text(stringResource(R.string.flash_start)) }
+    }
+    if (writing) {
+        Text(stringResource(R.string.flash_progress, vm.flashPercent), style = MaterialTheme.typography.titleMedium)
+        LinearProgressIndicator(progress = { vm.flashPercent / 100f }, modifier = Modifier.fillMaxWidth())
+        if (vm.working.isNotEmpty()) Text(vm.working, style = MaterialTheme.typography.bodySmall)
+    } else if (vm.busy) Busy(vm)
+    Message(vm)
+    if (vm.flashDone && toCompanion) Button(onClick = { vm.closeFlash() }) { Text(stringResource(R.string.reconnect)) }
+
+    vm.flashPlan?.let { p ->
+        AlertDialog(
+            onDismissRequest = { vm.flashCancel() },
+            title = { Text(stringResource(R.string.flash_start)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.flash_confirm_text, p.image.name, p.device))
+                    for (w in p.warnings) Text(w, color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.flashStart() }) { Text(stringResource(R.string.flash_start)) } },
+            dismissButton = { TextButton(onClick = { vm.flashCancel() }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    Spacer(Modifier.height(24.dp))
+}
+
+@Composable
 private fun Busy(vm: AppViewModel) {
     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     if (vm.working.isNotEmpty()) Text(vm.working, style = MaterialTheme.typography.bodyMedium)
@@ -325,7 +397,8 @@ private fun StatusCard(vm: AppViewModel) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(stringResource(R.string.status_title), style = MaterialTheme.typography.labelMedium)
             Text(stringResource(R.string.status_batt_uptime, s.battMv / 1000.0, duration(s.upTimeSecs)))
-            Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi, s.lastSnr ?: 0.0), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi) +
+                (s.lastSnr?.let { ", SNR %.1f dB".format(it) } ?: ""), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)), style = MaterialTheme.typography.bodySmall)
         }
     }

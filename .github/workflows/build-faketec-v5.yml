@@ -20,6 +20,7 @@ on:
       - 'variants/faketec_v5/**'
       - 'platformio.ini'
       - 'build.sh'
+      - 'tools/ota-manifest-entry.sh'
       - '.github/workflows/build-faketec-v5.yml'
 
 jobs:
@@ -43,6 +44,9 @@ jobs:
           FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
         run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
 
+      - name: DFU File for the LoRa OTA App
+        run: tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}"
+
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -60,6 +64,12 @@ jobs:
           merge-multiple: true
           path: out
 
+      - name: OTA Manifest
+        run: |
+          jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
+          rm out/*.ota.json
+          cat out/ota-manifest.json
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -67,5 +77,5 @@ jobs:
           body: |
             Faketec v5 companion firmware (Nice!Nano v2 + HT-RA62, SSD1306, rotary encoder).
             Copy the `_ble.uf2` (phone over Bluetooth) or `_usb.uf2` file to the bootloader drive
-            (double-tap RST). The `.zip` files are for OTA DFU updates.
+            (double-tap RST). The `.zip` files are for OTA DFU updates (also from the LoRa OTA app over Bluetooth).
           files: out/*
