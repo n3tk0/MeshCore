@@ -325,4 +325,6 @@
     <string name="repeat_on">репийтър вкл.</string>
     <string name="restore_now">сега: %1$s</string>
     <string name="set_admin_password">Admin парола</string>
+    <string name="flash_log_title">Лог на последния запис по Bluetooth</string>
+    <string name="flash_log_copy">Копирай</string>
 </resources>

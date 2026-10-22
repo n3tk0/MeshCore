@@ -536,6 +536,7 @@ private fun FlashContent(vm: AppViewModel) {
         }
         return
     }
+    if (vm.flashLog.isNotEmpty() && !vm.busy) FlashLogCard(vm.flashLog)
     SourceRow(vm.flashSource, !vm.busy) { vm.flashSource = it }
     when (vm.flashSource) {
         Source.RELEASES -> {
@@ -759,6 +760,7 @@ private fun RunningView(vm: AppViewModel) {
         Text(stringResource(R.string.flash_progress, vm.flashPercent), style = MaterialTheme.typography.titleMedium)
         LinearProgressIndicator(progress = { vm.flashPercent / 100f }, modifier = Modifier.fillMaxWidth())
         vm.flashImage?.let { Text(it.label, style = MaterialTheme.typography.bodySmall) }
+        if (vm.flashLog.isNotEmpty()) LogLines(vm.flashLog.takeLast(8))
     } else {
         vm.phase?.let { PhaseView(vm, it) }
         vm.newImage?.let { Text(it.name, style = MaterialTheme.typography.bodySmall) }
@@ -766,6 +768,31 @@ private fun RunningView(vm: AppViewModel) {
     InfoCard(stringResource(R.string.power_note))
     // no Stop for a flash: a cut-short DFU leaves the device in its bootloader
     if (!flashing) OutlinedButton(onClick = { vm.stop() }) { Text(stringResource(R.string.stop)) }
+}
+
+/** The steps of the last Bluetooth flash: what went wrong where, to copy and send on. */
+@Composable
+private fun FlashLogCard(lines: List<String>) {
+    val ctx = LocalContext.current
+    var open by rememberSaveable { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.flash_log_title), style = MaterialTheme.typography.labelMedium)
+            LogLines(if (open) lines else lines.takeLast(6))
+            Row {
+                TextButton(onClick = { open = !open }) { Text(stringResource(if (open) R.string.less else R.string.more)) }
+                TextButton(onClick = {
+                    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("flash log", lines.joinToString("\n")))
+                }) { Text(stringResource(R.string.flash_log_copy)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LogLines(lines: List<String>) {
+    Text(lines.joinToString("\n"), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
 }
 
 // ---- small parts ----
