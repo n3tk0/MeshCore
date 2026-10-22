@@ -239,4 +239,5 @@
     <string name="opt_debug">Debug logs</string>
     <string name="opt_release">Also a GitHub pre-release</string>
     <string name="build_token_group">Uses the group token built into the app.</string>
+    <string name="build_err_group_token">The group token has expired or was changed: ask for the new app.</string>
 </resources>

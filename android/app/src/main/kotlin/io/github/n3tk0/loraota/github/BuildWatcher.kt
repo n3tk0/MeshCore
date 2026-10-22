@@ -148,7 +148,7 @@ object BuildWatcher {
             } catch (e: GitHubError) {
                 // a token taken back or without the right access: waiting does not help
                 if (e.code == 401 || e.code == 403 || e.code == 404) {
-                    return end(j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_access, e.message ?: "")))
+                    return end(j.copy(phase = BuildPhase.FAILED, error = accessError(ctx, e, TokenStore(ctx).usesGroup)))
                 }
                 j = j.copy(offline = true)
             } catch (e: IOException) {
@@ -242,6 +242,10 @@ object BuildWatcher {
     }
 
     private fun str(ctx: Context, res: Int, vararg args: Any) = Lang.wrap(ctx).getString(res, *args)
+
+    /** What to tell about a refusal: the group's token gone stale needs a new group APK, not new rights. */
+    fun accessError(ctx: Context, e: GitHubError, group: Boolean): String =
+        if (group && e.code == 401) str(ctx, R.string.build_err_group_token) else str(ctx, R.string.build_err_access, e.message ?: "")
 
     @SuppressLint("MissingPermission")
     private fun notifyDone(ctx: Context, j: BuildJob) {

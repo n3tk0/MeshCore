@@ -887,10 +887,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reloadBuildForm() = work { readBuildForm() }
 
+    /** A GitHub call of the build form: a refusal says what to do about the token. */
+    private suspend fun <T> github(block: () -> T): T = try {
+        withContext(Dispatchers.IO) { block() }
+    } catch (e: io.github.n3tk0.loraota.github.GitHubError) {
+        if (e.code != 401 && e.code != 403 && e.code != 404) throw e
+        throw Exception(BuildWatcher.accessError(ctx, e, tokens.usesGroup))
+    }
+
     private suspend fun readBuildForm() {
         working = str(R.string.working_build_form)
         val a = api()
-        val inputs = withContext(Dispatchers.IO) { WorkflowInputs.parse(a.file(GitHubApi.WORKFLOW_PATH, a.defaultBranch())) }
+        val inputs = github { WorkflowInputs.parse(a.file(GitHubApi.WORKFLOW_PATH, a.defaultBranch())) }
         if (inputs.none { it.name == buildRole }) throw Exception(str(R.string.build_err_workflow))
         buildInputs = inputs
         buildInputsRole = buildRole
@@ -933,7 +941,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         for ((k, v) in buildOptions) inputs[k] = v.toString()
         if (withId) inputs["request_id"] = id
         val at = System.currentTimeMillis()
-        withContext(Dispatchers.IO) { a.dispatch(GitHubApi.WORKFLOW, a.defaultBranch(), inputs) }
+        github { a.dispatch(GitHubApi.WORKFLOW, a.defaultBranch(), inputs) }
         BuildWatcher.begin(ctx, BuildJob(repo, buildRole, board, id, at))
     }
 
