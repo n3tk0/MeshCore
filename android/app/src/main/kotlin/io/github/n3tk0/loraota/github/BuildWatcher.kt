@@ -67,6 +67,7 @@ object BuildWatcher {
     val state: StateFlow<BuildJob?> = _state
 
     private const val POLL_MS = 15_000L
+    private const val GROUP_POLL_MS = 30_000L   // the group shares one token's 5000 calls an hour
     private const val FIND_RUN_MS = 3 * 60_000L    // GitHub shows a new run within seconds
     private const val MAX_MS = 120 * 60_000L       // a build of one board takes some 4-8 minutes
     private const val DONE_ID = 3
@@ -138,6 +139,7 @@ object BuildWatcher {
         fun end(j: BuildJob) { if (live()) finish(ctx, j) }
         val token = TokenStore(ctx).get() ?: return end(j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_token)))
         val api = GitHubApi(token, j.repo)
+        val poll = if (TokenStore(ctx).usesGroup) GROUP_POLL_MS else POLL_MS
         while (true) {
             try {
                 j = step(ctx, api, j, live)
@@ -159,7 +161,7 @@ object BuildWatcher {
             }
             if (!live()) return
             save(ctx, j)
-            delay(POLL_MS)
+            delay(poll)
         }
     }
 

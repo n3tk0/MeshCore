@@ -56,7 +56,7 @@ object Releases {
      */
     fun list(repo: String = DEFAULT_REPO, cache: File? = null): List<FirmwareFile> {
         val out = ArrayList<FirmwareFile>()
-        val releases = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=20")))
+        val releases = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=50")))
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
             val assets = rel.getJSONArray("assets")

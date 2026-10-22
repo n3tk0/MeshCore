@@ -83,6 +83,9 @@ class Image(val name: String, val data: ByteArray, val env: String? = null) {
 
 private const val OTA_CHECK_MS = 15_000L
 
+/** The box the group APK does not show: its builds would pile up as pre-releases of the repository. */
+const val GROUP_HIDDEN = "release"
+
 @SuppressLint("MissingPermission")
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx: Context get() = getApplication()
@@ -939,6 +942,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val inputs = HashMap<String, String>()
         inputs[buildRole] = board
         for ((k, v) in buildOptions) inputs[k] = v.toString()
+        if (tokens.usesGroup) inputs.remove(GROUP_HIDDEN)   // the workflow's default: no pre-release
         if (withId) inputs["request_id"] = id
         val at = System.currentTimeMillis()
         github { a.dispatch(GitHubApi.WORKFLOW, a.defaultBranch(), inputs) }
