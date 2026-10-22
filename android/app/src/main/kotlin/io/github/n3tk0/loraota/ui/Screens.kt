@@ -46,6 +46,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -66,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -77,6 +81,11 @@ import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.ble.Contact
+import io.github.n3tk0.loraota.github.BuildPhase
+import io.github.n3tk0.loraota.github.BuildService
+import io.github.n3tk0.loraota.github.GitHubApi
+import io.github.n3tk0.loraota.github.WorkflowInput
+import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.Phase
 import io.github.n3tk0.loraota.ota.hex
@@ -421,18 +430,17 @@ private fun LoraTab(vm: AppViewModel) {
     if (continuing && vm.message.isEmpty()) InfoCard(stringResource(R.string.paused_hint))
 
     Text(stringResource(R.string.new_firmware), style = MaterialTheme.typography.titleMedium)
+    SourceRow(vm.loraSource, !vm.busy) { vm.loraSource = it }
     val candidates = vm.newCandidates()
-    if (candidates.isEmpty() && vm.newImage == null) Text(stringResource(R.string.no_new_firmware))
-    for (f in candidates) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !vm.busy) { vm.pickRelease(f) }) {
-            RadioButton(selected = vm.newImage?.sha == f.sha256, onClick = { vm.pickRelease(f) }, enabled = !vm.busy)
-            Column {
-                Text(f.version.ifEmpty { f.release }, style = MaterialTheme.typography.titleMedium)
-                Text(f.env.replace('_', ' '), style = MaterialTheme.typography.bodySmall)
+    when (vm.loraSource) {
+        Source.RELEASES -> {
+            if (candidates.isEmpty()) Text(stringResource(R.string.no_new_firmware))
+            for (f in candidates) {
+                FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' ')) { vm.pickRelease(f) }
             }
         }
+        Source.BUILD -> BuildPanel(vm)
+        Source.FILE -> OutlinedButton(onClick = { pickNew.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.pick_new)) }
     }
     if (vm.newImage != null && candidates.none { it.sha256 == vm.newImage?.sha }) {
         Text(stringResource(R.string.chosen, vm.newImage!!.name))
@@ -474,10 +482,7 @@ private fun LoraTab(vm: AppViewModel) {
             fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.running_firmware), style = MaterialTheme.typography.titleSmall)
         Text(vm.oldImage?.name ?: "—", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { pickOld.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.pick_running)) }
-            OutlinedButton(onClick = { pickNew.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.pick_new)) }
-        }
+        OutlinedButton(onClick = { pickOld.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.pick_running)) }
         OutlinedButton(onClick = { vm.loadReleases() }, enabled = !vm.busy) { Text(stringResource(R.string.reload_releases)) }
 
         Text(stringResource(R.string.side_channel), style = MaterialTheme.typography.titleSmall)
@@ -521,23 +526,216 @@ private fun FlashContent(vm: AppViewModel) {
         }
         return
     }
-    val candidates = vm.flashCandidates()
-    if (candidates.isEmpty()) Text(stringResource(R.string.flash_none))
-    for (f in candidates) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !vm.busy) { vm.pickFlashRelease(f) }) {
-            RadioButton(selected = vm.flashImage?.name == f.dfu && vm.flashImage?.env == f.env,
-                onClick = { vm.pickFlashRelease(f) }, enabled = !vm.busy)
-            Column {
-                Text(f.version.ifEmpty { f.release }, style = MaterialTheme.typography.titleMedium)
-                Text(f.env.replace('_', ' ') + if (f.dfuIsZip) " · Bluetooth" else " · Wi-Fi", style = MaterialTheme.typography.bodySmall)
+    SourceRow(vm.flashSource, !vm.busy) { vm.flashSource = it }
+    when (vm.flashSource) {
+        Source.RELEASES -> {
+            // ours (with mailbox and LoRa OTA) or stock MeshCore
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                for ((i, up) in listOf(false, true).withIndex()) {
+                    SegmentedButton(selected = vm.flashUpstream == up, onClick = { vm.showUpstream(up) }, enabled = !vm.busy,
+                        shape = SegmentedButtonDefaults.itemShape(i, 2)) {
+                        Text(stringResource(if (up) R.string.src_upstream else R.string.src_ours))
+                    }
+                }
+            }
+            if (vm.flashUpstream) Text(stringResource(R.string.upstream_hint), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val candidates = vm.flashCandidates()
+            if (candidates.isEmpty()) Text(stringResource(R.string.flash_none))
+            for (f in candidates) {
+                FirmwareRow(f, vm.flashImage?.name == f.dfu && vm.flashImage?.env == f.env, !vm.busy,
+                    f.env.replace('_', ' ') + if (f.dfuIsZip) " · Bluetooth" else " · Wi-Fi") { vm.pickFlashRelease(f) }
+            }
+        }
+        Source.BUILD -> BuildPanel(vm)
+        Source.FILE -> OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, enabled = !vm.busy) {
+            Text(stringResource(R.string.flash_from_file))
+        }
+    }
+    vm.flashImage?.let { if (it.env == null) Text(stringResource(R.string.chosen, it.name)) }
+    Button(onClick = { vm.flashCheck() }, enabled = vm.flashImage != null && !vm.busy) { Text(stringResource(R.string.flash_start)) }
+}
+
+/** Releases (and builds made before) / a new build on GitHub / a file. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SourceRow(selected: Source, enabled: Boolean, onSelect: (Source) -> Unit) {
+    val labels = listOf(R.string.src_releases, R.string.src_build, R.string.src_file)
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        for ((i, src) in Source.entries.withIndex()) {
+            SegmentedButton(selected = selected == src, onClick = { onSelect(src) }, enabled = enabled,
+                shape = SegmentedButtonDefaults.itemShape(i, Source.entries.size)) {
+                Text(stringResource(labels[i]), maxLines = 1)
             }
         }
     }
-    OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_from_file)) }
-    vm.flashImage?.let { if (it.env == null) Text(stringResource(R.string.chosen, it.name)) }
-    Button(onClick = { vm.flashCheck() }, enabled = vm.flashImage != null && !vm.busy) { Text(stringResource(R.string.flash_start)) }
+}
+
+@Composable
+private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, detail: String, onPick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+        .fillMaxWidth()
+        .clickable(enabled = enabled, onClick = onPick)) {
+        RadioButton(selected = selected, onClick = onPick, enabled = enabled)
+        Column {
+            Text(f.label, style = MaterialTheme.typography.titleMedium)
+            Text(detail, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+// ---- a new build on GitHub ----
+
+/** "Build Firmware for Boards" from the app: the token once, then the board and the parts, then its progress. */
+@Composable
+private fun BuildPanel(vm: AppViewModel) {
+    if (!vm.hasToken) {
+        TokenForm(vm)
+        return
+    }
+    vm.buildJob?.let { BuildCard(vm) }
+    LaunchedEffect(vm.buildRole, vm.repeater, vm.oldImage, vm.companionModel) { vm.loadBuildForm() }
+    if (vm.buildInputs.isEmpty()) {
+        if (!vm.busy) OutlinedButton(onClick = { vm.reloadBuildForm() }) { Text(stringResource(R.string.build_reload)) }
+        return
+    }
+    var picking by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.build_board), style = MaterialTheme.typography.labelMedium)
+                Text(vm.buildBoard.ifEmpty { stringResource(R.string.build_no_board) }.replace('_', ' '),
+                    style = MaterialTheme.typography.titleMedium)
+                if (vm.buildBoardAuto) Text(stringResource(R.string.build_board_auto), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+            TextButton(onClick = { picking = true }, enabled = !vm.busy) { Text(stringResource(R.string.build_board_pick)) }
+        }
+    }
+    Text(stringResource(R.string.build_options), style = MaterialTheme.typography.titleSmall)
+    for (input in vm.buildInputs.filter { it.isBoolean && !(vm.groupToken && it.name == GROUP_HIDDEN) }) {
+        val on = vm.buildOptions[input.name] ?: input.defaultOn
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !vm.busy) { vm.buildOptions[input.name] = !on }) {
+            Text(optionLabel(input), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = on, onCheckedChange = { vm.buildOptions[input.name] = it }, enabled = !vm.busy)
+        }
+    }
+    if (vm.buildRole == "companion" && vm.buildOptions["display"] == false) {
+        Text(stringResource(R.string.build_note_no_display), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    if (vm.buildRole == "repeater" && vm.buildOptions["lora_ota"] == false) {
+        Text(stringResource(R.string.build_note_no_ota), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    Button(onClick = { vm.startBuild() }, enabled = vm.buildBoard.isNotEmpty() && !vm.busy && vm.buildJob?.finished != false) {
+        Text(stringResource(R.string.build_start))
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = { vm.reloadBuildForm() }, enabled = !vm.busy) { Text(stringResource(R.string.build_reload)) }
+        if (!vm.groupToken) TextButton(onClick = { vm.forgetToken() }, enabled = !vm.busy) { Text(stringResource(R.string.build_token_forget)) }
+    }
+    if (vm.groupToken) Text(stringResource(R.string.build_token_group), style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (picking) BoardPicker(vm.boardChoices(), vm.buildBoard, { picking = false }) { vm.pickBuildBoard(it); picking = false }
+}
+
+/** The app's words for the workflow's boxes it knows; the workflow's own for any other. */
+@Composable
+private fun optionLabel(input: WorkflowInput): String {
+    val res = when (input.name) {
+        "rtc" -> R.string.opt_rtc
+        "climate" -> R.string.opt_climate
+        "power_meters" -> R.string.opt_power_meters
+        "other_sensors" -> R.string.opt_other_sensors
+        "gps" -> R.string.opt_gps
+        "display" -> R.string.opt_display
+        "mailbox" -> R.string.opt_mailbox
+        "lora_ota" -> R.string.opt_lora_ota
+        "debug" -> R.string.opt_debug
+        "release" -> R.string.opt_release
+        else -> null
+    }
+    return if (res != null) stringResource(res) else input.description.ifEmpty { input.name }
+}
+
+@Composable
+private fun TokenForm(vm: AppViewModel) {
+    val uri = LocalUriHandler.current
+    var token by remember { mutableStateOf("") }
+    Hint(stringResource(R.string.build_token_short), stringResource(R.string.build_token_long, vm.repo))
+    TextButton(onClick = { runCatching { uri.openUri(GitHubApi.NEW_TOKEN_URL) } }) { Text(stringResource(R.string.build_token_make)) }
+    OutlinedTextField(
+        value = token, onValueChange = { token = it },
+        label = { Text(stringResource(R.string.build_token_field)) },
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !vm.busy,
+    )
+    Button(onClick = { vm.saveToken(token) }, enabled = token.isNotBlank() && !vm.busy) { Text(stringResource(R.string.build_token_save)) }
+}
+
+/** Where the build is: queued, the step it runs, done or why not; its page on GitHub. */
+@Composable
+private fun BuildCard(vm: AppViewModel) {
+    val j = vm.buildJob ?: return
+    val ctx = LocalContext.current
+    val uri = LocalUriHandler.current
+    val failed = j.phase == BuildPhase.FAILED
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = if (failed) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer) else CardDefaults.cardColors(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(if (j.runNumber > 0) stringResource(R.string.build_card_title, j.runNumber, j.board.replace('_', ' '))
+                else stringResource(R.string.build_card_title_new, j.board.replace('_', ' ')), style = MaterialTheme.typography.titleMedium)
+            Text(BuildService.phaseText(Lang.wrap(ctx), j), style = MaterialTheme.typography.bodyMedium)
+            if (!j.finished) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (j.made > 0) Text(stringResource(R.string.build_made, j.made), style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (j.htmlUrl.isNotEmpty()) TextButton(onClick = { runCatching { uri.openUri(j.htmlUrl) } }) {
+                    Text(stringResource(R.string.build_open_run))
+                }
+                if (j.finished) TextButton(onClick = { vm.closeBuild() }) { Text(stringResource(R.string.build_close)) }
+                else TextButton(onClick = { vm.forgetBuild() }) { Text(stringResource(R.string.build_stop_follow)) }
+            }
+        }
+    }
+}
+
+/** The workflow's board list with a search: some 100 boards. */
+@Composable
+private fun BoardPicker(choices: List<String>, current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.build_board_pick)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(
+                    value = query, onValueChange = { query = it }, singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    placeholder = { Text(stringResource(R.string.build_board_search)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                // "xiao nrf" finds Xiao_nrf52_repeater: each word on its own
+                val words = query.lowercase().split(Regex("[\\s_]+")).filter { it.isNotEmpty() }
+                val shown = choices.filter { c -> words.all { it in c.lowercase() } }
+                Column(Modifier.height(360.dp).verticalScroll(rememberScrollState())) {
+                    for (c in shown) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(c) }) {
+                            RadioButton(selected = c == current, onClick = { onPick(c) })
+                            Text(c.replace('_', ' '), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 /** While an update or a flash writes: only its progress (a stray tap cannot start anything else). */

@@ -10,6 +10,9 @@ name: Build Firmware for Boards
 # nRF52 / ESP32 boards get an .ota.json for the LoRa OTA app (the DFU file it flashes; repeaters also the app image .bin).
 # The lists come from platformio.ini: run `bash tools/gen-board-choices.sh` after new boards arrive.
 
+# a run started by the LoRa OTA app carries its request id in the name, so the app finds its own run
+run-name: ${{ inputs.request_id != '' && format('Build Firmware for Boards · app {0}', inputs.request_id) || 'Build Firmware for Boards' }}
+
 permissions:
   contents: write
 
@@ -453,6 +456,10 @@ on:
         description: 'Публикувай и GitHub pre-release с файловете'
         type: boolean
         default: false
+      request_id:
+        description: 'За приложението LoRa OTA (остави празно)'
+        type: string
+        default: ''
 
 jobs:
   targets:
