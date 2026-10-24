@@ -94,7 +94,7 @@ A companion radio build for a Faketec v5 (rev A) board without the on-board BMS/
 - `-D PIN_VIBRATION`, `-D VIBRATION_PWM=190`: haptic patterns (key click, confirm, channel / direct message, power off); PWM keeps the motor near 3.1 V on a full LiPo. Remove to build without a motor.
 - `-D AUTO_SHUTDOWN_MILLIVOLTS=3300`: there is no BMS, so the node hibernates below this voltage. Calibrate in Settings > System > Battery (or set `-D ADC_MULTIPLIER` for your divider).
 - `-D ENCODER_STEPS_PER_DETENT=2`, `-D ENCODER_REVERSE=true`: build defaults for the encoder; both can also be changed in Settings.
-- `-D DISABLE_RTC_AUTODISCOVERY`, `-D DISABLE_ENV_SENSORS`: recommended when no RTC or sensors are fitted (see below).
+- `-D DISABLE_RTC_AUTODISCOVERY`, `-D DISABLE_ENV_SENSORS`: skip the RTC probes and the sensor scan when none are fitted (a faster boot; a bad I2C bus no longer hangs it, see below).
 - `-D ALLOWED_REPEAT_FREQ_RANGE=...`: the frequencies where the repeater setting may be turned on (upstream allows 433.000, 869.495 and 918.000 MHz; this build adds 869.618).
 
 Build with PlatformIO, e.g. `pio run -e Faketec_v5_companion_radio_ble` (or `_usb`), then flash the UF2 by double-tapping reset and copying it to the bootloader drive.
@@ -122,7 +122,15 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 - **Watchdog on nRF52 repeaters:** 60 s (`-D REPEATER_WATCHDOG_SECS`, 0 = off). It cannot be stopped: after loading firmware that does not feed it, press RST once.
 - **ESP32 rollback:** a new image that does not get an admin login or 10 minutes of uptime before a restart goes back to the previous one; `ota rollback` does it by hand.
 - **Where the firmware comes from:** the app offers three sources for both an update over LoRa and a flash over Bluetooth / Wi-Fi: **Releases** (ours with `ota-manifest.json`, and for a flash also stock MeshCore from meshcore-dev), **New build** (runs [Build Firmware for Boards](#builds-and-ci) on GitHub with the board picked from the device and the workflow's own boxes, then downloads the run's artifact and checks it against its `.ota.json`) and **File**. A build needs a fine-grained GitHub token for this repository with *Actions: Read and write* and *Contents: Read*; it is kept on the phone only, encrypted with an Android Keystore key. The app follows the run in the background and notifies when it is done. For a group: Actions > Build LoRa OTA Android App > Run workflow with *group APK* builds a second APK with the token from the secret `LORAOTA_GITHUB_TOKEN` (XOR-ed, not readable as text, but anyone who takes the APK apart can get it), only as an artifact kept 3 days, never in a release.
+- **Flash from a file:** `.zip` (DFU package), `.bin` (Wi-Fi, ESP32) or `.uf2`; a `.uf2` is turned into a DFU `.zip` in the app (application only, any SoftDevice), so the same file as for the USB drive works over Bluetooth. A bootloader or SoftDevice `.uf2` is refused.
+- **Bluetooth flash log:** the flash screen shows the DFU library's log while it runs and keeps it after an error, with a Copy button. A repeater is flashed without a bond and the app looks for its bootloader by scanning (the Adafruit bootloader advertises on the address + 1 after a jump from the app).
+- **Battery and current:** after login the app reads the repeater's telemetry; with an INA219 it shows the battery voltage, the current and whether it is charging or discharging.
+- **Backup:** before every flash and LoRa update the app saves the device's settings (companion: settings, channels, contacts; repeater: its CLI settings and the admin password kept in the app), and can restore them by difference or export them to a file (encrypted with a password; without one the secrets stay out).
 - **APK signing:** CI signs with the key from the secrets `LORAOTA_KEYSTORE_BASE64`, `LORAOTA_KEYSTORE_PASSWORD`, `LORAOTA_KEY_ALIAS`, `LORAOTA_KEY_PASSWORD` (a debug key when they are not set).
+
+### Repeater battery from an INA219
+
+With an INA219 in the battery line (the battery on Vin+, the load and the charger on Vin-), the repeater takes the battery from it instead of the board's ADC: bus voltage plus the drop over the shunt. It is used in the status, telemetry channel 1, the `power` command and the battery check before a LoRa OTA install. The INA219 channel also carries the current with its sign as an analog input (Cayenne LPP current has no sign): negative while charging, positive while discharging. Without an INA219, or after it was turned off for I2C errors (see `i2c` below), the board's own reading is used.
 
 ### nRF52 bootloader for LoRa OTA
 
@@ -151,7 +159,7 @@ These are in shared code and apply to every board.
 - **Invalid path lengths:** an invalid `out_path_len` from the app or from `/contacts3` is treated as unknown (flood) instead of producing malformed direct packets.
 - **nRF52 BLE RX race:** the RX queue was shifted in `loop()` while the Bluefruit callback appended to it without locking, so frames could be lost or duplicated. It is now a single-producer / single-consumer ring; connect / disconnect request a flush that `loop()` performs.
 - **Atomic saves on nRF52:** contacts, channels and prefs are written to a temp file and renamed, so a reset or brown-out during a save no longer corrupts them (falls back to an in-place write when the filesystem has no room for a second copy).
-- **Boot hang on the I2C bus:** the nRF52 Wire driver has no timeout, so a missing or stuck device could hang boot. New opt-in flags `-D DISABLE_RTC_AUTODISCOVERY` and `-D DISABLE_ENV_SENSORS` skip the RTC probes and the 112-address sensor scan.
+- **Hang on the I2C bus (nRF52):** the Adafruit Wire driver waits on the TWIM with no timeout and reads an error left by an earlier transfer as its own, so a loose cable or a module holding a line could stop a node at boot or in a sensor read. [`arch/nrf52/libs/nrf52_wire`](./arch/nrf52/libs/nrf52_wire) is that driver with a 50 ms timeout on every wait (`-D WIRE_TIMEOUT_MS`), a reset of the TWIM, bus recovery (9 SCL clocks and a STOP), stale events cleared before each transfer and error counters; it replaces the framework's Wire on every nRF52 build, so sensor libraries and displays get the timeouts too. A device that times out at boot, or whose reads fail 3 times in a row, is turned off until a reboot and the others go on (it keeps its telemetry channel). The CLI command `i2c` lists what was found and what was turned off and why ([docs](./docs/cli_commands.md#show-the-i2c-devices-and-the-ones-turned-off)). The flags `-D DISABLE_RTC_AUTODISCOVERY` and `-D DISABLE_ENV_SENSORS` still skip the RTC probes and the sensor scan.
 - **Display left on after power-off:** `ui-new` and `ui-tiny` put a non-e-ink display to sleep before SYSTEMOFF, so the OLED no longer drains the battery after hibernate or low-battery shutdown.
 - **STM32 builds:** `[stm32_base]` pins the STM32duino framework, because the new 3.0 release breaks RadioLib's Arduino HAL and drops `ltoa()`.
 
@@ -163,6 +171,8 @@ These are in shared code and apply to every board.
 - `src/helpers/ui/MomentaryButton::setDebounce()`: debounce without the multi-click delay, so presses register at once.
 - `AbstractUITask::msgSource()`: optional hook telling a UI whether the next message came from a contact or a channel (no-op for the other UIs).
 - `DataStore::loadSmallFile()` / `saveSmallFile()`: small UI-owned files with the same atomic save.
+- `src/helpers/I2CHealth`: I2C probe with a timeout result, the error counters and the list `i2c` shows.
+- `SensorManager::getBatteryMilliVolts()`: a battery from a sensor (the INA219), 0 when there is none.
 
 ### Builds and CI
 
