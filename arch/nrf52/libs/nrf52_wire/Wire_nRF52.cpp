@@ -83,26 +83,17 @@ bool TwoWire::waitFor(volatile uint32_t& ev, volatile uint32_t& or_ev) {
   return true;
 }
 
-// The TWIM did not finish: reset it, clock out whatever a device was still sending (up to 9
-// SCL pulses while SDA is low) and put a STOP on the bus. Lines still low after that: stuck.
-void TwoWire::recover() {
-  _timeouts++;
-  _errors++;
-  uint32_t frequency = _p_twim->FREQUENCY;
-  _p_twim->TASKS_STOP = 0x1UL;
-  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);  // the pins go back to GPIO
-  // a TWIM stopped mid-transfer is only fully reset by a power cycle of the peripheral
-  volatile uint32_t* power = (volatile uint32_t*)((uint8_t*)_p_twim + 0xFFC);
-  *power = 0;
-  *power;
-  *power = 1;
-
+// With the TWIM disabled (the pins are GPIO): 9 SCL clocks, all of them, so a device that was
+// sending gets to the end of its byte and sees a NACK (stopping at the first high SDA could
+// catch a 1 bit and the next clock would start the device's following 0), then a STOP.
+// Lines still low after that: stuck.
+void TwoWire::freeBus() {
   nrf_gpio_pin_set(_uc_pinSCL);
   nrf_gpio_pin_set(_uc_pinSDA);
   nrf_gpio_cfg(_uc_pinSCL, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE);
   nrf_gpio_cfg(_uc_pinSDA, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE);
   delayMicroseconds(10);
-  for (int i = 0; i < 9 && !nrf_gpio_pin_read(_uc_pinSDA); i++) {
+  for (int i = 0; i < 9; i++) {
     nrf_gpio_pin_clear(_uc_pinSCL);
     delayMicroseconds(5);
     nrf_gpio_pin_set(_uc_pinSCL);
@@ -119,6 +110,22 @@ void TwoWire::recover() {
   delayMicroseconds(10);
   _stuck = !nrf_gpio_pin_read(_uc_pinSDA) || !nrf_gpio_pin_read(_uc_pinSCL);
   _stuck_at = millis();
+}
+
+// The TWIM did not finish: reset it, free the bus, start it again
+void TwoWire::recover() {
+  _timeouts++;
+  _errors++;
+  uint32_t frequency = _p_twim->FREQUENCY;
+  _p_twim->TASKS_STOP = 0x1UL;
+  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);  // the pins go back to GPIO
+  // a TWIM stopped mid-transfer is only fully reset by a power cycle of the peripheral
+  volatile uint32_t* power = (volatile uint32_t*)((uint8_t*)_p_twim + 0xFFC);
+  *power = 0;
+  *power;
+  *power = 1;
+
+  freeBus();
 
   configPins();
   _p_twim->FREQUENCY = frequency;
@@ -128,12 +135,17 @@ void TwoWire::recover() {
   clearEvents();
 }
 
-// A stuck bus fails at once, without the timeout each time; it is tried again every 10 s
+// A stuck bus fails at once, without the timeout each time; every 10 s it is freed again.
+// A TWIM not started (no begin(), or after end()) fails at once too.
 bool TwoWire::busReady() {
+  if (_p_twim->ENABLE != (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos)) return false;
   if (!_stuck) return true;
   if (millis() - _stuck_at < 10000) return false;
-  _stuck = !nrf_gpio_pin_read(_uc_pinSDA) || !nrf_gpio_pin_read(_uc_pinSCL);
-  _stuck_at = millis();
+  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);
+  freeBus();
+  configPins();
+  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
+  clearEvents();
   return !_stuck;
 }
 
@@ -299,7 +311,7 @@ uint8_t TwoWire::endTransmission(bool stopBit)
 {
   transmissionBegun = false ;
 
-  if (!busReady()) { _errors++; return 5; }
+  if (!busReady()) { _errors++; return _stuck ? 5 : 4; }
   clearEvents();
 
   // Start I2C transmission

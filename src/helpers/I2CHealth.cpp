@@ -47,7 +47,7 @@ struct I2CListEntry {
 
 static I2CListEntry i2c_list[I2C_LIST_MAX];
 static uint8_t i2c_list_count = 0;
-static bool i2c_bus_stuck = false;
+static TwoWire* i2c_stuck_wire = NULL;  // a bus that was found stuck
 
 static uint8_t i2c_boot_timeouts = 0;    // addresses whose probe timed out, nothing known there
 static uint8_t i2c_first_timeout = 0;
@@ -80,15 +80,16 @@ void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state) {
   }
 }
 
-void i2cSetBusStuck() {
-  if (!i2c_bus_stuck) Serial.println("I2C bus stuck: a line stays low");
-  i2c_bus_stuck = true;
+void i2cSetBusStuck(TwoWire& wire) {
+  if (i2c_stuck_wire == NULL) Serial.println("I2C bus stuck: a line stays low");
+  i2c_stuck_wire = &wire;
 }
 
 void i2cFormatList(char* reply, size_t size) {
   size_t n = 0;
   reply[0] = 0;
-  if (i2c_bus_stuck) n += snprintf(reply + n, size - n, "bus STUCK; ");
+  // Wire frees a stuck bus again every 10 s when it is used: it may have come back
+  if (i2c_stuck_wire) n += snprintf(reply + n, size - n, i2cBusStuck(*i2c_stuck_wire) ? "bus STUCK; " : "bus was stuck; ");
   if (i2c_boot_timeouts && n < size) {
     n += snprintf(reply + n, size - n, "%u probe timeouts at boot (first %02X); ", i2c_boot_timeouts, i2c_first_timeout);
   }
