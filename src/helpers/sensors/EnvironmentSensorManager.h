@@ -13,12 +13,18 @@ protected:
   struct ActiveSensor {
     void    (*query)(uint8_t channel, uint8_t sub_channel, CayenneLPP& telemetry);
     uint8_t   sub_channel;
+    uint8_t   address;
+    const char* name;
+    uint8_t   fails;    // reads in a row that made I2C errors
+    bool      off;      // turned off after 3 of them, until a reboot
   };
 
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
   int          _active_sensor_count = 0;
   uint8_t      next_available_channel = TELEM_CHANNEL_SELF + 1;
   bool         _ina219_found = false;   // its bus is taken as the battery
+
+  void noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before);
 
   bool     gps_detected = false;
   bool     gps_active = false;
