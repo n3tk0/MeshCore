@@ -1,0 +1,8 @@
+{
+  "name": "MeshCoreWire",
+  "version": "1.0.0+meshcore.1",
+  "description": "The Adafruit nRF52 Wire library (framework d541301) with a timeout on every TWIM wait, bus recovery and error counters. It takes the place of the framework's own Wire on nRF52 builds.",
+  "frameworks": "arduino",
+  "platforms": "nordicnrf52",
+  "build": { "srcDir": ".", "includeDir": "." }
+}

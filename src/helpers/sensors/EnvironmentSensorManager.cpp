@@ -1,7 +1,7 @@
 #include "EnvironmentSensorManager.h"
 
 #include <Wire.h>
-#include <helpers/I2CProbe.h>
+#include <helpers/I2CHealth.h>
 
 #if ENV_PIN_SDA && ENV_PIN_SCL
 #define TELEM_WIRE &Wire1  // Use Wire1 as the I2C bus for Environment Sensors
@@ -215,15 +215,18 @@ static RAK12500LocationProvider RAK12500_provider;
 // I2C bus scanner
 // Probes every valid address and records which ones ACK.
 // This runs before any sensor library is touched, so a missing
-// device is never initialized by a library. The probes have a
-// timeout (I2CProbe.h): on a stuck bus nothing is found and the
-// boot goes on. Boards without sensors can skip the scan with
-// -D DISABLE_ENV_SENSORS.
+// device is never initialized by a library. On nRF52 the probes
+// have a timeout (I2CHealth.h): an address that times out is listed
+// as off, and on a stuck bus the scan ends there. Boards without
+// sensors can skip the scan with -D DISABLE_ENV_SENSORS.
 // ============================================================
 
 static void scanI2CBus(TwoWire* wire, bool found[128]) {
-  for (uint8_t addr = 0x08; addr < 0x78 && !i2cBusStuck(); addr++) {
-    found[addr] = i2cProbe(*wire, addr) == I2C_PROBE_ACK;
+  for (uint8_t addr = 0x08; addr < 0x78; addr++) {
+    I2CProbeResult r = i2cProbe(*wire, addr);
+    found[addr] = r == I2C_PROBE_ACK;
+    if (i2cBusStuck(*wire)) { i2cSetBusStuck(*wire); break; }
+    if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
   }
 }
 
@@ -655,6 +658,10 @@ bool EnvironmentSensorManager::begin() {
   #endif
 
   // Walk the sensor table and initialize only detected devices.
+  // Several entries can share an address (BME680/BME280/BMP280 on 0x76, SHT4X/INA226 on 0x44):
+  // one that does not start is only a miss until every entry there was tried.
+  struct { uint8_t address; const char* name; } misses[SENSOR_TABLE_SIZE + 1];
+  int miss_count = 0;
   _active_sensor_count = 0;
   for (size_t i = 0; i < SENSOR_TABLE_SIZE && _active_sensor_count < MAX_ACTIVE_SENSORS; i++) {
     const SensorDef& def = SENSOR_TABLE[i];
@@ -668,19 +675,43 @@ bool EnvironmentSensorManager::begin() {
       MESH_DEBUG_PRINTLN("%s not detected at I2C address %02X", def.name, def.address);
       continue;
     }
+    uint32_t timeouts = i2cTimeoutCount(*TELEM_WIRE);
     uint8_t n = def.init(TELEM_WIRE, def.address);
-    if (n == 0) {
-      MESH_DEBUG_PRINTLN("%s found at %02X but failed to initialize", def.name, def.address);
+    if (i2cTimeoutCount(*TELEM_WIRE) != timeouts) {
+      // it answered the scan, then hung the bus: keep away from it
+      i2cListDevice(def.address, def.name, I2C_DEV_OFF_BOOT_TIMEOUT);
+      detected[def.address] = false;
       continue;
     }
+    if (n == 0) {
+      MESH_DEBUG_PRINTLN("%s found at %02X but failed to initialize", def.name, def.address);
+      misses[miss_count++] = { def.address, def.name };
+      continue;
+    }
+    i2cListDevice(def.address, def.name, I2C_DEV_OK);
     MESH_DEBUG_PRINTLN("Found %s at address: %02X", def.name, def.address);
     detected[def.address] = false;  // consumed; later entries must not re-claim this device
     #if ENV_INCLUDE_INA219
     if (def.init == init_ina219) _ina219_found = true;
     #endif
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
-      _active_sensors[_active_sensor_count++] = { def.query, sub };
+      _active_sensors[_active_sensor_count++] = { def.query, sub, def.address, def.name, 0, false };
     }
+  }
+
+  // An address still unclaimed answered the scan, but none of its drivers started
+  for (int i = 0; i < miss_count; i++) {
+    uint8_t addr = misses[i].address;
+    if (!detected[addr]) continue;  // another entry took it, or it was already listed
+    #if defined(RAK_WISBLOCK_GPS) && defined(TELEM_RAK12500_ADDRESS)
+    if (addr == TELEM_RAK12500_ADDRESS && i2cGPSFlag) continue;  // the GPS, not an INA3221
+    #endif
+    bool shared = false;
+    for (int j = i + 1; j < miss_count; j++) {
+      if (misses[j].address == addr && strcmp(misses[j].name, misses[i].name) != 0) shared = true;
+    }
+    i2cListDevice(addr, shared ? NULL : misses[i].name, I2C_DEV_OFF_INIT_FAILED);  // "?" when it could be several
+    detected[addr] = false;
   }
 
   return true;
@@ -691,11 +722,33 @@ bool EnvironmentSensorManager::begin() {
 uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
   #if ENV_INCLUDE_INA219
   if (_ina219_found) {
+    for (int i = 0; i < _active_sensor_count; i++) {
+      if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) return 0;  // the board's own reading
+    }
+    uint32_t errors = i2cErrorCount(*TELEM_WIRE);
     float mv = INA219.getBusVoltage_V() * 1000.0f + INA219.getShuntVoltage_mV();
+    noteRead(query_ina219, errors);
+    if (i2cErrorCount(*TELEM_WIRE) != errors) return 0;  // a half-read value: the board's own reading
     if (mv > 0 && mv < 65535) return (uint16_t)mv;
   }
   #endif
   return 0;
+}
+
+// A read that made I2C errors (a NACK, a timeout) counts against its device; 3 in a row turn it
+// off until a reboot, every channel of it (an INA3221 has three)
+void EnvironmentSensorManager::noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before) {
+  bool failed = i2cErrorCount(*TELEM_WIRE) != errors_before;
+  for (int i = 0; i < _active_sensor_count; i++) {
+    ActiveSensor& a = _active_sensors[i];
+    if (a.query != query || a.off) continue;
+    a.fails = failed ? a.fails + 1 : 0;
+    if (a.fails >= 3) {
+      a.off = true;
+      if (a.sub_channel == 0) i2cListDevice(a.address, a.name, I2C_DEV_OFF_ERRORS);
+    }
+  }
+  if (i2cBusStuck(*TELEM_WIRE)) i2cSetBusStuck(*TELEM_WIRE);
 }
 
 // ============================================================
@@ -712,8 +765,15 @@ bool EnvironmentSensorManager::querySensors(uint8_t requester_permissions, Cayen
   }
 
   if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
+    uint32_t device_errors = 0;
     for (int i = 0; i < _active_sensor_count; i++) {
-      _active_sensors[i].query(next_available_channel, _active_sensors[i].sub_channel, telemetry);
+      // a sensor turned off keeps its channel, so the ones after it do not move
+      // the errors of all channels of a device (an INA3221 has three) count as one read
+      ActiveSensor& a = _active_sensors[i];
+      if (a.sub_channel == 0) device_errors = i2cErrorCount(*TELEM_WIRE);
+      if (!a.off) a.query(next_available_channel, a.sub_channel, telemetry);
+      bool last_channel = i + 1 >= _active_sensor_count || _active_sensors[i + 1].query != a.query;
+      if (last_channel && !a.off) noteRead(a.query, device_errors);
       next_available_channel++;
     }
   }
@@ -979,7 +1039,18 @@ void EnvironmentSensorManager::loop() {
   }
   #endif
   #if ENV_INCLUDE_BME680_BSEC
-  if (bsec_active && bsec_iaq.run()) {
+  if (bsec_active) {
+    for (int i = 0; i < _active_sensor_count; i++) {
+      if (_active_sensors[i].query == query_bme680_bsec && _active_sensors[i].off) bsec_active = false;
+    }
+  }
+  uint32_t bsec_errors = bsec_active ? i2cErrorCount(*TELEM_WIRE) : 0;
+  bool bsec_sample = bsec_active && bsec_iaq.run();
+  // the BSEC reads the sensor here, not in querySensors(): a sample, or an I2C error, is a read
+  if (bsec_active && (bsec_sample || i2cErrorCount(*TELEM_WIRE) != bsec_errors)) {
+    noteRead(query_bme680_bsec, bsec_errors);
+  }
+  if (bsec_sample) {
     uint8_t prev_accuracy = bsec_accuracy;
     bsec_temperature  = bsec_iaq.temperature;
     bsec_humidity     = bsec_iaq.humidity;
