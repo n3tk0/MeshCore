@@ -144,6 +144,17 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
+### Power - Battery and power sources
+**Usage:** `power`
+
+**Example reply:** `batt:4012 mV usb:no solar_chg:n/a ext:no charger:no`
+
+**Notes:**
+- With an INA219 in the battery line (battery on Vin+), `batt` comes from it (bus voltage plus the shunt drop), otherwise from the board's ADC.
+- `n/a`: the board cannot tell.
+
+---
+
 ### Radio Stats - Noise floor, Last RSSI/SNR, Airtime, Receive errors
 **Usage:** `stats-radio`
 
