@@ -40,10 +40,10 @@ index 5eec85e..3433fd0 100644
    {
      KEEP(*(.bootloaderConfig))
 diff --git a/src/boards/lilygo_techo/board.h b/src/boards/lilygo_techo/board.h
-index 0e03a5c..881fc42 100644
+index 0e03a5c..657f029 100644
 --- a/src/boards/lilygo_techo/board.h
 +++ b/src/boards/lilygo_techo/board.h
-@@ -60,4 +60,14 @@
+@@ -60,4 +60,15 @@
  #define UF2_BOARD_ID      "nRF52840-TEcho-v1"
  #define UF2_INDEX_URL     "https://lilygo.cc/products/t-echo-lilygo"
  
@@ -56,6 +56,7 @@ index 0e03a5c..881fc42 100644
 +#define OTA_STAGE_QSPI_IO1   _PINNUM(1, 13)
 +#define OTA_STAGE_QSPI_IO2   _PINNUM(0, 7)
 +#define OTA_STAGE_QSPI_IO3   _PINNUM(0, 5)
++#define OTA_STAGE_QSPI_PWR_1 _PINNUM(0, 12)   // PIN_PWR_EN: the 3.3 V peripheral supply
 +
  #endif // _LILYGO_TECHO_H
 diff --git a/src/boards/sensecap_solar_p1/board.h b/src/boards/sensecap_solar_p1/board.h
@@ -78,10 +79,10 @@ index 3c3e0e8..1c9c749 100644
 +
  #endif // _SEEED_SOLAR_NODE_P1_H
 diff --git a/src/boards/thinknode_m1/board.h b/src/boards/thinknode_m1/board.h
-index 1efb659..ba7a9c5 100644
+index 1efb659..f6a0f56 100644
 --- a/src/boards/thinknode_m1/board.h
 +++ b/src/boards/thinknode_m1/board.h
-@@ -59,4 +59,14 @@
+@@ -59,4 +59,15 @@
  #define UF2_BOARD_ID      "nRF52840-ThinkNodeM1-v1"
  #define UF2_INDEX_URL     "https://www.elecrow.com"
  
@@ -94,14 +95,15 @@ index 1efb659..ba7a9c5 100644
 +#define OTA_STAGE_QSPI_IO1   _PINNUM(1, 13)
 +#define OTA_STAGE_QSPI_IO2   _PINNUM(0, 7)
 +#define OTA_STAGE_QSPI_IO3   _PINNUM(0, 5)
++#define OTA_STAGE_QSPI_PWR_1 _PINNUM(0, 12)   // PIN_PWR_EN: the 3.3 V peripheral supply
 +
  #endif // _THINKNODE_M1_H
 \ No newline at end of file
 diff --git a/src/boards/thinknode_m6/board.h b/src/boards/thinknode_m6/board.h
-index c7bece7..2f0721a 100644
+index c7bece7..8c18fc1 100644
 --- a/src/boards/thinknode_m6/board.h
 +++ b/src/boards/thinknode_m6/board.h
-@@ -58,4 +58,14 @@
+@@ -58,4 +58,16 @@
  #define UF2_BOARD_ID      "nRF52840-ThinkNodeM6-v1"
  #define UF2_INDEX_URL     "https://www.elecrow.com"
  
@@ -114,6 +116,8 @@ index c7bece7..2f0721a 100644
 +#define OTA_STAGE_QSPI_IO1   _PINNUM(1, 2)
 +#define OTA_STAGE_QSPI_IO2   _PINNUM(1, 4)
 +#define OTA_STAGE_QSPI_IO3   _PINNUM(1, 5)
++#define OTA_STAGE_QSPI_PWR_1 _PINNUM(0, 27)   // PIN_PWR_EN
++#define OTA_STAGE_QSPI_PWR_2 _PINNUM(0, 21)   // QSPI_FLASH_EN: the flash's own supply
 +
  #endif // _THINKNODE_M6_H
 \ No newline at end of file
