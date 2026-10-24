@@ -31,3 +31,9 @@ extern fake_wdt_t fake_wdt;
 #define QSPI_IFCONFIG1_SCKDELAY_Pos 0
 #define QSPI_IFCONFIG1_SCKFREQ_Pos 28
 #define NRFX_DELAY_US(us) ((void)(us))
+
+// the GPIO calls qspi_wake() makes (test_ota_stage.c decodes them)
+void nrf_gpio_cfg_output(uint32_t pin);
+void nrf_gpio_pin_set(uint32_t pin);
+void nrf_gpio_pin_clear(uint32_t pin);
+void nrf_gpio_pin_write(uint32_t pin, uint32_t value);

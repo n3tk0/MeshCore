@@ -85,8 +85,48 @@ static bool qspi_cmd(uint8_t opcode, uint32_t len) {   // len: opcode + data byt
 
 static bool qspi_on;
 
+// boards that switch the flash's supply: on, as the app does at start (after a reset the pins float)
+static void qspi_power(void) {
+#ifdef OTA_STAGE_QSPI_PWR_1
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_PWR_1);
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_PWR_1);
+#endif
+#ifdef OTA_STAGE_QSPI_PWR_2
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_PWR_2);
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_PWR_2);
+#endif
+#if defined(OTA_STAGE_QSPI_PWR_1) || defined(OTA_STAGE_QSPI_PWR_2)
+  NRFX_DELAY_US(5000);   // the supply comes up, then the flash (well under 1 ms)
+#endif
+}
+
+// The app leaves the flash in deep power down, where it ignores everything but 0xAB: also the status
+// reads the QSPI peripheral makes on ACTIVATE, which then never ends. So 0xAB goes out by hand on the
+// pins first (SPI mode 0, WP and HOLD high), before the peripheral takes them.
+static void qspi_wake(void) {
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_CSN);
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_CSN);
+  nrf_gpio_pin_clear(OTA_STAGE_QSPI_SCK);
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_SCK);
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_IO0);
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_IO2);
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_IO2);
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_IO3);
+  nrf_gpio_cfg_output(OTA_STAGE_QSPI_IO3);
+  nrf_gpio_pin_clear(OTA_STAGE_QSPI_CSN);
+  for (int b = 7; b >= 0; b--) {
+    nrf_gpio_pin_write(OTA_STAGE_QSPI_IO0, (0xABu >> b) & 1u);
+    nrf_gpio_pin_set(OTA_STAGE_QSPI_SCK);
+    nrf_gpio_pin_clear(OTA_STAGE_QSPI_SCK);
+  }
+  nrf_gpio_pin_set(OTA_STAGE_QSPI_CSN);
+  NRFX_DELAY_US(50);                                           // tRES1: well under 50 us
+}
+
 static bool qspi_begin(void) {
   if (qspi_on) return true;
+  qspi_power();
+  qspi_wake();
   NRF_QSPI->PSEL.SCK = OTA_STAGE_QSPI_SCK;
   NRF_QSPI->PSEL.CSN = OTA_STAGE_QSPI_CSN;
   NRF_QSPI->PSEL.IO0 = OTA_STAGE_QSPI_IO0;
@@ -98,16 +138,17 @@ static bool qspi_begin(void) {
   NRF_QSPI->ENABLE = 1;
   NRF_QSPI->EVENTS_READY = 0;
   NRF_QSPI->TASKS_ACTIVATE = 1;
-  if (!qspi_wait()) return false;
-  qspi_cmd(0xAB, 1);                                           // out of deep power down (the app leaves it there)
-  NRFX_DELAY_US(50);
-  for (uint32_t n = 0; n < 1000000u; n++) {                    // a write may still be going on
-    if (!qspi_cmd(0x05, 2)) return false;                      // read status
-    if ((NRF_QSPI->CINSTRDAT0 & 1u) == 0) {
-      qspi_on = true;
-      return true;
+  if (qspi_wait()) {
+    for (uint32_t n = 0; n < 1000000u; n++) {                  // a write may still be going on
+      if (!qspi_cmd(0x05, 2)) break;                           // read status
+      if ((NRF_QSPI->CINSTRDAT0 & 1u) == 0) {
+        qspi_on = true;
+        return true;
+      }
     }
   }
+  NRF_QSPI->TASKS_DEACTIVATE = 1;
+  NRF_QSPI->ENABLE = 0;
   return false;
 }
 
