@@ -2,6 +2,7 @@
 #include "RTClib.h"
 #include <Melopero_RV3028.h>
 #include "RTC_RX8130CE.h"
+#include "I2CProbe.h"
 
 static RTC_DS3231 rtc_3231;
 static bool ds3231_success = false;
@@ -21,15 +22,13 @@ static bool rtc_8130_success = false;
 #define RX8130CE_ADDRESS 0x32
 
 bool AutoDiscoverRTCClock::i2c_probe(TwoWire& wire, uint8_t addr) {
-  wire.beginTransmission(addr);
-  uint8_t error = wire.endTransmission();
-  return (error == 0);
+  return i2cProbe(wire, addr) == I2C_PROBE_ACK;
 }
 
 void AutoDiscoverRTCClock::begin(TwoWire& wire) {
   #ifdef DISABLE_RTC_AUTODISCOVERY
-  // Boards without an RTC can skip the probes: on nRF52 the Wire driver has no timeout,
-  // so a probe on a faulty/unpulled bus can hang the boot forever. Falls back to _fallback.
+  // Boards without an RTC can skip the probes. Falls back to _fallback. (The probes have a
+  // timeout: a faulty bus no longer hangs the boot, see I2CProbe.h.)
   return;
   #endif
 

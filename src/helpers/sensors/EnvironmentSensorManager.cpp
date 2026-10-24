@@ -1,6 +1,7 @@
 #include "EnvironmentSensorManager.h"
 
 #include <Wire.h>
+#include <helpers/I2CProbe.h>
 
 #if ENV_PIN_SDA && ENV_PIN_SCL
 #define TELEM_WIRE &Wire1  // Use Wire1 as the I2C bus for Environment Sensors
@@ -214,16 +215,15 @@ static RAK12500LocationProvider RAK12500_provider;
 // I2C bus scanner
 // Probes every valid address and records which ones ACK.
 // This runs before any sensor library is touched, so a missing
-// device is never initialized by a library. Note the scan itself
-// still does I2C transfers: on nRF52 the Wire driver has no timeout,
-// so a stuck or unpulled bus can hang here. Boards without sensors
-// can skip it with -D DISABLE_ENV_SENSORS.
+// device is never initialized by a library. The probes have a
+// timeout (I2CProbe.h): on a stuck bus nothing is found and the
+// boot goes on. Boards without sensors can skip the scan with
+// -D DISABLE_ENV_SENSORS.
 // ============================================================
 
 static void scanI2CBus(TwoWire* wire, bool found[128]) {
-  for (uint8_t addr = 0x08; addr < 0x78; addr++) {
-    wire->beginTransmission(addr);
-    found[addr] = (wire->endTransmission() == 0);
+  for (uint8_t addr = 0x08; addr < 0x78 && !i2cBusStuck(); addr++) {
+    found[addr] = i2cProbe(*wire, addr) == I2C_PROBE_ACK;
   }
 }
 
