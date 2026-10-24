@@ -107,10 +107,10 @@
     <string name="recheck">Check again</string>
     <string name="flash_open">Flash firmware…</string>
     <string name="flash_title">Firmware for %1$s</string>
-    <string name="flash_hint_repeater">nRF52 repeaters are flashed over Bluetooth (.zip), ESP32 over Wi-Fi (.bin). The app runs `start ota` in the repeater\'s console over LoRa, so stay within 10–30 m of it.</string>
+    <string name="flash_hint_repeater">nRF52 repeaters are flashed over Bluetooth (.zip or .uf2), ESP32 over Wi-Fi (.bin). The app runs `start ota` in the repeater\'s console over LoRa, so stay within 10–30 m of it.</string>
     <string name="flash_hint_companion">The companion is flashed over Bluetooth (.zip). The link drops; connect again afterwards.</string>
     <string name="flash_none">No fitting firmware in the releases. Choose a file.</string>
-    <string name="flash_from_file">From a file (.zip / .bin)</string>
+    <string name="flash_from_file">From a file (.zip / .uf2 / .bin)</string>
     <string name="flash_start">Flash</string>
     <string name="flash_confirm_text">File: %1$s\nDevice: %2$s\n\nDo not cut the power and stay close until it is done (1–3 minutes).</string>
     <string name="flash_progress">Writing: %1$d%%</string>
@@ -125,7 +125,7 @@
     <string name="warn_not_running">The repeater now runs firmware for %1$s; this one is for %2$s.</string>
     <string name="warn_many_dfu">%1$d devices nearby are in update mode. The strongest was picked: %2$s.</string>
     <string name="warn_wifi">For ESP32 the board cannot be checked before the write.</string>
-    <string name="err_flash_need_zip">The companion and nRF52 repeaters are flashed with a .zip file.</string>
+    <string name="err_flash_need_zip">The companion and nRF52 repeaters are flashed with a .zip or .uf2 file.</string>
     <string name="err_flash_need_bin">ESP32 repeaters are flashed with the .bin file (not -merged.bin).</string>
     <string name="err_flash_bad_file">The file is not what its name says (.zip or .bin).</string>
     <string name="err_no_dfu">The repeater did not show up over Bluetooth. Get closer to it and try again.</string>
@@ -324,4 +324,10 @@
     <string name="repeat_on">repeat on</string>
     <string name="restore_now">now: %1$s</string>
     <string name="set_admin_password">Admin password</string>
+    <string name="flash_log_title">Log of the last Bluetooth flash</string>
+    <string name="flash_log_copy">Copy</string>
+    <string name="err_flash_uf2">This .uf2 cannot be flashed over Bluetooth: %1$s</string>
+    <string name="status_batt_current">Battery from its sensor (INA219): %1$d mA</string>
+    <string name="status_batt_charging">Battery from its sensor (INA219): charging at %1$d mA</string>
+    <string name="status_batt_discharging">Battery from its sensor (INA219): discharging at %1$d mA</string>
 </resources>

@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import no.nordicsemi.android.dfu.DfuBaseService
+import no.nordicsemi.android.dfu.DfuLogListener
 import no.nordicsemi.android.dfu.DfuProgressListenerAdapter
 import no.nordicsemi.android.dfu.DfuServiceInitiator
 import no.nordicsemi.android.dfu.DfuServiceListenerHelper
@@ -54,9 +55,11 @@ object BleDfu {
 
     /**
      * Flashes the DFU .zip: the device's application jumps to its bootloader (legacy buttonless DFU, the
-     * Adafruit BLEDfu service), then the image goes over. [progress] gets 0..100.
+     * Adafruit BLEDfu service), then the image goes over. [progress] gets 0..100, [log] the library's steps.
+     * [bonded]: a companion (PIN bond kept); a repeater is never bonded.
      */
-    suspend fun flash(ctx: Context, address: String, name: String, zip: File, progress: (Int) -> Unit) {
+    suspend fun flash(ctx: Context, address: String, name: String, zip: File, bonded: Boolean, log: (String) -> Unit,
+              progress: (Int) -> Unit) {
         val done = CompletableDeferred<Unit>()
         val listener = object : DfuProgressListenerAdapter() {
             override fun onProgressChanged(deviceAddress: String, percent: Int, speed: Float, avgSpeed: Float,
@@ -67,20 +70,27 @@ object BleDfu {
                 done.completeExceptionally(FlashFailed(message ?: "DFU error $error"))
             }
         }
+        val logs = DfuLogListener { _, _, message -> log(message) }
         // no address filter: the bootloader may come back on another address
         DfuServiceListenerHelper.registerProgressListener(ctx, listener)
+        DfuServiceListenerHelper.registerLogListener(ctx, logs)
         try {
             val starter = DfuServiceInitiator(address)
                 .setDeviceName(name)
-                .setKeepBond(true)   // the companion's PIN bond stays
                 .setForceDfu(false)
-                .setPacketsReceiptNotificationsEnabled(true)
-                .setPacketsReceiptNotificationsValue(8)
                 .setUnsafeExperimentalButtonlessServiceInSecureDfuEnabled(true)
-                // the Adafruit bootloader comes up on the address + 1 unless the phone is bonded (a repeater
-                // never is): without this the library waits on the old address, GATT CONN TIMEOUT
+                // after the jump the Xiao's bootloader did not answer on the app's address (log: connect to
+                // the same address, GATT CONN TIMEOUT x3): it comes up on the address + 1 when it lost the
+                // app's peer data. Scan for both, then the same address as before
                 .setForceScanningForNewAddressInLegacyDfu(true)
                 .setScanTimeout(10_000)   // the bootloader starts its SoftDevice first
+            if (bonded) {
+                starter.setKeepBond(true)   // the companion's PIN bond stays
+                    .setPacketsReceiptNotificationsEnabled(true)
+                    .setPacketsReceiptNotificationsValue(8)
+            }
+            // a repeater (never bonded): no receipts, no kept bond, as the nRF Device Firmware Update app
+            starter
                 // a foreground service: Android does not stop it mid-write when the app goes to the background
                 .setForeground(true)
                 .setDisableNotification(false)
@@ -95,6 +105,7 @@ object BleDfu {
             }
         } finally {
             DfuServiceListenerHelper.unregisterProgressListener(ctx, listener)
+            DfuServiceListenerHelper.unregisterLogListener(ctx, logs)
         }
     }
 }

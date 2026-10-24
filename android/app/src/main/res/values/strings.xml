@@ -108,10 +108,10 @@
     <string name="recheck">Провери пак</string>
     <string name="flash_open">Запиши firmware…</string>
     <string name="flash_title">Firmware за %1$s</string>
-    <string name="flash_hint_repeater">nRF52 repeater-ите се записват по Bluetooth (.zip), ESP32 по Wi-Fi (.bin). Приложението пуска `start ota` в конзолата на repeater-а по LoRa, затова стой на 10–30 м от него.</string>
+    <string name="flash_hint_repeater">nRF52 repeater-ите се записват по Bluetooth (.zip или .uf2), ESP32 по Wi-Fi (.bin). Приложението пуска `start ota` в конзолата на repeater-а по LoRa, затова стой на 10–30 м от него.</string>
     <string name="flash_hint_companion">Companion-ът се записва по Bluetooth (.zip). Връзката с него прекъсва и след записа се свързваш отново.</string>
     <string name="flash_none">Няма подходящ firmware в изданията. Избери файл.</string>
-    <string name="flash_from_file">От файл (.zip / .bin)</string>
+    <string name="flash_from_file">От файл (.zip / .uf2 / .bin)</string>
     <string name="flash_start">Запиши</string>
     <string name="flash_confirm_text">Файл: %1$s\nУстройство: %2$s\n\nНе спирай захранването и стой наблизо, докато свърши (1–3 минути).</string>
     <string name="flash_progress">Записвам: %1$d%%</string>
@@ -126,7 +126,7 @@
     <string name="warn_not_running">Repeater-ът сега работи с firmware за %1$s, а този е за %2$s.</string>
     <string name="warn_many_dfu">Наблизо има %1$d устройства в режим за обновяване. Избрах най-силното: %2$s.</string>
     <string name="warn_wifi">При ESP32 платката не може да се провери преди записа.</string>
-    <string name="err_flash_need_zip">Companion-ът и nRF52 repeater-ите се записват с .zip файл.</string>
+    <string name="err_flash_need_zip">Companion-ът и nRF52 repeater-ите се записват с .zip или .uf2 файл.</string>
     <string name="err_flash_need_bin">ESP32 repeater-ите се записват с .bin файла (не с -merged.bin).</string>
     <string name="err_flash_bad_file">Файлът не е какъвто казва името му (.zip или .bin).</string>
     <string name="err_no_dfu">Repeater-ът не се появи по Bluetooth. Приближи се до него и опитай пак.</string>
@@ -325,4 +325,10 @@
     <string name="repeat_on">репийтър вкл.</string>
     <string name="restore_now">сега: %1$s</string>
     <string name="set_admin_password">Admin парола</string>
+    <string name="flash_log_title">Лог на последния запис по Bluetooth</string>
+    <string name="flash_log_copy">Копирай</string>
+    <string name="err_flash_uf2">Този .uf2 не става за запис по Bluetooth: %1$s</string>
+    <string name="status_batt_current">Батерия от сензора (INA219): ток %1$d mA</string>
+    <string name="status_batt_charging">Батерия от сензора (INA219): зарежда с %1$d mA</string>
+    <string name="status_batt_discharging">Батерия от сензора (INA219): разрежда с %1$d mA</string>
 </resources>
