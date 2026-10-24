@@ -225,8 +225,8 @@ static void scanI2CBus(TwoWire* wire, bool found[128]) {
   for (uint8_t addr = 0x08; addr < 0x78; addr++) {
     I2CProbeResult r = i2cProbe(*wire, addr);
     found[addr] = r == I2C_PROBE_ACK;
-    if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
     if (i2cBusStuck(*wire)) { i2cSetBusStuck(); break; }
+    if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
   }
 }
 

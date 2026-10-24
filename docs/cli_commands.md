@@ -194,6 +194,20 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
+### Show the I2C devices and the ones turned off
+**Usage:** `i2c`
+
+**Example reply:** `40 INA219 ok; 76 BMP280 off: 3 errors at 125m`
+
+**Notes:**
+- Lists the RTC and the sensors found at boot, with `ok` or why each was turned off: `timeout at boot` (its probe or start hung the bus), `init failed` (it answered, its driver did not start) or `3 errors at <uptime>m` (3 reads in a row failed).
+- A device turned off stays off until a reboot, and keeps its telemetry channel. When an INA219 used for the battery is turned off, the board's own battery reading is used.
+- `bus STUCK` in front: a line stayed low after the bus was freed, so no device can be reached.
+- On nRF52, every I2C wait has a 50 ms timeout, so a bad module cannot hang the node. On other platforms the devices are only listed.
+- `N probe timeouts at boot (first XX)` in front: probes that timed out where nothing is known, often a flaky bus.
+
+---
+
 ## Configuration
 
 ### Radio

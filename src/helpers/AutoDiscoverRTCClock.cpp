@@ -23,8 +23,9 @@ static bool rtc_8130_success = false;
 
 bool AutoDiscoverRTCClock::i2c_probe(TwoWire& wire, uint8_t addr) {
   I2CProbeResult r = i2cProbe(wire, addr);
-  if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
+  // on a stuck bus every probe fails at once: that is the bus, not these addresses
   if (i2cBusStuck(wire)) i2cSetBusStuck();
+  else if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
   return r == I2C_PROBE_ACK;
 }
 
