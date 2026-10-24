@@ -32,6 +32,6 @@ enum I2CDeviceState : uint8_t {
 // The list `i2c` shows. With name NULL and I2C_DEV_OFF_BOOT_TIMEOUT (a probe that timed out,
 // nothing known at that address) it is only counted
 void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state);
-void i2cSetBusStuck();
+void i2cSetBusStuck(TwoWire& wire);  // `i2c` then shows its state as it is now
 // e.g. "40 INA219 ok; 76 BMP280 off: 3 errors at 125m", cut to fit
 void i2cFormatList(char* reply, size_t size);

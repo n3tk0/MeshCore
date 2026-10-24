@@ -115,6 +115,7 @@ class TwoWire : public Stream
     void configPins();
     void clearEvents();
     bool waitFor(volatile uint32_t& ev, volatile uint32_t& or_ev);
+    void freeBus();
     void recover();
     bool busReady();
 

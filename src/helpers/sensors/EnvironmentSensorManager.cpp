@@ -225,7 +225,7 @@ static void scanI2CBus(TwoWire* wire, bool found[128]) {
   for (uint8_t addr = 0x08; addr < 0x78; addr++) {
     I2CProbeResult r = i2cProbe(*wire, addr);
     found[addr] = r == I2C_PROBE_ACK;
-    if (i2cBusStuck(*wire)) { i2cSetBusStuck(); break; }
+    if (i2cBusStuck(*wire)) { i2cSetBusStuck(*wire); break; }
     if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
   }
 }
@@ -658,6 +658,10 @@ bool EnvironmentSensorManager::begin() {
   #endif
 
   // Walk the sensor table and initialize only detected devices.
+  // Several entries can share an address (BME680/BME280/BMP280 on 0x76, SHT4X/INA226 on 0x44):
+  // one that does not start is only a miss until every entry there was tried.
+  struct { uint8_t address; const char* name; } misses[SENSOR_TABLE_SIZE + 1];
+  int miss_count = 0;
   _active_sensor_count = 0;
   for (size_t i = 0; i < SENSOR_TABLE_SIZE && _active_sensor_count < MAX_ACTIVE_SENSORS; i++) {
     const SensorDef& def = SENSOR_TABLE[i];
@@ -681,7 +685,7 @@ bool EnvironmentSensorManager::begin() {
     }
     if (n == 0) {
       MESH_DEBUG_PRINTLN("%s found at %02X but failed to initialize", def.name, def.address);
-      i2cListDevice(def.address, def.name, I2C_DEV_OFF_INIT_FAILED);
+      misses[miss_count++] = { def.address, def.name };
       continue;
     }
     i2cListDevice(def.address, def.name, I2C_DEV_OK);
@@ -693,6 +697,21 @@ bool EnvironmentSensorManager::begin() {
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
       _active_sensors[_active_sensor_count++] = { def.query, sub, def.address, def.name, 0, false };
     }
+  }
+
+  // An address still unclaimed answered the scan, but none of its drivers started
+  for (int i = 0; i < miss_count; i++) {
+    uint8_t addr = misses[i].address;
+    if (!detected[addr]) continue;  // another entry took it, or it was already listed
+    #if defined(RAK_WISBLOCK_GPS) && defined(TELEM_RAK12500_ADDRESS)
+    if (addr == TELEM_RAK12500_ADDRESS && i2cGPSFlag) continue;  // the GPS, not an INA3221
+    #endif
+    bool shared = false;
+    for (int j = i + 1; j < miss_count; j++) {
+      if (misses[j].address == addr && strcmp(misses[j].name, misses[i].name) != 0) shared = true;
+    }
+    i2cListDevice(addr, shared ? NULL : misses[i].name, I2C_DEV_OFF_INIT_FAILED);  // "?" when it could be several
+    detected[addr] = false;
   }
 
   return true;
@@ -709,6 +728,7 @@ uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
     uint32_t errors = i2cErrorCount(*TELEM_WIRE);
     float mv = INA219.getBusVoltage_V() * 1000.0f + INA219.getShuntVoltage_mV();
     noteRead(query_ina219, errors);
+    if (i2cErrorCount(*TELEM_WIRE) != errors) return 0;  // a half-read value: the board's own reading
     if (mv > 0 && mv < 65535) return (uint16_t)mv;
   }
   #endif
@@ -728,7 +748,7 @@ void EnvironmentSensorManager::noteRead(void (*query)(uint8_t, uint8_t, CayenneL
       if (a.sub_channel == 0) i2cListDevice(a.address, a.name, I2C_DEV_OFF_ERRORS);
     }
   }
-  if (i2cBusStuck(*TELEM_WIRE)) i2cSetBusStuck();
+  if (i2cBusStuck(*TELEM_WIRE)) i2cSetBusStuck(*TELEM_WIRE);
 }
 
 // ============================================================
@@ -745,13 +765,15 @@ bool EnvironmentSensorManager::querySensors(uint8_t requester_permissions, Cayen
   }
 
   if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
+    uint32_t device_errors = 0;
     for (int i = 0; i < _active_sensor_count; i++) {
       // a sensor turned off keeps its channel, so the ones after it do not move
-      if (!_active_sensors[i].off) {
-        uint32_t errors = i2cErrorCount(*TELEM_WIRE);
-        _active_sensors[i].query(next_available_channel, _active_sensors[i].sub_channel, telemetry);
-        if (_active_sensors[i].sub_channel == 0) noteRead(_active_sensors[i].query, errors);  // once per device
-      }
+      // the errors of all channels of a device (an INA3221 has three) count as one read
+      ActiveSensor& a = _active_sensors[i];
+      if (a.sub_channel == 0) device_errors = i2cErrorCount(*TELEM_WIRE);
+      if (!a.off) a.query(next_available_channel, a.sub_channel, telemetry);
+      bool last_channel = i + 1 >= _active_sensor_count || _active_sensors[i + 1].query != a.query;
+      if (last_channel && !a.off) noteRead(a.query, device_errors);
       next_available_channel++;
     }
   }
@@ -1017,7 +1039,18 @@ void EnvironmentSensorManager::loop() {
   }
   #endif
   #if ENV_INCLUDE_BME680_BSEC
-  if (bsec_active && bsec_iaq.run()) {
+  if (bsec_active) {
+    for (int i = 0; i < _active_sensor_count; i++) {
+      if (_active_sensors[i].query == query_bme680_bsec && _active_sensors[i].off) bsec_active = false;
+    }
+  }
+  uint32_t bsec_errors = bsec_active ? i2cErrorCount(*TELEM_WIRE) : 0;
+  bool bsec_sample = bsec_active && bsec_iaq.run();
+  // the BSEC reads the sensor here, not in querySensors(): a sample, or an I2C error, is a read
+  if (bsec_active && (bsec_sample || i2cErrorCount(*TELEM_WIRE) != bsec_errors)) {
+    noteRead(query_bme680_bsec, bsec_errors);
+  }
+  if (bsec_sample) {
     uint8_t prev_accuracy = bsec_accuracy;
     bsec_temperature  = bsec_iaq.temperature;
     bsec_humidity     = bsec_iaq.humidity;
