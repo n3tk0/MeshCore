@@ -2,7 +2,7 @@
 #include "RTClib.h"
 #include <Melopero_RV3028.h>
 #include "RTC_RX8130CE.h"
-#include "I2CProbe.h"
+#include "I2CHealth.h"
 
 static RTC_DS3231 rtc_3231;
 static bool ds3231_success = false;
@@ -22,19 +22,23 @@ static bool rtc_8130_success = false;
 #define RX8130CE_ADDRESS 0x32
 
 bool AutoDiscoverRTCClock::i2c_probe(TwoWire& wire, uint8_t addr) {
-  return i2cProbe(wire, addr) == I2C_PROBE_ACK;
+  I2CProbeResult r = i2cProbe(wire, addr);
+  if (r == I2C_PROBE_TIMEOUT) i2cListDevice(addr, NULL, I2C_DEV_OFF_BOOT_TIMEOUT);
+  if (i2cBusStuck(wire)) i2cSetBusStuck();
+  return r == I2C_PROBE_ACK;
 }
 
 void AutoDiscoverRTCClock::begin(TwoWire& wire) {
   #ifdef DISABLE_RTC_AUTODISCOVERY
-  // Boards without an RTC can skip the probes. Falls back to _fallback. (The probes have a
-  // timeout: a faulty bus no longer hangs the boot, see I2CProbe.h.)
+  // Boards without an RTC can skip the probes. Falls back to _fallback. (On nRF52 the probes have a
+  // timeout: a faulty bus no longer hangs the boot, see I2CHealth.h.)
   return;
   #endif
 
   #if !defined(DISABLE_DS3231_PROBE)
   if (i2c_probe(wire, DS3231_ADDRESS)) {
     ds3231_success = rtc_3231.begin(&wire);
+    i2cListDevice(DS3231_ADDRESS, "DS3231", ds3231_success ? I2C_DEV_OK : I2C_DEV_OFF_INIT_FAILED);
   }
   #endif
 
@@ -44,17 +48,20 @@ void AutoDiscoverRTCClock::begin(TwoWire& wire) {
     rtc_rv3028.writeToRegister(0x37, 0xB4); // Direct Switching Mode (DSM): when VDD < VBACKUP, switchover occurs from VDD to VBACKUP
     rtc_rv3028.set24HourMode(); // Set the device to use the 24hour format (default) instead of the 12 hour format
     rv3028_success = true;
+    i2cListDevice(RV3028_ADDRESS, "RV3028", I2C_DEV_OK);
   }
 
   if (i2c_probe(wire, PCF8563_ADDRESS)) {
     MESH_DEBUG_PRINTLN("PCF8563: Found");
     rtc_8563_success = rtc_8563.begin(&wire);
+    i2cListDevice(PCF8563_ADDRESS, "PCF8563", rtc_8563_success ? I2C_DEV_OK : I2C_DEV_OFF_INIT_FAILED);
   }
 
   if (i2c_probe(wire, RX8130CE_ADDRESS)) {
     MESH_DEBUG_PRINTLN("RX8130CE: Found");
     rtc_8130.begin(&wire);
     rtc_8130_success = true;
+    i2cListDevice(RX8130CE_ADDRESS, "RX8130CE", I2C_DEV_OK);
     MESH_DEBUG_PRINTLN("RX8130CE: Initialized");
   }
 }
