@@ -124,6 +124,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var repeater by mutableStateOf<Contact?>(null)
     var info by mutableStateOf<OtaProtocol.Info?>(null)   // null: the repeater has no LoRa OTA (stock firmware)
     var status by mutableStateOf<RepeaterStatus?>(null)
+    /** The battery from a current sensor (INA219) in the repeater's telemetry; null without one. */
+    var sensorBattery by mutableStateOf<io.github.n3tk0.loraota.ota.RepeaterTelemetry.Battery?>(null)
     var routeHops by mutableStateOf<Int?>(null)   // hops on the route the login learned; null: none learned
     val direct get() = routeHops == 0   // only then the update can go
     var otaChecked by mutableStateOf(false)   // the OTA check got to its end (an answer or none)
@@ -180,6 +182,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
     var flashDone by mutableStateOf(false)
+    /** The DFU library's steps of the last Bluetooth flash, seconds from its start first: kept after a failure. */
+    var flashLog by mutableStateOf<List<String>>(emptyList())
     var loginSheet by mutableStateOf<Contact?>(null)   // the repeater whose login sheet is open
     var firmwareTab by mutableStateOf(0)   // the repeater's firmware: 0 over LoRa, 1 over Bluetooth / Wi-Fi
     var companionModel by mutableStateOf("")
@@ -371,6 +375,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         repeater = learned ?: contact
         info = null
         status = null
+        sensorBattery = null
         otaChecked = false
         oldImage = null
         newImage = null
@@ -407,6 +412,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         routeHops = hops
         working = str(R.string.working_status)
         status = readStatus(r)
+        // the battery from a sensor: a stock repeater reports its board's own reading (0.45 V on a Xiao without
+        // its battery pins) also when an INA219 measures the battery
+        if (status != null) sensorBattery = readSensorBattery(r)
         working = str(R.string.working_ota)
         val i = try {
             session(r).info(OTA_CHECK_MS, 1)
@@ -419,6 +427,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         resumable = i?.state == OtaProtocol.STATE_PAUSED
         if (i != null) loadReleases()   // a route with hops is shown on the screen (and keeps Update off)
     }
+
+    private suspend fun readSensorBattery(r: Contact): io.github.n3tk0.loraota.ota.RepeaterTelemetry.Battery? = runCatching {
+        val tag = companion.sendRequest(r, io.github.n3tk0.loraota.ota.RepeaterTelemetry.request())
+        companion.awaitResponse(tag, 12_000)?.let { io.github.n3tk0.loraota.ota.RepeaterTelemetry.parse(it).battery() }
+    }.getOrNull()
 
     /** One try: 'Check again' asks again, and a slow link should not hold the OTA check back. */
     private suspend fun readStatus(r: Contact): RepeaterStatus? {
@@ -499,6 +512,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             repeater = null
             info = null
             status = null
+            sensorBattery = null
         }
     }
 
@@ -727,7 +741,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pickFlashFile(uri: Uri) = work {
         val data = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
-        flashImage = FlashImage(fileName(uri), data, null)
+        val name = fileName(uri)
+        flashImage = if (name.endsWith(".uf2", ignoreCase = true)) {
+            // the USB drive's file: made into the Bluetooth DFU .zip here
+            val zip = runCatching { withContext(Dispatchers.Default) { io.github.n3tk0.loraota.flash.Uf2.toDfuZip(data) } }
+                .getOrElse { throw Exception(str(R.string.err_flash_uf2, it.message ?: "")) }
+            FlashImage(name.dropLast(4) + ".zip", zip, null)
+        } else FlashImage(name, data, null)
     }
 
     /** 'Flash': checks the file, wakes the repeater's DFU mode and finds it, then asks before it writes. */
@@ -832,7 +852,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             delay(1500)
         }
         working = str(R.string.working_flash)
-        BleDfu.flash(ctx, address, p.name, zip) { flashPercent = it }
+        val t0 = System.currentTimeMillis()
+        flashLog = emptyList()
+        val log = { m: String ->
+            val line = "%.1f %s".format(java.util.Locale.ROOT, (System.currentTimeMillis() - t0) / 1000.0, m)
+            viewModelScope.launch { flashLog = (flashLog + line).takeLast(300) }
+            Unit
+        }
+        log("${p.name} $address, ${p.image.data.size} B")
+        BleDfu.flash(ctx, address, p.name, zip, flashTarget == FlashTarget.COMPANION, log) { flashPercent = it }
     }
 
     private suspend fun flashWifi(img: FlashImage) {
