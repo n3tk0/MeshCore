@@ -29,7 +29,8 @@ enum I2CDeviceState : uint8_t {
   I2C_DEV_OFF_ERRORS,         // 3 failed reads in a row
 };
 
-// The list `i2c` shows. name may be NULL (an address that only timed out)
+// The list `i2c` shows. With name NULL and I2C_DEV_OFF_BOOT_TIMEOUT (a probe that timed out,
+// nothing known at that address) it is only counted
 void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state);
 void i2cSetBusStuck();
 // e.g. "40 INA219 ok; 76 BMP280 off: 3 errors at 125m", cut to fit

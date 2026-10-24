@@ -49,7 +49,17 @@ static I2CListEntry i2c_list[I2C_LIST_MAX];
 static uint8_t i2c_list_count = 0;
 static bool i2c_bus_stuck = false;
 
+static uint8_t i2c_boot_timeouts = 0;    // addresses whose probe timed out, nothing known there
+static uint8_t i2c_first_timeout = 0;
+
 void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state) {
+  if (name == NULL && state == I2C_DEV_OFF_BOOT_TIMEOUT) {
+    // counted, not listed: a flaky bus could time out at many addresses and fill the list
+    if (i2c_boot_timeouts++ == 0) i2c_first_timeout = addr;
+    Serial.print("I2C probe timed out at 0x");
+    Serial.println(addr, HEX);
+    return;
+  }
   I2CListEntry* e = NULL;
   for (int i = 0; i < i2c_list_count; i++) {
     if (i2c_list[i].addr == addr) { e = &i2c_list[i]; break; }
@@ -79,6 +89,9 @@ void i2cFormatList(char* reply, size_t size) {
   size_t n = 0;
   reply[0] = 0;
   if (i2c_bus_stuck) n += snprintf(reply + n, size - n, "bus STUCK; ");
+  if (i2c_boot_timeouts && n < size) {
+    n += snprintf(reply + n, size - n, "%u probe timeouts at boot (first %02X); ", i2c_boot_timeouts, i2c_first_timeout);
+  }
   if (i2c_list_count == 0 && n < size) n += snprintf(reply + n, size - n, "no I2C devices");
   for (int i = 0; i < i2c_list_count && n < size; i++) {
     const I2CListEntry& e = i2c_list[i];
