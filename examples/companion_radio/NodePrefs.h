@@ -67,6 +67,7 @@ public:
   uint8_t ui_wake = 0;           // encoder UI: screen wakes for 0=direct messages, 1=all messages, 2=never
   uint8_t ui_lock = 0;           // encoder UI: key lock 0=by hand (hold Back on standby), 1=when the screen goes off
   uint8_t ui_input = 0;          // encoder UI: on the encoder pins 0=not known yet, 1=encoder, 2=two buttons
+  uint8_t ui_quiet = 0;          // encoder UI: quiet hours (channels neither wake nor buzz) 0=off, else ui::QUIET_FROM/TO
   float   adc_mult = 0;          // battery ADC multiplier from the on-device calibration, 0 = build default
   int8_t tz_offset = 0;
 #ifdef ENABLE_WIFI_INTERFACE
@@ -206,6 +207,7 @@ private:
       def("ui_wake", _parent->ui_wake);
       def("ui_lock", _parent->ui_lock);
       def("ui_input", _parent->ui_input);
+      def("ui_quiet", _parent->ui_quiet);
       def("adc_mult", _parent->adc_mult);
       def("tz_offset", _parent->tz_offset);
     }

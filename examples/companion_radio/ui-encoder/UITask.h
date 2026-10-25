@@ -100,6 +100,7 @@ class UITask : public AbstractUITask {
   unsigned long _last_new_msg;
   uint8_t _next_src, _next_channel, _next_prefix[6];   // from msgSource(), for the next newMsg()
   bool _next_muted;                                    // the next newMsg() is from a muted channel
+  bool _next_quiet;                                    // ... arrives in quiet hours (a channel)
   int8_t _next_snr4;                                   // ... and its signal
   int16_t _next_rssi;
 
@@ -166,6 +167,7 @@ public:
     _ask_antenna = false;
     _next_src = MSG_SRC_UNKNOWN;
     _next_muted = false;
+    _next_quiet = false;
     _next_snr4 = 0;
     _next_rssi = 0;
     _num_muted = 0;
@@ -249,6 +251,8 @@ public:
   void onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
                    const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) override;
   void onControlDataRecv(const mesh::Packet* pkt) override;
+  void onMailboxDelivered(int count) override;
+  bool isQuietNow() const;   // quiet hours, by the local clock (off without a clock)
 
   void shutdown(bool restart = false);
 };

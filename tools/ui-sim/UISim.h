@@ -5,6 +5,7 @@
 
 #include <MeshCore.h>
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/TelemetryHistory.h>
 #include <Utils.h>
 #include "../../examples/companion_radio/NodePrefs.h"
 
@@ -78,6 +79,7 @@ public:
                              const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) { }
     virtual bool onUnhandledResponse(const ContactInfo &from, uint32_t tag, const uint8_t* data, uint8_t len) { return false; }
     virtual void onControlDataRecv(const mesh::Packet* pkt) { }
+    virtual void onMailboxDelivered(int count) { }
     virtual ~Listener() { }
   };
 };
@@ -131,6 +133,9 @@ public:
   int loadUIData(const char*, uint8_t*, int, int = 0) { return -1; }
   void removeUIData(const char*) { }
   bool saveOfflineQueue() { return true; }
+  TelemetryHistory history;
+  const TelemetryHistory& getHistory() const { return history; }
+  void saveHistoryNow() { }
   void enterCLIRescue() { }
   void resetContactPath(ContactInfo& c) { c.out_path_len = OUT_PATH_UNKNOWN; }
   void setTxPower(int8_t dbm) { if (prefs) prefs->tx_power_dbm = dbm; }
