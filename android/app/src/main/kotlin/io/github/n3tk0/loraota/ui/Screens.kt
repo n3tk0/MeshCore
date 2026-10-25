@@ -118,6 +118,8 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                             Step.UPDATE -> vm.repeater?.name ?: ""
                             Step.FLASH -> stringResource(R.string.flash_title, vm.companionName)
                             Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
+                            Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
+                            Step.QUEUE -> stringResource(R.string.q_title)
                         },
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
@@ -148,6 +150,8 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                     Step.UPDATE -> if (vm.running) RunningView(vm) else RepeaterHome(vm)
                     Step.FLASH -> if (vm.running) RunningView(vm) else FlashContent(vm)
                     Step.BACKUP -> BackupScreen(vm)
+                    Step.HEALTH -> HealthScreen(vm)
+                    Step.QUEUE -> QueueScreen(vm)
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -251,6 +255,12 @@ private fun RepeaterStep(vm: AppViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
 
     CompanionCard(vm)
+    // a queue cut short: it goes on from where it was
+    val q = vm.queue
+    if (q != null && !q.finished) {
+        InfoCard(stringResource(R.string.q_unfinished, q.label, q.entries.count { it.result != io.github.n3tk0.loraota.ota.QueueResult.PENDING }, q.entries.size))
+    }
+    if (vm.companionOta) OutlinedButton(onClick = { vm.openQueue() }, enabled = !vm.busy) { Text(stringResource(R.string.q_open)) }
     OutlinedTextField(
         value = query, onValueChange = { query = it }, singleLine = true,
         leadingIcon = { Icon(Icons.Default.Search, null) },
@@ -349,6 +359,7 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
             if (withFlashButton) Row(Modifier.padding(top = 2.dp)) {
                 TextButton(onClick = { vm.openFlash(FlashTarget.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_open)) }
                 TextButton(onClick = { vm.openBackup(DeviceKind.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
+                TextButton(onClick = { vm.openHealth(DeviceKind.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.health_open)) }
             }
         }
     }
@@ -360,7 +371,10 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
 private fun RepeaterHome(vm: AppViewModel) {
     StatusCard(vm)
     vm.info?.let { RunningCard(it) }
-    OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { vm.openHealth(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.health_open)) }
+        OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
+    }
     TabRow(selectedTabIndex = vm.firmwareTab) {
         Tab(selected = vm.firmwareTab == 0, onClick = { vm.firmwareTab = 0 }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
         Tab(selected = vm.firmwareTab == 1, onClick = { vm.showFlashTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_flash)) })
@@ -751,7 +765,7 @@ private fun BoardPicker(choices: List<String>, current: String, onDismiss: () ->
 
 /** While an update or a flash writes: only its progress (a stray tap cannot start anything else). */
 @Composable
-private fun RunningView(vm: AppViewModel) {
+internal fun RunningView(vm: AppViewModel) {
     val name = if (vm.step == Step.FLASH) vm.companionName else vm.repeater?.name ?: ""
     val flashing = vm.flashPercent >= 0
     Text(stringResource(if (flashing) R.string.running_flash else R.string.running_update, name),

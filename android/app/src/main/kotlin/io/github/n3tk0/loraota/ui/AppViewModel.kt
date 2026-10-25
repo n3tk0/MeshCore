@@ -63,14 +63,23 @@ import io.github.n3tk0.loraota.ota.Releases
 import io.github.n3tk0.loraota.ota.RepeaterStatus
 import io.github.n3tk0.loraota.ota.SideRadio
 import io.github.n3tk0.loraota.ota.hex
+import io.github.n3tk0.loraota.ota.HealthCheck
+import io.github.n3tk0.loraota.ota.OtaQueueState
+import io.github.n3tk0.loraota.ota.QueueEntry
+import io.github.n3tk0.loraota.ota.QueueResult
+import io.github.n3tk0.loraota.ota.HealthStore
+import io.github.n3tk0.loraota.ota.HealthWarning
+import io.github.n3tk0.loraota.ota.HistorySeries
+import io.github.n3tk0.loraota.ota.SelfTest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP }
+enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE }
 
 /** What the flash screen writes: the repeater the app is logged in to, or the companion itself. */
 enum class FlashTarget { REPEATER, COMPANION }
@@ -334,6 +343,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         when (step) {
             Step.FLASH -> closeFlash()
             Step.BACKUP -> closeBackup()
+            Step.HEALTH -> closeHealth()
+            Step.QUEUE -> closeQueue()
             Step.UPDATE -> backToRepeaters()
             Step.REPEATER -> disconnect()
             Step.COMPANION -> {}
@@ -358,11 +369,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- repeater ----
 
-    fun login(contact: Contact, password: String) = work {
-        // log in by flood, so both sides learn the route: the update only goes when it has no hop
+    /**
+     * Admin login by flood, so both sides learn the route (the update only goes when it has no hop);
+     * the contact with the route just learned, null when the companion does not say.
+     */
+    private suspend fun signIn(contact: Contact, password: String): Contact? {
         companion.resetPath(contact)
         working = str(R.string.working_login)
-        val learned = try {
+        return try {
             if (!companion.login(contact, password)) throw Exception(str(R.string.msg_not_admin))
             delay(4000)   // the companion sends its route back to the repeater
             companion.contact(contact.publicKey)
@@ -370,6 +384,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { companion.restorePath(contact) }
             throw e
         }
+    }
+
+    fun login(contact: Contact, password: String) = work {
+        val learned = signIn(contact, password)
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned ?: contact
@@ -884,6 +902,267 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             release()
         }
+    }
+
+    // ---- a queue: several repeaters updated one after another ----
+
+    private val queuePrefs get() = ctx.getSharedPreferences("ota_queue", Context.MODE_PRIVATE)
+    /** The queue being run or cut short (kept on the phone), or the last one finished (its report). */
+    var queue by mutableStateOf(OtaQueueState.fromJson(queuePrefs.getString("state", null)))
+    val queuePicked = mutableStateMapOf<String, Boolean>()   // repeaters ticked for a new queue, by key
+    var queueRelease by mutableStateOf<String?>(null)
+    var queueCurrent by mutableStateOf<QueueEntry?>(null)
+    private var queueReturn = Step.REPEATER
+
+    private fun saveQueue() {
+        val q = queue
+        queuePrefs.edit().apply { if (q == null) remove("state") else putString("state", q.toJson()) }.apply()
+    }
+
+    fun openQueue() {
+        queueReturn = step
+        message = ""
+        step = Step.QUEUE
+        if (releases.isEmpty()) loadReleases()
+    }
+
+    fun closeQueue() {
+        job?.cancel()
+        step = queueReturn
+    }
+
+    /** The queue's choices: releases with LoRa OTA files, (release, label). */
+    fun queueReleases() = OtaQueueState.releases(allFirmware)
+
+    /** Repeaters the queue can take: those with a password kept from an earlier login, nearest first. */
+    fun queueCandidates(): List<Contact> = OtaQueueState.order(repeaters.filter { hasSavedPassword(it) }, { it.hops }, { it.name })
+
+    fun startQueue() {
+        val rel = queueRelease ?: return
+        val label = queueReleases().firstOrNull { it.first == rel }?.second ?: rel
+        val picked = queueCandidates().filter { queuePicked[hex(it.publicKey)] == true }
+        if (picked.isEmpty()) return
+        queue = OtaQueueState(rel, label, picked.map { QueueEntry(hex(it.publicKey), it.name) })
+        saveQueue()
+        runQueue()
+    }
+
+    fun retryQueue() {
+        queue?.retryFailed()
+        saveQueue()
+        runQueue()
+    }
+
+    /** A finished (or unwanted) queue: gone, the screen is back to picking. */
+    fun clearQueue() {
+        queue = null
+        saveQueue()
+    }
+
+    fun runQueue() = work {
+        val q = queue ?: return@work
+        if (!companionOta) throw Exception(str(R.string.q_stock_companion))
+        if (releases.isEmpty()) loadReleases().join()
+        try {
+            while (true) {
+                val e = q.next ?: break
+                queueCurrent = e
+                val (result, note) = queueOne(q, e)
+                e.result = result
+                e.note = note
+                queue = OtaQueueState(q.release, q.label, q.entries)   // a new object: the screen redraws
+                saveQueue()
+            }
+        } finally {
+            queueCurrent = null
+            repeater = null
+            info = null
+            phase = null
+        }
+        message = str(R.string.q_report, q.count(QueueResult.DONE), q.count(QueueResult.CURRENT),
+            q.count(QueueResult.SKIPPED), q.count(QueueResult.FAILED))
+        messageIsError = q.count(QueueResult.FAILED) > 0
+    }
+
+    /** One repeater: log in, check, back up, update. Stop (a cancel) leaves it pending, to go on with later. */
+    private suspend fun queueOne(q: OtaQueueState, e: QueueEntry): Pair<QueueResult, String> {
+        val c = repeaters.firstOrNull { hex(it.publicKey) == e.key } ?: return QueueResult.SKIPPED to str(R.string.q_not_found)
+        val pw = savedPassword(c) ?: return QueueResult.SKIPPED to str(R.string.q_no_password)
+        repeater = c
+        info = null
+        log.clear()
+        val learned = try {
+            signIn(c, pw)
+        } catch (x: kotlinx.coroutines.CancellationException) {
+            throw x
+        } catch (x: Exception) {
+            return QueueResult.FAILED to (x.message ?: x.toString())
+        }
+        val r = learned ?: c
+        repeater = r
+        try {
+            if (learned?.hops != 0) return QueueResult.SKIPPED to str(R.string.q_not_direct)
+            working = str(R.string.working_ota)
+            val i = try {
+                session(r).info(OTA_CHECK_MS, 2)
+            } catch (x: OtaFailed) {
+                return QueueResult.SKIPPED to if (x.res == R.string.err_no_answer) str(R.string.q_no_ota) else str(x.res, *x.args.toTypedArray())
+            }
+            info = i
+            if (!i.enabled) return QueueResult.SKIPPED to str(R.string.q_ota_off)
+            val running = allFirmware.firstOrNull { it.sha256 == hex(i.imageSha) }
+                ?: return QueueResult.SKIPPED to str(R.string.q_unknown_firmware)
+            val target = OtaQueueState.target(allFirmware, q.release, running)
+                ?: return QueueResult.SKIPPED to str(R.string.q_no_file, running.env)
+            if (target.sha256 == running.sha256) return QueueResult.CURRENT to running.label
+            val old = withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) }
+            val new = withContext(Dispatchers.IO) { Releases.download(target, ctx.filesDir) }
+            if (!i.fits(new.size)) return QueueResult.SKIPPED to str(R.string.msg_too_big)
+            // a power cut while it copies in place needs a visit: only one at a time, by hand
+            if (i.inPlace(new.size)) return QueueResult.SKIPPED to str(R.string.q_in_place)
+            oldImage = Image(running.file, old, running.env)
+            newImage = Image(target.file, new, target.env)
+            val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old, new) }
+            patch = p
+            val noBackup = autoBackup(DeviceKind.REPEATER)
+            OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
+            try {
+                session(r).run(old, new, p, false)
+            } catch (x: OtaFailed) {
+                val why = str(x.res, *x.args.toTypedArray())
+                return QueueResult.FAILED to if (x.resumable) str(R.string.q_failed_resumable, why) else why
+            } finally {
+                phase = null
+                OtaService.stop(ctx)
+            }
+            val after = runCatching { session(r).info() }.getOrNull()
+            val ident = after?.ident?.replace('|', ' ') ?: target.label
+            return QueueResult.DONE to (if (noBackup != null) "$ident · $noBackup" else ident)
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.restorePath(r) } }
+            oldImage = null
+            newImage = null
+            patch = null
+        }
+    }
+
+    // ---- health: the repeater's self test, and the telemetry history of either device ----
+
+    private val healthStore by lazy { HealthStore(ctx.filesDir) }
+    var healthKind by mutableStateOf(DeviceKind.REPEATER)
+    var selfTest by mutableStateOf<SelfTest?>(null)
+    var selfTestMissing by mutableStateOf(false)   // the repeater's firmware has no `selftest`
+    var healthWarnings by mutableStateOf<List<HealthWarning>>(emptyList())
+    var healthRecords by mutableStateOf<List<HealthStore.Record>>(emptyList())
+    var historyField by mutableStateOf(HistorySeries.F_BATT_PCT)
+    var historyRing by mutableStateOf(HistorySeries.RING_DAY)
+    /** Series read since the page opened, by (ring, field); a field the node does not measure has only nulls. */
+    val historyCache = mutableStateMapOf<Pair<Int, Int>, HistorySeries>()
+    var historyMissing by mutableStateOf(false)    // the node keeps no history (stock or older firmware)
+    private var healthReturn = Step.UPDATE
+
+    val healthDeviceName get() = if (healthKind == DeviceKind.COMPANION) companionName else repeater?.name ?: ""
+
+    fun openHealth(kind: DeviceKind) {
+        healthReturn = step
+        healthKind = kind
+        selfTest = null
+        selfTestMissing = false
+        healthWarnings = emptyList()
+        historyCache.clear()
+        historyMissing = false
+        historyField = HistorySeries.F_BATT_PCT
+        historyRing = HistorySeries.RING_DAY
+        message = ""
+        val dev = deviceKey(kind)
+        healthRecords = emptyList()
+        step = Step.HEALTH
+        viewModelScope.launch { healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) } }
+        refreshHealth()
+    }
+
+    fun closeHealth() {
+        job?.cancel()
+        step = healthReturn
+    }
+
+    /** The self test (a repeater), then the battery's day and week (for 'drains faster than usual') and the series shown. */
+    fun refreshHealth() = work {
+        val kind = healthKind
+        val warnings = ArrayList<HealthWarning>()
+        if (kind == DeviceKind.REPEATER) {
+            val r = repeater ?: return@work
+            if (!RepeaterBackup.supported(companion)) {
+                canReadRepeater = false
+            } else {
+                canReadRepeater = true
+                working = str(R.string.working_selftest)
+                val line = try {
+                    RepeaterBackup.ask(companion, r, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
+                } finally {
+                    withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+                }
+                val t = line?.let { SelfTest.parse(it) }
+                if (line == null) throw Exception(str(R.string.health_no_answer))
+                if (t == null) {
+                    selfTestMissing = true
+                } else {
+                    val dev = deviceKey(kind)
+                    val before = healthRecords.lastOrNull()?.let { SelfTest.parse(it.line) }
+                    healthRecords = withContext(Dispatchers.IO) {
+                        healthStore.add(dev, line)
+                        healthStore.records(dev)
+                    }
+                    selfTest = t
+                    warnings.addAll(HealthCheck.warnings(t, before))
+                }
+            }
+        }
+        historyCache.clear()
+        historyMissing = false
+        working = str(R.string.working_history)
+        val day = loadSeries(HistorySeries.RING_DAY, HistorySeries.F_BATT_PCT)
+        if (day != null) {
+            val week = loadSeries(HistorySeries.RING_WEEK, HistorySeries.F_BATT_PCT)
+            if (week != null && HealthCheck.fasterDrain(day.values, week.values)) warnings.add(HealthWarning.FAST_DRAIN)
+            loadSeries(historyRing, historyField)
+        } else {
+            historyMissing = true
+        }
+        healthWarnings = warnings
+    }
+
+    fun showHistory(ring: Int, field: Int) {
+        historyRing = ring
+        historyField = field
+        if (historyMissing || historyCache.containsKey(ring to field)) return
+        work {
+            working = str(R.string.working_history)
+            loadSeries(ring, field)
+        }
+    }
+
+    private suspend fun loadSeries(ring: Int, field: Int): HistorySeries? {
+        historyCache[ring to field]?.let { return it }
+        val kind = healthKind
+        val s = HistorySeries.load(ring, field) { start, max ->
+            when (kind) {
+                DeviceKind.COMPANION -> companion.history(HistorySeries.args(ring, field, start, max))
+                DeviceKind.REPEATER -> {
+                    val r = repeater ?: return@load null
+                    // a piece lost on the air is asked for once more
+                    var reply: ByteArray? = null
+                    for (attempt in 1..2) {
+                        val tag = companion.sendRequest(r, HistorySeries.request(ring, field, start, max))
+                        reply = companion.awaitResponse(tag, 12_000)
+                        if (reply != null) break
+                    }
+                    reply
+                }
+            }
+        } ?: return null
+        historyCache[ring to field] = s
+        return s
     }
 
     // ---- backups of the settings ----
