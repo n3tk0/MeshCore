@@ -331,11 +331,13 @@ private:
   void flushOfflineTakes();
   bool _tx_allowed;
 #ifdef BACK_ADVERT
-  unsigned long _back_repeater_heard;   // millis a repeater was last heard with no hop, 0 = not yet
+  unsigned long _back_repeater_heard;   // millis a repeater next to us was last heard (advert or traffic), 0 = not yet
   unsigned long _back_advert_at;        // millis of the last "I'm back" advert, 0 = none yet
   unsigned long _back_boot_advert;      // millis: the advert after start-up is due, 0 = sent
   unsigned long _mail_window_until;     // millis: direct messages with no hop now come from a mailbox
   int _mail_count;
+  void noteRepeaterHeard();
+  void logRx(mesh::Packet* packet, int len, float score) override;
   bool sendBackAdvert();
   void backAdvertLoop();
 #endif

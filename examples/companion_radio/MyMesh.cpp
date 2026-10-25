@@ -466,14 +466,25 @@ void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32
   // a repeater next to us again after a while (or the first since start-up): we are back in its range,
   // and its mailbox learns it from our advert (zero hop) and hands over what it kept for us
   if (packet->getPathHashCount() == 0 && app_data_len > 0 && (app_data[0] & 0x0F) == ADV_TYPE_REPEATER) {
-    if (_back_repeater_heard == 0 || millis() - _back_repeater_heard > BACK_ADVERT_AWAY_MILLIS) sendBackAdvert();
-    _back_repeater_heard = millis() ? millis() : 1;
+    noteRepeaterHeard();
   }
 #endif
   BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
 }
 
 #ifdef BACK_ADVERT
+// A repeater next to us was heard: its own advert, or any flood packet it passed on (a hop in the path).
+// After 10 minutes of hearing none, that is a return: one advert so its mailbox hands over. A repeater's
+// advert alone comes only every hour; its traffic keeps a node that stays near it from saying "back" hourly.
+void MyMesh::noteRepeaterHeard() {
+  if (_back_repeater_heard == 0 || millis() - _back_repeater_heard > BACK_ADVERT_AWAY_MILLIS) sendBackAdvert();
+  _back_repeater_heard = millis() ? millis() : 1;
+}
+
+void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
+  if (packet->isRouteFlood() && packet->getPathHashCount() > 0) noteRepeaterHeard();
+}
+
 bool MyMesh::sendBackAdvert() {
   if (_back_advert_at && millis() - _back_advert_at < BACK_ADVERT_AWAY_MILLIS) return false;   // at most every 10 min
   if (!advert(false)) return false;   // transmit off (antenna not confirmed): tried again later
