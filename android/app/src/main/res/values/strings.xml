@@ -414,8 +414,8 @@
     <string name="batt_cap_save">Запази</string>
     <string name="batt_cap_learn">Научи</string>
     <string name="batt_saved">Запазено в repeater-а.</string>
-    <string name="hw_fresh_firmware">Новият firmware е потвърден при тази проверка (влизането го потвърждава).</string>
-    <string name="health_fresh">нов, потвърден сега</string>
+    <string name="hw_fresh_firmware">Новият firmware е потвърден в последния час (влизането го потвърждава).</string>
+    <string name="health_fresh">нов, потвърден наскоро</string>
     <string name="health_history">История</string>
     <string name="health_no_history">Това устройство не пази история (стандартен или по-стар firmware).</string>
     <string name="health_24h">24 ч</string>

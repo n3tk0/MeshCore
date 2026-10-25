@@ -930,6 +930,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeQueue() {
         job?.cancel()
+        queueAsk = false   // the confirmation must not come back by itself when the page is opened again
         step = queueReturn
     }
 

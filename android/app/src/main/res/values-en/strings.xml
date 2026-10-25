@@ -413,8 +413,8 @@
     <string name="batt_cap_save">Save</string>
     <string name="batt_cap_learn">Learn</string>
     <string name="batt_saved">Saved on the repeater.</string>
-    <string name="hw_fresh_firmware">The new firmware was confirmed by this check (the login confirms it).</string>
-    <string name="health_fresh">new, confirmed now</string>
+    <string name="hw_fresh_firmware">The new firmware was confirmed in the last hour (the login confirms it).</string>
+    <string name="health_fresh">new, confirmed recently</string>
     <string name="health_history">History</string>
     <string name="health_no_history">This device keeps no history (stock or older firmware).</string>
     <string name="health_24h">24 h</string>
