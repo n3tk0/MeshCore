@@ -821,7 +821,7 @@ void EnvironmentSensorManager::sampleBatteryGauge() {
   noteRead(query_ina219, errors);
   if (i2cErrorCount(*TELEM_WIRE) != errors || mv <= 0 || mv >= 65535) return;
   uint32_t t = day_clock ? day_clock() : 0;
-  uint32_t day = t >= 1704067200UL ? t / 86400 : 100000 + millis() / 86400000UL;   // days since boot: their own range
+  uint32_t day = t >= 1735689600UL ? t / 86400 : 100000 + millis() / 86400000UL;   // no clock (it boots in May 2024): days since boot, their own range
   ina_gauge.update(millis(), (uint16_t)mv, ma, day);
   #endif
 }

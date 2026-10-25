@@ -145,8 +145,9 @@ class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val inter
             var lastTime = 0L
             var interval = if (ring == RING_DAY) 10 else 60
             while (true) {
-                val p = parsePiece(fetch(start, 64) ?: return if (start == 0) null else HistorySeries(ring, field, lastTime, interval, out))
-                    ?: return null
+                // no answer (or a bad one) later on: what came so far is still worth a graph
+                val p = fetch(start, 64)?.let { parsePiece(it) }
+                    ?: return if (start == 0) null else HistorySeries(ring, field, lastTime, interval, out)
                 if (start == 0) { lastTime = p.lastTime; interval = p.interval }
                 out.addAll(p.values)
                 start += p.values.size
