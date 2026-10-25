@@ -117,6 +117,7 @@ static Adafruit_INA3221 INA3221;
 #endif
 #include <Adafruit_INA219.h>
 static Adafruit_INA219 INA219(TELEM_INA219_ADDRESS);
+static BatteryGauge ina_gauge;   // in the battery line: its current is counted every 10 s
 #endif
 
 #if ENV_INCLUDE_INA260
@@ -392,6 +393,8 @@ static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
   lpp.addPower(ch, INA219.getPower_mW() / 1000.0f);
   // LPP current has no sign: the direction (charge / discharge in a battery line) as a signed analog value too
   lpp.addAnalogInput(ch, amps);
+  int pct = ina_gauge.percent();
+  if (pct >= 0) lpp.addPercentage(ch, pct);   // the counted charge (see BatteryGauge)
 }
 #endif
 
@@ -695,7 +698,7 @@ bool EnvironmentSensorManager::begin() {
     if (def.init == init_ina219) _ina219_found = true;
     #endif
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
-      _active_sensors[_active_sensor_count++] = { def.query, sub, def.address, def.name, 0, false };
+      _active_sensors[_active_sensor_count++] = { def.query, sub, def.address, def.name, 0, false, 0, 0 };
     }
   }
 
@@ -736,7 +739,11 @@ uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
 }
 
 // A read that made I2C errors (a NACK, a timeout) counts against its device; 3 in a row turn it
-// off until a reboot, every channel of it (an INA3221 has three)
+// off, every channel of it (an INA3221 has three). It is tried again later: see retryOffSensors()
+static uint32_t sensorRetryDelay(uint8_t retries) {
+  return retries == 0 ? 10 * 60000UL : retries == 1 ? 60 * 60000UL : 6 * 60 * 60000UL;
+}
+
 void EnvironmentSensorManager::noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before) {
   bool failed = i2cErrorCount(*TELEM_WIRE) != errors_before;
   for (int i = 0; i < _active_sensor_count; i++) {
@@ -745,10 +752,78 @@ void EnvironmentSensorManager::noteRead(void (*query)(uint8_t, uint8_t, CayenneL
     a.fails = failed ? a.fails + 1 : 0;
     if (a.fails >= 3) {
       a.off = true;
+      a.retry_at = millis() + sensorRetryDelay(a.retries);
       if (a.sub_channel == 0) i2cListDevice(a.address, a.name, I2C_DEV_OFF_ERRORS);
     }
   }
   if (i2cBusStuck(*TELEM_WIRE)) i2cSetBusStuck(*TELEM_WIRE);
+}
+
+// A sensor turned off for errors gets another chance after 10 min, 1 h, then every 6 h: it answers
+// its address and one read makes no I2C error -> on again. A repeater on a roof may not be
+// restarted for weeks, and a loose wire or a wet connector can come good again.
+void EnvironmentSensorManager::retryOffSensors() {
+  static CayenneLPP scratch(64);
+  for (int i = 0; i < _active_sensor_count; i++) {
+    ActiveSensor& a = _active_sensors[i];
+    if (!a.off || a.sub_channel != 0 || (int32_t)(millis() - a.retry_at) < 0) continue;
+    if (i2cBusStuck(*TELEM_WIRE)) {   // nothing to try on a stuck bus: wait for the next slot
+      a.retry_at = millis() + sensorRetryDelay(a.retries);
+      continue;
+    }
+    uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+    bool ok = i2cProbe(*TELEM_WIRE, a.address) == I2C_PROBE_ACK;
+    if (ok) {
+      scratch.reset();
+      a.query(TELEM_CHANNEL_SELF + 1, 0, scratch);
+      ok = i2cErrorCount(*TELEM_WIRE) == errors;
+    }
+    for (int j = i; j < _active_sensor_count; j++) {   // every channel of the device
+      ActiveSensor& c = _active_sensors[j];
+      if (c.query != a.query) continue;
+      if (ok) {
+        c.off = false;
+        c.fails = 0;
+      } else {
+        c.retries = c.retries < 255 ? c.retries + 1 : c.retries;
+        c.retry_at = millis() + sensorRetryDelay(c.retries);
+      }
+    }
+    if (ok) {
+      MESH_DEBUG_PRINTLN("I2C %02X %s answers again: back on", a.address, a.name);
+      i2cListDevice(a.address, a.name, I2C_DEV_OK);
+      #if ENV_INCLUDE_BME680_BSEC
+      if (a.query == query_bme680_bsec) bsec_active = true;
+      #endif
+    }
+    return;   // one device per loop: the bus is not held long
+  }
+}
+
+BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
+  #if ENV_INCLUDE_INA219
+  if (_ina219_found) return &ina_gauge;
+  #endif
+  return NULL;
+}
+
+void EnvironmentSensorManager::sampleBatteryGauge() {
+  #if ENV_INCLUDE_INA219
+  static uint32_t next_sample = 0;
+  if (!_ina219_found || (int32_t)(millis() - next_sample) < 0) return;
+  next_sample = millis() + 10000;
+  for (int i = 0; i < _active_sensor_count; i++) {
+    if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) return;
+  }
+  uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+  float mv = INA219.getBusVoltage_V() * 1000.0f + INA219.getShuntVoltage_mV();
+  float ma = INA219.getCurrent_mA();
+  noteRead(query_ina219, errors);
+  if (i2cErrorCount(*TELEM_WIRE) != errors || mv <= 0 || mv >= 65535) return;
+  uint32_t t = day_clock ? day_clock() : 0;
+  uint32_t day = t >= 1704067200UL ? t / 86400 : 100000 + millis() / 86400000UL;   // days since boot: their own range
+  ina_gauge.update(millis(), (uint16_t)mv, ma, day);
+  #endif
 }
 
 // ============================================================
@@ -1006,8 +1081,9 @@ void EnvironmentSensorManager::stop_gps() {
 }
 #endif // ENV_INCLUDE_GPS
 
-#if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC)
 void EnvironmentSensorManager::loop() {
+  retryOffSensors();
+  sampleBatteryGauge();
 
   #if ENV_INCLUDE_GPS
   static unsigned long next_gps_update = 0;
@@ -1072,4 +1148,3 @@ void EnvironmentSensorManager::loop() {
   }
   #endif  // ENV_INCLUDE_BME680_BSEC
 }
-#endif // ENV_INCLUDE_GPS || ENV_INCLUDE_BME680_BSEC

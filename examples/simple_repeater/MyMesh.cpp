@@ -20,7 +20,7 @@
   #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
   #define OTA_COMMIT_DELAY       10000                // the END reply goes out (and is repeated if lost) before the reboot
   #define OTA_MAX_SIDE_MILLIS    (60 * 60 * 1000UL)   // hard limit on the side radio, whatever happens
-  #define OTA_CONFIRM_MILLIS     (10 * 60 * 1000UL)   // a new image that ran this long is kept
+  #define OTA_CONFIRM_MILLIS     (10 * 60 * 1000UL)   // a new image whose radio sent and heard a packet by now is kept
   #define OTA_ON_FILE            "/ota_on"            // `set ota on`: OTA is off until then
   #ifndef OTA_MIN_BATT_MV
     #define OTA_MIN_BATT_MV      3700                 // below this (on battery) the copy at the end waits
@@ -90,7 +90,71 @@
   #define MAILBOX_SEND_GAP           2500   // between kept messages
   #define MAILBOX_EXPIRE_EVERY     600000
   #define MAILBOX_LEARN_TIME       120000
+  #define MAILBOX_ACK_WAIT          10000   // an unproven owner: its ACK for a message handed over, this soon
+  #define MAILBOX_RETRY_UNPROVEN    60000   // and not more often than this per owner
 #endif
+#define PSAVE_FILE               "/psave"
+#define PSAVE_CHECK_EVERY        60000   // a battery reading for the power steps
+#define PSAVE_OFF_CHECK_EVERY   600000   // in the 'off' step: is the battery back?
+#define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
+#define BATT_CAP_FILE            "/batt_cap"
+#ifdef WITH_TELEMETRY_HISTORY
+  #define HISTORY_FILE           "/tele_hist"
+  #define HISTORY_TMP            "/tele_hist.tmp"
+  #define HISTORY_SAVE_EVERY   3600000UL   // flash wear: once an hour
+  #define REQ_TYPE_GET_TELEMETRY_HISTORY 0x41   // our own: see TelemetryHistory::formatReply()
+#endif
+#ifdef WITH_LORA_OTA
+  #define OTA_PROBE_MILLIS     (5 * 60 * 1000UL)    // an unconfirmed new firmware sends an advert by now
+  #define OTA_GIVEUP_MILLIS    (60 * 60 * 1000UL)   // ... and is rolled back if its radio did not work by now
+#endif
+
+static MyMesh* the_instance = NULL;
+
+// a small file written whole: to a temp file first, renamed over the old one when all of it was written
+struct FsWriter {
+  File& f;
+  bool ok = true;
+  FsWriter(File& file) : f(file) { }
+  void write(const uint8_t* p, int n) { if (f.write(p, n) != (size_t)n) ok = false; }
+  int read(uint8_t* p, int n) { return f.read(p, n); }
+};
+
+static File openForRead(FILESYSTEM* fs, const char* name) {
+#if defined(RP2040_PLATFORM)
+  return fs->open(name, "r");
+#else
+  return fs->open(name);
+#endif
+}
+
+static File openForWrite(FILESYSTEM* fs, const char* name) {
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  return fs->open(name, FILE_O_WRITE);
+#elif defined(RP2040_PLATFORM)
+  return fs->open(name, "w");
+#else
+  return fs->open(name, "w", true);
+#endif
+}
+
+static bool writeSmallFile(FILESYSTEM* fs, const char* name, const void* data, int len) {
+  fs->remove(name);
+  File f = openForWrite(fs, name);
+  if (!f) return false;
+  bool ok = f.write((const uint8_t*)data, len) == (size_t)len;
+  f.close();
+  return ok;
+}
+
+static bool readSmallFile(FILESYSTEM* fs, const char* name, void* data, int len) {
+  if (!fs->exists(name)) return false;
+  File f = openForRead(fs, name);
+  if (!f) return false;
+  bool ok = f.read((uint8_t*)data, len) == len;
+  f.close();
+  return ok;
+}
 
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
 #if MAX_NEIGHBOURS // check if neighbours enabled
@@ -300,6 +364,13 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
     memcpy(&reply_data[4], telemetry.getBuffer(), tlen);
     return 4 + tlen; // reply_len
   }
+#ifdef WITH_TELEMETRY_HISTORY
+  if (payload[0] == REQ_TYPE_GET_TELEMETRY_HISTORY && payload_len >= 6) {
+    // values of one field for a stretch of the day or week ring (see TelemetryHistory.h)
+    int n = history.formatReply(&payload[1], payload_len - 1, &reply_data[4], 140);
+    return n > 0 ? 4 + n : 0;
+  }
+#endif
   if (payload[0] == REQ_TYPE_GET_ACCESS_LIST && sender->isAdmin()) {
     uint8_t res1 = payload[1];   // reserved for future  (extra query params)
     uint8_t res2 = payload[2];
@@ -713,10 +784,7 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
     int owner = mailbox.isEnabled() ? mailbox.findOwner(id.pub_key, PUB_KEY_SIZE) : -1;
     if (owner >= 0) {
       mailbox.markHeard(owner, getRTCClock()->getCurrentTime());
-      if (mailbox_deliver_owner < 0 && mailbox.countFor(owner) > 0) {
-        mailbox_deliver_owner = owner;
-        mailbox_next_send = futureMillis(MAILBOX_FIRST_DELAY);
-      }
+      startMailboxDelivery(owner, true);   // its signed advert: it is the owner
     }
 #endif
   }
@@ -1048,13 +1116,24 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 #ifdef WITH_MAILBOX
   mailbox_deliver_owner = -1;
   mailbox_next_send = mailbox_save_at = mailbox_next_expire = mailbox_learn_until = 0;
+  mailbox_confirm = false;
+  mailbox_wait_until = 0;
+  memset(mailbox_try_after, 0, sizeof(mailbox_try_after));
 #endif
 #ifdef WITH_LORA_OTA
   ota_commit_at = 0;
   ota_on_side = false;
   ota_radio_away = false;
   ota_ident[0] = 0;
+  ota_probe_sent = ota_verdict_done = false;
 #endif
+  psave_next_check = psave_next_wake_check = 0;
+  psave_radio_off = false;
+#ifdef WITH_TELEMETRY_HISTORY
+  history_next = history_save_at = 0;
+  history_rx = history_tx = history_air = 0;
+#endif
+  the_instance = this;
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -1069,6 +1148,14 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #ifdef WITH_MAILBOX
   loadMailbox();
 #endif
+  loadPowerSave();
+  loadBatteryCapacity();
+  sensors.setDayClock([]() -> uint32_t { return the_instance->getRTCClock()->getCurrentTime(); });
+#ifdef WITH_TELEMETRY_HISTORY
+  loadHistory();
+  history_next = futureMillis(TH_DAY_MINS * 60000UL);
+  history_save_at = futureMillis(HISTORY_SAVE_EVERY);
+#endif
 #ifdef WITH_LORA_OTA
   snprintf(ota_ident, sizeof(ota_ident), "%s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, board.getManufacturerName());
   lora_ota.setIdent(ota_ident);
@@ -1078,6 +1165,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
   }, NULL);
   lora_ota.setPowerCheck([](void*) {
     uint16_t mv = battMilliVolts();   // 0 or very low: the board cannot measure it
+    if (the_instance->psave.stage() >= PSAVE_CRITICAL) return false;
     return board.isExternalPowered() || mv < 1000 || mv >= OTA_MIN_BATT_MV;
   }, NULL);
 #endif
@@ -1178,7 +1266,8 @@ void MyMesh::sendSelfAdvertisement(int delay_millis, bool flood) {
 
 void MyMesh::updateAdvertTimer() {
   if (_prefs.advert_interval > 0) { // schedule local advert timer
-    next_local_advert = futureMillis(((uint32_t)_prefs.advert_interval) * 2 * 60 * 1000);
+    uint32_t factor = psave.stage() >= PSAVE_LOW ? 2 : 1;   // battery low: half as often
+    next_local_advert = futureMillis(((uint32_t)_prefs.advert_interval) * 2 * 60 * 1000 * factor);
   } else {
     next_local_advert = 0; // stop the timer
   }
@@ -1186,7 +1275,8 @@ void MyMesh::updateAdvertTimer() {
 
 void MyMesh::updateFloodAdvertTimer() {
   if (_prefs.flood_advert_interval > 0) { // schedule flood advert timer
-    next_flood_advert = futureMillis(((uint32_t)_prefs.flood_advert_interval) * 60 * 60 * 1000);
+    uint32_t factor = psave.stage() >= PSAVE_LOW ? 2 : 1;   // battery low: half as often
+    next_flood_advert = futureMillis(((uint32_t)_prefs.flood_advert_interval) * 60 * 60 * 1000 * factor);
   } else {
     next_flood_advert = 0; // stop the timer
   }
@@ -1405,6 +1495,12 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       Serial.printf("\n");
     }
     reply[0] = 0;
+  } else if (strcmp(command, "selftest") == 0) {
+    formatSelfTest(reply);
+  } else if (memcmp(command, "powersave", 9) == 0 && (command[9] == 0 || command[9] == ' ')) {
+    handlePowerSaveCommand(&command[9], reply);
+  } else if (memcmp(command, "battery", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
+    handleBatteryCommand(&command[7], reply);
 #ifdef WITH_MAILBOX
   } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleMailboxCommand(&command[7], reply);
@@ -1505,6 +1601,16 @@ void MyMesh::loop() {
 #ifdef WITH_MAILBOX
   mailboxLoop();
 #endif
+  powerSaveLoop();
+#ifdef WITH_TELEMETRY_HISTORY
+  historyLoop();
+#endif
+  if (BatteryGauge* g = sensors.getBatteryGauge()) {
+    if (g->takeCapacityChanged()) {   // learnt from a full charge down to empty
+      uint16_t cap[2] = { g->capacity(), 1 };
+      writeSmallFile(_fs, BATT_CAP_FILE, cap, sizeof(cap));
+    }
+  }
 
   // is pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
@@ -1685,13 +1791,32 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
   uint32_t now = getRTCClock()->getCurrentTime();
   uint8_t type = pkt->getPayloadType();
 
-  // an owner's own flood packet with no hop yet: it is here and gets messages the normal way
+  // an owner's own flood packet with no hop yet: it is here and gets new messages the normal way, and
+  // what was kept for it is handed over now. Only the first byte of its key is in the packet (another
+  // node next to us may share it), so each message is kept until the owner's ACK is heard.
   if (pkt->isRouteFlood() && pkt->getPathHashCount() == 0
       && (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE || type == PAYLOAD_TYPE_PATH)) {
     for (int i = 0; i < mailbox.config().num_owners; i++) {
-      if (mailbox.config().owners[i][0] == pkt->payload[1]) mailbox.markHeard(i, now);
+      if (mailbox.config().owners[i][0] == pkt->payload[1]) {
+        mailbox.markHeard(i, now);
+        startMailboxDelivery(i, false);
+      }
     }
   }
+
+  // the owner's ACK (or PATH with the ACK in it) for the message just handed over
+  if (mailbox_wait_until && (type == PAYLOAD_TYPE_ACK || type == PAYLOAD_TYPE_PATH || type == PAYLOAD_TYPE_MULTIPART)) {
+    for (int i = 0; i < mailbox.count(); i++) {
+      if (memcmp(mailbox.at(i).hash, mailbox_wait_hash, MAX_HASH_SIZE) == 0) {
+        mailbox.remove(i);
+        mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+        break;
+      }
+    }
+    mailbox_wait_until = 0;
+    mailbox_next_send = futureMillis(MAILBOX_SEND_GAP);   // it is here: the next one
+  }
+  if (psave.stage() >= PSAVE_CRITICAL) return;   // battery low: no new messages kept
 
   bool changed = false;
   if (type == PAYLOAD_TYPE_TXT_MSG && pkt->isRouteDirect() && pkt->getPathHashCount() == 0) {
@@ -1707,12 +1832,30 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
   if (changed) mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);   // a sender's retries come in a burst
 }
 
+// Hand over what was kept for an owner heard with no hop between. 'proven': its signed advert, every
+// message goes out and is removed. Else (only its 1-byte hash was seen) one message at a time stays
+// kept until the owner's ACK is heard; no ACK in time = not the owner (or gone): the rest waits.
+void MyMesh::startMailboxDelivery(int owner, bool proven) {
+  if (owner < 0 || mailbox_deliver_owner >= 0 || mailbox.countFor(owner) == 0) return;
+  if (psave.stage() >= PSAVE_CRITICAL) return;
+  if (!proven && mailbox_try_after[owner] && !millisHasNowPassed(mailbox_try_after[owner])) return;
+  if (!proven) mailbox_try_after[owner] = futureMillis(MAILBOX_RETRY_UNPROVEN);
+  mailbox_deliver_owner = owner;
+  mailbox_confirm = !proven;
+  mailbox_wait_until = 0;
+  mailbox_next_send = futureMillis(MAILBOX_FIRST_DELAY);
+}
+
 void MyMesh::mailboxLoop() {
   bool on_side_radio = false;
 #ifdef WITH_LORA_OTA
   on_side_radio = ota_radio_away;   // the owner would not hear it there
 #endif
-  if (mailbox_deliver_owner >= 0 && !on_side_radio && millisHasNowPassed(mailbox_next_send)) {
+  if (mailbox_wait_until && millisHasNowPassed(mailbox_wait_until)) {
+    mailbox_wait_until = 0;          // no ACK: keep the message and the rest for the owner's advert
+    mailbox_deliver_owner = -1;
+  }
+  if (mailbox_deliver_owner >= 0 && !mailbox_wait_until && !on_side_radio && millisHasNowPassed(mailbox_next_send)) {
     int i = mailbox.nextFor(mailbox_deliver_owner);
     mesh::Packet* pkt = i >= 0 ? obtainNewPacket() : NULL;
     if (i < 0) {
@@ -1723,8 +1866,13 @@ void MyMesh::mailboxLoop() {
       pkt->payload_len = e.len;
       memcpy(pkt->payload, e.payload, e.len);
       sendZeroHop(pkt);             // no hop: only the owner next to us hears it, nobody repeats it
-      mailbox.remove(i);
-      mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      if (mailbox_confirm) {
+        memcpy(mailbox_wait_hash, e.hash, MAX_HASH_SIZE);
+        mailbox_wait_until = futureMillis(MAILBOX_ACK_WAIT);
+      } else {
+        mailbox.remove(i);
+        mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      }
       mailbox_next_send = futureMillis(MAILBOX_SEND_GAP);
     } else {
       mailbox_next_send = futureMillis(MAILBOX_SEND_GAP);   // no free packet, try again later
@@ -1736,7 +1884,8 @@ void MyMesh::mailboxLoop() {
     if (mailbox.expire(getRTCClock()->getCurrentTime())) mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
   }
 
-  if (mailbox_save_at && millisHasNowPassed(mailbox_save_at)) {
+  // battery low: the mailbox stays in RAM (saved when the battery is back, or before the radio goes off)
+  if (mailbox_save_at && millisHasNowPassed(mailbox_save_at) && psave.stage() == PSAVE_NORMAL) {
     mailbox_save_at = 0;
     saveMailbox();
   }
@@ -1877,8 +2026,37 @@ void MyMesh::applyOtaAction() {
   }
 }
 
+// A new firmware is kept when its radio works: after 10 min it has sent a packet and heard one.
+// A quiet place may have nothing to hear for long: after an hour a sane noise floor will do (the
+// radio answers and listens). Not even that: back to the firmware before, where there is one.
+// An admin who logs in confirms it at once (see above).
 void MyMesh::otaLoop() {
-  if (millis() > OTA_CONFIRM_MILLIS) ota_target.confirm();   // cheap when there is nothing to confirm
+  if (!ota_verdict_done && ota_target.isUnconfirmed()) {
+    if (!ota_probe_sent && millis() > OTA_PROBE_MILLIS && radio_driver.getPacketsSent() == 0) {
+      mesh::Packet* pkt = createSelfAdvert();   // nothing went out yet: test the transmitter
+      if (pkt) sendZeroHop(pkt);
+      ota_probe_sent = true;
+    }
+    bool sent = radio_driver.getPacketsSent() > 0;
+    int nf = _radio->getNoiseFloor();
+    bool listens = nf < -60 && nf > -140;
+    if (millis() > OTA_CONFIRM_MILLIS && sent && radio_driver.getPacketsRecv() > 0) {
+      ota_target.confirm();
+      ota_verdict_done = true;
+    } else if (millis() > OTA_GIVEUP_MILLIS) {
+      ota_verdict_done = true;
+      if (sent && listens) {
+        ota_target.confirm();
+      } else {
+        MESH_DEBUG_PRINTLN("LoRa OTA: the radio of the new firmware does not work, rolling back");
+        acl.save(_fs);
+  #ifdef WITH_MAILBOX
+        if (mailbox_save_at) saveMailbox();
+  #endif
+        ota_target.rollback();   // does not return when there is a firmware to go back to
+      }
+    }
+  }
   if (lora_ota.checkTimeout(millis())) {
     MESH_DEBUG_PRINTLN("LoRa OTA: session timed out");
     applyOtaAction();
@@ -1892,6 +2070,281 @@ void MyMesh::otaLoop() {
     lora_ota.commit();   // does not return when it works
     MESH_DEBUG_PRINTLN("LoRa OTA: could not boot the new image");
     applyOtaAction();
+  }
+}
+#endif
+
+/* ------------------------- Power steps (battery) ------------------------- */
+
+void MyMesh::loadPowerSave() {
+  PowerSaverConfig c;
+  if (readSmallFile(_fs, PSAVE_FILE, &c, sizeof(c))) {
+    PowerSaverConfig saved = psave.config();
+    psave.config() = c;
+    if (!psave.valid()) psave.config() = saved;   // a damaged file: the defaults
+  }
+}
+
+bool MyMesh::savePowerSave() {
+  return writeSmallFile(_fs, PSAVE_FILE, &psave.config(), sizeof(PowerSaverConfig));
+}
+
+void MyMesh::powerSaveLoop() {
+  if (psave_next_check && !millisHasNowPassed(psave_next_check)) return;
+  psave_next_check = futureMillis(PSAVE_CHECK_EVERY);
+  uint8_t old_stage = psave.stage();
+  psave.update(battMilliVolts(), board.isExternalPowered());
+  if (psave.stage() != old_stage) applyPowerStage(old_stage);
+}
+
+void MyMesh::applyPowerStage(uint8_t old_stage) {
+  uint8_t st = psave.stage();
+  MESH_DEBUG_PRINTLN("Power step: %s -> %s", PowerSaver::name(old_stage), PowerSaver::name(st));
+  updateAdvertTimer();        // half as often from 'low' on
+  updateFloodAdvertTimer();
+#ifdef WITH_LORA_OTA
+  if (st >= PSAVE_CRITICAL && old_stage < PSAVE_CRITICAL) {
+    lora_ota.setEnabled(false);   // stops an update under way too; the file (`set ota on`) stays
+    applyOtaAction();
+  } else if (st < PSAVE_CRITICAL && old_stage >= PSAVE_CRITICAL) {
+    lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
+  }
+#endif
+#ifdef WITH_MAILBOX
+  if (st >= PSAVE_CRITICAL) {
+    mailbox_deliver_owner = -1;
+    mailbox_wait_until = 0;
+  }
+  if (st == PSAVE_NORMAL && mailbox_save_at) mailbox_save_at = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+#endif
+  if (st == PSAVE_OFF) {
+    // nothing must be lost while the radio is off
+    acl.save(_fs);
+#ifdef WITH_MAILBOX
+    if (mailbox_save_at) { mailbox_save_at = 0; saveMailbox(); }
+#endif
+#ifdef WITH_TELEMETRY_HISTORY
+    saveHistory();
+#endif
+    radio_driver.powerOff();
+    psave_radio_off = true;
+    psave_next_wake_check = futureMillis(PSAVE_OFF_CHECK_EVERY);
+  }
+}
+
+// The 'off' step: the radio sleeps and so does the MCU, between battery checks. A battery that came
+// back (sun, a charger) restarts the node. On ESP32 a deep sleep with a timer does the same.
+void MyMesh::powerOffLoop() {
+#if defined(ESP32)
+  esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);   // 30 min, then a normal boot
+  esp_deep_sleep_start();
+#else
+  if (millisHasNowPassed(psave_next_wake_check)) {
+    psave_next_wake_check = futureMillis(PSAVE_OFF_CHECK_EVERY);
+    uint16_t mv = battMilliVolts();
+    if (board.isExternalPowered() || !psave.config().enabled
+        || (mv > 2500 && mv >= psave.config().off_mv + PSAVE_OFF_WAKE_MV)) {
+      MESH_DEBUG_PRINTLN("Power step: battery back (%u mV), restarting", mv);
+      board.reboot();
+    }
+  }
+  delay(5000);   // FreeRTOS idles the MCU in a delay; the watchdog (60 s) is fed between
+#endif
+}
+
+// powersave                       state and limits
+// powersave on|off
+// powersave <low> <crit> <off>    mV, 0 = that step is not used
+void MyMesh::handlePowerSaveCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+  PowerSaverConfig& c = psave.config();
+  if (*args == 0) {
+    uint16_t mv = battMilliVolts();
+    sprintf(reply, "%s, step %s, %u mV%s; low %u crit %u off %u", c.enabled ? "on" : "off",
+            PowerSaver::name(psave.stage()), mv, board.isExternalPowered() ? " ext" : "",
+            c.low_mv, c.crit_mv, c.off_mv);
+    return;
+  }
+  if (strcmp(args, "on") == 0 || strcmp(args, "off") == 0) {
+    uint8_t old_stage = psave.stage();
+    c.enabled = args[1] == 'n';
+    if (!c.enabled) psave.setStage(PSAVE_NORMAL);
+    if (psave.stage() != old_stage) applyPowerStage(old_stage);
+    strcpy(reply, savePowerSave() ? "OK" : "Err - could not save");
+    return;
+  }
+  unsigned int lo, cr, of;
+  if (sscanf(args, "%u %u %u", &lo, &cr, &of) == 3 && lo <= 4500 && cr <= 4500 && of <= 4500) {
+    PowerSaverConfig old = c;
+    c.low_mv = lo; c.crit_mv = cr; c.off_mv = of;
+    if (!psave.valid() || (of && of < 3000)) {
+      c = old;
+      strcpy(reply, "Err - need low > crit > off, off 0 or >= 3000");
+      return;
+    }
+    strcpy(reply, savePowerSave() ? "OK" : "Err - could not save");
+    psave_next_check = 0;   // apply at once
+    return;
+  }
+  strcpy(reply, "Err - powersave [on|off|<low> <crit> <off>]");
+}
+
+void MyMesh::loadBatteryCapacity() {
+  uint16_t cap[2];   // mAh, learnt
+  BatteryGauge* g = sensors.getBatteryGauge();
+  if (g && readSmallFile(_fs, BATT_CAP_FILE, cap, sizeof(cap))) g->setCapacity(cap[0], cap[1] != 0);
+}
+
+// battery                     voltage, %, hours left, today's and yesterday's mAh in/out (INA219)
+// battery capacity <mAh>      the cell's capacity (0 = learn it from a full charge down to empty)
+void MyMesh::handleBatteryCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+  BatteryGauge* g = sensors.getBatteryGauge();
+  if (memcmp(args, "capacity", 8) == 0) {
+    unsigned int mah;
+    if (g == NULL) {
+      strcpy(reply, "Err - no current sensor (INA219) on the battery");
+    } else if (sscanf(&args[8], "%u", &mah) == 1 && mah <= 60000) {
+      g->setCapacity(mah, false);
+      uint16_t cap[2] = { (uint16_t)mah, 0 };
+      strcpy(reply, writeSmallFile(_fs, BATT_CAP_FILE, cap, sizeof(cap)) ? "OK" : "Err - could not save");
+    } else {
+      sprintf(reply, "> %u mAh%s", g->capacity(), g->capacity() == 0 ? " (not known yet)" : g->capacityLearnt() ? " (learnt)" : "");
+    }
+    return;
+  }
+  uint16_t mv = battMilliVolts();
+  int n = sprintf(reply, "%u mV%s", mv, board.isExternalPowered() ? " ext" : "");
+  if (g && g->hasReading()) {
+    int h = g->hoursLeft();
+    n += sprintf(reply + n, ", %d%%%s", g->percent(), g->fromCount() ? "" : " (by voltage)");
+    if (h == -2) n += sprintf(reply + n, ", charging");
+    else if (h >= 0) n += sprintf(reply + n, ", left %dh", h);
+    n += sprintf(reply + n, ", now %d mA, today +%d/-%d mAh, yesterday +%d/-%d, cap %u%s",
+                 (int)g->lastMilliAmps(), g->inToday(), g->outToday(), g->inYesterday(), g->outYesterday(),
+                 g->capacity(), g->capacityLearnt() ? " learnt" : "");
+  } else if (mv >= 2000) {
+    sprintf(reply + n, ", ~%d%% (by voltage)", gaugeVoltagePercent(mv));
+  }
+}
+
+// One line for the app's Health page and for a person: what does not work comes first.
+// e.g. "ok radio=ok rx=120 tx=40 nf=-112 i2c=ok qspi=ok batt=3987mV/72% left=41h day=+420/-310 mail=3 ota=on ps=normal up=3d04h"
+void MyMesh::formatSelfTest(char* reply) {
+  char warn[40] = "";
+  int nf = _radio->getNoiseFloor();
+  bool radio_ok = nf < -60 && nf > -140;
+  uint32_t rx = radio_driver.getPacketsRecv(), tx = radio_driver.getPacketsSent();
+  if (!radio_ok) strcat(warn, "radio,");
+  int i2c_off = i2cOffCount();
+  bool i2c_stuck = i2cAnyBusStuck();
+  if (i2c_off || i2c_stuck) strcat(warn, "i2c,");
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+  bool qspi_ok = qspi.ok();
+  if (!qspi_ok) strcat(warn, "qspi,");
+#endif
+  if (psave.stage() != PSAVE_NORMAL) strcat(warn, "batt,");
+  int len = strlen(warn);
+  if (len) warn[len - 1] = 0;
+
+  int n = snprintf(reply, 160, "%s%s radio=%s rx=%lu tx=%lu nf=%d", warn[0] ? "WARN " : "ok", warn,
+                   radio_ok ? "ok" : "bad", (unsigned long)rx, (unsigned long)tx, nf);
+  if (i2c_stuck) n += snprintf(reply + n, 160 - n, " i2c=stuck");
+  else if (i2c_off) n += snprintf(reply + n, 160 - n, " i2c=off:%d", i2c_off);
+  else n += snprintf(reply + n, 160 - n, " i2c=ok");
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+  n += snprintf(reply + n, 160 - n, " qspi=%s", qspi_ok ? "ok" : "bad");
+#endif
+  uint16_t mv = battMilliVolts();
+  BatteryGauge* g = sensors.getBatteryGauge();
+  int pct = g && g->hasReading() ? g->percent() : mv >= 2000 ? gaugeVoltagePercent(mv) : -1;
+  if (pct >= 0) n += snprintf(reply + n, 160 - n, " batt=%umV/%d%%", mv, pct);
+  else n += snprintf(reply + n, 160 - n, " batt=%umV", mv);
+  if (g && g->hasReading()) {
+    int h = g->hoursLeft();
+    if (h == -2) n += snprintf(reply + n, 160 - n, " left=chg");
+    else if (h >= 0) n += snprintf(reply + n, 160 - n, " left=%dh", h);
+    n += snprintf(reply + n, 160 - n, " day=+%d/-%d", g->inToday(), g->outToday());
+  }
+#ifdef WITH_MAILBOX
+  if (mailbox.isEnabled()) n += snprintf(reply + n, 160 - n, " mail=%d", mailbox.count());
+  else n += snprintf(reply + n, 160 - n, " mail=off");
+#endif
+#ifdef WITH_LORA_OTA
+  n += snprintf(reply + n, 160 - n, " ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : "");
+#endif
+  uint32_t up = uptime_millis / 1000;
+  n += snprintf(reply + n, 160 - n, " ps=%s up=%lud%02luh", PowerSaver::name(psave.stage()),
+                (unsigned long)(up / 86400), (unsigned long)(up % 86400 / 3600));
+}
+
+/* ------------------------- Telemetry history ------------------------- */
+
+#ifdef WITH_TELEMETRY_HISTORY
+#include <helpers/LppScan.h>
+
+void MyMesh::loadHistory() {
+  File f = openForRead(_fs, HISTORY_FILE);
+  if (!f) return;
+  FsWriter r(f);
+  if (!history.load(r)) MESH_DEBUG_PRINTLN("loadHistory: damaged file, history reset");
+  f.close();
+}
+
+void MyMesh::saveHistory() {
+  _fs->remove(HISTORY_TMP);
+  File f = openForWrite(_fs, HISTORY_TMP);
+  if (!f) return;
+  FsWriter w(f);
+  history.save(w);
+  f.close();
+  if (w.ok) {
+    _fs->remove(HISTORY_FILE);
+    _fs->rename(HISTORY_TMP, HISTORY_FILE);
+  }
+}
+
+void MyMesh::historyLoop() {
+  if (millisHasNowPassed(history_next)) {
+    history_next = futureMillis(TH_DAY_MINS * 60000UL);
+    TelemetrySample s;
+    TelemetryHistory::emptySample(s);
+    uint16_t mv = battMilliVolts();
+    BatteryGauge* g = sensors.getBatteryGauge();
+    if (mv >= 1000) s.v[TH_F_BATT_MV] = mv;
+    if (g && g->hasReading()) {
+      s.v[TH_F_BATT_PCT] = g->percent();
+      s.v[TH_F_CURRENT_MA] = (int16_t)g->lastMilliAmps();
+    } else if (mv >= 2000) {
+      s.v[TH_F_BATT_PCT] = gaugeVoltagePercent(mv);
+    }
+    // a climate sensor's values, else the MCU's temperature
+    telemetry.reset();
+    sensors.querySensors(TELEM_PERM_ENVIRONMENT, telemetry);
+    int32_t raw;
+    if (lppScanFirst(telemetry.getBuffer(), telemetry.getSize(), LPP_SCAN_TEMPERATURE, &raw)) {
+      s.v[TH_F_TEMP_DC] = (int16_t)raw;
+    } else {
+      float t = board.getMCUTemperature();
+      if (!isnan(t)) s.v[TH_F_TEMP_DC] = (int16_t)(t * 10);
+    }
+    if (lppScanFirst(telemetry.getBuffer(), telemetry.getSize(), LPP_SCAN_HUMIDITY, &raw)) s.v[TH_F_HUMIDITY] = (int16_t)(raw / 2);
+    if (lppScanFirst(telemetry.getBuffer(), telemetry.getSize(), LPP_SCAN_BAROMETER, &raw)) {
+      s.v[TH_F_PRESSURE] = (int16_t)((uint16_t)raw - 9000);   // 0.1 hPa above 900 hPa
+    }
+    telemetry.reset();
+    s.v[TH_F_NOISE_DBM] = (int16_t)_radio->getNoiseFloor();
+    uint32_t rx = radio_driver.getPacketsRecv(), tx = radio_driver.getPacketsSent();
+    uint32_t air = getTotalAirTime() / 1000;
+    s.v[TH_F_RX] = (int16_t)(rx - history_rx > 32767 ? 32767 : rx - history_rx);
+    s.v[TH_F_TX] = (int16_t)(tx - history_tx > 32767 ? 32767 : tx - history_tx);
+    s.v[TH_F_AIR_TX_S] = (int16_t)(air - history_air > 32767 ? 32767 : air - history_air);
+    history_rx = rx; history_tx = tx; history_air = air;
+    history.add(s, getRTCClock()->getCurrentTime());
+  }
+  if (millisHasNowPassed(history_save_at)) {
+    history_save_at = futureMillis(HISTORY_SAVE_EVERY);
+    if (history.takeDirty()) saveHistory();
   }
 }
 #endif

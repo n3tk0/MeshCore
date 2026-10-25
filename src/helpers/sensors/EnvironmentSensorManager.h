@@ -16,7 +16,9 @@ protected:
     uint8_t   address;
     const char* name;
     uint8_t   fails;    // reads in a row that made I2C errors
-    bool      off;      // turned off after 3 of them, until a reboot
+    bool      off;      // turned off after 3 of them; tried again later (retry_at)
+    uint8_t   retries;  // tries since it was turned off: 10 min, 1 h, then every 6 h
+    uint32_t  retry_at; // millis
   };
 
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
@@ -25,6 +27,8 @@ protected:
   bool         _ina219_found = false;   // its bus is taken as the battery
 
   void noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before);
+  void retryOffSensors();
+  void sampleBatteryGauge();
 
   bool     gps_detected = false;
   bool     gps_active = false;
@@ -52,9 +56,8 @@ public:
   bool begin() override;
   bool querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) override;
   uint16_t getBatteryMilliVolts() override;
-  #if ENV_INCLUDE_GPS || defined(ENV_INCLUDE_BME680_BSEC)
   void loop() override;
-  #endif
+  BatteryGauge* getBatteryGauge() override;
   int getNumSettings() const override;
   const char* getSettingName(int i) const override;
   const char* getSettingValue(int i) const override;
