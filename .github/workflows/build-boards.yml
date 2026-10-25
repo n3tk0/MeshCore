@@ -557,6 +557,9 @@ jobs:
               mv "$f" "out/${{ matrix.target }}-lite-${f#out/${{ matrix.target }}-}"
             done
           fi
+          # with the same flags as the build: an nRF52 repeater too big for the staged OTA copy fails the
+          # job at its end (its files are still uploaded, e.g. for a USB flash)
+          tools/check-size.sh --log /tmp/pio-size.txt ${{ matrix.target }} && echo 0 > /tmp/size-rc || echo 1 > /tmp/size-rc
 
       - name: App Image and DFU File for the LoRa OTA App
         run: |
@@ -580,6 +583,9 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: out
+
+      - name: Size Check Result
+        run: exit $(cat /tmp/size-rc 2>/dev/null || echo 0)
 
   release:
     needs: build
