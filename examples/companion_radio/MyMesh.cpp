@@ -68,6 +68,7 @@
 #define CMD_RUN_CLI_COMMAND           66  // v14+
 // our fork only (far from upstream's numbers): console replies straight to the app, see onCommandDataRecv
 #define CMD_CAPTURE_CLI_REPLIES       120
+#define CMD_GET_TELEMETRY_HISTORY     121   // our fork: [ring][field][start 2][max] -> RESP_CODE_TELEMETRY_HISTORY
 
 // Stats sub-types for CMD_GET_STATS
 #define STATS_TYPE_CORE               0
@@ -104,6 +105,7 @@
 #define RESP_CODE_CHANNEL_DATA_RECV   27
 #define RESP_CODE_DEFAULT_FLOOD_SCOPE 28
 #define RESP_CODE_CLI_REPLY           29  // v14+, a reply to CMD_RUN_CLI_COMMAND
+#define RESP_CODE_TELEMETRY_HISTORY   0xC1  // our fork: the reply of TelemetryHistory::formatReply()
 
 #define MAX_CHANNEL_DATA_LENGTH       (MAX_FRAME_SIZE - 9)
 
@@ -152,6 +154,17 @@
 // Auto-add config bitmask
 // Bit 0: If set, overwrite oldest non-favourite contact when contacts file is full
 // Bits 1-4: these indicate which contact types to auto-add when manual_contact_mode = 0x01
+#ifdef BACK_ADVERT
+  #define BACK_ADVERT_AWAY_MILLIS  (10 * 60000UL)   // no repeater heard this long = away; also the advert limit
+  #define BACK_BOOT_DELAY_MILLIS      30000         // the advert after start-up
+  #define BACK_MAIL_WINDOW_MILLIS     60000         // a mailbox hands over within this after our advert
+  #define BACK_MAIL_GAP_MILLIS        15000         // ... and its messages come this close together
+#endif
+#ifdef TELEMETRY_HISTORY
+  #define HISTORY_FILE            "/tele_hist"
+  #define HISTORY_SAVE_MILLIS     3600000UL         // flash wear: once an hour
+#endif
+
 #define AUTO_ADD_OVERWRITE_OLDEST (1 << 0)  // 0x01 - overwrite oldest non-favourite when full
 #define AUTO_ADD_CHAT             (1 << 1)  // 0x02 - auto-add Chat (Companion) (ADV_TYPE_CHAT)
 #define AUTO_ADD_REPEATER         (1 << 2)  // 0x04 - auto-add Repeater (ADV_TYPE_REPEATER)
@@ -449,8 +462,50 @@ void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32
     }
   }
 #endif
+#ifdef BACK_ADVERT
+  // a repeater next to us again after a while (or the first since start-up): we are back in its range,
+  // and its mailbox learns it from our advert (zero hop) and hands over what it kept for us
+  if (packet->getPathHashCount() == 0 && app_data_len > 0 && (app_data[0] & 0x0F) == ADV_TYPE_REPEATER) {
+    noteRepeaterHeard();
+  }
+#endif
   BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
 }
+
+#ifdef BACK_ADVERT
+// A repeater next to us was heard: its own advert, or any flood packet it passed on (a hop in the path).
+// After 10 minutes of hearing none, that is a return: one advert so its mailbox hands over. A repeater's
+// advert alone comes only every hour; its traffic keeps a node that stays near it from saying "back" hourly.
+void MyMesh::noteRepeaterHeard() {
+  if (_back_repeater_heard == 0 || millis() - _back_repeater_heard > BACK_ADVERT_AWAY_MILLIS) sendBackAdvert();
+  _back_repeater_heard = millis() ? millis() : 1;
+}
+
+void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
+  if (packet->isRouteFlood() && packet->getPathHashCount() > 0) noteRepeaterHeard();
+}
+
+bool MyMesh::sendBackAdvert() {
+  if (_back_advert_at && millis() - _back_advert_at < BACK_ADVERT_AWAY_MILLIS) return false;   // at most every 10 min
+  if (!advert(false)) return false;   // transmit off (antenna not confirmed): tried again later
+  _back_advert_at = millis() ? millis() : 1;
+  _mail_window_until = futureMillis(BACK_MAIL_WINDOW_MILLIS);
+  _mail_count = 0;
+  return true;
+}
+
+void MyMesh::backAdvertLoop() {
+  if (_back_boot_advert && millisHasNowPassed(_back_boot_advert)) {
+    if (sendBackAdvert() || _back_advert_at) _back_boot_advert = 0;
+    else _back_boot_advert = futureMillis(10000);   // waits for the antenna answer
+  }
+  if (_mail_window_until && millisHasNowPassed(_mail_window_until)) {
+    _mail_window_until = 0;
+    if (_mail_count > 0 && _listener) _listener->onMailboxDelivered(_mail_count);
+    _mail_count = 0;
+  }
+}
+#endif
 
 void MyMesh::resetContactPath(ContactInfo& contact) {
   contact.out_path_len = OUT_PATH_UNKNOWN;
@@ -626,6 +681,13 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
   markConnectionActive(from); // in case this is from a server, and we have a connection
   // shown once; the sender still gets its ACK (sent by the caller)
   if (isRepeatedMsg(from, sender_timestamp)) return;
+#ifdef BACK_ADVERT
+  // after our advert, a direct message with no hop from someone not next to us is a mailbox handing over
+  if (_mail_window_until && !millisHasNowPassed(_mail_window_until) && pkt->isRouteDirect() && pkt->getPathHashCount() == 0) {
+    _mail_count++;
+    _mail_window_until = futureMillis(BACK_MAIL_GAP_MILLIS);   // the next one comes within seconds
+  }
+#endif
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -1072,6 +1134,15 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   memset(advert_paths, 0, sizeof(advert_paths));
   memset(send_scope.key, 0, sizeof(send_scope.key));
   send_unscoped = false;
+#ifdef BACK_ADVERT
+  _back_repeater_heard = _back_advert_at = _mail_window_until = 0;
+  _back_boot_advert = BACK_BOOT_DELAY_MILLIS;   // millis() is about 0 here
+  _mail_count = 0;
+#endif
+#ifdef TELEMETRY_HISTORY
+  _history_next = _history_save_at = 0;
+  _history_rx = _history_tx = _history_air = 0;
+#endif
 
   // defaults
   _prefs.airtime_factor = 1.0;
@@ -1170,6 +1241,11 @@ void MyMesh::begin() {
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure public channel
   _store->loadChannels(this);
   loadOfflineQueue();   // messages the app had not fetched before the last power off or reset
+#ifdef TELEMETRY_HISTORY
+  loadHistory();
+  _history_next = futureMillis(TH_DAY_MINS * 60000UL);
+  _history_save_at = futureMillis(HISTORY_SAVE_MILLIS);
+#endif
 
   if (!radio_driver.paramsSupported(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr)) {
     // stored settings this chip cannot use: start on the build defaults rather than half-applied ones
@@ -1311,6 +1387,15 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&out_frame[i], _prefs.node_name, tlen);
     i += tlen;
     _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_GET_TELEMETRY_HISTORY && len >= 6) {
+#ifdef TELEMETRY_HISTORY
+    out_frame[0] = RESP_CODE_TELEMETRY_HISTORY;
+    int n = _history.formatReply(&cmd_frame[1], len - 1, &out_frame[1], MAX_FRAME_SIZE - 1);
+    if (n > 0) _serial->writeFrame(out_frame, 1 + n);
+    else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+#else
+    writeDisabledFrame();
+#endif
   } else if (cmd_frame[0] == CMD_CAPTURE_CLI_REPLIES && len >= 2) {
     // [secs]: console replies come as PUSH_CODE_CLI_REPLY_CAPTURED for that long (at most 2 min); 0 = off
     uint8_t secs = cmd_frame[1] > 120 ? 120 : cmd_frame[1];
@@ -2660,6 +2745,12 @@ void MyMesh::loop() {
 #ifdef OFFLINE_QUEUE_PERSIST
   if (_offline_flush_at && millisHasNowPassed(_offline_flush_at)) flushOfflineTakes();
 #endif
+#ifdef BACK_ADVERT
+  backAdvertLoop();
+#endif
+#ifdef TELEMETRY_HISTORY
+  historyLoop();
+#endif
 
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
@@ -2886,3 +2977,76 @@ bool MyMesh::hasPendingWork() const {
   // a contacts write that is not due yet must not keep the CPU from sleeping until then
   return _mgr->getOutboundTotal() > 0 || (dirty_contacts_expiry != 0 && millisHasNowPassed(dirty_contacts_expiry));
 }
+
+#ifdef TELEMETRY_HISTORY
+#include <helpers/LppScan.h>
+
+struct HistoryBuf {   // TelemetryHistory streams into a RAM buffer, written with one small-file save
+  uint8_t* p;
+  int len, max, pos;
+  void write(const uint8_t* d, int n) { if (len + n <= max) { memcpy(p + len, d, n); } len += n; }
+  int read(uint8_t* d, int n) { int k = pos + n <= len ? n : len - pos; if (k < 0) k = 0; memcpy(d, p + pos, k); pos += k; return k; }
+};
+#define HISTORY_FILE_MAX (int)(sizeof(TelemetryHistory) + 16)
+
+void MyMesh::loadHistory() {
+  uint8_t* buf = (uint8_t*)malloc(HISTORY_FILE_MAX);
+  if (!buf) return;
+  int n = _store->loadSmallFile(HISTORY_FILE, buf, HISTORY_FILE_MAX);
+  if (n > 0) {
+    HistoryBuf r = { buf, n, HISTORY_FILE_MAX, 0 };
+    _history.load(r);
+  }
+  free(buf);
+}
+
+bool MyMesh::saveHistory() {
+  uint8_t* buf = (uint8_t*)malloc(HISTORY_FILE_MAX);
+  if (!buf) return false;
+  HistoryBuf w = { buf, 0, HISTORY_FILE_MAX, 0 };
+  _history.save(w);
+  bool ok = w.len <= HISTORY_FILE_MAX && _store->saveSmallFile(HISTORY_FILE, buf, w.len);
+  free(buf);
+  return ok;
+}
+
+// every 10 minutes: battery, temperature (a sensor's, else the MCU's), noise, packets and airtime
+void MyMesh::historyLoop() {
+  if (millisHasNowPassed(_history_next)) {
+    _history_next = futureMillis(TH_DAY_MINS * 60000UL);
+    TelemetrySample s;
+    TelemetryHistory::emptySample(s);
+    uint16_t mv = board.getBattMilliVolts();
+    if (mv >= 1000) s.v[TH_F_BATT_MV] = mv;
+    if (mv >= 2000) s.v[TH_F_BATT_PCT] = gaugeVoltagePercent(mv);
+    CayenneLPP lpp(64);
+    sensors.querySensors(TELEM_PERM_ENVIRONMENT, lpp);
+    int32_t raw;
+    if (lppScanFirst(lpp.getBuffer(), lpp.getSize(), LPP_SCAN_TEMPERATURE, &raw)) {
+      s.v[TH_F_TEMP_DC] = (int16_t)raw;
+    } else {
+      float t = board.getMCUTemperature();
+      if (!isnan(t)) s.v[TH_F_TEMP_DC] = (int16_t)(t * 10);
+    }
+    if (lppScanFirst(lpp.getBuffer(), lpp.getSize(), LPP_SCAN_HUMIDITY, &raw)) s.v[TH_F_HUMIDITY] = (int16_t)(raw / 2);
+    if (lppScanFirst(lpp.getBuffer(), lpp.getSize(), LPP_SCAN_BAROMETER, &raw)) s.v[TH_F_PRESSURE] = (int16_t)((uint16_t)raw - 9000);
+    s.v[TH_F_NOISE_DBM] = (int16_t)_radio->getNoiseFloor();
+    uint32_t rx = radio_driver.getPacketsRecv(), tx = radio_driver.getPacketsSent();
+    uint32_t air = getTotalAirTime() / 1000;
+    s.v[TH_F_RX] = (int16_t)(rx - _history_rx > 32767 ? 32767 : rx - _history_rx);
+    s.v[TH_F_TX] = (int16_t)(tx - _history_tx > 32767 ? 32767 : tx - _history_tx);
+    s.v[TH_F_AIR_TX_S] = (int16_t)(air - _history_air > 32767 ? 32767 : air - _history_air);
+    _history_rx = rx; _history_tx = tx; _history_air = air;
+    _history.add(s, getRTCClock()->getCurrentTime());
+  }
+  if (millisHasNowPassed(_history_save_at)) {
+    _history_save_at = futureMillis(HISTORY_SAVE_MILLIS);
+    if (_history.takeDirty() && !saveHistory()) _history_save_at = futureMillis(HISTORY_SAVE_MILLIS / 6);
+  }
+}
+
+// before a power off (hibernate, battery empty): the samples since the last hourly save
+void MyMesh::saveHistoryNow() {
+  saveHistory();
+}
+#endif

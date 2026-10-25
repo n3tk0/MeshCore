@@ -56,3 +56,6 @@ jobs:
 
       - name: Build ${{ matrix.environment }}
         run: pio run -e ${{ matrix.environment }}
+
+      - name: Size Check
+        run: tools/check-size.sh --warn-only ${{ matrix.environment }}

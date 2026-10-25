@@ -68,6 +68,7 @@ void setup() {
   delay(1000);
 
   board.begin();
+  MyMesh::powerOffAtBoot(false);
 
 #ifdef HAS_EXTERNAL_WATCHDOG
   external_watchdog.begin();
@@ -131,6 +132,7 @@ void setup() {
 #endif
 
   sensors.begin();
+  MyMesh::powerOffAtBoot(true);
 
   the_mesh.begin(fs);
 
@@ -153,6 +155,11 @@ void setup() {
 
 void loop() {
   watchdogFeed();
+
+  if (the_mesh.isPowerOff()) {   // battery empty (see `battsave`): only a sleep and a battery check now and then
+    the_mesh.powerOffLoop();
+    return;
+  }
 
   // Handle Serial CLI
   int len = strlen(command);

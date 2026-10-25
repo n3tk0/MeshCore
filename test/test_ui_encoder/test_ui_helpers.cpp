@@ -120,6 +120,18 @@ TEST(UIHelpers, AccelerationOnlyForFastTurnsInOneDirection) {
   EXPECT_EQ(1, ui::accelSteps(5000, true));
 }
 
+TEST(UIHelpers, QuietHoursWrapPastMidnight) {
+  const uint32_t day = 20000 * 86400UL;
+  EXPECT_FALSE(ui::quietNow(day + 23 * 3600, 0));        // off
+  EXPECT_TRUE(ui::quietNow(day + 23 * 3600, 1));         // 22-07
+  EXPECT_TRUE(ui::quietNow(day + 3 * 3600, 1));
+  EXPECT_FALSE(ui::quietNow(day + 7 * 3600, 1));         // ends at 7:00
+  EXPECT_FALSE(ui::quietNow(day + 21 * 3600 + 59 * 60, 1));
+  EXPECT_FALSE(ui::quietNow(day + 23 * 3600, 3));        // 00-07
+  EXPECT_TRUE(ui::quietNow(day + 30 * 60, 3));
+  EXPECT_FALSE(ui::quietNow(day + 2 * 3600, QUIET_PRESETS));   // a bad value is off
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

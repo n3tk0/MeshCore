@@ -7,8 +7,9 @@
 //
 // On nRF52 our Wire (arch/nrf52/libs/nrf52_wire) has a timeout on every wait, frees a stuck bus and counts
 // errors; a probe or a sensor read can then fail but not hang. The sensor manager turns off a
-// device that timed out at boot, or failed 3 reads in a row, and keeps it off until a reboot,
-// so one bad module does not take the others with it. The `i2c` CLI command lists them.
+// device that timed out at boot (until a reboot), or failed 3 reads in a row,
+// so one bad module does not take the others with it; it is tried again after 10 min, 1 h, then
+// every 6 h. The `i2c` CLI command lists them.
 // Elsewhere Wire has its own timeouts and no counters: devices are only listed.
 
 enum I2CProbeResult : uint8_t {
@@ -26,7 +27,7 @@ enum I2CDeviceState : uint8_t {
   I2C_DEV_OK = 0,
   I2C_DEV_OFF_BOOT_TIMEOUT,   // its probe or its init timed out
   I2C_DEV_OFF_INIT_FAILED,    // it answered, its driver did not start
-  I2C_DEV_OFF_ERRORS,         // 3 failed reads in a row
+  I2C_DEV_OFF_ERRORS,         // 3 failed reads in a row (tried again later)
 };
 
 // The list `i2c` shows. With name NULL and I2C_DEV_OFF_BOOT_TIMEOUT (a probe that timed out,
@@ -35,3 +36,5 @@ void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state);
 void i2cSetBusStuck(TwoWire& wire);  // `i2c` then shows its state as it is now
 // e.g. "40 INA219 ok; 76 BMP280 off: 3 errors at 125m", cut to fit
 void i2cFormatList(char* reply, size_t size);
+int i2cOffCount();       // devices listed as off (any reason)
+bool i2cAnyBusStuck();   // a bus found stuck is still stuck

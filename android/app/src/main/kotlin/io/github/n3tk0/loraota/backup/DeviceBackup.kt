@@ -136,7 +136,7 @@ object RepeaterBackup {
      * One console command and its reply; null when none came. The command starts with a 2-letter tag that
      * the repeater sends back, so a late reply to an earlier command cannot pass for this one.
      */
-    private suspend fun ask(c: CompanionRadio, r: Contact, command: String): String? {
+    internal suspend fun ask(c: CompanionRadio, r: Contact, command: String): String? {
         c.captureCli(60)   // kept on while the commands go, off again at the end
         c.dropCliReplies(r)
         val n = tags++ % (26 * 26)

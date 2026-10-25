@@ -394,10 +394,24 @@ static void scenario(uint8_t lang) {
   run(100);
   turn(1); shot("card_recent", bg ? "Карта: чути наскоро" : "Card: recently heard");
   turn(1); shot("card_radio", bg ? "Карта: радио" : "Card: radio");
-  turn(1); shot("card_battery", bg ? "Карта: батерия" : "Card: battery");
+  // 24 h of history: charged to 100 % in the evening, then 1 % every 20 minutes
+  for (int i = 0; i < TH_DAY_SLOTS; i++) {
+    TelemetrySample hs;
+    TelemetryHistory::emptySample(hs);
+    int pct = i < 40 ? 55 + i : i < 50 ? 95 + (i - 40) / 2 : 100 - (i - 50) / 2;
+    if (i >= 70 && i < 76) pct = TH_NONE;   // off for an hour
+    hs.v[TH_F_BATT_PCT] = pct;
+    the_mesh.history.add(hs, now0 - (TH_DAY_SLOTS - i) * 600);
+  }
+  turn(1); shot("card_battery", bg ? "Карта: батерия, с оставащо време по спада за последните часове" : "Card: battery, with the time left from the last hours' fall");
   board.external = true; ui->refresh(); run(100);
   shot("card_battery_usb", bg ? "Карта: батерия при USB (мълния в лентата)" : "Card: battery on USB (bolt in the bar)");
   board.external = false; ui->refresh();
+  turn(1); shot("card_batt_graph", bg ? "Карта: батерията за 24 ч (празно = изключен)" : "Card: the battery over 24 h (gap = switched off)");
+  ui->onMailboxDelivered(3); run(100);
+  shotFrame("mailbox_delivered", bg ? "Пощата на ретранслатора предаде 3 писма след нашия advert" : "The repeater's mailbox handed over 3 messages after our advert");
+  run(3000);
+  turn(-1);
   turn(1);
 
   // messages arrive

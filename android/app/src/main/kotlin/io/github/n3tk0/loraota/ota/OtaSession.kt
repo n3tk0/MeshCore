@@ -114,12 +114,14 @@ class OtaSession(
         }
     }
 
-    suspend fun run(old: ByteArray, new: ByteArray, patch: ByteArray, inPlace: Boolean = false) {
+    /** The whole update; returns what the repeater says after its restart (it runs the new image). */
+    suspend fun run(old: ByteArray, new: ByteArray, patch: ByteArray, inPlace: Boolean = false): OtaProtocol.Info {
         val oldSha = io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(old)
         val newSha = io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(new)
         val total = (patch.size + CHUNK - 1) / CHUNK
         val begin = OtaProtocol.begin(patch.size, new.size, newSha, oldSha, CHUNK, radio, SESSION_TIMEOUT_SECS, inPlace)
         var stopped = false
+        var after: OtaProtocol.Info? = null
         try {
             var st = start(begin)
             var next = st.nextSeq
@@ -190,6 +192,7 @@ class OtaSession(
             if (i.state == OtaProtocol.STATE_PAUSED) throw OtaFailed(R.string.err_end_lost, resumable = true)
             if (!i.imageSha.contentEquals(newSha)) throw OtaFailed(R.string.err_old_still_runs, listOf(i.ident))
             log("the repeater runs the new firmware")
+            after = i
         } catch (e: Throwable) {
             // stopped by the user (the job is cancelled, not a timeout): drop it on the repeater too
             if (e is CancellationException && !currentCoroutineContext().isActive && begun) {
@@ -210,6 +213,7 @@ class OtaSession(
         } finally {
             if (onSide) normalRadio()
         }
+        return after!!
     }
 
     /**

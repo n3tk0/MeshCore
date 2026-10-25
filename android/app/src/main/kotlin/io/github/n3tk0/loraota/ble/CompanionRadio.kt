@@ -57,6 +57,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val CMD_SET_DEVICE_PIN = 37
         const val CMD_SET_PATH_HASH_MODE = 61
         const val CMD_CAPTURE_CLI_REPLIES = 120   // our companion firmware only
+        const val CMD_GET_TELEMETRY_HISTORY = 121 // our companion firmware only
 
         const val TXT_TYPE_CLI_DATA = 1
 
@@ -79,6 +80,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val PUSH_LOGIN_FAIL = 0x86
         const val PUSH_BINARY_RESPONSE = 0x8C
         const val PUSH_CLI_REPLY_CAPTURED = 0xC0   // [code][sender prefix 6][timestamp 4][text]
+        const val RESP_TELEMETRY_HISTORY = 0xC1    // [code] + a history piece (see HistorySeries)
     }
 
     var nodeName: String = ""
@@ -277,6 +279,17 @@ class CompanionRadio(private val link: CompanionLink) {
             if (code(f) == PUSH_BINARY_RESPONSE || (code(f) == PUSH_CLI_REPLY_CAPTURED && !his(f))) pending.addLast(f)
         }
         pending.removeAll { his(it) }
+    }
+
+    /**
+     * A piece of the companion's own telemetry history ([args]: see HistorySeries.args); null when its
+     * firmware keeps none (stock, or built without it).
+     */
+    suspend fun history(args: ByteArray): ByteArray? = try {
+        val f = command(byteArrayOf(CMD_GET_TELEMETRY_HISTORY.toByte()) + args, 5000, RESP_TELEMETRY_HISTORY, RESP_DISABLED)
+        if (code(f) == RESP_TELEMETRY_HISTORY) f.copyOfRange(1, f.size) else null
+    } catch (e: CompanionError) {
+        null
     }
 
     // ---- the companion's own settings: backup and restore ----
