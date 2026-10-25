@@ -193,6 +193,7 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 - `ok`, or `WARN` with what is wrong first (`radio`, `i2c`, `qspi`, `batt`).
 - `radio=bad`: the noise floor is not between -140 and -60 dBm. `i2c=off:N` / `i2c=stuck`. `qspi` only on boards with QSPI storage. `left=chg`: charging. `ota=on,new`: new firmware not confirmed yet. `ps`: the power step.
 - The LoRa OTA app reads it for its Health page and keeps every result on the phone.
+- The app also reads `battsave` and, when `day=` shows an INA219, `battery capacity` for its battery card.
 
 ---
 
