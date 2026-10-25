@@ -1804,8 +1804,20 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
     }
   }
 
-  // the owner's ACK (or PATH with the ACK in it) for the message just handed over
-  if (mailbox_wait_until && (type == PAYLOAD_TYPE_ACK || type == PAYLOAD_TYPE_PATH || type == PAYLOAD_TYPE_MULTIPART)) {
+  // the owner's ACK (or PATH with the ACK in it) for the message just handed over. An ACK names no
+  // sender, so only one sent next to us counts: a flood with no hop yet, or a direct packet with no
+  // hop left or routed through us; a PATH also carries its sender's hash. Any other ACK nearby
+  // would drop a message that was never delivered.
+  bool owner_ack = false;
+  if (mailbox_wait_until && mailbox_deliver_owner >= 0
+      && (type == PAYLOAD_TYPE_ACK || type == PAYLOAD_TYPE_PATH || type == PAYLOAD_TYPE_MULTIPART)) {
+    owner_ack = pkt->isRouteFlood() ? pkt->getPathHashCount() == 0
+        : pkt->getPathHashCount() == 0 || self_id.isHashMatch(pkt->path, pkt->getPathHashSize());
+    if (type == PAYLOAD_TYPE_PATH) {
+      owner_ack = owner_ack && pkt->payload_len >= 2 && pkt->payload[1] == mailbox.config().owners[mailbox_deliver_owner][0];
+    }
+  }
+  if (owner_ack) {
     for (int i = 0; i < mailbox.count(); i++) {
       if (memcmp(mailbox.at(i).hash, mailbox_wait_hash, MAX_HASH_SIZE) == 0) {
         mailbox.remove(i);
@@ -2228,7 +2240,11 @@ void MyMesh::handleBatteryCommand(char* args, char* reply) {
   }
 }
 
-// One line for the app's Health page and for a person: what does not work comes first.
+// One line for the app's Health page and for a person: what does not work comes first. At most
+// SELFTEST_MAX bytes: the reply buffer (160 on serial, 161 over the air) may already hold a 3-byte "xx|" tag.
+#define SELFTEST_MAX 155
+#define ST_ADD(...) do { if (n < SELFTEST_MAX) n += snprintf(reply + n, SELFTEST_MAX - n, __VA_ARGS__); \
+                         if (n > SELFTEST_MAX) n = SELFTEST_MAX; } while (0)
 // e.g. "ok radio=ok rx=120 tx=40 nf=-112 i2c=ok qspi=ok batt=3987mV/72% left=41h day=+420/-310 mail=3 ota=on ps=normal up=3d04h"
 void MyMesh::formatSelfTest(char* reply) {
   char warn[40] = "";
@@ -2247,35 +2263,36 @@ void MyMesh::formatSelfTest(char* reply) {
   int len = strlen(warn);
   if (len) warn[len - 1] = 0;
 
-  int n = snprintf(reply, 160, "%s%s radio=%s rx=%lu tx=%lu nf=%d", warn[0] ? "WARN " : "ok", warn,
-                   radio_ok ? "ok" : "bad", (unsigned long)rx, (unsigned long)tx, nf);
-  if (i2c_stuck) n += snprintf(reply + n, 160 - n, " i2c=stuck");
-  else if (i2c_off) n += snprintf(reply + n, 160 - n, " i2c=off:%d", i2c_off);
-  else n += snprintf(reply + n, 160 - n, " i2c=ok");
+  int n = 0;
+  ST_ADD("%s%s radio=%s rx=%lu tx=%lu nf=%d", warn[0] ? "WARN " : "ok", warn,
+         radio_ok ? "ok" : "bad", (unsigned long)rx, (unsigned long)tx, nf);
+  if (i2c_stuck) ST_ADD(" i2c=stuck");
+  else if (i2c_off) ST_ADD(" i2c=off:%d", i2c_off);
+  else ST_ADD(" i2c=ok");
 #if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
-  n += snprintf(reply + n, 160 - n, " qspi=%s", qspi_ok ? "ok" : "bad");
+  ST_ADD(" qspi=%s", qspi_ok ? "ok" : "bad");
 #endif
   uint16_t mv = battMilliVolts();
   BatteryGauge* g = sensors.getBatteryGauge();
   int pct = g && g->hasReading() ? g->percent() : mv >= 2000 ? gaugeVoltagePercent(mv) : -1;
-  if (pct >= 0) n += snprintf(reply + n, 160 - n, " batt=%umV/%d%%", mv, pct);
-  else n += snprintf(reply + n, 160 - n, " batt=%umV", mv);
+  if (pct >= 0) ST_ADD(" batt=%umV/%d%%", mv, pct);
+  else ST_ADD(" batt=%umV", mv);
   if (g && g->hasReading()) {
     int h = g->hoursLeft();
-    if (h == -2) n += snprintf(reply + n, 160 - n, " left=chg");
-    else if (h >= 0) n += snprintf(reply + n, 160 - n, " left=%dh", h);
-    n += snprintf(reply + n, 160 - n, " day=+%d/-%d", g->inToday(), g->outToday());
+    if (h == -2) ST_ADD(" left=chg");
+    else if (h >= 0) ST_ADD(" left=%dh", h);
+    ST_ADD(" day=+%d/-%d", g->inToday(), g->outToday());
   }
 #ifdef WITH_MAILBOX
-  if (mailbox.isEnabled()) n += snprintf(reply + n, 160 - n, " mail=%d", mailbox.count());
-  else n += snprintf(reply + n, 160 - n, " mail=off");
+  if (mailbox.isEnabled()) ST_ADD(" mail=%d", mailbox.count());
+  else ST_ADD(" mail=off");
 #endif
 #ifdef WITH_LORA_OTA
-  n += snprintf(reply + n, 160 - n, " ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : "");
+  ST_ADD(" ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : "");
 #endif
   uint32_t up = uptime_millis / 1000;
-  n += snprintf(reply + n, 160 - n, " ps=%s up=%lud%02luh", PowerSaver::name(psave.stage()),
-                (unsigned long)(up / 86400), (unsigned long)(up % 86400 / 3600));
+  ST_ADD(" ps=%s up=%lud%02luh", PowerSaver::name(psave.stage()),
+         (unsigned long)(up / 86400), (unsigned long)(up % 86400 / 3600));
 }
 
 /* ------------------------- Telemetry history ------------------------- */

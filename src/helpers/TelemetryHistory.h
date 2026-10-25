@@ -29,6 +29,9 @@
 #define TH_F_COUNT        10
 
 #define TH_NONE         ((int16_t)0x8000)
+// a clock before this is not set: VolatileRTCClock starts in May 2024 after every restart, and its
+// samples would be followed by a jump of years once the clock is set (wiping the rings with blanks)
+#define TH_VALID_EPOCH  1735689600UL   // 2025-01-01
 
 struct TelemetrySample {
   int16_t v[TH_F_COUNT];
@@ -93,11 +96,10 @@ public:
 
   static void emptySample(TelemetrySample& s) { blank(s); }
 
-  // A 10-minute sample. 'now' = RTC seconds (a clock before 2024 counts as unknown). Missed slots
+  // A 10-minute sample. 'now' = RTC seconds (a clock before TH_VALID_EPOCH counts as unknown). Missed slots
   // (the node was off) are filled with empty samples, so the graph keeps its time axis.
   void add(const TelemetrySample& s, uint32_t now) {
-    const uint32_t valid_after = 1704067200UL;   // 2024-01-01
-    if (now < valid_after) now = 0;
+    if (now < TH_VALID_EPOCH) now = 0;
     if (now && _rday.last_time && now > _rday.last_time) {
       uint32_t missed = (now - _rday.last_time) / (TH_DAY_MINS * 60);
       if (missed > 1) {

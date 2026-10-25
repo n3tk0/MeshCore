@@ -168,6 +168,12 @@ TEST(TelemetryHistory, UnknownClockDoesNotFill) {
   h.add(sample(3900), 100);
   h.add(sample(3800), 100000);
   EXPECT_EQ(h.count(0), 2);
+  // after a restart the clock reads May 2024 until it is set: not a time, so setting it later
+  // (a jump of years) does not fill the rings with blanks
+  h.add(sample(3700), 1715770351);
+  h.add(sample(3600), 1760000000);
+  EXPECT_EQ(h.count(0), 4);
+  EXPECT_EQ(h.at(0, 0)->v[TH_F_BATT_MV], 3900);
 }
 
 TEST(TelemetryHistory, ReplyFormat) {
