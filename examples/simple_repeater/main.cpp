@@ -154,6 +154,11 @@ void setup() {
 void loop() {
   watchdogFeed();
 
+  if (the_mesh.isPowerOff()) {   // battery empty (see `powersave`): only a sleep and a battery check now and then
+    the_mesh.powerOffLoop();
+    return;
+  }
+
   // Handle Serial CLI
   int len = strlen(command);
   // `command` must stay NUL-terminated within its bounds. If it ever isn't,

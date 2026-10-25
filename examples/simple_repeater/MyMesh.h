@@ -41,6 +41,14 @@
   #include <helpers/MailboxStore.h>
 #endif
 
+#include <helpers/PowerSaver.h>
+#include <helpers/I2CHealth.h>
+
+#if !defined(NO_TELEMETRY_HISTORY) && !defined(STM32_PLATFORM)
+  #define WITH_TELEMETRY_HISTORY // 24 h every 10 min + a week every hour, in a file; read by the app
+  #include <helpers/TelemetryHistory.h>
+#endif
+
 #if !defined(NO_LORA_OTA) && (defined(NRF52_PLATFORM) || defined(ESP32))
   #define WITH_LORA_OTA          // firmware delta over LoRa from an admin with no hop between
   #include <helpers/LoraOta.h>
@@ -126,6 +134,11 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   unsigned long mailbox_save_at;        // millis, 0 = nothing to save
   unsigned long mailbox_next_expire;    // millis
   unsigned long mailbox_learn_until;    // millis, 0 = not learning: the next companion advert with no hop is an owner
+  bool mailbox_confirm;                 // the owner is not proven (only its 1-byte hash): each message waits for its ACK
+  uint8_t mailbox_wait_hash[MAX_HASH_SIZE];   // the message handed over that waits for an ACK
+  unsigned long mailbox_wait_until;     // millis, 0 = not waiting
+  unsigned long mailbox_try_after[MAILBOX_MAX_OWNERS];   // millis: no new unproven delivery before
+  void startMailboxDelivery(int owner, bool proven);
   void loadMailbox();
   void saveMailbox();
   void onMailboxPacket(mesh::Packet* pkt);
@@ -138,8 +151,31 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool ota_on_side;                     // on the OTA side channel radio settings
   bool ota_radio_away;                  // the radio is not back on the normal settings yet (it waits for the queue)
   char ota_ident[64];
+  bool ota_probe_sent;                  // an unconfirmed new firmware sent an advert to test its radio
+  bool ota_verdict_done;                // ... and was kept or rolled back
   void applyOtaAction();
   void otaLoop();
+#endif
+  PowerSaver psave;
+  unsigned long psave_next_check;       // millis
+  bool psave_radio_off;
+  unsigned long psave_next_wake_check;  // millis, in the 'off' step
+  void loadPowerSave();
+  bool savePowerSave();
+  void powerSaveLoop();
+  void applyPowerStage(uint8_t old_stage);
+  void handlePowerSaveCommand(char* args, char* reply);
+  void handleBatteryCommand(char* args, char* reply);
+  void loadBatteryCapacity();
+  void formatSelfTest(char* reply);
+#ifdef WITH_TELEMETRY_HISTORY
+  TelemetryHistory history;
+  unsigned long history_next;           // millis: the next 10-minute sample
+  unsigned long history_save_at;        // millis: the next save (hourly)
+  uint32_t history_rx, history_tx, history_air;   // counters at the last sample
+  void historyLoop();
+  void loadHistory();
+  void saveHistory();
 #endif
 #if defined(WITH_RS232_BRIDGE)
   RS232Bridge bridge;
@@ -258,6 +294,8 @@ public:
   void clearStats() override;
 
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
+  bool isPowerOff() const { return psave.stage() == PSAVE_OFF; }   // battery empty: the radio is off, the node only sleeps
+  void powerOffLoop();
   void loop();
 
 #if defined(WITH_BRIDGE)

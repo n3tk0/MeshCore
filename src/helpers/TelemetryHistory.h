@@ -1,0 +1,190 @@
+#pragma once
+
+#include <stdint.h>
+#include <string.h>
+
+// Telemetry history: the last 24 hours every 10 minutes and the last week every hour.
+// The caller adds a sample every 10 minutes; six of them make one hourly sample (averages, sums
+// for the counters). Kept in RAM (~6 KB) and in a file, saved once an hour.
+// An app reads one value at a time (a "field") for a stretch of samples: see the request below.
+// Pure logic: no clock, no radio, no file system.
+
+#define TH_DAY_SLOTS     144     // 24 h x 6
+#define TH_WEEK_SLOTS    168     // 7 d x 24
+#define TH_DAY_MINS       10
+#define TH_WEEK_MINS      60
+#define TH_FILE_VER        1
+
+// fields (each value int16 on the air, 0x8000 = none)
+#define TH_F_BATT_MV       0
+#define TH_F_BATT_PCT      1
+#define TH_F_TEMP_DC       2     // 0.1 degC: a sensor's, else the MCU's
+#define TH_F_HUMIDITY      3     // %
+#define TH_F_PRESSURE      4     // 0.1 hPa above 900 hPa (int16 range)
+#define TH_F_CURRENT_MA    5     // battery current, positive = out (INA219)
+#define TH_F_NOISE_DBM     6
+#define TH_F_RX            7     // packets received in the slot
+#define TH_F_TX            8     // packets sent in the slot
+#define TH_F_AIR_TX_S      9     // seconds of transmit in the slot
+#define TH_F_COUNT        10
+
+#define TH_NONE         ((int16_t)0x8000)
+
+struct TelemetrySample {
+  int16_t v[TH_F_COUNT];
+};
+
+struct TelemetryRing {
+  uint32_t last_time;     // RTC seconds of the newest sample, 0 = unknown clock
+  uint16_t head;          // where the next sample goes
+  uint16_t count;
+};
+
+class TelemetryHistory {
+  TelemetrySample _day[TH_DAY_SLOTS];
+  TelemetrySample _week[TH_WEEK_SLOTS];
+  TelemetryRing _rday, _rweek;
+  int32_t _acc[TH_F_COUNT];   // the hour being made, from 10-minute samples
+  uint8_t _acc_n[TH_F_COUNT];
+  uint8_t _acc_slots;
+  bool _dirty;
+
+  static bool isCounter(int f) { return f == TH_F_RX || f == TH_F_TX || f == TH_F_AIR_TX_S; }
+
+  static void push(TelemetrySample* ring, int slots, TelemetryRing& r, const TelemetrySample& s, uint32_t now) {
+    ring[r.head] = s;
+    r.head = (r.head + 1) % slots;
+    if (r.count < slots) r.count++;
+    r.last_time = now;
+  }
+  static void blank(TelemetrySample& s) { for (int f = 0; f < TH_F_COUNT; f++) s.v[f] = TH_NONE; }
+
+  void addHourPart(const TelemetrySample& s, uint32_t now) {
+    for (int f = 0; f < TH_F_COUNT; f++) {
+      if (s.v[f] == TH_NONE) continue;
+      _acc[f] += s.v[f];
+      _acc_n[f]++;
+    }
+    if (++_acc_slots >= TH_WEEK_MINS / TH_DAY_MINS) {
+      TelemetrySample h;
+      for (int f = 0; f < TH_F_COUNT; f++) {
+        if (_acc_n[f] == 0) h.v[f] = TH_NONE;
+        else if (isCounter(f)) h.v[f] = (int16_t)(_acc[f] > 32767 ? 32767 : _acc[f]);
+        else h.v[f] = (int16_t)(_acc[f] / _acc_n[f]);
+      }
+      push(_week, TH_WEEK_SLOTS, _rweek, h, now);
+      memset(_acc, 0, sizeof(_acc));
+      memset(_acc_n, 0, sizeof(_acc_n));
+      _acc_slots = 0;
+    }
+  }
+
+public:
+  TelemetryHistory() { clear(); }
+
+  void clear() {
+    memset(&_rday, 0, sizeof(_rday));
+    memset(&_rweek, 0, sizeof(_rweek));
+    memset(_acc, 0, sizeof(_acc));
+    memset(_acc_n, 0, sizeof(_acc_n));
+    _acc_slots = 0;
+    _dirty = false;
+  }
+
+  static void emptySample(TelemetrySample& s) { blank(s); }
+
+  // A 10-minute sample. 'now' = RTC seconds (a clock before 2024 counts as unknown). Missed slots
+  // (the node was off) are filled with empty samples, so the graph keeps its time axis.
+  void add(const TelemetrySample& s, uint32_t now) {
+    const uint32_t valid_after = 1704067200UL;   // 2024-01-01
+    if (now < valid_after) now = 0;
+    if (now && _rday.last_time && now > _rday.last_time) {
+      uint32_t missed = (now - _rday.last_time) / (TH_DAY_MINS * 60);
+      if (missed > 1) {
+        missed--;
+        if (missed > TH_WEEK_SLOTS * (TH_WEEK_MINS / TH_DAY_MINS)) missed = TH_WEEK_SLOTS * (TH_WEEK_MINS / TH_DAY_MINS);
+        TelemetrySample e;
+        blank(e);
+        for (uint32_t i = 0; i < missed; i++) {
+          uint32_t t = _rday.last_time + TH_DAY_MINS * 60;
+          if (i < TH_DAY_SLOTS || missed - i <= TH_DAY_SLOTS) push(_day, TH_DAY_SLOTS, _rday, e, t);
+          else _rday.last_time = t;
+          addHourPart(e, t);
+        }
+      }
+    }
+    push(_day, TH_DAY_SLOTS, _rday, s, now);
+    addHourPart(s, now);
+    _dirty = true;
+  }
+
+  // ring 0 = day (10 min), 1 = week (1 h)
+  int count(int ring) const { return ring ? _rweek.count : _rday.count; }
+  uint32_t lastTime(int ring) const { return ring ? _rweek.last_time : _rday.last_time; }
+  // i = 0 is the oldest sample kept
+  const TelemetrySample* at(int ring, int i) const {
+    const TelemetryRing& r = ring ? _rweek : _rday;
+    int slots = ring ? TH_WEEK_SLOTS : TH_DAY_SLOTS;
+    if (i < 0 || i >= r.count) return NULL;
+    int idx = (r.head + slots - r.count + i) % slots;
+    return ring ? &_week[idx] : &_day[idx];
+  }
+  bool takeDirty() { bool d = _dirty; _dirty = false; return d; }
+
+  // Request (after the request type byte): ring(1) field(1) start(2 LE, from the oldest) max(1).
+  // Reply: ring(1) field(1) total(2) start(2) n(1) last_time(4) interval_mins(1) values(n x int16 LE).
+  // Returns the reply length (0 = bad request).
+  int formatReply(const uint8_t* req, int req_len, uint8_t* out, int out_max) const {
+    if (req_len < 5) return 0;
+    int ring = req[0], field = req[1], start = req[2] | (req[3] << 8), max = req[4];
+    if (ring > 1 || field >= TH_F_COUNT || out_max < 12) return 0;
+    int total = count(ring);
+    if (start > total) start = total;
+    int room = (out_max - 12) / 2;
+    int n = total - start;
+    if (n > max) n = max;
+    if (n > room) n = room;
+    uint32_t t = lastTime(ring);
+    out[0] = ring; out[1] = field;
+    out[2] = total & 0xFF; out[3] = total >> 8;
+    out[4] = start & 0xFF; out[5] = start >> 8;
+    out[6] = n;
+    memcpy(&out[7], &t, 4);
+    out[11] = ring ? TH_WEEK_MINS : TH_DAY_MINS;
+    for (int i = 0; i < n; i++) {
+      int16_t v = at(ring, start + i)->v[field];
+      out[12 + i * 2] = v & 0xFF;
+      out[13 + i * 2] = (v >> 8) & 0xFF;
+    }
+    return 12 + n * 2;
+  }
+
+  // the file: ver(1) + both rings (header + all slots) + the hour being made
+  template<class W> void save(W& w) const {
+    uint8_t ver = TH_FILE_VER;
+    w.write(&ver, 1);
+    w.write((const uint8_t*)&_rday, sizeof(_rday));
+    w.write((const uint8_t*)_day, sizeof(_day));
+    w.write((const uint8_t*)&_rweek, sizeof(_rweek));
+    w.write((const uint8_t*)_week, sizeof(_week));
+    w.write((const uint8_t*)_acc, sizeof(_acc));
+    w.write((const uint8_t*)_acc_n, sizeof(_acc_n));
+    w.write(&_acc_slots, 1);
+  }
+  template<class R> bool load(R& r) {
+    clear();
+    uint8_t ver = 0;
+    bool ok = r.read(&ver, 1) == 1 && ver == TH_FILE_VER
+      && r.read((uint8_t*)&_rday, sizeof(_rday)) == (int)sizeof(_rday)
+      && r.read((uint8_t*)_day, sizeof(_day)) == (int)sizeof(_day)
+      && r.read((uint8_t*)&_rweek, sizeof(_rweek)) == (int)sizeof(_rweek)
+      && r.read((uint8_t*)_week, sizeof(_week)) == (int)sizeof(_week)
+      && r.read((uint8_t*)_acc, sizeof(_acc)) == (int)sizeof(_acc)
+      && r.read((uint8_t*)_acc_n, sizeof(_acc_n)) == (int)sizeof(_acc_n)
+      && r.read(&_acc_slots, 1) == 1
+      && _rday.head < TH_DAY_SLOTS && _rday.count <= TH_DAY_SLOTS
+      && _rweek.head < TH_WEEK_SLOTS && _rweek.count <= TH_WEEK_SLOTS && _acc_slots < 6;
+    if (!ok) clear();
+    return ok;
+  }
+};

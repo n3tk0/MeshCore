@@ -43,6 +43,7 @@ struct I2CListEntry {
   I2CDeviceState state;
   const char* name;
   uint32_t at_min;  // uptime when it was turned off
+  uint8_t drops;    // times it was turned off for errors (it is tried again later)
 };
 
 static I2CListEntry i2c_list[I2C_LIST_MAX];
@@ -69,7 +70,9 @@ void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state) {
     e = &i2c_list[i2c_list_count++];
     e->addr = addr;
     e->name = NULL;
+    e->drops = 0;
   }
+  if (state == I2C_DEV_OFF_ERRORS && e->drops < 255) e->drops++;
   if (name) e->name = name;
   e->state = state;
   e->at_min = millis() / 60000;
@@ -100,14 +103,26 @@ void i2cFormatList(char* reply, size_t size) {
     const char* name = e.name ? e.name : "?";
     switch (e.state) {
       case I2C_DEV_OK:
-        n += snprintf(reply + n, size - n, "%s%02X %s ok", sep, e.addr, name); break;
+        if (e.drops) n += snprintf(reply + n, size - n, "%s%02X %s ok (off %ux)", sep, e.addr, name, e.drops);
+        else n += snprintf(reply + n, size - n, "%s%02X %s ok", sep, e.addr, name);
+        break;
       case I2C_DEV_OFF_BOOT_TIMEOUT:
         n += snprintf(reply + n, size - n, "%s%02X %s off: timeout at boot", sep, e.addr, name); break;
       case I2C_DEV_OFF_INIT_FAILED:
         n += snprintf(reply + n, size - n, "%s%02X %s off: init failed", sep, e.addr, name); break;
       case I2C_DEV_OFF_ERRORS:
-        n += snprintf(reply + n, size - n, "%s%02X %s off: 3 errors at %lum", sep, e.addr, name, (unsigned long)e.at_min); break;
+        n += snprintf(reply + n, size - n, "%s%02X %s off: 3 errors at %lum, retrying", sep, e.addr, name, (unsigned long)e.at_min); break;
     }
   }
   if (n >= size && size > 4) strcpy(reply + size - 4, "...");
+}
+
+int i2cOffCount() {
+  int n = 0;
+  for (int i = 0; i < i2c_list_count; i++) if (i2c_list[i].state != I2C_DEV_OK) n++;
+  return n;
+}
+
+bool i2cAnyBusStuck() {
+  return i2c_stuck_wire != NULL && i2cBusStuck(*i2c_stuck_wire);
 }
