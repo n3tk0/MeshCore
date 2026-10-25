@@ -68,7 +68,7 @@ void setup() {
   delay(1000);
 
   board.begin();
-  MyMesh::powerOffAtBoot();
+  MyMesh::powerOffAtBoot(false);
 
 #ifdef HAS_EXTERNAL_WATCHDOG
   external_watchdog.begin();
@@ -132,6 +132,7 @@ void setup() {
 #endif
 
   sensors.begin();
+  MyMesh::powerOffAtBoot(true);
 
   the_mesh.begin(fs);
 

@@ -76,6 +76,14 @@ class HealthTest {
     }
 
     @Test
+    fun picksAFieldTheNodeMeasures() {
+        val noPct = (1 shl HistorySeries.F_BATT_MV) or (1 shl HistorySeries.F_RX)
+        assertEquals(HistorySeries.F_BATT_MV, HistorySeries.pick(HistorySeries.F_BATT_PCT, noPct))
+        assertEquals(HistorySeries.F_BATT_PCT, HistorySeries.pick(HistorySeries.F_BATT_PCT, null))
+        assertEquals(HistorySeries.F_BATT_PCT, HistorySeries.pick(HistorySeries.F_BATT_PCT, 0))
+    }
+
+    @Test
     fun olderRepeaterAnswerIsNotASelfTest() {
         assertNull(SelfTest.parse("Unknown command"))
         assertNull(SelfTest.parse(""))

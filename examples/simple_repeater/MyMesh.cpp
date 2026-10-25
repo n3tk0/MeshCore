@@ -2147,23 +2147,27 @@ void MyMesh::applyPowerStage(uint8_t old_stage) {
 
 #if defined(ESP32)
 RTC_DATA_ATTR static uint16_t psave_sleep_off_mv = 0;   // kept over the deep sleep of the 'off' step: its limit
+RTC_DATA_ATTR static uint8_t psave_sleep_sensor = 0;    // ... and whether a sensor (INA219) gave the battery
 
-// Right after board.begin(), before the radio starts: a wake from the 'off' step's sleep with the
-// battery still under off + 150 mV (and no external power) goes back to sleep at once, so an empty
-// cell is not pulled down every 30 min by a full boot, 3 battery checks and an advert. Any other boot
-// (power on, reset, a reading the board cannot make) goes on as usual.
-void MyMesh::powerOffAtBoot() {
+// A wake from the 'off' step's sleep with the battery still under off + 150 mV (and no external power)
+// goes back to sleep at once, so an empty cell is not pulled down every 30 min by a full boot, 3 battery
+// checks and an advert. Called twice: right after board.begin() (the board's own reading, before the
+// radio starts) and right after sensors.begin() (an INA219's reading; the radio is put back to sleep).
+// Any other boot (power on, reset, a reading that cannot be made) goes on as usual.
+void MyMesh::powerOffAtBoot(bool sensors_ready) {
   uint16_t off = psave_sleep_off_mv;
+  if (off == 0 || (psave_sleep_sensor != 0) != sensors_ready) return;
   psave_sleep_off_mv = 0;
-  if (off == 0 || esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) return;
-  uint16_t mv = board.getBattMilliVolts();
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) return;
+  uint16_t mv = sensors_ready ? sensors.getBatteryMilliVolts() : board.getBattMilliVolts();
   if (board.isExternalPowered() || mv < 2500 || mv > 4600 || mv >= off + PSAVE_OFF_WAKE_MV) return;
+  if (sensors_ready) radio_driver.powerOff();
   psave_sleep_off_mv = off;
   esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);
   esp_deep_sleep_start();
 }
 #else
-void MyMesh::powerOffAtBoot() { }   // nRF52 stays in powerOffLoop() and never restarts while low
+void MyMesh::powerOffAtBoot(bool) { }   // nRF52 stays in powerOffLoop() and never restarts while low
 #endif
 
 // The 'off' step: the radio sleeps and so does the MCU, between battery checks. A battery that came
@@ -2171,8 +2175,9 @@ void MyMesh::powerOffAtBoot() { }   // nRF52 stays in powerOffLoop() and never r
 void MyMesh::powerOffLoop() {
 #if defined(ESP32)
   // the boot after the timer looks at the battery first and sleeps again when it is still low (see
-  // powerOffAtBoot); only the board's own reading is known that early, not a sensor's (INA219)
-  psave_sleep_off_mv = sensors.getBatteryMilliVolts() == 0 && psave.config().enabled ? psave.config().off_mv : 0;
+  // powerOffAtBoot): with the board's reading before the radio starts, with an INA219's after the sensors
+  psave_sleep_sensor = sensors.getBatteryMilliVolts() != 0;
+  psave_sleep_off_mv = psave.config().enabled ? psave.config().off_mv : 0;
   esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);   // 30 min, then a boot
   esp_deep_sleep_start();
 #else
