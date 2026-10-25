@@ -46,6 +46,36 @@ class HealthTest {
     }
 
     @Test
+    fun oneProblemPerThingWorstFirst() {
+        val p = HealthCheck.problems(listOf(HealthWarning.I2C_OFF, HealthWarning.I2C_NEW_OFF, HealthWarning.NEW_FIRMWARE, HealthWarning.BATTERY_STEP))
+        assertEquals(listOf(HealthWarning.BATTERY_STEP, HealthWarning.I2C_OFF, HealthWarning.NEW_FIRMWARE), p.map { it.warning })
+        assertEquals(listOf(HealthSeverity.DANGER, HealthSeverity.WARN, HealthSeverity.INFO), p.map { it.severity })
+        assertTrue(p[1].isNew)
+    }
+
+    @Test
+    fun fieldsWithValuesComeAfterTheValues() {
+        val b = piece(0, 2, 0, listOf(1, 2)) + byteArrayOf(0x81.toByte(), 0x00)
+        assertEquals(0x81, HistorySeries.parsePiece(b)!!.fields)
+        assertNull(HistorySeries.parsePiece(piece(0, 2, 0, listOf(1, 2)))!!.fields)
+    }
+
+    @Test
+    fun battSaveAndCapacityReplies() {
+        val b = BattSave.parse("on, step normal, 3987 mV ext; low 3600 crit 3450 off 0")!!
+        assertTrue(b.enabled && b.external)
+        assertEquals(3987, b.mv)
+        assertEquals(0, b.off)
+        assertTrue(b.matches(BattSave.recommended(false)))
+        assertFalse(b.matches(BattSave.recommended(true)))
+        assertEquals("battsave 3600 3450 3300", BattSave.command(BattSave.recommended(true)))
+        assertNull(BattSave.parse("Unknown command"))
+        assertEquals(2000, BattCapacity.parse("> 2000 mAh (learnt)")!!.mah)
+        assertTrue(BattCapacity.parse("> 2000 mAh (learnt)")!!.learnt)
+        assertNull(BattCapacity.parse("Err - no current sensor (INA219) on the battery"))
+    }
+
+    @Test
     fun olderRepeaterAnswerIsNotASelfTest() {
         assertNull(SelfTest.parse("Unknown command"))
         assertNull(SelfTest.parse(""))

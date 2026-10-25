@@ -105,8 +105,16 @@ TEST(PowerSaver, GoesBackUpWithHysteresis) {
   EXPECT_EQ(p.update(3710, false), PSAVE_NORMAL);
 }
 
+TEST(PowerSaver, OffStepIsNotOnByDefault) {
+  PowerSaver p;
+  EXPECT_EQ(p.config().off_mv, 0);
+  for (int i = 0; i < 5; i++) p.update(3100, false);
+  EXPECT_EQ(p.stage(), PSAVE_CRITICAL);
+}
+
 TEST(PowerSaver, ExternalPowerAndBadReadings) {
   PowerSaver p;
+  p.config().off_mv = 3300;
   for (int i = 0; i < 3; i++) p.update(3250, false);
   EXPECT_EQ(p.stage(), PSAVE_OFF);
   EXPECT_EQ(p.update(0, false), PSAVE_OFF);         // cannot measure: no change
@@ -184,11 +192,12 @@ TEST(TelemetryHistory, ReplyFormat) {
   uint8_t req[5] = { 0, TH_F_BATT_MV, 2, 0, 3 };
   uint8_t out[64];
   int n = h.formatReply(req, 5, out, sizeof(out));
-  ASSERT_EQ(n, 12 + 3 * 2);
+  ASSERT_EQ(n, 14 + 3 * 2);
   EXPECT_EQ(out[2] | (out[3] << 8), 10);  // total
   EXPECT_EQ(out[6], 3);
   EXPECT_EQ(out[11], TH_DAY_MINS);
   EXPECT_EQ((int16_t)(out[12] | (out[13] << 8)), 3002);
+  EXPECT_EQ(out[18] | (out[19] << 8), (1 << TH_F_BATT_MV) | (1 << TH_F_RX));   // only these have values
   uint8_t bad[5] = { 2, 0, 0, 0, 1 };
   EXPECT_EQ(h.formatReply(bad, 5, out, sizeof(out)), 0);
 }
