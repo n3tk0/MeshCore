@@ -19,8 +19,8 @@ protected:
     const char* name;
     uint8_t   fails;    // reads in a row that made I2C errors
     bool      off;      // turned off after 3 of them; tried again later (retry_at)
-    uint8_t   retries;  // tries since it was turned off: 10 min, 1 h, then every 6 h
-    uint32_t  retry_at; // millis
+    uint8_t   retries;  // tries since it was turned off: 10 min, 1 h, then every 6 h (back to 10 min after a good day)
+    uint32_t  retry_at; // millis; while on again after a retry: when it came back
   };
 
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
