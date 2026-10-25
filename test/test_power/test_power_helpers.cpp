@@ -184,6 +184,27 @@ TEST(TelemetryHistory, UnknownClockDoesNotFill) {
   EXPECT_EQ(h.at(0, 0)->v[TH_F_BATT_MV], 3900);
 }
 
+TEST(TelemetryHistory, RestartWithoutClockKeepsTheTimeAxis) {
+  static TelemetryHistory h;
+  h.clear();
+  h.add(sample(3900), 1760000000);
+  h.add(sample(3800), 0);              // a restart, no clock yet
+  EXPECT_EQ(h.lastTime(0), 1760000000u + TH_DAY_MINS * 60);
+  h.add(sample(3700), 1760000000u + 5 * TH_DAY_MINS * 60);   // clock set: the 3 slots it was off are filled
+  EXPECT_EQ(h.count(0), 6);
+}
+
+TEST(TelemetryHistory, ReplyForAFieldWithoutValuesIsOnlyTheHeader) {
+  static TelemetryHistory h;
+  h.clear();
+  for (int i = 0; i < 5; i++) h.add(sample(3900), 1760000000 + i * 600);
+  uint8_t req[5] = { 0, TH_F_TEMP_DC, 0, 0, 64 };
+  uint8_t out[160];
+  ASSERT_EQ(h.formatReply(req, 5, out, sizeof(out)), 14);
+  EXPECT_EQ(out[2], 5);   // total
+  EXPECT_EQ(out[6], 0);   // n
+}
+
 TEST(TelemetryHistory, ReplyFormat) {
   static TelemetryHistory h;
   h.clear();

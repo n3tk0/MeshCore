@@ -84,6 +84,24 @@ class HealthTest {
     }
 
     @Test
+    fun aFieldWithoutValuesIsOnePiece() = runBlocking {
+        var asked = 0
+        val s = HistorySeries.load(0, HistorySeries.F_BATT_MV) { _, _ ->
+            asked++
+            piece(0, 144, 0, emptyList()) + byteArrayOf(0x80.toByte(), 0x00)   // only F_TX has values
+        }!!
+        assertEquals(1, asked)
+        assertEquals(144, s.values.size)
+        assertTrue(s.values.all { it == null })
+    }
+
+    @Test
+    fun freshFirmwareIsNoted() {
+        val t = SelfTest.parse("ok radio=ok ota=on,fresh ps=normal")!!
+        assertEquals(listOf(HealthWarning.FRESH_FIRMWARE), HealthCheck.warnings(t, null))
+    }
+
+    @Test
     fun olderRepeaterAnswerIsNotASelfTest() {
         assertNull(SelfTest.parse("Unknown command"))
         assertNull(SelfTest.parse(""))

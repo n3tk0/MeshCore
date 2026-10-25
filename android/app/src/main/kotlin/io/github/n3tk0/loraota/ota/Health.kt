@@ -43,7 +43,7 @@ class SelfTest(val ok: Boolean, val problems: List<String>, val values: Map<Stri
 }
 
 /** What the Health page warns about, beyond the repeater's own "WARN" list. */
-enum class HealthWarning { RADIO, I2C_OFF, I2C_STUCK, QSPI, BATTERY_STEP, NEW_FIRMWARE, I2C_NEW_OFF, FAST_DRAIN }
+enum class HealthWarning { RADIO, I2C_OFF, I2C_STUCK, QSPI, BATTERY_STEP, NEW_FIRMWARE, I2C_NEW_OFF, FAST_DRAIN, FRESH_FIRMWARE }
 
 /** How a warning is shown: red (the repeater cannot do its job), amber (degraded, it retries), neutral. */
 enum class HealthSeverity { DANGER, WARN, INFO }
@@ -59,7 +59,7 @@ object HealthCheck {
                 HealthProblem(it, HealthSeverity.DANGER)
             HealthWarning.I2C_OFF -> HealthProblem(it, HealthSeverity.WARN, isNew = HealthWarning.I2C_NEW_OFF in w)
             HealthWarning.QSPI -> HealthProblem(it, HealthSeverity.WARN)
-            HealthWarning.NEW_FIRMWARE -> HealthProblem(it, HealthSeverity.INFO)
+            HealthWarning.NEW_FIRMWARE, HealthWarning.FRESH_FIRMWARE -> HealthProblem(it, HealthSeverity.INFO)
             HealthWarning.I2C_NEW_OFF -> null
         }
     }.sortedBy { it.severity }
@@ -78,6 +78,8 @@ object HealthCheck {
         if (now.values["qspi"] == "bad") w.add(HealthWarning.QSPI)
         if ((now.powerStep ?: "normal") != "normal") w.add(HealthWarning.BATTERY_STEP)
         if (now.values["ota"]?.endsWith(",new") == true) w.add(HealthWarning.NEW_FIRMWARE)
+        // confirmed in this boot, by the login or a console command just before the self test
+        if (now.values["ota"]?.endsWith(",fresh") == true) w.add(HealthWarning.FRESH_FIRMWARE)
         return w
     }
 
@@ -185,6 +187,10 @@ class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val inter
                 val p = fetch(start, 64)?.let { parsePiece(it) }
                     ?: return if (start == 0) null else HistorySeries(ring, field, lastTime, interval, out, fields)
                 if (start == 0) { lastTime = p.lastTime; interval = p.interval; fields = p.fields }
+                // the node has nothing for this field (it sends only the header): no more pieces
+                if (start == 0 && p.fields != null && p.fields != 0 && p.fields and (1 shl field) == 0) {
+                    return HistorySeries(ring, field, lastTime, interval, List(p.total) { null }, fields)
+                }
                 out.addAll(p.values)
                 start += p.values.size
                 if (p.values.isEmpty() || start >= p.total) break

@@ -698,7 +698,7 @@ bool EnvironmentSensorManager::begin() {
     if (def.init == init_ina219) _ina219_found = true;
     #endif
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
-      _active_sensors[_active_sensor_count++] = { def.query, sub, def.address, def.name, 0, false, 0, 0 };
+      _active_sensors[_active_sensor_count++] = { def.query, def.init, sub, def.address, def.name, 0, false, 0, 0 };
     }
   }
 
@@ -773,6 +773,9 @@ void EnvironmentSensorManager::retryOffSensors() {
     }
     uint32_t errors = i2cErrorCount(*TELEM_WIRE);
     bool ok = i2cProbe(*TELEM_WIRE, a.address) == I2C_PROBE_ACK;
+    // set it up again: after a lost supply its registers are back to reset values (an INA219's
+    // calibration, a BME280's mode), and reads would make no error but wrong values
+    if (ok) ok = a.init(TELEM_WIRE, a.address) != 0 && i2cErrorCount(*TELEM_WIRE) == errors;
     if (ok) {
       scratch.reset();
       a.query(TELEM_CHANNEL_SELF + 1, 0, scratch);

@@ -58,7 +58,10 @@ class TelemetryHistory {
     ring[r.head] = s;
     r.head = (r.head + 1) % slots;
     if (r.count < slots) r.count++;
-    r.last_time = now;
+    // no clock (a restart without RTC): go on from the last known time, so the history keeps its time
+    // axis (the time the node was off is not known: it shows when the clock is set again)
+    if (now) r.last_time = now;
+    else if (r.last_time) r.last_time += (slots == TH_DAY_SLOTS ? TH_DAY_MINS : TH_WEEK_MINS) * 60;
   }
   static void blank(TelemetrySample& s) { for (int f = 0; f < TH_F_COUNT; f++) s.v[f] = TH_NONE; }
 
@@ -170,9 +173,11 @@ public:
     int total = count(ring);
     if (start > total) start = total;
     int room = (out_max - 14) / 2;
+    uint16_t fields = fieldsWithValues(ring);
     int n = total - start;
     if (n > max) n = max;
     if (n > room) n = room;
+    if (!(fields & (1 << field))) n = 0;   // nothing but empty slots: only the header
     uint32_t t = lastTime(ring);
     out[0] = ring; out[1] = field;
     out[2] = total & 0xFF; out[3] = total >> 8;
@@ -185,7 +190,6 @@ public:
       out[12 + i * 2] = v & 0xFF;
       out[13 + i * 2] = (v >> 8) & 0xFF;
     }
-    uint16_t fields = fieldsWithValues(ring);
     out[12 + n * 2] = fields & 0xFF;
     out[13 + n * 2] = fields >> 8;
     return 14 + n * 2;
