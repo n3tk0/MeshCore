@@ -166,6 +166,7 @@ enum StrId {
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
   S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
+  S_SET_QUIET, S_MAIL_FMT, S_LEFT_DH_FMT, S_LEFT_H_FMT, S_HIST_24H, S_NO_HISTORY,
   S_COUNT
 };
 
@@ -414,6 +415,12 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Тест вход", "Input test" },
   { "Тест вибро", "Vibe test" },
   { "Тест екран", "OLED test" },
+  { "Тишина", "Quiet" },
+  { "Поща: %d писма", "Mailbox: %d msgs" },
+  { "~%dд%dч", "~%dd%dh" },
+  { "~%dч", "~%dh" },
+  { "24ч", "24h" },
+  { "Няма данни", "No data yet" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -1083,6 +1090,7 @@ private:
   char _rest[48];                             // suggested completion of the current word
   bool _has_rest = false;
   bool _on_word = false;                      // the cursor is on the suggestion
+  char _prev_word[PREDICT_MAX_WORD * 2 + 1];  // the word before the cursor, for the next-word suggestion
   uint8_t _mode = MODE_SEND;
   int _slot = 0;                              // quick reply being edited
   bool _draft = false;                        // _text is an unsent message for _target
@@ -1159,8 +1167,19 @@ private:
   // after every edit: a suggestion, if any, takes the cursor
   void updateSuggestion() {
     int ws = wordStart();
-    _has_rest = _mode != MODE_NAME && _mode != MODE_CHANNEL && ws < _len && _predict.suggest(&_text[ws], _rest, sizeof(_rest)) &&
+    bool words = _mode != MODE_NAME && _mode != MODE_CHANNEL;
+    _has_rest = words && ws < _len && _predict.suggest(&_text[ws], _rest, sizeof(_rest)) &&
                 _len + (int)strlen(_rest) + 1 <= _max_len;
+    if (!_has_rest && words && ws == _len && _len >= 2 && _text[_len - 1] == ' ' && !_shift) {
+      // after "word ": the word that followed it last time in a sent message
+      int we = _len - 1, wb = we;
+      while (wb > 0 && (((unsigned char)_text[wb - 1] >= 0x80) || isalpha((unsigned char)_text[wb - 1]))) wb--;
+      if (wb < we && we - wb < (int)sizeof(_prev_word)) {
+        memcpy(_prev_word, &_text[wb], we - wb);
+        _prev_word[we - wb] = 0;
+        _has_rest = _predict.suggestNext(_prev_word, _rest, sizeof(_rest)) && _len + (int)strlen(_rest) + 1 <= _max_len;
+      }
+    }
     _on_word = _has_rest;
   }
 
@@ -1506,23 +1525,39 @@ static ComposeScreen* compose_screen;
 #define WORDS_FILE "/ui_words"
 #define WORDS_FILE_MAX (PREDICT_USER_WORDS * (PREDICT_MAX_WORD + 1))
 
+// ... and which word followed which in sent messages (next-word suggestion), in /ui_pairs
+#define PAIRS_FILE "/ui_pairs"
+#define PAIRS_FILE_MAX (PREDICT_PAIRS * (PREDICT_PAIR_WORD + 3))
+
 static void loadLearnedWords() {
-  uint8_t* buf = (uint8_t*)malloc(WORDS_FILE_MAX);
+  int max = WORDS_FILE_MAX > PAIRS_FILE_MAX ? WORDS_FILE_MAX : PAIRS_FILE_MAX;
+  uint8_t* buf = (uint8_t*)malloc(max);
   if (!buf) return;
   int n = the_mesh.loadUIFile(WORDS_FILE, buf, WORDS_FILE_MAX);
   if (n > 0) compose_screen->predictor().importUser(buf, n);
+  n = the_mesh.loadUIFile(PAIRS_FILE, buf, PAIRS_FILE_MAX);
+  if (n > 0) compose_screen->predictor().importPairs(buf, n);
   free(buf);
 }
 
 static bool saveLearnedWords() {
   WordPredictor& p = compose_screen->predictor();
-  if (!p.userDirty()) return true;
-  uint8_t* buf = (uint8_t*)malloc(WORDS_FILE_MAX);
+  if (!p.userDirty() && !p.pairsDirty()) return true;
+  int max = WORDS_FILE_MAX > PAIRS_FILE_MAX ? WORDS_FILE_MAX : PAIRS_FILE_MAX;
+  uint8_t* buf = (uint8_t*)malloc(max);
   if (!buf) return false;
-  int n = p.exportUser(buf, WORDS_FILE_MAX);
-  bool ok = the_mesh.saveUIFile(WORDS_FILE, buf, n);
+  bool ok = true;
+  if (p.userDirty()) {
+    int n = p.exportUser(buf, WORDS_FILE_MAX);
+    if (the_mesh.saveUIFile(WORDS_FILE, buf, n)) p.markUserSaved();   // a failed write is tried again with the next history save
+    else ok = false;
+  }
+  if (p.pairsDirty()) {
+    int n = p.exportPairs(buf, PAIRS_FILE_MAX);
+    if (the_mesh.saveUIFile(PAIRS_FILE, buf, n)) p.markPairsSaved();
+    else ok = false;
+  }
   free(buf);
-  if (ok) p.markUserSaved();   // a failed write is tried again with the next history save
   return ok;
 }
 
@@ -2652,6 +2687,7 @@ enum SettingId : uint8_t {
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
   ST_WORDS, ST_HW, ST_REPEAT, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN,
+  ST_QUIET,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2689,6 +2725,7 @@ static StrId settingName(uint8_t id) {
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
     S_WORDS, S_HARDWARE, S_SET_REPEAT, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
+    S_SET_QUIET,
   };
   return N[id];
 }
@@ -2706,6 +2743,7 @@ static int optCount(uint8_t id) {
     case ST_TX: case ST_LANG: case ST_DST: case ST_REPEAT: return 2;
     case ST_TXPOW: return MAX_LORA_TX_POWER - TXPOW_MIN + 1;
     case ST_TZ: return TZ_MAX - TZ_MIN + 1;
+    case ST_QUIET: return QUIET_PRESETS;
     default: return 0;
   }
 }
@@ -2740,6 +2778,7 @@ static int getOpt(UITask* task, uint8_t id) {
     case ST_TZ: return p->tz_offset - TZ_MIN;
     case ST_DST: return p->ui_dst ? 1 : 0;
     case ST_REPEAT: return p->isRepeatEn() ? 1 : 0;
+    case ST_QUIET: return p->ui_quiet < QUIET_PRESETS ? p->ui_quiet : 0;
     default: return 0;
   }
 }
@@ -2766,6 +2805,10 @@ static void optText(uint8_t id, int v, char* buf, size_t n) {
     case ST_LANG: snprintf(buf, n, "%s", LANG_NAMES[v % LANG_COUNT]); break;
     case ST_TZ: snprintf(buf, n, "UTC%+d", v + TZ_MIN); break;
     case ST_DST: snprintf(buf, n, "%s", T(v ? S_DST_EU : S_OFF)); break;
+    case ST_QUIET:
+      if (v == 0) snprintf(buf, n, "%s", T(S_OFF));
+      else snprintf(buf, n, "%02d-%02d", ui::QUIET_FROM[v], ui::QUIET_TO[v]);
+      break;
     default: snprintf(buf, n, "%s", T(v ? S_ON : S_OFF)); break;
   }
 }
@@ -2803,6 +2846,7 @@ static void setOpt(UITask* task, uint8_t id, int v) {
     case ST_LANG: p->ui_lang = v; break;
     case ST_TZ: p->tz_offset = v + TZ_MIN; break;
     case ST_DST: p->ui_dst = v; break;
+    case ST_QUIET: p->ui_quiet = v; break;
   }
 }
 
@@ -3061,7 +3105,7 @@ static SettingsGroupScreen* settings_group;
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
 // controls and hardware in one place: the input settings, the tests, then the readings
 static const uint8_t GROUP_INPUT[]   = { ST_ENC, ST_STEPS, ST_VIBE, ST_SKIP, ST_LOCK, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN, ST_HW };
-static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
+static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_QUIET, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET, ST_REPEAT };
 static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
@@ -3212,6 +3256,9 @@ class StandbyScreen : public UIScreen {
   unsigned long _since = 0;
   AdvertPath _recent[3];
   enum { SUMMARY, RECENT, RADIO, BATTERY,
+#ifdef TELEMETRY_HISTORY
+    BATT_GRAPH,
+#endif
 #if ENV_INCLUDE_GPS == 1
     GPS,
 #endif
@@ -3243,6 +3290,9 @@ class StandbyScreen : public UIScreen {
       }
     } else {
       static const uint8_t* const ICONS[] = { NULL, icon_person, icon_radio, icon_batt,
+#ifdef TELEMETRY_HISTORY
+        icon_batt,
+#endif
 #if ENV_INCLUDE_GPS == 1
         icon_pin,
 #endif
@@ -3364,9 +3414,57 @@ class StandbyScreen : public UIScreen {
     d.setTextSize(4);
     d.drawTextCentered(w / 2, LH, buf);
     big(d);
+#ifdef TELEMETRY_HISTORY
+    // how long it lasts at the rate it fell over the last hours (none while charging); the row
+    // holds 10 characters, so the voltage loses a digit then
+    int h = isCharging() ? -1 : the_mesh.getHistory().hoursLeft();
+    if (h >= 0) {
+      int n = snprintf(buf, sizeof(buf), "%d.%dV ", mv / 1000, (mv % 1000) / 100);
+      if (h >= 48) snprintf(buf + n, sizeof(buf) - n, T(S_LEFT_DH_FMT), h / 24, h % 24);
+      else snprintf(buf + n, sizeof(buf) - n, T(S_LEFT_H_FMT), h);
+    } else
+#endif
     snprintf(buf, sizeof(buf), "%d.%02d V", mv / 1000, (mv % 1000) / 10);
     d.drawTextCentered(w / 2, bottomY() + TEXT_DY, buf);
   }
+
+#ifdef TELEMETRY_HISTORY
+  // the battery over the last 24 hours, every 10 minutes: a line from 0 to 100 %
+  void renderBatteryGraph(DisplayDriver& d) {
+    const TelemetryHistory& h = the_mesh.getHistory();
+    int w = cols(d) * CW;
+    int top = LH + 2, bottom = bottomY() - 2;
+    int n = h.count(0);
+    int lo = 101, hi = -1, px = -1, py = -1;
+    for (int i = 0; i < n; i++) {
+      int16_t p = h.at(0, i)->v[TH_F_BATT_PCT];
+      if (p == TH_NONE) { px = -1; continue; }   // the node was off: a gap
+      if (p < lo) lo = p;
+      if (p > hi) hi = p;
+      // the newest sample at the right edge; a full day fills the width
+      int x = w - 1 - (n - 1 - i) * (w - 1) / (TH_DAY_SLOTS - 1);
+      int y = bottom - p * (bottom - top) / 100;
+      if (px >= 0) {   // joined to the one before: a vertical run at most, the steps are small
+        int y0 = py < y ? py : y, y1 = py < y ? y : py;
+        d.fillRect(x, y0, 1, y1 - y0 + 1);
+        if (x - px > 1) d.fillRect(px + 1, py, x - px - 1, 1);
+      } else {
+        d.fillRect(x, y, 1, 1);
+      }
+      px = x; py = y;
+    }
+    for (int x = 0; x < w; x += 4) d.fillRect(x, bottom, 1, 1);   // the 0 % line, dotted
+    d.setColor(UIColor::title_txt);
+    d.setCursor(18, TEXT_DY);   // next to the card icon in the status row
+    d.print(T(S_HIST_24H));
+    d.setColor(UIColor::primary_txt);
+    char buf[24];
+    if (hi < 0) snprintf(buf, sizeof(buf), "%s", T(S_NO_HISTORY));
+    else if (lo == hi) snprintf(buf, sizeof(buf), "%d%%", lo);
+    else snprintf(buf, sizeof(buf), "%d-%d%%", lo, hi);
+    d.drawTextCentered(w / 2, bottomY() + TEXT_DY, buf);
+  }
+#endif
 
 #if ENV_INCLUDE_GPS == 1
   void renderGPS(DisplayDriver& d) {
@@ -3401,6 +3499,9 @@ public:
       case RECENT: renderRecent(d); break;
       case RADIO: renderRadio(d); break;
       case BATTERY: renderBattery(d); break;
+#ifdef TELEMETRY_HISTORY
+      case BATT_GRAPH: renderBatteryGraph(d); break;
+#endif
 #if ENV_INCLUDE_GPS == 1
       case GPS: renderGPS(d); break;
 #endif
@@ -4426,6 +4527,9 @@ void UITask::enterBootloader(bool usb) {
   the_mesh.flushPendingWrites();
   saveHistory();
   the_mesh.saveOfflineQueue();
+#ifdef TELEMETRY_HISTORY
+  the_mesh.saveHistoryNow();
+#endif
   if (_display != NULL) {
     _display->turnOn();
     _display->startFrame();
@@ -4629,8 +4733,10 @@ void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_det
   _next_snr4 = pkt->_snr;
   _next_rssi = (int16_t)radio_driver.getLastRSSI();
   bool mention = isMention(text);   // newMsg() gives a mention the direct message buzz: keep it
+  _next_quiet = !mention && isQuietNow();   // quiet hours: a channel neither wakes the screen nor buzzes
   newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, channel_details.name, text, _msgcount);
-  if (!muted && !mention) notifyMsg(UIEventType::channelMessage, hasConnection());
+  if (!muted && !mention && !_next_quiet) notifyMsg(UIEventType::channelMessage, hasConnection());
+  _next_quiet = false;
 }
 
 void UITask::msgRead(int msgcount) {
@@ -4727,6 +4833,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   }
   bool direct = m->src != MSG_SRC_CHANNEL || m->mention;
   if (muted && !m->mention) direct = false;
+  if (_next_quiet) muted = true;   // quiet hours: only counts, like a muted channel
 
   if (_display != NULL) {
     // Settings > Messages > Wake for: direct messages (default), all, never; never with a phone
@@ -4743,6 +4850,20 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     if (_display->isOn()) _auto_off = millis() + autoOffMillis();
     _next_refresh = 0;
   }
+}
+
+bool UITask::isQuietNow() const {
+  uint32_t now = rtc_clock.getCurrentTime();
+  if (_node_prefs->ui_quiet == 0 || now < VALID_EPOCH) return false;   // no clock: never quiet
+  return ui::quietNow(ui::localTime(now, _node_prefs->tz_offset, _node_prefs->ui_dst), _node_prefs->ui_quiet);
+}
+
+// a repeater's mailbox handed over messages kept while we were away (after our "I'm back" advert)
+void UITask::onMailboxDelivered(int count) {
+  if (_display == NULL || !_display->isOn()) return;   // the messages themselves woke it, or not
+  char alert[40];
+  snprintf(alert, sizeof(alert), T(S_MAIL_FMT), count);
+  showAlert(alert, 2500);
 }
 
 // "@name" or "@[name]" (the app's mention format) in the text, ASCII letters in any case, whole name only
@@ -4796,6 +4917,9 @@ void UITask::hibernate(bool low_battery) {
   the_mesh.flushPendingWrites();
   saveHistory();
   the_mesh.saveOfflineQueue();
+#ifdef TELEMETRY_HISTORY
+  the_mesh.saveHistoryNow();
+#endif
 #if defined(FAKETEC_V5) && !defined(UI_SIM)
   FaketecBoard::setQuietPowerHaptics(_node_prefs->vibe_quiet);   // also for the buzz at the next wake
 #endif

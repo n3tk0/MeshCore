@@ -8,7 +8,7 @@ mkdir -p "$OUT"
 rm -f "$OUT"/*.png "$OUT"/manifest.tsv
 c++ -std=c++17 -O1 -funsigned-char -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable \
   -DUI_SIM -DUI_HAS_ROTARY_INPUT -DPIN_ENCODER_BTN=1 -DPIN_USER_BTN=2 \
-  -DMAX_CONTACTS=160 -DMAX_GROUP_CHANNELS=40 -DUI_ASK_ANTENNA -DAUTO_SHUTDOWN_MILLIVOLTS=3300 \
+  -DMAX_CONTACTS=160 -DMAX_GROUP_CHANNELS=40 -DUI_ASK_ANTENNA -DAUTO_SHUTDOWN_MILLIVOLTS=3300 -DTELEMETRY_HISTORY -DBACK_ADVERT \
   -Istubs -I. -I$ROOT/src -I$ROOT/examples/companion_radio/ui-encoder \
   sim_main.cpp \
   $ROOT/examples/companion_radio/ui-encoder/UITask.cpp \

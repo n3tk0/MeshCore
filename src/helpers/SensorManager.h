@@ -2,6 +2,7 @@
 
 #include <CayenneLPP.h>
 #include "sensors/LocationProvider.h"
+#include "BatteryGauge.h"
 
 #define TELEM_PERM_BASE         0x01   // 'base' permission includes battery
 #define TELEM_PERM_LOCATION     0x02
@@ -26,6 +27,13 @@ public:
   virtual bool isGPSDetected() const { return false; }
   // the battery as a sensor measures it (e.g. an INA219 in the battery line), 0: none does, the board's own reading counts
   virtual uint16_t getBatteryMilliVolts() { return 0; }
+  // counts the battery's charge when a sensor measures its current (INA219); NULL: none does
+  virtual BatteryGauge* getBatteryGauge() { return NULL; }
+  // the gauge's 'today' follows this clock when it is set (else days since boot)
+  void setDayClock(uint32_t (*now)()) { day_clock = now; }
+protected:
+  uint32_t (*day_clock)() = NULL;
+public:
 
   // Helper functions to manage setting by keys (useful in many places ...)
   const char* getSettingByKey(const char* key) {

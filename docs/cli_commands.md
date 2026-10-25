@@ -155,6 +155,48 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
+### Battery - charge, time left, mAh in and out (Repeater Only)
+**Usage:**
+- `battery`
+- `battery capacity` (show) / `battery capacity <mAh>` (set; 0 = learn it)
+
+**Example reply:** `3987 mV, 72%, left 41h, now 35 mA, today +420/-310 mAh, yesterday +510/-640, cap 2000 learnt`
+
+**Notes:**
+- Needs an INA219 in the battery line for the counted %, time left and mAh; without one only the voltage and a rough % `(by voltage)`.
+- The capacity is learnt from a full charge (4.15 V and only a trickle going in for 2 minutes) down to 3.3 V, or set by hand; kept in `/batt_cap`.
+
+---
+
+### Battery saving steps (Repeater Only)
+**Usage:**
+- `battsave` (state)
+- `battsave on|off`
+- `battsave <low> <crit> <off>` (mV; 0 leaves a step out)
+
+**Example reply:** `on, step normal, 3987 mV; low 3600 crit 3450 off 0`
+
+**Notes:**
+- Not the same as upstream's `powersaving` (the MCU sleeps between packets and the radio keeps listening); both can be on.
+- `low`: adverts half as often, the mailbox stops writing to flash. `critical`: no LoRa OTA and no mailbox. `off`: radio off, the node only checks the battery and restarts when it is 150 mV above `off` or on external power.
+- Default: `low` 3600 and `critical` 3450 on, `off` not used (0). Turn it on by hand with `battsave 3600 3450 3300` once the battery reading is checked: a wrong reading would take the radio away and only a battery 150 mV above `off` brings it back. On ESP32 the node wakes every 30 min and, if the battery is still low, sleeps again before starting the radio.
+- A step down needs 3 readings in a row below it, a step up 100 mV above. External power is always `normal`. Kept in `/psave`.
+
+---
+
+### Self test
+**Usage:** `selftest`
+
+**Example reply:** `ok radio=ok rx=120 tx=40 nf=-112 i2c=ok qspi=ok batt=3987mV/72% left=41h day=+420/-310 mail=3 ota=on ps=normal up=3d04h`
+
+**Notes:**
+- `ok`, or `WARN` with what is wrong first (`radio`, `i2c`, `qspi`, `batt`).
+- `radio=bad`: the noise floor is not between -140 and -60 dBm. `i2c=off:N` / `i2c=stuck`. `qspi` only on boards with QSPI storage. `left=chg`: charging. `ota=on,new`: new firmware not confirmed yet; `ota=on,fresh`: it was confirmed in the last hour (a login or a console command does it, so a self test over the air shows `fresh`). `ps`: the power step.
+- The LoRa OTA app reads it for its Health page and keeps every result on the phone.
+- The app also reads `battsave` and, when `day=` shows an INA219, `battery capacity` for its battery card.
+
+---
+
 ### Radio Stats - Noise floor, Last RSSI/SNR, Airtime, Receive errors
 **Usage:** `stats-radio`
 
@@ -212,7 +254,7 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 **Notes:**
 - Lists the RTC and the sensors found at boot, with `ok` or why each was turned off: `timeout at boot` (its probe or start hung the bus), `init failed` (it answered, its driver did not start) or `3 errors at <uptime>m` (3 reads in a row failed).
-- A device turned off stays off until a reboot, and keeps its telemetry channel. When an INA219 used for the battery is turned off, the board's own battery reading is used.
+- A device turned off for read errors is tried again after 10 minutes, 1 hour, then every 6 hours (`off: 3 errors at 125m, retrying`); one that came back shows how often it dropped out (`ok (off 2x)`). One that hung at boot stays off until a reboot. A device keeps its telemetry channel while off. When an INA219 used for the battery is turned off, the board's own battery reading is used.
 - `bus STUCK` in front: a line stayed low after the bus was freed, so no device can be reached. The bus is freed again every 10 s while it is used; `bus was stuck` once it came back (the devices turned off meanwhile stay off until a reboot).
 - `?` for the name: none of the drivers for that address started (several share 0x76/0x77 and 0x44).
 - On nRF52, every I2C wait has a 50 ms timeout, so a bad module cannot hang the node. On other platforms the devices are only listed.
