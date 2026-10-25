@@ -740,6 +740,8 @@ uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
 
 // A read that made I2C errors (a NACK, a timeout) counts against its device; 3 in a row turn it
 // off, every channel of it (an INA3221 has three). It is tried again later: see retryOffSensors()
+#define SENSOR_GOOD_RESET_MS  (24 * 60 * 60000UL)
+
 static uint32_t sensorRetryDelay(uint8_t retries) {
   return retries == 0 ? 10 * 60000UL : retries == 1 ? 60 * 60000UL : 6 * 60 * 60000UL;
 }
@@ -752,6 +754,9 @@ void EnvironmentSensorManager::noteRead(void (*query)(uint8_t, uint8_t, CayenneL
     a.fails = failed ? a.fails + 1 : 0;
     if (a.fails >= 3) {
       a.off = true;
+      // a day without an error since it came back: a new drop-out starts again from 10 minutes;
+      // one that keeps coming and going stays on the long pause
+      if (a.retries && (uint32_t)(millis() - a.retry_at) >= SENSOR_GOOD_RESET_MS) a.retries = 0;
       a.retry_at = millis() + sensorRetryDelay(a.retries);
       if (a.sub_channel == 0) i2cListDevice(a.address, a.name, I2C_DEV_OFF_ERRORS);
     }
@@ -787,6 +792,7 @@ void EnvironmentSensorManager::retryOffSensors() {
       if (ok) {
         c.off = false;
         c.fails = 0;
+        c.retry_at = millis();   // while it is on: since when (see noteRead)
       } else {
         c.retries = c.retries < 255 ? c.retries + 1 : c.retries;
         c.retry_at = millis() + sensorRetryDelay(c.retries);
