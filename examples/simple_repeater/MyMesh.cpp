@@ -1801,16 +1801,14 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
   uint32_t now = getRTCClock()->getCurrentTime();
   uint8_t type = pkt->getPayloadType();
 
-  // an owner's own flood packet with no hop yet: it is here and gets new messages the normal way, and
-  // what was kept for it is handed over now. Only the first byte of its key is in the packet (another
-  // node next to us may share it), so each message is kept until the owner's ACK is heard.
+  // an owner's own flood packet with no hop yet: what was kept for it is handed over now. Only the
+  // first byte of its key is in the packet (another node next to us may share it), so each message is
+  // kept until the owner's ACK is heard, and only that ACK marks the owner as here (a neighbour with the
+  // same byte must not stop new messages from being kept for an owner who is away).
   if (pkt->isRouteFlood() && pkt->getPathHashCount() == 0
       && (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE || type == PAYLOAD_TYPE_PATH)) {
     for (int i = 0; i < mailbox.config().num_owners; i++) {
-      if (mailbox.config().owners[i][0] == pkt->payload[1]) {
-        mailbox.markHeard(i, now);
-        startMailboxDelivery(i, false);
-      }
+      if (mailbox.config().owners[i][0] == pkt->payload[1]) startMailboxDelivery(i, false);
     }
   }
 
@@ -1828,6 +1826,7 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
     }
   }
   if (owner_ack) {
+    mailbox.markHeard(mailbox_deliver_owner, now);   // the ACK proves it is the owner, and next to us
     for (int i = 0; i < mailbox.count(); i++) {
       if (memcmp(mailbox.at(i).hash, mailbox_wait_hash, MAX_HASH_SIZE) == 0) {
         mailbox.remove(i);
@@ -1858,6 +1857,14 @@ void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
 // message goes out and is removed. Else (only its 1-byte hash was seen) one message at a time stays
 // kept until the owner's ACK is heard; no ACK in time = not the owner (or gone): the rest waits.
 void MyMesh::startMailboxDelivery(int owner, bool proven) {
+  if (proven && owner >= 0 && mailbox_deliver_owner == owner && mailbox_confirm) {
+    // its signed advert came while one message waited for its ACK: the rest goes without waiting
+    // (the waited one is still kept and goes again)
+    mailbox_confirm = false;
+    mailbox_wait_until = 0;
+    mailbox_next_send = futureMillis(MAILBOX_SEND_GAP);
+    return;
+  }
   if (owner < 0 || mailbox_deliver_owner >= 0 || mailbox.countFor(owner) == 0) return;
   if (psave.stage() >= PSAVE_CRITICAL) return;
   if (!proven && mailbox_try_after[owner] && !millisHasNowPassed(mailbox_try_after[owner])) return;

@@ -973,6 +973,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val q = queue ?: return@work
         if (!companionOta) throw Exception(str(R.string.q_stock_companion))
         if (releases.isEmpty()) loadReleases().join()
+        // one foreground service (and wake lock) for the whole queue: the next repeater's login, download and
+        // backup run with the screen off too, and Android does not let an app in the background start one again
+        OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
         try {
             while (true) {
                 val e = q.next ?: break
@@ -988,6 +991,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             repeater = null
             info = null
             phase = null
+            OtaService.stop(ctx)
         }
         message = str(R.string.q_report, q.count(QueueResult.DONE), q.count(QueueResult.CURRENT),
             q.count(QueueResult.SKIPPED), q.count(QueueResult.FAILED))
@@ -1035,19 +1039,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old, new) }
             patch = p
             val noBackup = autoBackup(DeviceKind.REPEATER)
-            OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
-            try {
+            val after = try {
                 session(r).run(old, new, p, false)
             } catch (x: OtaFailed) {
                 val why = str(x.res, *x.args.toTypedArray())
                 return QueueResult.FAILED to if (x.resumable) str(R.string.q_failed_resumable, why) else why
             } finally {
                 phase = null
-                OtaService.stop(ctx)
             }
-            val after = runCatching { session(r).info() }.getOrNull()
-            val ident = after?.ident?.replace('|', ' ') ?: target.label
+            val ident = after.ident.replace('|', ' ').ifEmpty { target.label }
             return QueueResult.DONE to (if (noBackup != null) "$ident · $noBackup" else ident)
+        } catch (x: kotlinx.coroutines.CancellationException) {
+            throw x
+        } catch (x: io.github.n3tk0.loraota.ble.CompanionError) {
+            throw x   // the companion is gone: the queue stops here and goes on later
+        } catch (x: Exception) {
+            // a download that broke off, a repeater that answered oddly: this one failed, the next one goes on
+            return QueueResult.FAILED to (x.message ?: x.toString())
         } finally {
             withContext(NonCancellable) { runCatching { companion.restorePath(r) } }
             oldImage = null
