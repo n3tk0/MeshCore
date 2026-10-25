@@ -160,15 +160,16 @@ public:
   }
 
   // Request (after the request type byte): ring(1) field(1) start(2 LE, from the oldest) max(1).
-  // Reply: ring(1) field(1) total(2) start(2) n(1) last_time(4) interval_mins(1) values(n x int16 LE).
+  // Reply: ring(1) field(1) total(2) start(2) n(1) last_time(4) interval_mins(1) values(n x int16 LE)
+  //        fields(2 LE): bit f set = field f has a value somewhere in this ring (the app offers only those).
   // Returns the reply length (0 = bad request).
   int formatReply(const uint8_t* req, int req_len, uint8_t* out, int out_max) const {
     if (req_len < 5) return 0;
     int ring = req[0], field = req[1], start = req[2] | (req[3] << 8), max = req[4];
-    if (ring > 1 || field >= TH_F_COUNT || out_max < 12) return 0;
+    if (ring > 1 || field >= TH_F_COUNT || out_max < 14) return 0;
     int total = count(ring);
     if (start > total) start = total;
-    int room = (out_max - 12) / 2;
+    int room = (out_max - 14) / 2;
     int n = total - start;
     if (n > max) n = max;
     if (n > room) n = room;
@@ -184,7 +185,19 @@ public:
       out[12 + i * 2] = v & 0xFF;
       out[13 + i * 2] = (v >> 8) & 0xFF;
     }
-    return 12 + n * 2;
+    uint16_t fields = fieldsWithValues(ring);
+    out[12 + n * 2] = fields & 0xFF;
+    out[13 + n * 2] = fields >> 8;
+    return 14 + n * 2;
+  }
+
+  uint16_t fieldsWithValues(int ring) const {
+    uint16_t m = 0;
+    for (int i = count(ring) - 1; i >= 0; i--) {
+      const TelemetrySample* s = at(ring, i);
+      for (int f = 0; f < TH_F_COUNT; f++) if (s->v[f] != TH_NONE) m |= 1 << f;
+    }
+    return m;
   }
 
   // the file: ver(1) + both rings (header + all slots) + the hour being made

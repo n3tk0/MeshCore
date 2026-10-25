@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -75,6 +76,7 @@ private fun QueuePick(vm: AppViewModel) {
     }
     Text(stringResource(R.string.q_pick_repeaters), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
     val list = vm.queueCandidates()
+    val noPassword = vm.queueNoPassword()
     if (list.isEmpty()) InfoCard(stringResource(R.string.q_no_candidates))
     for (c in list) {
         val key = hex(c.publicKey)
@@ -94,12 +96,42 @@ private fun QueuePick(vm: AppViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                     color = if (c.hops == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // only a direct route can take an update over LoRa; the route may still change by then
+                if (c.hops != 0) Text(stringResource(R.string.q_skipped_unless_direct), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
-    val count = list.count { vm.queuePicked[hex(it.publicKey)] == true }
-    Button(onClick = { vm.startQueue() }, enabled = !vm.busy && count > 0 && vm.queueRelease != null) {
+    for (c in noPassword) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Checkbox(checked = false, onCheckedChange = null, enabled = false, modifier = Modifier.padding(12.dp))
+            Column(Modifier.weight(1f)) {
+                val grey = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                Text(c.name, color = grey)
+                Text(stringResource(R.string.q_login_once), style = MaterialTheme.typography.bodySmall, color = grey)
+            }
+        }
+    }
+    val picked = list.filter { vm.queuePicked[hex(it.publicKey)] == true }
+    val count = picked.size
+    Button(onClick = { vm.queueAsk = true }, enabled = !vm.busy && count > 0 && vm.queueRelease != null) {
         Text(pluralStringResource(R.plurals.q_start, count, count))
+    }
+    if (vm.queueAsk) {
+        val label = rels.firstOrNull { it.first == vm.queueRelease }?.second ?: vm.queueRelease ?: ""
+        AlertDialog(
+            onDismissRequest = { vm.queueAsk = false },
+            title = { Text(pluralStringResource(R.plurals.q_start, count, count)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.q_confirm_release, label))
+                    Text(picked.joinToString("\n") { "• " + it.name })
+                    Text(stringResource(R.string.q_confirm_text))
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.startQueue() }) { Text(stringResource(R.string.q_confirm_go)) } },
+            dismissButton = { TextButton(onClick = { vm.queueAsk = false }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 }
 

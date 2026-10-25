@@ -133,6 +133,9 @@ fun AppScreen(vm: AppViewModel, setLang: (String) -> Unit) {
                     if (vm.step == Step.REPEATER) IconButton(onClick = { vm.refreshRepeaters() }, enabled = !vm.busy) {
                         Icon(Icons.Default.Refresh, stringResource(R.string.refresh))
                     }
+                    if (vm.step == Step.HEALTH) IconButton(onClick = { vm.refreshHealth() }, enabled = !vm.busy) {
+                        Icon(Icons.Default.Refresh, stringResource(R.string.health_refresh))
+                    }
                     LanguageMenu(enabled = !vm.busy, setLang)
                 },
             )

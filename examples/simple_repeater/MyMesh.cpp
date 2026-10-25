@@ -1497,8 +1497,9 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     reply[0] = 0;
   } else if (strcmp(command, "selftest") == 0) {
     formatSelfTest(reply);
-  } else if (memcmp(command, "powersave", 9) == 0 && (command[9] == 0 || command[9] == ' ')) {
-    handlePowerSaveCommand(&command[9], reply);
+  } else if (memcmp(command, "battsave", 8) == 0 && (command[8] == 0 || command[8] == ' ')) {
+    // not upstream's `powersaving` (MCU sleep between packets): steps by battery voltage
+    handlePowerSaveCommand(&command[8], reply);
   } else if (memcmp(command, "battery", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleBatteryCommand(&command[7], reply);
 #ifdef WITH_MAILBOX
@@ -2144,11 +2145,35 @@ void MyMesh::applyPowerStage(uint8_t old_stage) {
   }
 }
 
+#if defined(ESP32)
+RTC_DATA_ATTR static uint16_t psave_sleep_off_mv = 0;   // kept over the deep sleep of the 'off' step: its limit
+
+// Right after board.begin(), before the radio starts: a wake from the 'off' step's sleep with the
+// battery still under off + 150 mV (and no external power) goes back to sleep at once, so an empty
+// cell is not pulled down every 30 min by a full boot, 3 battery checks and an advert. Any other boot
+// (power on, reset, a reading the board cannot make) goes on as usual.
+void MyMesh::powerOffAtBoot() {
+  uint16_t off = psave_sleep_off_mv;
+  psave_sleep_off_mv = 0;
+  if (off == 0 || esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) return;
+  uint16_t mv = board.getBattMilliVolts();
+  if (board.isExternalPowered() || mv < 2500 || mv > 4600 || mv >= off + PSAVE_OFF_WAKE_MV) return;
+  psave_sleep_off_mv = off;
+  esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);
+  esp_deep_sleep_start();
+}
+#else
+void MyMesh::powerOffAtBoot() { }   // nRF52 stays in powerOffLoop() and never restarts while low
+#endif
+
 // The 'off' step: the radio sleeps and so does the MCU, between battery checks. A battery that came
 // back (sun, a charger) restarts the node. On ESP32 a deep sleep with a timer does the same.
 void MyMesh::powerOffLoop() {
 #if defined(ESP32)
-  esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);   // 30 min, then a normal boot
+  // the boot after the timer looks at the battery first and sleeps again when it is still low (see
+  // powerOffAtBoot); only the board's own reading is known that early, not a sensor's (INA219)
+  psave_sleep_off_mv = sensors.getBatteryMilliVolts() == 0 && psave.config().enabled ? psave.config().off_mv : 0;
+  esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);   // 30 min, then a boot
   esp_deep_sleep_start();
 #else
   if (millisHasNowPassed(psave_next_wake_check)) {
@@ -2164,9 +2189,9 @@ void MyMesh::powerOffLoop() {
 #endif
 }
 
-// powersave                       state and limits
-// powersave on|off
-// powersave <low> <crit> <off>    mV, 0 = that step is not used
+// battsave                        state and limits
+// battsave on|off
+// battsave <low> <crit> <off>     mV, 0 = that step is not used
 void MyMesh::handlePowerSaveCommand(char* args, char* reply) {
   while (*args == ' ') args++;
   PowerSaverConfig& c = psave.config();
@@ -2198,7 +2223,7 @@ void MyMesh::handlePowerSaveCommand(char* args, char* reply) {
     psave_next_check = 0;   // apply at once
     return;
   }
-  strcpy(reply, "Err - powersave [on|off|<low> <crit> <off>]");
+  strcpy(reply, "Err - battsave [on|off|<low> <crit> <off>]");
 }
 
 void MyMesh::loadBatteryCapacity() {

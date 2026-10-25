@@ -45,7 +45,26 @@ class SelfTest(val ok: Boolean, val problems: List<String>, val values: Map<Stri
 /** What the Health page warns about, beyond the repeater's own "WARN" list. */
 enum class HealthWarning { RADIO, I2C_OFF, I2C_STUCK, QSPI, BATTERY_STEP, NEW_FIRMWARE, I2C_NEW_OFF, FAST_DRAIN }
 
+/** How a warning is shown: red (the repeater cannot do its job), amber (degraded, it retries), neutral. */
+enum class HealthSeverity { DANGER, WARN, INFO }
+
+/** One card line per problem; [isNew]: it was not there at the check before. */
+class HealthProblem(val warning: HealthWarning, val severity: HealthSeverity, val isNew: Boolean = false)
+
 object HealthCheck {
+    /** The warnings as the page shows them: one per problem (a sensor off and newly off are one), worst first. */
+    fun problems(w: List<HealthWarning>): List<HealthProblem> = w.mapNotNull {
+        when (it) {
+            HealthWarning.RADIO, HealthWarning.I2C_STUCK, HealthWarning.BATTERY_STEP, HealthWarning.FAST_DRAIN ->
+                HealthProblem(it, HealthSeverity.DANGER)
+            HealthWarning.I2C_OFF -> HealthProblem(it, HealthSeverity.WARN, isNew = HealthWarning.I2C_NEW_OFF in w)
+            HealthWarning.QSPI -> HealthProblem(it, HealthSeverity.WARN)
+            HealthWarning.NEW_FIRMWARE -> HealthProblem(it, HealthSeverity.INFO)
+            HealthWarning.I2C_NEW_OFF -> null
+        }
+    }.sortedBy { it.severity }
+
+
     /** Warnings from a self test, and from what changed since the one before (null: none kept). */
     fun warnings(now: SelfTest, before: SelfTest?): List<HealthWarning> {
         val w = ArrayList<HealthWarning>()
@@ -93,7 +112,9 @@ object HealthCheck {
  * One value over time from a node's telemetry history (src/helpers/TelemetryHistory.h): the day ring
  * (10-minute samples) or the week ring (hourly). Asked for in pieces: a LoRa packet holds ~64 values.
  */
-class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val intervalMinutes: Int, val values: List<Int?>) {
+class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val intervalMinutes: Int, val values: List<Int?>,
+                    /** Bit f: field f has values somewhere in this ring; null from a node that does not say. */
+                    val fields: Int? = null) {
     /** The time of sample i, in seconds; null when the node had no clock. */
     fun timeOf(i: Int): Long? = if (lastTime == 0L) null else lastTime - (values.size - 1 - i).toLong() * intervalMinutes * 60
 
@@ -122,9 +143,13 @@ class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val inter
         fun request(ring: Int, field: Int, start: Int, max: Int) =
             byteArrayOf(REQ_TYPE.toByte()) + args(ring, field, start, max)
 
-        class Piece(val ring: Int, val field: Int, val total: Int, val start: Int, val lastTime: Long, val interval: Int, val values: List<Int?>)
+        class Piece(val ring: Int, val field: Int, val total: Int, val start: Int, val lastTime: Long, val interval: Int,
+                    val values: List<Int?>, val fields: Int?)
 
-        /** ring(1) field(1) total(2) start(2) n(1) last_time(4) interval(1) values(n x int16), all little endian. */
+        /**
+         * ring(1) field(1) total(2) start(2) n(1) last_time(4) interval(1) values(n x int16) fields(2), all
+         * little endian; fields (which fields have values in the ring) came later, so it may be missing.
+         */
         fun parsePiece(d: ByteArray): Piece? {
             if (d.size < 12) return null
             fun u8(i: Int) = d[i].toInt() and 0xff
@@ -135,7 +160,9 @@ class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val inter
                 val v = (u8(12 + 2 * it) or (u8(13 + 2 * it) shl 8)).toShort().toInt()
                 if (v == NONE) null else v
             }
-            return Piece(u8(0), u8(1), u8(2) or (u8(3) shl 8), u8(4) or (u8(5) shl 8), t, u8(11), values)
+            val end = 12 + 2 * n
+            val fields = if (d.size >= end + 2) u8(end) or (u8(end + 1) shl 8) else null
+            return Piece(u8(0), u8(1), u8(2) or (u8(3) shl 8), u8(4) or (u8(5) shl 8), t, u8(11), values, fields)
         }
 
         /** All of one ring's values of one field, piece by piece; null when the node does not answer. */
@@ -144,16 +171,17 @@ class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val inter
             var start = 0
             var lastTime = 0L
             var interval = if (ring == RING_DAY) 10 else 60
+            var fields: Int? = null
             while (true) {
                 // no answer (or a bad one) later on: what came so far is still worth a graph
                 val p = fetch(start, 64)?.let { parsePiece(it) }
-                    ?: return if (start == 0) null else HistorySeries(ring, field, lastTime, interval, out)
-                if (start == 0) { lastTime = p.lastTime; interval = p.interval }
+                    ?: return if (start == 0) null else HistorySeries(ring, field, lastTime, interval, out, fields)
+                if (start == 0) { lastTime = p.lastTime; interval = p.interval; fields = p.fields }
                 out.addAll(p.values)
                 start += p.values.size
                 if (p.values.isEmpty() || start >= p.total) break
             }
-            return HistorySeries(ring, field, lastTime, interval, out)
+            return HistorySeries(ring, field, lastTime, interval, out, fields)
         }
 
         /** The value as shown: e.g. 0.1 degC -> degC, pressure from its 900 hPa offset. */
@@ -191,5 +219,45 @@ class HealthStore(dir: File) {
 
     companion object {
         const val MAX = 200
+    }
+}
+
+/**
+ * A repeater's `battsave` reply (examples/simple_repeater/MyMesh.cpp, handlePowerSaveCommand):
+ * "on, step normal, 3987 mV ext; low 3600 crit 3450 off 0". Not upstream's `powersaving`.
+ */
+class BattSave(val enabled: Boolean, val step: String, val mv: Int, val external: Boolean, val low: Int, val crit: Int, val off: Int) {
+    fun matches(r: Triple<Int, Int, Int>) = enabled && low == r.first && crit == r.second && off == r.third
+
+    companion object {
+        const val COMMAND = "battsave"
+        private val RE = Regex("^(on|off), step (\\w+), (\\d+) mV( ext)?; low (\\d+) crit (\\d+) off (\\d+)")
+
+        fun parse(line: String): BattSave? {
+            val m = RE.find(line.trim().removePrefix("> ")) ?: return null
+            val g = m.groupValues
+            return BattSave(g[1] == "on", g[2], g[3].toInt(), g[4].isNotEmpty(), g[5].toInt(), g[6].toInt(), g[7].toInt())
+        }
+
+        /**
+         * For one Li-ion / LiPo cell: 'low' 3.6 V and 'critical' 3.45 V; 'off' 3.3 V only once the reading was
+         * checked (a meter, or an INA219), since a wrong one would take the radio away with no way back from afar.
+         */
+        fun recommended(checked: Boolean) = Triple(3600, 3450, if (checked) 3300 else 0)
+
+        fun command(r: Triple<Int, Int, Int>) = "$COMMAND ${r.first} ${r.second} ${r.third}"
+    }
+}
+
+/** The `battery capacity` reply: "> 2000 mAh (learnt)", "> 0 mAh (not known yet)"; "Err ..." without an INA219. */
+class BattCapacity(val mah: Int, val learnt: Boolean) {
+    companion object {
+        const val COMMAND = "battery capacity"
+
+        /** null: no current sensor (or not understood). */
+        fun parse(line: String): BattCapacity? {
+            val m = Regex("^(\\d+) mAh").find(line.trim().removePrefix("> ")) ?: return null
+            return BattCapacity(m.groupValues[1].toInt(), line.contains("(learnt)"))
+        }
     }
 }

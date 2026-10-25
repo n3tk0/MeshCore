@@ -296,6 +296,7 @@ public:
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
   bool isPowerOff() const { return psave.stage() == PSAVE_OFF; }   // battery empty: the radio is off, the node only sleeps
   void powerOffLoop();
+  static void powerOffAtBoot();   // ESP32: still empty after the 'off' step's sleep -> sleep again
   void loop();
 
 #if defined(WITH_BRIDGE)

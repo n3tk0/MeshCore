@@ -43,7 +43,8 @@ public:
     _cfg.enabled = 1;
     _cfg.low_mv = 3600;
     _cfg.crit_mv = 3450;
-    _cfg.off_mv = 3300;
+    _cfg.off_mv = 0;   // 'off' only by hand (`battsave 3600 3450 3300`): a wrongly calibrated ADC on a roof
+                       // would take the radio away with no way to fix it from afar
     _stage = PSAVE_NORMAL;
     _below = 0;
     _below_to = PSAVE_NORMAL;

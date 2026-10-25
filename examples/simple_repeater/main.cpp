@@ -68,6 +68,7 @@ void setup() {
   delay(1000);
 
   board.begin();
+  MyMesh::powerOffAtBoot();
 
 #ifdef HAS_EXTERNAL_WATCHDOG
   external_watchdog.begin();
@@ -154,7 +155,7 @@ void setup() {
 void loop() {
   watchdogFeed();
 
-  if (the_mesh.isPowerOff()) {   // battery empty (see `powersave`): only a sleep and a battery check now and then
+  if (the_mesh.isPowerOff()) {   // battery empty (see `battsave`): only a sleep and a battery check now and then
     the_mesh.powerOffLoop();
     return;
   }

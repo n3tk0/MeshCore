@@ -168,16 +168,18 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
-### Power saving steps (Repeater Only)
+### Battery saving steps (Repeater Only)
 **Usage:**
-- `powersave` (state)
-- `powersave on|off`
-- `powersave <low> <crit> <off>` (mV; 0 leaves a step out)
+- `battsave` (state)
+- `battsave on|off`
+- `battsave <low> <crit> <off>` (mV; 0 leaves a step out)
 
-**Example reply:** `on, step normal, 3987 mV; low 3600 crit 3450 off 3300`
+**Example reply:** `on, step normal, 3987 mV; low 3600 crit 3450 off 0`
 
 **Notes:**
+- Not the same as upstream's `powersaving` (the MCU sleeps between packets and the radio keeps listening); both can be on.
 - `low`: adverts half as often, the mailbox stops writing to flash. `critical`: no LoRa OTA and no mailbox. `off`: radio off, the node only checks the battery and restarts when it is 150 mV above `off` or on external power.
+- Default: `low` 3600 and `critical` 3450 on, `off` not used (0). Turn it on by hand with `battsave 3600 3450 3300` once the battery reading is checked: a wrong reading would take the radio away and only a battery 150 mV above `off` brings it back. On ESP32 the node wakes every 30 min and, if the battery is still low, sleeps again before starting the radio.
 - A step down needs 3 readings in a row below it, a step up 100 mV above. External power is always `normal`. Kept in `/psave`.
 
 ---

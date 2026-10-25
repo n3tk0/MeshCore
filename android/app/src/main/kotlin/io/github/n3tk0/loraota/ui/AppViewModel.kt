@@ -63,6 +63,8 @@ import io.github.n3tk0.loraota.ota.Releases
 import io.github.n3tk0.loraota.ota.RepeaterStatus
 import io.github.n3tk0.loraota.ota.SideRadio
 import io.github.n3tk0.loraota.ota.hex
+import io.github.n3tk0.loraota.ota.BattCapacity
+import io.github.n3tk0.loraota.ota.BattSave
 import io.github.n3tk0.loraota.ota.HealthCheck
 import io.github.n3tk0.loraota.ota.OtaQueueState
 import io.github.n3tk0.loraota.ota.QueueEntry
@@ -937,7 +939,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Repeaters the queue can take: those with a password kept from an earlier login, nearest first. */
     fun queueCandidates(): List<Contact> = OtaQueueState.order(repeaters.filter { hasSavedPassword(it) }, { it.hops }, { it.name })
 
+    /** Repeaters it cannot take yet (no kept password): shown greyed, with how to fix it. */
+    fun queueNoPassword(): List<Contact> = repeaters.filter { !hasSavedPassword(it) }.sortedBy { it.name.lowercase() }
+
+    /** The confirmation before a new queue starts (the list, the release, that it takes hours). */
+    var queueAsk by mutableStateOf(false)
+
     fun startQueue() {
+        queueAsk = false
         val rel = queueRelease ?: return
         val label = queueReleases().firstOrNull { it.first == rel }?.second ?: rel
         val picked = queueCandidates().filter { queuePicked[hex(it.publicKey)] == true }
@@ -1059,6 +1068,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Series read since the page opened, by (ring, field); a field the node does not measure has only nulls. */
     val historyCache = mutableStateMapOf<Pair<Int, Int>, HistorySeries>()
     var historyMissing by mutableStateOf(false)    // the node keeps no history (stock or older firmware)
+    var battSave by mutableStateOf<BattSave?>(null)        // the repeater's `battsave` (null: not read / older firmware)
+    var battCapacity by mutableStateOf<BattCapacity?>(null)
+    var battGauge by mutableStateOf(false)                  // an INA219 counts the charge: capacity matters, voltage is exact
+    var battChecked by mutableStateOf(false)                // the person says the voltage reading was checked
     private var healthReturn = Step.UPDATE
 
     val healthDeviceName get() = if (healthKind == DeviceKind.COMPANION) companionName else repeater?.name ?: ""
@@ -1073,6 +1086,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         historyMissing = false
         historyField = HistorySeries.F_BATT_PCT
         historyRing = HistorySeries.RING_DAY
+        battSave = null
+        battCapacity = null
+        battGauge = false
+        battChecked = false
         message = ""
         val dev = deviceKey(kind)
         healthRecords = emptyList()
@@ -1098,7 +1115,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 canReadRepeater = true
                 working = str(R.string.working_selftest)
                 val line = try {
-                    RepeaterBackup.ask(companion, r, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
+                    val l = RepeaterBackup.ask(companion, r, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
+                    if (l != null && SelfTest.parse(l) != null) readBattery(r)
+                    l
                 } finally {
                     withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
                 }
@@ -1131,6 +1150,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         healthWarnings = warnings
     }
+
+    /** `battsave` and `battery capacity`, with the console capture already on. */
+    private suspend fun readBattery(r: Contact) {
+        working = str(R.string.working_battery)
+        battSave = RepeaterBackup.ask(companion, r, BattSave.COMMAND)?.let { BattSave.parse(it) }
+        val cap = RepeaterBackup.ask(companion, r, BattCapacity.COMMAND)
+        battCapacity = cap?.let { BattCapacity.parse(it) }
+        battGauge = battCapacity != null
+        if (battGauge) battChecked = true   // the INA219 measures the cell itself
+    }
+
+    /** Commands to the repeater's console, then `battsave` read again; a reply other than OK is shown. */
+    private fun battCommands(vararg commands: String) = work {
+        val r = repeater ?: return@work
+        try {
+            for (c in commands) {
+                working = c
+                val reply = RepeaterBackup.ask(companion, r, c)?.removePrefix("> ")?.trim()
+                    ?: throw Exception(str(R.string.health_no_answer))
+                if (!reply.startsWith("OK")) throw Exception(reply)
+            }
+            readBattery(r)
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+        }
+        message = str(R.string.batt_saved)
+    }
+
+    fun applyBattSave() = battCommands(BattSave.command(BattSave.recommended(battChecked)), "${BattSave.COMMAND} on")
+    fun setBattSave(on: Boolean) = battCommands("${BattSave.COMMAND} ${if (on) "on" else "off"}")
+    fun setBattCapacity(mah: Int) = battCommands("${BattCapacity.COMMAND} $mah")
 
     fun showHistory(ring: Int, field: Int) {
         historyRing = ring
