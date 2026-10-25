@@ -16,13 +16,15 @@
     // the Arduino core leaves a new image 'pending verify' instead of keeping it at once (see otaLoop)
     extern "C" bool verifyRollbackLater() { return true; }
   #endif
-  // A login or a console command confirms a new image before `selftest` could say so: the self test
-  // still shows it was new in this boot ("ota=on,fresh"), so the app can tell.
-  static bool ota_confirmed_this_boot = false;
+  // A login or a console command confirms a new image before `selftest` could say so: for an hour after
+  // that the self test still shows it was new ("ota=on,fresh"), so the app can tell.
+  #define OTA_FRESH_MILLIS  (60 * 60 * 1000UL)
+  static unsigned long ota_confirmed_at = 0;   // millis, 0 = not confirmed in this boot
   static void confirmOta() {
-    if (ota_target.isUnconfirmed()) ota_confirmed_this_boot = true;
+    if (ota_target.isUnconfirmed()) ota_confirmed_at = millis() | 1;
     ota_target.confirm();
   }
+  static bool otaFresh() { return ota_confirmed_at && millis() - ota_confirmed_at < OTA_FRESH_MILLIS; }
   #define OTA_SIDE_RADIO_DELAY   2500                 // the BEGIN reply goes out on the normal radio first
   #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
   #define OTA_COMMIT_DELAY       10000                // the END reply goes out (and is repeated if lost) before the reboot
@@ -2325,7 +2327,7 @@ void MyMesh::formatSelfTest(char* reply) {
   else ST_ADD(" mail=off");
 #endif
 #ifdef WITH_LORA_OTA
-  ST_ADD(" ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : ota_confirmed_this_boot ? ",fresh" : "");
+  ST_ADD(" ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : otaFresh() ? ",fresh" : "");
 #endif
   uint32_t up = uptime_millis / 1000;
   ST_ADD(" ps=%s up=%lud%02luh", PowerSaver::name(psave.stage()),
