@@ -1116,7 +1116,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 working = str(R.string.working_selftest)
                 val line = try {
                     val l = RepeaterBackup.ask(companion, r, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
-                    if (l != null && SelfTest.parse(l) != null) readBattery(r)
+                    // "day=" (mAh in/out) only comes with an INA219: no capacity to ask for without one
+                    SelfTest.parse(l ?: "")?.let { readBattery(r, hasGauge = "day" in it.values) }
                     l
                 } finally {
                     withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
@@ -1142,8 +1143,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         working = str(R.string.working_history)
         val day = loadSeries(HistorySeries.RING_DAY, HistorySeries.F_BATT_PCT)
         if (day != null) {
-            val week = loadSeries(HistorySeries.RING_WEEK, HistorySeries.F_BATT_PCT)
-            if (week != null && HealthCheck.fasterDrain(day.values, week.values)) warnings.add(HealthWarning.FAST_DRAIN)
+            // the week only when the last 6 h have enough samples for 'falls faster' (saves 1-3 packets)
+            if (day.values.takeLast(36).count { it != null } >= 7) {
+                val week = loadSeries(HistorySeries.RING_WEEK, HistorySeries.F_BATT_PCT)
+                if (week != null && HealthCheck.fasterDrain(day.values, week.values)) warnings.add(HealthWarning.FAST_DRAIN)
+            }
+            // a node that does not measure the battery %: the first value it does measure
+            historyField = HistorySeries.pick(historyField, day.fields)
             loadSeries(historyRing, historyField)
         } else {
             historyMissing = true
@@ -1152,13 +1158,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** `battsave` and `battery capacity`, with the console capture already on. */
-    private suspend fun readBattery(r: Contact) {
+    private suspend fun readBattery(r: Contact, hasGauge: Boolean) {
         working = str(R.string.working_battery)
-        battSave = RepeaterBackup.ask(companion, r, BattSave.COMMAND)?.let { BattSave.parse(it) }
-        val cap = RepeaterBackup.ask(companion, r, BattCapacity.COMMAND)
-        battCapacity = cap?.let { BattCapacity.parse(it) }
+        val b = RepeaterBackup.ask(companion, r, BattSave.COMMAND)?.let { BattSave.parse(it) }
+        battSave = b
+        battCapacity = if (hasGauge) RepeaterBackup.ask(companion, r, BattCapacity.COMMAND)?.let { BattCapacity.parse(it) } else null
         battGauge = battCapacity != null
-        if (battGauge) battChecked = true   // the INA219 measures the cell itself
+        // the INA219 measures the cell itself; an 'off' step set before means the reading was checked then
+        if (battGauge || (b?.off ?: 0) > 0) battChecked = true
     }
 
     /** Commands to the repeater's console, then `battsave` read again; a reply other than OK is shown. */
@@ -1171,14 +1178,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ?: throw Exception(str(R.string.health_no_answer))
                 if (!reply.startsWith("OK")) throw Exception(reply)
             }
-            readBattery(r)
+            readBattery(r, battGauge)
         } finally {
             withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
         }
         message = str(R.string.batt_saved)
     }
 
-    fun applyBattSave() = battCommands(BattSave.command(BattSave.recommended(battChecked)), "${BattSave.COMMAND} on")
+    fun applyBattSave() {
+        val set = BattSave.command(BattSave.recommended(battChecked))
+        if (battSave?.enabled == true) battCommands(set) else battCommands(set, "${BattSave.COMMAND} on")
+    }
     fun setBattSave(on: Boolean) = battCommands("${BattSave.COMMAND} ${if (on) "on" else "off"}")
     fun setBattCapacity(mah: Int) = battCommands("${BattCapacity.COMMAND} $mah")
 

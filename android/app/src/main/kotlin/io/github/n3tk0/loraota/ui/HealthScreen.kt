@@ -343,7 +343,8 @@ private fun HistoryCard(vm: AppViewModel) {
             }
             // only what the device measures (the node says which fields have values; an older one does not)
             val masks = vm.historyCache.values.mapNotNull { it.fields }
-            val has = if (masks.isEmpty()) null else masks.fold(0) { a, m -> a or m }
+            // none yet (the first 10 minutes after a fresh flash): all of them, as from an older node
+            val has = masks.fold(0) { a, m -> a or m }.takeIf { it != 0 }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for ((f, name) in FIELDS) {
                     if (has != null && has and (1 shl f) == 0 && f != vm.historyField) continue

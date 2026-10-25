@@ -135,6 +135,14 @@ class HistorySeries(val ring: Int, val field: Int, val lastTime: Long, val inter
         const val F_TX = 8
         const val F_AIR_TX_S = 9
 
+        /** The order the page offers them in. */
+        val ORDER = listOf(F_BATT_PCT, F_BATT_MV, F_CURRENT_MA, F_TEMP_DC, F_HUMIDITY, F_PRESSURE, F_NOISE_DBM, F_RX, F_TX, F_AIR_TX_S)
+
+        /** The field to show: [wanted] when it has values (or nothing says), else the first that has. */
+        fun pick(wanted: Int, fields: Int?): Int =
+            if (fields == null || fields == 0 || fields and (1 shl wanted) != 0) wanted
+            else ORDER.firstOrNull { fields and (1 shl it) != 0 } ?: wanted
+
         /** ring, field, start (from the oldest), how many: the bytes after the request type. */
         fun args(ring: Int, field: Int, start: Int, max: Int) =
             byteArrayOf(ring.toByte(), field.toByte(), (start and 0xff).toByte(), (start shr 8).toByte(), max.toByte())
