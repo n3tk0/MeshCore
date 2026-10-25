@@ -16,6 +16,13 @@
     // the Arduino core leaves a new image 'pending verify' instead of keeping it at once (see otaLoop)
     extern "C" bool verifyRollbackLater() { return true; }
   #endif
+  // A login or a console command confirms a new image before `selftest` could say so: the self test
+  // still shows it was new in this boot ("ota=on,fresh"), so the app can tell.
+  static bool ota_confirmed_this_boot = false;
+  static void confirmOta() {
+    if (ota_target.isUnconfirmed()) ota_confirmed_this_boot = true;
+    ota_target.confirm();
+  }
   #define OTA_SIDE_RADIO_DELAY   2500                 // the BEGIN reply goes out on the normal radio first
   #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
   #define OTA_COMMIT_DELAY       10000                // the END reply goes out (and is repeated if lost) before the reboot
@@ -234,7 +241,7 @@ uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secr
   reply_data[5] = 0;  // Legacy: was recommended keep-alive interval (secs / 16)
   reply_data[6] = client->isAdmin() ? 1 : 0;
 #ifdef WITH_LORA_OTA
-  if (client->isAdmin()) ota_target.confirm();   // an admin got in: the new firmware works
+  if (client->isAdmin()) confirmOta();   // an admin got in: the new firmware works
 #endif
   reply_data[7] = client->permissions;
   getRNG()->random(&reply_data[8], 4);   // random blob to help packet-hash uniqueness
@@ -815,7 +822,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
                         && client->out_path_len != OUT_PATH_UNKNOWN && (client->out_path_len & 63) == 0;
         memcpy(reply_data, &timestamp, 4);
         int n = lora_ota.handleRequest(client->id.pub_key, zero_hop, &data[4], len - 4, &reply_data[4], millis());
-        ota_target.confirm();   // after the reply: INFO still tells the app it was not confirmed before
+        confirmOta();   // after the reply: INFO still tells the app it was not confirmed before
         applyOtaAction();
         if (ota_on_side && revert_radio_at) revert_radio_at = futureMillis(OTA_MAX_SIDE_MILLIS);   // still busy
         if (n == 0) return;   // DATA: no reply, the admin asks for STATUS now and then
@@ -868,7 +875,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
     }
   } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5 && client->isAdmin()) { // a CLI command
 #ifdef WITH_LORA_OTA
-    ota_target.confirm();   // an admin reaches the console: the new firmware works (also before a 'reboot')
+    confirmOta();   // an admin reaches the console: the new firmware works (also before a 'reboot')
 #endif
     uint32_t sender_timestamp;
     memcpy(&sender_timestamp, data, 4); // timestamp (by sender's RTC clock - which could be wrong)
@@ -2054,12 +2061,12 @@ void MyMesh::otaLoop() {
     int nf = _radio->getNoiseFloor();
     bool listens = nf < -60 && nf > -140;
     if (millis() > OTA_CONFIRM_MILLIS && sent && radio_driver.getPacketsRecv() > 0) {
-      ota_target.confirm();
+      confirmOta();
       ota_verdict_done = true;
     } else if (millis() > OTA_GIVEUP_MILLIS) {
       ota_verdict_done = true;
       if (sent && listens) {
-        ota_target.confirm();
+        confirmOta();
       } else {
         MESH_DEBUG_PRINTLN("LoRa OTA: the radio of the new firmware does not work, rolling back");
         acl.save(_fs);
@@ -2318,7 +2325,7 @@ void MyMesh::formatSelfTest(char* reply) {
   else ST_ADD(" mail=off");
 #endif
 #ifdef WITH_LORA_OTA
-  ST_ADD(" ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : "");
+  ST_ADD(" ota=%s%s", lora_ota.isEnabled() ? "on" : "off", ota_target.isUnconfirmed() ? ",new" : ota_confirmed_this_boot ? ",fresh" : "");
 #endif
   uint32_t up = uptime_millis / 1000;
   ST_ADD(" ps=%s up=%lud%02luh", PowerSaver::name(psave.stage()),

@@ -1138,8 +1138,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        healthWarnings = warnings.toList()   // shown at once; the graphs below take a while over LoRa
         historyCache.clear()
         historyMissing = false
+        // a repeater without `selftest` (older or stock firmware) has no history either: no 2 x 12 s wait
+        if (selfTestMissing) {
+            historyMissing = true
+            return@work
+        }
         working = str(R.string.working_history)
         val day = loadSeries(HistorySeries.RING_DAY, HistorySeries.F_BATT_PCT)
         if (day != null) {
@@ -1154,7 +1160,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             historyMissing = true
         }
-        healthWarnings = warnings
+        if (HealthWarning.FAST_DRAIN in warnings) healthWarnings = warnings
     }
 
     /** `battsave` and `battery capacity`, with the console capture already on. */
@@ -1168,8 +1174,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (battGauge || (b?.off ?: 0) > 0) battChecked = true
     }
 
-    /** Commands to the repeater's console, then `battsave` read again; a reply other than OK is shown. */
-    private fun battCommands(vararg commands: String) = work {
+    /**
+     * Commands to the repeater's console, then what they changed read again (`battsave` only; the
+     * capacity is known from the command); a reply other than OK is shown.
+     */
+    private fun battCommands(vararg commands: String, capacity: Int? = null) = work {
         val r = repeater ?: return@work
         try {
             for (c in commands) {
@@ -1178,7 +1187,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ?: throw Exception(str(R.string.health_no_answer))
                 if (!reply.startsWith("OK")) throw Exception(reply)
             }
-            readBattery(r, battGauge)
+            if (capacity != null) {
+                battCapacity = BattCapacity(capacity, learnt = false)
+            } else {
+                working = str(R.string.working_battery)
+                RepeaterBackup.ask(companion, r, BattSave.COMMAND)?.let { BattSave.parse(it) }?.let { battSave = it }
+            }
         } finally {
             withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
         }
@@ -1190,7 +1204,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (battSave?.enabled == true) battCommands(set) else battCommands(set, "${BattSave.COMMAND} on")
     }
     fun setBattSave(on: Boolean) = battCommands("${BattSave.COMMAND} ${if (on) "on" else "off"}")
-    fun setBattCapacity(mah: Int) = battCommands("${BattCapacity.COMMAND} $mah")
+    fun setBattCapacity(mah: Int) = battCommands("${BattCapacity.COMMAND} $mah", capacity = mah)
 
     fun showHistory(ring: Int, field: Int) {
         historyRing = ring

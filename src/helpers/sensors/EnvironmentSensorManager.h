@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Wire.h>
 #include <Mesh.h>
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
@@ -12,6 +13,7 @@ protected:
   // Sub-channel is 0 for all single-output sensors.
   struct ActiveSensor {
     void    (*query)(uint8_t channel, uint8_t sub_channel, CayenneLPP& telemetry);
+    uint8_t (*init)(TwoWire* wire, uint8_t address);   // again when it comes back (a power glitch resets its setup)
     uint8_t   sub_channel;
     uint8_t   address;
     const char* name;

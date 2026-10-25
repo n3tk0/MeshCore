@@ -165,6 +165,7 @@ private fun warningText(p: HealthProblem) = when (p.warning) {
     HealthWarning.QSPI -> R.string.hw_qspi
     HealthWarning.BATTERY_STEP -> R.string.hw_battery_step
     HealthWarning.NEW_FIRMWARE -> R.string.hw_new_firmware
+    HealthWarning.FRESH_FIRMWARE -> R.string.hw_fresh_firmware
     HealthWarning.I2C_NEW_OFF -> R.string.hw_i2c_off_new
     HealthWarning.FAST_DRAIN -> R.string.hw_fast_drain
 }
@@ -175,7 +176,7 @@ private fun shortName(w: HealthWarning) = when (w) {
     HealthWarning.I2C_OFF, HealthWarning.I2C_STUCK, HealthWarning.I2C_NEW_OFF -> R.string.hs_i2c
     HealthWarning.QSPI -> R.string.hs_qspi
     HealthWarning.BATTERY_STEP, HealthWarning.FAST_DRAIN -> R.string.hs_battery
-    HealthWarning.NEW_FIRMWARE -> R.string.hs_firmware
+    HealthWarning.NEW_FIRMWARE, HealthWarning.FRESH_FIRMWARE -> R.string.hs_firmware
 }
 
 /** Amber for "degraded, it tries again": not in the Material scheme. */
@@ -261,7 +262,11 @@ private fun SelfTestRows(t: SelfTest) {
     v["mail"]?.let { HealthRow(stringResource(R.string.health_mailbox), if (it == "off") stringResource(R.string.health_off) else it) }
     v["ota"]?.let { o ->
         val on = stringResource(if (o.startsWith("on")) R.string.hv_on else R.string.hv_off)
-        HealthRow("LoRa OTA", if (o.endsWith(",new")) on + " · " + stringResource(R.string.health_unconfirmed) else on)
+        HealthRow("LoRa OTA", when {
+            o.endsWith(",new") -> on + " · " + stringResource(R.string.health_unconfirmed)
+            o.endsWith(",fresh") -> on + " · " + stringResource(R.string.health_fresh)
+            else -> on
+        })
     }
     t.powerStep?.let { HealthRow(stringResource(R.string.health_power), powerStep(it)) }
     v["up"]?.let { up ->
