@@ -85,3 +85,42 @@ TEST(WordPredictor, OnlyANewWordNeedsAWrite) {
   p.learnText("zzqwerty");
   EXPECT_TRUE(p.userDirty());
 }
+
+TEST(WordPredictor, SuggestsTheWordThatFollowedLast) {
+  WordPredictor p;
+  char w[48];
+  EXPECT_FALSE(p.suggestNext("добро", w, sizeof(w)));
+  p.learnText("Добро утро");
+  ASSERT_TRUE(p.suggestNext("добро", w, sizeof(w)));
+  EXPECT_STREQ("утро", w);
+  ASSERT_TRUE(p.suggestNext("Добро", w, sizeof(w)));   // either case
+  p.learnText("добро момче");
+  ASSERT_TRUE(p.suggestNext("добро", w, sizeof(w)));
+  EXPECT_STREQ("момче", w);                              // the most recent first
+}
+
+TEST(WordPredictor, PunctuationBreaksPairsAndOneLetterIsNoSuggestion) {
+  WordPredictor p;
+  char w[48];
+  p.learnText("ok, see you a b");
+  EXPECT_FALSE(p.suggestNext("ok", w, sizeof(w)));
+  ASSERT_TRUE(p.suggestNext("see", w, sizeof(w)));
+  EXPECT_STREQ("you", w);
+  EXPECT_FALSE(p.suggestNext("you", w, sizeof(w)));   // "a": one letter
+}
+
+TEST(WordPredictor, PairsSurviveExportImport) {
+  WordPredictor p, q;
+  p.learnText("call me later");
+  EXPECT_TRUE(p.pairsDirty());
+  uint8_t buf[256];
+  int n = p.exportPairs(buf, sizeof(buf));
+  q.importPairs(buf, n);
+  EXPECT_EQ(p.pairCount(), q.pairCount());
+  char w[48];
+  ASSERT_TRUE(q.suggestNext("me", w, sizeof(w)));
+  EXPECT_STREQ("later", w);
+  EXPECT_FALSE(q.pairsDirty());
+  q.clearUser();
+  EXPECT_FALSE(q.suggestNext("me", w, sizeof(w)));
+}

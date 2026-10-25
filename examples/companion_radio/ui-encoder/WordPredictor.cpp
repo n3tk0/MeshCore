@@ -54,6 +54,15 @@ WordPredictor::WordPredictor() {
   memset(_user, 0, sizeof(_user));
   _num_user = 0;
   _user_dirty = false;
+  memset(_pairs, 0, sizeof(_pairs));
+  _num_pairs = 0;
+  _pairs_dirty = false;
+}
+
+static uint16_t wordHash(const uint8_t* w, int n) {
+  uint16_t h = 0x9E37;
+  for (int i = 0; i < n; i++) h = (uint16_t)((h ^ w[i]) * 0x3B1);
+  return h ? h : 1;
 }
 
 // the first word of the list that starts with key[0..n) and is longer, or NULL
@@ -118,6 +127,8 @@ bool WordPredictor::inDictionary(const char* word) const {
 void WordPredictor::learnText(const char* text) {
   char word[PREDICT_MAX_WORD * 2 + 1];
   const char* p = text;
+  uint8_t prev[PREDICT_MAX_WORD + 1];
+  int prev_len = 0;   // the word before, 0 = none (start, or after punctuation)
   while (*p) {
     // a word: letters only (ASCII or 2-byte UTF-8); anything else ends it
     int j = 0;
@@ -127,9 +138,17 @@ void WordPredictor::learnText(const char* text) {
       p++;
     }
     word[j] = 0;
+    char sep = *p;
     if (*p) p++;
     uint8_t key[PREDICT_MAX_WORD + 1];
     int n = ok && j > 0 ? encodeWord(word, key, PREDICT_MAX_WORD, NULL) : -1;
+    if (n > 0 && prev_len > 0) learnPair(prev, prev_len, key, n);
+    if (n > 0 && (sep == ' ' || sep == 0)) {   // "word word": a pair; punctuation breaks the chain
+      memcpy(prev, key, n);
+      prev_len = n;
+    } else {
+      prev_len = 0;
+    }
     if (n < 3) continue;   // short words are already easy to type
     if (listHas((const uint8_t*)(key[0] >= 0xE0 ? DICT_BG : DICT_EN), key, n)) continue;
     key[n] = 0;
@@ -152,6 +171,9 @@ void WordPredictor::clearUser() {
   memset(_user, 0, sizeof(_user));
   _num_user = 0;
   _user_dirty = true;
+  memset(_pairs, 0, sizeof(_pairs));
+  _num_pairs = 0;
+  _pairs_dirty = true;
 }
 
 int WordPredictor::exportUser(uint8_t* buf, int max_len) {
@@ -200,4 +222,76 @@ void WordPredictor::learn(const char* word) {
   }
   memmove(_recent[1], _recent[0], found * sizeof(_recent[0]));
   memcpy(_recent[0], key, n + 1);
+}
+
+void WordPredictor::learnPair(const uint8_t* prev, int prev_len, const uint8_t* next, int next_len) {
+  if (next_len < 2 || next_len > PREDICT_PAIR_WORD) return;   // one letter is no help
+  uint16_t h = wordHash(prev, prev_len);
+  int found = -1;
+  for (int i = 0; i < _num_pairs; i++) {
+    if (_pairs[i].prev == h && (int)strlen((const char*)_pairs[i].next) == next_len
+        && memcmp(_pairs[i].next, next, next_len) == 0) { found = i; break; }
+  }
+  if (found == 0) return;
+  if (found < 0) {
+    if (_num_pairs < PREDICT_PAIRS) _num_pairs++;
+    found = _num_pairs - 1;   // full: the least recently used pair drops out
+  }
+  memmove(&_pairs[1], &_pairs[0], found * sizeof(WordPair));
+  _pairs[0].prev = h;
+  memcpy(_pairs[0].next, next, next_len);
+  _pairs[0].next[next_len] = 0;
+  _pairs_dirty = true;
+}
+
+bool WordPredictor::suggestNext(const char* prev, char* word, size_t word_size) const {
+  uint8_t key[PREDICT_MAX_WORD];
+  int n = encodeWord(prev, key, sizeof(key), NULL);
+  if (n <= 0) return false;
+  uint16_t h = wordHash(key, n);
+  for (int i = 0; i < _num_pairs; i++) {
+    if (_pairs[i].prev == h) {
+      decodeLetters(_pairs[i].next, strlen((const char*)_pairs[i].next), false, word, word_size);
+      return true;
+    }
+  }
+  return false;
+}
+
+int WordPredictor::exportPairs(uint8_t* buf, int max_len) {
+  int len = 0;
+  for (int i = 0; i < _num_pairs; i++) {
+    int l = strlen((const char*)_pairs[i].next);
+    if (len + 3 + l > max_len) break;
+    buf[len++] = _pairs[i].prev & 0xFF;
+    buf[len++] = _pairs[i].prev >> 8;
+    buf[len++] = l;
+    memcpy(&buf[len], _pairs[i].next, l);
+    len += l;
+  }
+  return len;
+}
+
+void WordPredictor::importPairs(const uint8_t* buf, int len) {
+  memset(_pairs, 0, sizeof(_pairs));
+  _num_pairs = 0;
+  int i = 0;
+  while (i + 3 <= len && _num_pairs < PREDICT_PAIRS) {
+    uint16_t h = buf[i] | (buf[i + 1] << 8);
+    int l = buf[i + 2];
+    if (l < 2 || l > PREDICT_PAIR_WORD || i + 3 + l > len) break;
+    bool valid = true;
+    for (int k = 0; k < l; k++) {
+      uint8_t b = buf[i + 3 + k];
+      if (!((b >= 'a' && b <= 'z') || b >= 0xE0)) valid = false;
+    }
+    if (valid) {
+      _pairs[_num_pairs].prev = h;
+      memcpy(_pairs[_num_pairs].next, &buf[i + 3], l);
+      _pairs[_num_pairs].next[l] = 0;
+      _num_pairs++;
+    }
+    i += 3 + l;
+  }
+  _pairs_dirty = false;
 }

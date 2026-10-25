@@ -230,6 +230,35 @@ TEST(LppScan, FindsTemperatureAfterOtherValues) {
   uint8_t unknown[] = { 1, 250, 0, 2, 103, 0, 10 };
   EXPECT_FALSE(lppScanFirst(unknown, sizeof(unknown), LPP_SCAN_TEMPERATURE, &raw));
 }
+
+static TelemetrySample pctSample(int pct) {
+  TelemetrySample s;
+  TelemetryHistory::emptySample(s);
+  s.v[TH_F_BATT_PCT] = pct;
+  return s;
+}
+
+TEST(TelemetryHistory, HoursLeftFromFallingPercent) {
+  static TelemetryHistory h;
+  h.clear();
+  uint32_t t = 1750000000;
+  for (int i = 0; i < 11; i++) { t += 600; h.add(pctSample(80 - i), t); }
+  EXPECT_EQ(h.hoursLeft(), -1);                // under 2 h
+  for (int i = 11; i < 18; i++) { t += 600; h.add(pctSample(80 - i), t); }
+  // 1 % per 10 min = 6 %/h, at 63 % -> ~10 h
+  EXPECT_NEAR(h.hoursLeft(), 10, 1);
+}
+
+TEST(TelemetryHistory, HoursLeftUnknownWhileCharging) {
+  static TelemetryHistory h;
+  h.clear();
+  uint32_t t = 1750000000;
+  for (int i = 0; i < 20; i++) { t += 600; h.add(pctSample(50 + i), t); }
+  EXPECT_EQ(h.hoursLeft(), -1);
+  for (int i = 0; i < 20; i++) { t += 600; h.add(pctSample(70), t); }
+  EXPECT_EQ(h.hoursLeft(), -1);                // flat
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

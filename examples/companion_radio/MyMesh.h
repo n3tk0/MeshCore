@@ -68,6 +68,9 @@
 
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#ifdef TELEMETRY_HISTORY
+  #include <helpers/TelemetryHistory.h>
+#endif
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -112,6 +115,8 @@ public:
       virtual void onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
                                const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) { }
       virtual void onRawDataRecv(mesh::Packet *pkt) { }
+      // BACK_ADVERT: direct messages a repeater's mailbox handed over after our "I'm back" advert
+      virtual void onMailboxDelivered(int count) { }
       virtual ~Listener() { }
   };
 
@@ -224,6 +229,11 @@ public:
   bool isTxAllowed() const { return _tx_allowed; }
   void setTxAllowed(bool on) { _tx_allowed = on; }
 
+#ifdef TELEMETRY_HISTORY
+  const TelemetryHistory& getHistory() const { return _history; }
+  void saveHistoryNow();
+#endif
+
   // UI data kept over a power off (e.g. message history), on the contacts filesystem
   bool saveUIData(const char* filename, const uint8_t* head, int head_len, const uint8_t* body, int body_len);
   int loadUIData(const char* filename, uint8_t* dest, int max_len, int offset = 0);   // -1 = missing
@@ -320,6 +330,23 @@ private:
   void logOfflineTake();
   void flushOfflineTakes();
   bool _tx_allowed;
+#ifdef BACK_ADVERT
+  unsigned long _back_repeater_heard;   // millis a repeater was last heard with no hop, 0 = not yet
+  unsigned long _back_advert_at;        // millis of the last "I'm back" advert, 0 = none yet
+  unsigned long _back_boot_advert;      // millis: the advert after start-up is due, 0 = sent
+  unsigned long _mail_window_until;     // millis: direct messages with no hop now come from a mailbox
+  int _mail_count;
+  bool sendBackAdvert();
+  void backAdvertLoop();
+#endif
+#ifdef TELEMETRY_HISTORY
+  TelemetryHistory _history;
+  unsigned long _history_next, _history_save_at;   // millis
+  uint32_t _history_rx, _history_tx, _history_air;
+  void historyLoop();
+  void loadHistory();
+  bool saveHistory();
+#endif
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   char cli_command[80];
   char reply_buf[166];

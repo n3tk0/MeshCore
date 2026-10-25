@@ -147,4 +147,17 @@ inline int accelSteps(unsigned long since_prev_ms, bool same_direction) {
   return 1;
 }
 
+// quiet hours (Settings > Messages > Quiet): 0 = off, else one of these spans of local time
+#define QUIET_PRESETS 6
+static const uint8_t QUIET_FROM[QUIET_PRESETS] = { 0, 22, 23, 0, 22, 23 };
+static const uint8_t QUIET_TO[QUIET_PRESETS]   = { 0,  7,  7, 7,  6,  6 };
+
+// local: local time in seconds (localTime()); the span may wrap past midnight
+inline bool quietNow(uint32_t local, uint8_t preset) {
+  if (preset == 0 || preset >= QUIET_PRESETS) return false;
+  int h = (int)((local % 86400) / 3600);
+  int from = QUIET_FROM[preset], to = QUIET_TO[preset];
+  return from <= to ? (h >= from && h < to) : (h >= from || h < to);
+}
+
 }  // namespace ui

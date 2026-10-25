@@ -131,6 +131,32 @@ public:
   }
   bool takeDirty() { bool d = _dirty; _dirty = false; return d; }
 
+  // Hours until the battery is empty, from how fast its percentage fell over the last few hours
+  // (a least-squares line through the 10-minute samples). -1: not known (under 2 h of samples,
+  // charging, or hardly falling). A rise of more than 2 % between two samples (a charger) starts over.
+  int hoursLeft(int window = 36) const {
+    int n = count(0), first = n - window < 0 ? 0 : n - window;
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    int k = 0, last = -1, last_pct = -1;
+    for (int i = first; i < n; i++) {
+      int16_t p = at(0, i)->v[TH_F_BATT_PCT];
+      if (p == TH_NONE) continue;
+      if (last_pct >= 0 && p > last_pct + 2) { sx = sy = sxx = sxy = 0; k = 0; }   // charged: only after it
+      sx += i; sy += p; sxx += (double)i * i; sxy += (double)i * p;
+      k++;
+      last = i;
+      last_pct = p;
+    }
+    if (k < 12 || last < 0) return -1;
+    double den = k * sxx - sx * sx;
+    if (den <= 0) return -1;
+    double slope = (k * sxy - sx * sy) / den;           // % per sample (10 min)
+    double per_hour = -slope * (60 / TH_DAY_MINS);
+    if (per_hour < 0.2) return -1;                     // hardly falling: no honest estimate
+    double h = last_pct / per_hour;
+    return h > 999 ? 999 : (int)h;
+  }
+
   // Request (after the request type byte): ring(1) field(1) start(2 LE, from the oldest) max(1).
   // Reply: ring(1) field(1) total(2) start(2) n(1) last_time(4) interval_mins(1) values(n x int16 LE).
   // Returns the reply length (0 = bad request).

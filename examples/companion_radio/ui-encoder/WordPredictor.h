@@ -14,12 +14,26 @@
   #define PREDICT_USER_WORDS 128   // learned words kept on flash (names, slang: not in the dictionary)
 #endif
 #define PREDICT_MAX_WORD 24   // encoded bytes (one per letter)
+#ifndef PREDICT_PAIRS
+  #define PREDICT_PAIRS 192      // "word -> next word" pairs from sent messages, kept on flash (~3.5 KB)
+#endif
+#define PREDICT_PAIR_WORD 16     // the next word, encoded
+
+struct WordPair {
+  uint16_t prev;                         // hash of the encoded word before
+  uint8_t next[PREDICT_PAIR_WORD + 1];   // encoded, NUL ended
+};
 
 class WordPredictor {
   uint8_t _recent[PREDICT_RECENT_WORDS][PREDICT_MAX_WORD + 1];   // most recent first, encoded
   uint8_t _user[PREDICT_USER_WORDS][PREDICT_MAX_WORD + 1];       // learned, most recently used first
   int _num_user;
   bool _user_dirty;
+  WordPair _pairs[PREDICT_PAIRS];        // most recently used first
+  int _num_pairs;
+  bool _pairs_dirty;
+
+  void learnPair(const uint8_t* prev, int prev_len, const uint8_t* next, int next_len);
 
 public:
   WordPredictor();
@@ -41,4 +55,13 @@ public:
   int exportUser(uint8_t* buf, int max_len);
   void importUser(const uint8_t* buf, int len);
   bool inDictionary(const char* word) const;
+
+  // the word that most recently followed 'prev' in a sent message (lowercase UTF-8), false if none
+  bool suggestNext(const char* prev, char* word, size_t word_size) const;
+  int pairCount() const { return _num_pairs; }
+  bool pairsDirty() const { return _pairs_dirty; }
+  void markPairsSaved() { _pairs_dirty = false; }
+  // file image: [prev hash 2 LE][len 1][letters] per pair
+  int exportPairs(uint8_t* buf, int max_len);
+  void importPairs(const uint8_t* buf, int len);
 };
