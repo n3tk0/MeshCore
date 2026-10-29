@@ -160,6 +160,8 @@ def C(ref, val, x, y, a, b, lcsc, fp=C0805):
     P(ref, "Device:C", val, x, y, {"1": a, "2": b}, fp, lcsc)
 
 C10U = "C15850"     # 10uF 25V X5R 0805
+C10U50 = "C13585"   # 10uF 50V X5R 1206 (VBUS/PMID: derating at 25 V)
+C1206 = "Capacitor_SMD:C_1206_3216Metric"
 C100N = "C14663"    # 100nF 50V X7R 0603
 C47N = "C1622"      # 47nF 50V 0603
 C4U7 = "C1779"      # 4.7uF 25V 0805
@@ -170,9 +172,9 @@ P("J1", "Connector_Generic:Conn_01x02", "SOLAR", 20, 35, {"1": "SOLAR_IN", "2": 
 P("J2", "Connector_Generic:Conn_01x02", "VIN2 5-20V", 20, 55, {"1": "VIN2_IN", "2": "GND"}, CONN2)
 P("D1", "Device:D_Schottky", "SS34", 45, 30, {"2": "SOLAR_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C8678")
 P("D2", "Device:D_Schottky", "SS34", 45, 50, {"2": "VIN2_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C8678")
-P("D3", "xiao_solar:SMBJ24A-C87268", "SMBJ24A", 65, 40, {"1": "VBUS", "2": "GND"}, "xiao_solar:SMB_L4.6-W3.6-LS5.3-RD", "C87268")
-C("C1", "10u/25V", 78, 40, "VBUS", "GND", C10U)
-C("C2", "10u/25V", 88, 40, "VBUS", "GND", C10U)
+P("D3", "xiao_solar:SMBJ24A-C87268", "SMBJ24A", 65, 40, {"1": "VBUS", "2": "GND"}, "xiao_solar:SMB_L4.6-W3.6-LS5.3-RD", "C19077578")
+C("C1", "10u/50V", 78, 40, "VBUS", "GND", C10U50, C1206)
+C("C2", "10u/50V", 88, 40, "VBUS", "GND", C10U50, C1206)
 C("C3", "100n", 98, 40, "VBUS", "GND", C100N, C0603)
 T(15, 68, "SS34 = OR на двата входа + защита от обратна полярност. VAC1=VAC2=VBUS, ACDRV към GND (без ACFET).", 1.27)
 
@@ -189,9 +191,9 @@ P("L1", "xiao_solar:FNR4030S2R2MT", "2.2uH 3.2A", 125, 100, {"1": "SW1", "2": "S
   "xiao_solar:IND-SMD_L4.0-W4.0_FNR40XXS", "C167869")
 C("C4", "47n", 125, 112, "BTST1", "SW1", C47N, C0603)
 C("C5", "47n", 135, 112, "BTST2", "SW2", C47N, C0603)
-C("C6", "10u/25V", 110, 140, "PMID", "GND", C10U)
-C("C7", "10u/25V", 118, 140, "PMID", "GND", C10U)
-C("C8", "10u/25V", 126, 140, "PMID", "GND", C10U)
+C("C6", "10u/50V", 110, 140, "PMID", "GND", C10U50, C1206)
+C("C7", "10u/50V", 118, 140, "PMID", "GND", C10U50, C1206)
+C("C8", "10u/50V", 126, 140, "PMID", "GND", C10U50, C1206)
 C("C9", "100n", 134, 140, "PMID", "GND", C100N, C0603)
 C("C10", "4.7u/25V", 142, 140, "REGN", "GND", C4U7)
 R("R1", "4.7k 1%", 150, 140, "PROG", "GND", "C23162")
@@ -207,20 +209,22 @@ C("C18", "10u/25V", 166, 160, "BAT", "GND", C10U)
 R("R2", "5.1k 1%", 160, 100, "REGN", "TS", "C23186")
 R("R3", "30k 1%", 160, 115, "TS", "GND", "C22984")
 P("J3", "Connector_Generic:Conn_01x02", "NTC 10k (103AT)", 175, 108, {"1": "TS", "2": "GND"}, CONN2)
-# CE: pulled high (charging off) until firmware drives D0 high
-R("R4", "100k", 30, 160, "REGN", "CE", "C25803")
-P("Q1", "Transistor_FET:BSS138", "AO3400A", 40, 170, {"1": "CHG_EN", "2": "GND", "3": "CE"}, SOT23, "C20917")
-R("R5", "100k", 25, 180, "CHG_EN", "GND", "C25803")
+# CE (active low) on D0. JP2 picks what R4 does while D0 is not driven (Xiao off/resetting):
+# 1-2 (default, Li-ion) pull-down = charges without the Xiao, on BQ defaults 4.2 V / 1 A after a POR;
+# 2-3 (LiFePO4) pull-up to 3V3 = charges only after firmware wrote VREG 3.6 V and drives D0 low.
+R("R4", "100k", 30, 160, "CE_PULL", "CE", "C25803")
+P("JP2", "Jumper:SolderJumper_3_Bridged12", "CE: 1-2 Li-ion / 2-3 LiFePO4", 30, 175,
+  {"1": "GND", "2": "CE_PULL", "3": "3V3"}, "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm")
 # STAT LED (only lit while charging, firmware can disable with DIS_STAT)
 R("R6", "2.2k", 55, 160, "REGN", "LED_STAT", "C4190")
 P("D4", "Device:LED", "green", 55, 175, {"1": "STAT", "2": "LED_STAT"}, "LED_SMD:LED_0805_2012Metric", "C2297")
 R("R7", "10k", 70, 160, "3V3", "INT", "C25804")
 P("TP1", "Connector:TestPoint", "INT", 80, 165, {"1": "INT"}, "TestPoint:TestPoint_Pad_D1.0mm")
 P("TP2", "Connector:TestPoint", "QON (to GND = wake)", 90, 165, {"1": "QON"}, "TestPoint:TestPoint_Pad_D1.0mm")
-T(15, 192, "CE: R4 държи зареждането спряно; фърмуерът пуска D0 (CHG_EN) едва след запис на VREG. Watchdog off. D+/D- не се ползват.", 1.27)
+T(15, 192, "CE: JP2 1-2 (Li-ion) зарежда и без Xiao; 2-3 (LiFePO4) само след запис на VREG и D0=0. Watchdog off. D+/D- не се ползват.", 1.27)
 
 # ---- 3. Battery / BMS --------------------------------------------------------
-T(15, 205, "3. БАТЕРИЯ 1S (Li-ion по подразбиране, LiFePO4 с настройка): ship FET + DW01A/FS8205A", 2.0)
+T(15, 205, "3. БАТЕРИЯ 1S (Li-ion по подразбиране, LiFePO4 с настройка): ship FET + DW01A/HJ8205", 2.0)
 P("J4", "Connector_Generic:Conn_01x02", "BATTERY", 20, 230, {"1": "BATT+", "2": "BATT-"}, CONN2)
 P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 50, 225, {"1": "SDRV", "2": "BAT", "3": "BATT+"}, SOT23, "C20917")
 R("R8", "100", 70, 225, "BATT+", "BATP", "C22775")
@@ -230,16 +234,16 @@ P("U2", "xiao_solar:DW01A_C351410", "DW01A", 130, 250,
   {"1": "DW_OD", "2": "DW_CS", "3": "DW_OC", "4": None, "5": "DW_VCC", "6": "BATT-"},
   "xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL", "C351410")
 R("R10", "1k", 160, 255, "DW_CS", "GND", "C21190")
-P("Q3", "xiao_solar:FS8205A_C2830320", "FS8205A", 175, 235,
+P("Q3", "xiao_solar:FS8205A_C2830320", "HJ8205", 175, 235,
   {"1": "BATT-", "2": "FS_D", "3": "GND", "4": "DW_OC", "5": "FS_D", "6": "DW_OD"},
-  "xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL", "C2830320")
+  "xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL", "C20069150")
 T(15, 270, "Q2: D към батерията, S към BAT; в shutdown (SDRV_CTRL=01, 0.5 uA) диодът на Q2 спира разреждането,", 1.27)
-T(15, 274, "събужда се само когато се появи напрежение от панела. DW01A: 2.4 V / 4.3 V резерв, FS8205A в минуса.", 1.27)
+T(15, 274, "събужда се само когато се появи напрежение от панела. DW01A: 2.4 V / 4.3 V резерв, HJ8205 в минуса.", 1.27)
 
 # ---- 4. XIAO + Wio ----------------------------------------------------------------
 T(205, 15, "4. XIAO nRF52840 + Wio-SX1262 (пинове като variants/xiao_nrf52)", 2.0)
 P("U3", "custom:XIAO_nRF52840", "XIAO nRF52840", 235, 45,
-  {"1": "CHG_EN", "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
+  {"1": "CE", "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
    "6": "LORA_RXEN", "7": "SCL", "14": "XIAO_5V", "13": "GND", "12": "3V3",
    "11": "SPI_MOSI", "10": "SPI_MISO", "9": "SPI_SCK", "8": "SDA"}, "xiao_solar:XIAO_14P_2.54_21x17.8mm")
 P("U4", "custom:Wio-SX1262_for_XIAO", "Wio-SX1262 for XIAO", 300, 45,
@@ -272,20 +276,23 @@ for n in range(9, 23):
 P("U6", "xiao_solar:PCA9685PW,118", "PCA9685PW", 240, 215, pca,
   "xiao_solar:TSSOP-28_L9.7-W4.4-P0.65-LS6.4-TL", "C2678753")
 C("C24", "100n", 220, 245, "3V3", "GND", C100N, C0603)
-P("JP1", "Jumper:SolderJumper_3_Bridged12", "VLOAD: 1-2 SYS / 2-3 LOAD_IN", 285, 172,
-  {"1": "SYS", "2": "VLOAD", "3": "LOAD_IN"}, "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm")
-P("J6", "Connector_Generic:Conn_01x02", "LOAD_IN до 12V", 265, 180, {"1": "LOAD_IN_RAW", "2": "GND"}, CONN2)
-# reverse polarity: P-FET, D to connector, S to load side; Vgs = -0.69*Vin (-3.4 V at 5 V, -8.3 V at 12 V)
-P("Q7", "Device:Q_PMOS_GSD", "AO3401A", 270, 195, {"1": "LOAD_G", "2": "LOAD_IN", "3": "LOAD_IN_RAW"}, SOT23, "C15127")
-R("R19", "22k", 262, 205, "LOAD_IN", "LOAD_G", "C31850")
-R("R20", "10k", 275, 207, "LOAD_G", "GND", "C25804")
-C("C25", "10u/25V", 300, 172, "VLOAD", "GND", C10U)
+# Loads run from SYS through a ferrite bead; the bulk caps sit at the load end so the PWM
+# pulse current circulates locally. Load returns use PGND, tied to GND in one point (NT1).
+# same part as L1 (one JLC extended slot instead of two); 2.2 uH + 44 uF = LC filter ~16 kHz
+P("FB1", "xiao_solar:FNR4030S2R2MT", "2.2uH 3.2A", 285, 172, {"1": "SYS", "2": "VLOAD"},
+  "xiao_solar:IND-SMD_L4.0-W4.0_FNR40XXS", "C167869")
+C("C25", "22u/25V", 300, 172, "VLOAD", "PGND", "C12891", C1206)
+C("C26", "22u/25V", 310, 172, "VLOAD", "PGND", "C12891", C1206)
+C("C27", "100n", 320, 172, "VLOAD", "PGND", C100N, C0603)
+P("NT1", "Device:NetTie_2", "PGND-GND", 265, 190, {"1": "PGND", "2": "GND"}, "NetTie:NetTie-2_SMD_Pad0.5mm")
 for i, (name, x) in enumerate([("OUT1 heater", 300), ("OUT2 fan", 335), ("OUT3 spare", 370)]):
     k = i + 1
-    R("R%d" % (13 + 2 * i), "100", x, 200, "PWM%d" % k, "G%d" % k, "C22775")
-    R("R%d" % (14 + 2 * i), "100k", x - 8, 222, "G%d" % k, "GND", "C25803")
+    # 1k gate resistor slows the edges (less RF hash near the radio)
+    R("R%d" % (13 + 2 * i), "1k", x, 200, "PWM%d" % k, "G%d" % k, "C21190")
+    R("R%d" % (14 + 2 * i), "100k", x - 8, 222, "G%d" % k, "PGND", "C25803")
     P("Q%d" % (4 + i), "Transistor_FET:BSS138", "AO3400A", x + 5, 215,
-      {"1": "G%d" % k, "2": "GND", "3": "OUT%d-" % k}, SOT23, "C20917")
+      {"1": "G%d" % k, "2": "PGND", "3": "OUT%d-" % k}, SOT23, "C20917")
+    C("C%d" % (28 + i), "100n", x + 35, 215, "OUT%d+" % k, "OUT%d-" % k, C100N, C0603)
     P("F%d" % k, "Device:Polyfuse", "2A/16V", x + 15, 185, {"1": "VLOAD", "2": "OUT%d+" % k},
       "Fuse:Fuse_1206_3216Metric", "C2685749")
     P("D%d" % (6 + i), "Device:D_Schottky", "B5819W", x + 25, 205, {"1": "OUT%d+" % k, "2": "OUT%d-" % k},
@@ -294,10 +301,11 @@ for i, (name, x) in enumerate([("OUT1 heater", 300), ("OUT2 fan", 335), ("OUT3 s
       {"1": "OUT%d+" % k, "2": "OUT%d-" % k}, CONN2)
 
 # ---- power flags / mechanics ---------------------------------------------------------
-for i, net in enumerate(["GND", "VBUS", "SYS", "BATT-", "VLOAD", "BAT", "BATT+", "REGN", "PMID", "XIAO_5V"]):
+for i, net in enumerate(["GND", "VBUS", "SYS", "BATT-", "VLOAD", "BAT", "BATT+", "REGN", "PMID", "XIAO_5V", "PGND"]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", 330 + (i % 5) * 15, 120 + (i // 5) * 15, {"1": net})
-for i in range(2):
-    P("H%d" % (i + 1), "Mechanical:MountingHole", "M2.5", 360 + i * 15, 160, {}, "MountingHole:MountingHole_2.7mm_M2.5")
+for i in range(4):
+    P("H%d" % (i + 1), "Mechanical:MountingHole", "M2/M2.5", 360 + (i % 2) * 15, 160 + (i // 2) * 12, {},
+      "xiao_solar:MountingHole_2.8mm_Keepout6mm")
 
 # ---------------------------------------------------------------- writer
 

@@ -6,7 +6,7 @@ J4,BATTERY,PinHeader_1x02_P2.54mm_Vertical
 U3,XIAO nRF52840,XIAO_14P_2.54_21x17.8mm
 U4,Wio-SX1262 for XIAO,XIAO_14P_2.54_21x17.8mm
 J5,I2C rail,PinHeader_1x04_P2.54mm_Vertical
-J6,LOAD_IN до 12V,PinHeader_1x02_P2.54mm_Vertical
+NT1,PGND-GND,NetTie-2_SMD_Pad0.5mm
 J7,OUT1 heater,PinHeader_1x02_P2.54mm_Vertical
 J8,OUT2 fan,PinHeader_1x02_P2.54mm_Vertical
 J9,OUT3 spare,PinHeader_1x02_P2.54mm_Vertical
