@@ -274,7 +274,11 @@ P("U6", "xiao_solar:PCA9685PW,118", "PCA9685PW", 240, 215, pca,
 C("C24", "100n", 220, 245, "3V3", "GND", C100N, C0603)
 P("JP1", "Jumper:SolderJumper_3_Bridged12", "VLOAD: 1-2 SYS / 2-3 LOAD_IN", 285, 172,
   {"1": "SYS", "2": "VLOAD", "3": "LOAD_IN"}, "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm")
-P("J6", "Connector_Generic:Conn_01x02", "LOAD_IN до 12V", 265, 180, {"1": "LOAD_IN", "2": "GND"}, CONN2)
+P("J6", "Connector_Generic:Conn_01x02", "LOAD_IN до 12V", 265, 180, {"1": "LOAD_IN_RAW", "2": "GND"}, CONN2)
+# reverse polarity: P-FET, D to connector, S to load side; Vgs = -0.69*Vin (-3.4 V at 5 V, -8.3 V at 12 V)
+P("Q7", "Device:Q_PMOS_GSD", "AO3401A", 270, 195, {"1": "LOAD_G", "2": "LOAD_IN", "3": "LOAD_IN_RAW"}, SOT23, "C15127")
+R("R19", "22k", 262, 205, "LOAD_IN", "LOAD_G", "C31850")
+R("R20", "10k", 275, 207, "LOAD_G", "GND", "C25804")
 C("C25", "10u/25V", 300, 172, "VLOAD", "GND", C10U)
 for i, (name, x) in enumerate([("OUT1 heater", 300), ("OUT2 fan", 335), ("OUT3 spare", 370)]):
     k = i + 1
