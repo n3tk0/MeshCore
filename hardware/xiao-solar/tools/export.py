@@ -33,10 +33,16 @@ def gerbers():
             zf.write(os.path.join(GERB, f), f)
     print("wrote", z)
 
+# JLC's part models are drawn in EasyEDA's orientation. These KiCad library footprints are
+# rotated against it (checked pad by pad against the EasyEDA footprint of the LCSC part):
+# SOT-23 pin 1 sits top left in KiCad and bottom right in EasyEDA; the 0805 LED has pad 1
+# (cathode) on the other side. Footprints imported with easyeda2kicad need no correction.
+ROT_FIX = {"SOT-23": 180, "LED_0805_2012Metric": 180}
+
 def cpl():
     """KiCad position file -> JLC CPL (Designator, Mid X, Mid Y, Layer, Rotation).
     Only parts with an LCSC number (the ones JLC places) are kept."""
-    jlc = {p["ref"] for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
+    jlc = {p["ref"]: ROT_FIX.get(p["fp"].split(":")[-1], 0) for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
     tmp = os.path.join(OUT, "pos.csv")
     run("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",
         "--use-drill-file-origin", "-o", tmp, PCB)
@@ -49,7 +55,7 @@ def cpl():
         for r in rows:
             if r["Ref"] in jlc:
                 w.writerow([r["Ref"], r["PosX"] + "mm", r["PosY"] + "mm",
-                            "Top" if r["Side"] == "top" else "Bottom", r["Rot"]])
+                            "Top" if r["Side"] == "top" else "Bottom", "%g" % ((float(r["Rot"]) + jlc[r["Ref"]]) % 360)])
     print("wrote", out)
 
 if __name__ == "__main__":
