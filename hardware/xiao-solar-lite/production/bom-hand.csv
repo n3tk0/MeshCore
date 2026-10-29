@@ -1,5 +1,5 @@
 Designator,Value,Footprint
 J1,SOLAR,PinHeader_1x02_P2.54mm_Vertical
 J4,BATTERY,PinHeader_1x02_P2.54mm_Vertical
-J3,OUT (to Xiao 5V),PinHeader_1x02_P2.54mm_Vertical
-J5,I2C + CE,PinHeader_1x05_P2.54mm_Vertical
+U2,XIAO + Wio stack,XIAO_14P_2.54_21x17.8mm
+J5,I2C sensors,PinHeader_1x04_P2.54mm_Vertical

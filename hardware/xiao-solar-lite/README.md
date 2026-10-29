@@ -1,23 +1,27 @@
-# xiao-solar-lite: solar charger module (BQ25798, I2C)
+# xiao-solar-lite: solar charger layer for XIAO + Wio-SX1262
 
-The power part of [`../xiao-solar`](../xiao-solar) as a small module of its own, for any
-controller with I2C: solar input, BQ25798 MPPT buck-boost charger, ship FET, SYS output and
-an I2C header. 30.5 × 28.5 mm, 2 layers, all SMD parts on the top side (JLC assembly), no
-mounting holes.
+The power part of [`../xiao-solar`](../xiao-solar) as the third layer of the standard
+XIAO nRF52840 + Wio-SX1262 sandwich: this board at the bottom, Wio in the middle, XIAO on top
+(USB and buttons stay reachable). Solar input, BQ25798 MPPT buck-boost charger, ship FET.
+23 × 53 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
 
-Status v0.1: schematic, routed PCB, Gerber, JLC BOM/CPL. Not built or tested.
+The stack sits over the 14 XIAO holes at the USB end; only flat parts (two 0603 pull-ups) are
+under it, since the header plastic leaves ~2.5 mm and the inductor is 3 mm tall. The charger
+is below the stack. Long pin headers go through all three boards.
 
-## Connections (2.54 mm holes)
-| Header | Pins | Notes |
+Status v0.2: schematic, routed PCB, Gerber, JLC BOM/CPL. Not built or tested.
+
+## Connections
+| Where | Pins | Notes |
 |---|---|---|
-| J1 SOLAR | + / − | 5–22 V panel (Voc up to 25 V), SS34 against reverse polarity, SMBJ24A TVS |
+| XIAO stack | D0 = CE, D6 = SCL, D7 = SDA, 3V3, GND, 5V | 5V gets SYS (3.5–4.4 V) through B5819W, so the XIAO USB cannot feed SYS. Other pins pass through. **No battery on the XIAO itself.** |
+| J1 SOL | + / − | 5–22 V panel (Voc up to 25 V), SS34 against reverse polarity, SMBJ24A TVS |
 | J4 BAT | + / − | 1S cell **with its own protection** (no DW01A on this board) |
-| J3 OUT | + / − | SYS (3.5–4.4 V) through B5819W, e.g. to the Xiao 5V pin; the diode stops a controller's USB from feeding SYS |
-| J5 | SCL SDA 3V3 GND CE | 3V3 comes from the controller (I2C pull-ups 4.7k and JP2 only); CE to a GPIO (Xiao: D0) |
+| J5 | SCL SDA 3V3 GND | external I2C sensors (4.7k pull-ups on board, 3V3 from the XIAO) |
 
 ## Charger settings
-- **CE / JP2:** 1-2 (default) = Li-ion, charges on its own with the BQ defaults (4.2 V, 1 A) even
-  without a controller; 2-3 = LiFePO4, the pull-up to 3V3 holds charging off until firmware has
+- **CE / JP2:** CE is XIAO D0. 1-2 (default) = Li-ion, charges on its own with the BQ defaults
+  (4.2 V, 1 A) even while the XIAO is off; 2-3 = LiFePO4, the pull-up to 3V3 holds charging off until firmware has
   set VREG 3.6 V and pulls CE low.
 - **No NTC:** TS is held at 59.5 % of REGN (5.1k/7.5k), the value of a 10k NTC at 25 °C, so the
   TS window never stops charging. Firmware may also set TS_IGNORE.
@@ -33,7 +37,8 @@ a preferred extended part (no fee), everything else is basic. Headers are hand-s
 ## Files and tools
 - `tools/gen_sch.py`: schematic + BOM; reuses the writer and the symbol/footprint library of `../xiao-solar`.
 - `tools/gen_pcb.py`: placement. The charger cluster keeps the relative placement and hand routes
-  of the xiao-solar board (`preroute_charger`).
+  of the xiao-solar board (`preroute_charger`); keepouts hold signal tracks off the L1 switch node
+  and 0.4 mm off the board edge.
 - `tools/run.py <tool>` runs a shared tool from `../xiao-solar/tools` on this board:
   `FREEROUTING_JAR=… python3 tools/run.py route`, then `python3 tools/run.py export`.
 - `production/`: Gerber zip, `bom-jlc.csv`, `cpl-jlc.csv`, schematic PDF, board image, DRC report.

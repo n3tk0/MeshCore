@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generates xiao-solar-lite.kicad_sch: the power part of the xiao-solar board on its own
-(solar input, BQ25798 MPPT charger, ship FET, SYS output, I2C + CE header), no BMS/NTC.
+(solar input, BQ25798 MPPT charger, ship FET), no BMS/NTC, made as the third layer under the
+XIAO nRF52840 + Wio-SX1262 stack: SYS feeds the Xiao 5V pin, CE/I2C use D0/D6/D7.
 
 The writer and the part helpers come from ../xiao-solar/tools/gen_sch.py, so both boards
 share one symbol library and one way of drawing the schematic.
@@ -18,7 +19,7 @@ del base.parts[:], base.texts[:]
 base.ROOT = ROOT
 base.PROJECT = "xiao-solar-lite"
 base.ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0002"
-base.TITLE = "Solar charger module lite (BQ25798, I2C)"
+base.TITLE = "Solar charger layer for XIAO + Wio (BQ25798)"
 base.REV = "0.1"
 P, R, C, T = base.P, base.R, base.C, base.T
 parts, ROOT_UUID = base.parts, base.ROOT_UUID
@@ -62,9 +63,9 @@ C("C18", "10u/25V", 166, 160, "BAT", "GND", C10U)
 # so charging is never blocked by the TS window (firmware may also set TS_IGNORE).
 R("R2", "5.1k 1%", 160, 100, "REGN", "TS", "C23186")
 R("R3", "7.5k 1%", 160, 115, "TS", "GND", "C23234")
-# CE (active low) from the header. JP2 picks what R4 does while nobody drives CE:
+# CE (active low) on Xiao D0. JP2 picks what R4 does while nobody drives CE:
 # 1-2 (default, Li-ion) pull-down = charges on its own with the BQ defaults (4.2 V / 1 A);
-# 2-3 (LiFePO4) pull-up to the header 3V3 = charges only after firmware set VREG and pulls CE low.
+# 2-3 (LiFePO4) pull-up to the Xiao 3V3 = charges only after firmware set VREG and pulls CE low.
 R("R4", "100k", 30, 160, "CE_PULL", "CE", "C25803")
 P("JP2", "Jumper:SolderJumper_3_Bridged12", "CE: 1-2 Li-ion / 2-3 LiFePO4", 30, 175,
   {"1": "GND", "2": "CE_PULL", "3": "3V3"}, "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm")
@@ -79,18 +80,20 @@ P("J4", "Connector_Generic:Conn_01x02", "BATTERY", 20, 230, {"1": "BATT+", "2": 
 P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 50, 225, {"1": "SDRV", "2": "BAT", "3": "BATT+"}, base.SOT23, "C20917")
 R("R8", "100", 70, 225, "BATT+", "BATP", "C22775")
 
-# ---- 4. Outputs ------------------------------------------------------------------------
-T(205, 15, "4. ИЗХОД SYS (3.5-4.4 V, през B5819W) и I2C header", 2.0)
-P("D5", "Device:D_Schottky", "B5819W", 235, 40, {"2": "SYS", "1": "VOUT"}, "Diode_SMD:D_SOD-123", "C8598")
-C("C20", "10u/25V", 255, 45, "VOUT", "GND", C10U)
-P("J3", "Connector_Generic:Conn_01x02", "OUT (to Xiao 5V)", 275, 40, {"1": "VOUT", "2": "GND"}, CONN2)
-T(205, 60, "D5: USB на контролера не може да захрани SYS обратно.", 1.27)
+# ---- 4. XIAO stack + I2C -------------------------------------------------------------------
+T(205, 15, "4. ТРЕТИ СЛОЙ ПОД XIAO + Wio-SX1262 (общи 14 пина, пинове като variants/xiao_nrf52)", 2.0)
+P("U2", "custom:XIAO_nRF52840", "XIAO + Wio stack", 235, 45,
+  {"1": "CE", "2": None, "3": None, "4": None, "5": None, "6": None, "7": "SCL",
+   "14": "VOUT", "13": "GND", "12": "3V3", "11": None, "10": None, "9": None, "8": "SDA"},
+  "xiao_solar:XIAO_14P_2.54_21x17.8mm")
+P("D5", "Device:D_Schottky", "B5819W", 275, 40, {"2": "SYS", "1": "VOUT"}, "Diode_SMD:D_SOD-123", "C8598")
+C("C20", "10u/25V", 290, 45, "VOUT", "GND", C10U)
+T(205, 70, "D5: SYS към пина 5V на Xiao; USB на Xiao не може да захрани SYS обратно. На Xiao не се слага батерия.", 1.27)
+T(205, 74, "CE = D0, SCL = D6, SDA = D7; 3V3 идва от регулатора на Xiao (само за pull-up и JP2).", 1.27)
 R("R11", "4.7k", 215, 90, "3V3", "SCL", "C23162")
 R("R12", "4.7k", 225, 90, "3V3", "SDA", "C23162")
-P("J5", "Connector_Generic:Conn_01x05", "I2C + CE", 245, 110,
-  {"1": "SCL", "2": "SDA", "3": "3V3", "4": "GND", "5": "CE"},
-  "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical")
-T(205, 130, "3V3 идва от контролера (само за pull-up и JP2). CE: свържи към D0 за LiFePO4 / изключване на заряда.", 1.27)
+P("J5", "Connector_Generic:Conn_01x04", "I2C sensors", 245, 110,
+  {"1": "SCL", "2": "SDA", "3": "3V3", "4": "GND"}, base.CONN4)
 
 for i, net in enumerate(["GND", "VBUS", "SYS", "BAT", "BATT+", "REGN", "PMID", "VOUT", "3V3"]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", 300 + (i % 5) * 15, 160 + (i // 5) * 15, {"1": net})
