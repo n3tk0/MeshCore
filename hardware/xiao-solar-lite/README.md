@@ -3,13 +3,19 @@
 The power part of [`../xiao-solar`](../xiao-solar) as the third layer of the standard
 XIAO nRF52840 + Wio-SX1262 sandwich: this board at the bottom, Wio in the middle, XIAO on top
 (USB and buttons stay reachable). Solar input, BQ25798 MPPT buck-boost charger, ship FET.
-23 × 53 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
+23 × 57 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
 
 The stack sits over the 14 XIAO holes at the USB end; only flat parts (two 0603 pull-ups) are
 under it, since the header plastic leaves ~2.5 mm and the inductor is 3 mm tall. The charger
 is below the stack. Long pin headers go through all three boards.
 
-Status v0.2: schematic, routed PCB, Gerber, JLC BOM/CPL. Not built or tested.
+Status v0.3: schematic, routed PCB, Gerber, JLC BOM/CPL. Not built or tested.
+
+v0.3 (review 2026-10-29): charger zone redone after the BQ25798 layout guide (SLUSDV2C 8.4.1):
+PMID, SYS, VBUS and BAT are copper areas, SW1/SW2 run short and wide to the inductor, the 100 nF
+PMID/SYS caps sit at the pins, BTST/REGN/GND leave through vias under the package. Cap counts as
+TI recommends (VBUS 2, PMID 3, SYS 5, BAT 2 × 10 µF), so the board grew by 4 mm. Small parts get
+thermal spokes to GND (easier hand rework), the charger power caps stay solid.
 
 ## Connections
 | Where | Pins | Notes |
@@ -28,6 +34,8 @@ Status v0.2: schematic, routed PCB, Gerber, JLC BOM/CPL. Not built or tested.
 - **Charge current:** up to 2 A (firmware sets ICHG; 2.2 µH 3.2 A inductor). PROG 4.7k = 750 kHz, 1S.
 - **STAT LED** (green) lights while charging; QON test pad TP2 to GND wakes the charger from ship mode.
 - **INT** is not brought out: firmware polls the status registers.
+- **Ship FET:** Q2 (AO3400A, S to BAT, D to the battery) is driven by SDRV only after firmware
+  sets SFET_PRESENT (REG0x14 bit 7); ship and shutdown modes need it.
 
 ## JLC
 19 BOM lines, 2 extended parts with a setup fee (BQ25798, FNR4030S2R2MT inductor); SMBJ24A is
@@ -36,9 +44,9 @@ a preferred extended part (no fee), everything else is basic. Headers are hand-s
 
 ## Files and tools
 - `tools/gen_sch.py`: schematic + BOM; reuses the writer and the symbol/footprint library of `../xiao-solar`.
-- `tools/gen_pcb.py`: placement. The charger cluster keeps the relative placement and hand routes
-  of the xiao-solar board (`preroute_charger`); keepouts hold signal tracks off the L1 switch node
-  and 0.4 mm off the board edge.
+- `tools/gen_pcb.py`: placement. The charger cluster (placement, power zones, hand routes) comes
+  from `../xiao-solar/tools/charger.py`, shared with the main board and rotated 270° here;
+  keepouts hold signal tracks off the L1 switch node and 0.4 mm off the board edge.
 - `tools/run.py <tool>` runs a shared tool from `../xiao-solar/tools` on this board:
   `FREEROUTING_JAR=… python3 tools/run.py route`, then `python3 tools/run.py export`.
 - `production/`: Gerber zip, `bom-jlc.csv`, `cpl-jlc.csv`, schematic PDF, board image, DRC report.

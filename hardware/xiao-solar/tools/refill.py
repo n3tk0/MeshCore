@@ -13,7 +13,7 @@ STEPS = {0.8: 0.5, 0.5: 0.3, 0.3: 0.25}
 def narrow(board, tmp):
     """Steps widened charger tracks down (0.8 -> 0.5 -> 0.3 -> 0.25 mm) wherever DRC
     reports a clearance problem near them, until nothing changes."""
-    nets = set(route.gen_pcb.NETCLASSES["PowerQFN"][4])
+    nets = set(route.gen_pcb.NETCLASSES["PowerQFN"][4]) | set(route.gen_pcb.NETCLASSES["Power"][4])
     for _ in range(4):
         board.BuildConnectivity()
         rep = route.drc(board, tmp)
@@ -25,7 +25,7 @@ def narrow(board, tmp):
         n = 0
         for t in board.GetTracks():
             w = round(pcbnew.ToMM(t.GetWidth()), 2)
-            if t.GetClass() != "PCB_TRACK" or t.GetNetname() not in nets or w not in STEPS:
+            if t.GetClass() != "PCB_TRACK" or t.IsLocked() or t.GetNetname() not in nets or w not in STEPS:
                 continue
             pts = [(round(pcbnew.ToMM(p.x), 2), round(pcbnew.ToMM(p.y), 2)) for p in (t.GetStart(), t.GetEnd())]
             if any(route._near_seg(b, pts) for b in bad):
@@ -78,7 +78,10 @@ def main():
     for z in board.Zones():
         if z.GetIsRuleArea():
             continue
-        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THT_THERMAL)
+        # GND pours: thermal spokes (parts in charger.SOLID override to solid);
+        # power zones: solid
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL if z.GetNetname() == "GND"
+                           else pcbnew.ZONE_CONNECTION_FULL)
         z.SetLocalClearance(pcbnew.FromMM(0.2))
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     tmp = "/tmp/claude-0/dangling.rpt" if os.path.isdir("/tmp/claude-0") else route.PCB + ".rpt"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Second Freerouting pass on the routed board: the existing copper goes into the DSN, so
-the router only has to finish the few connections the first pass left open. All tracks
-and vias are then replaced by the session result, and refill.py runs again.
+the router only has to finish the few connections the first pass left open. The routed
+tracks and vias are then replaced by the session result (hand-routed copper is kept), and refill.py runs again.
 
 Run: FREEROUTING_JAR=/path/freerouting-1.9.0.jar python3 tools/finish.py
 """
@@ -18,12 +18,16 @@ def main():
     dsn, ses = os.path.join(tmp, "xs.dsn"), os.path.join(tmp, "xs.ses")
     board = pcbnew.LoadBoard(route.PCB)
     before = board.GetConnectivity().GetUnconnectedCount(True)
+    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.ExportSpecctraDSN(board, dsn)
     dsn_classes.fix(dsn)
+    dsn_classes.add_zone_copper(board, dsn)
     subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "30"],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+    # the session leaves out the fixed (locked, hand-routed) wiring, so that stays on the board
     for t in list(board.GetTracks()):
-        board.Delete(t)
+        if not t.IsLocked():
+            board.Delete(t)
     print("ses: %d segments, %d vias" % route.import_ses(board, ses))
     board.Save(route.PCB)
     board = pcbnew.LoadBoard(route.PCB)

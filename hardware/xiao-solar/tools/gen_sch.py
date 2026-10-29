@@ -14,7 +14,7 @@ LOCAL = os.path.join(ROOT, "lib", "xiao_solar.kicad_sym")
 PROJECT = "xiao-solar"
 ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0001"
 TITLE = "Xiao nRF52840 + Wio-SX1262 solar board"
-REV = "0.2"
+REV = "0.3"
 
 def uid():
     return str(uuid.uuid4())

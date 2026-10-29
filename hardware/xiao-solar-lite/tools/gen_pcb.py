@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Builds xiao-solar-lite.kicad_pcb: placement, outline, net classes, GND pours.
-The charger cluster around U1 keeps the same relative placement and hand routes as the
-xiao-solar board (laid out per the BQ25798 layout guide), only moved and trimmed.
+The charger cluster is the one of the xiao-solar board (tools/charger.py there), turned.
 
 Run: python3 tools/gen_pcb.py, then python3 tools/run.py route (see README)
 """
@@ -16,43 +15,36 @@ import gen_sch  # noqa: E402
 _spec = importlib.util.spec_from_file_location(
     "xs_gen_pcb", os.path.join(ROOT, "..", "xiao-solar", "tools", "gen_pcb.py"))
 base = importlib.util.module_from_spec(_spec)
+SHARED = os.path.abspath(os.path.join(ROOT, "..", "xiao-solar", "tools"))
+if SHARED not in sys.path:
+    sys.path.append(SHARED)
 _spec.loader.exec_module(base)
+import charger  # noqa: E402
 mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "xiao-solar-lite"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 23.0, 53.0
+W, H = 23.0, 57.0
 
-UX, UY = 9.6, 31.5  # U1; the parts below are placed relative to it like on xiao-solar
-REL = {
-    "U1": (0, 0, 0), "L1": (0, -7.5, 0),
-    "C9": (-2.6, -3.4, 180), "C16": (2.6, -3.4, 0),
-    "C6": (-4.4, -7.0, 90), "C7": (-6.8, -7.0, 90),
-    "C11": (4.4, -7.0, 90), "C12": (6.8, -7.0, 90), "C13": (9.2, -7.0, 90),
-    "C4": (-6.4, -0.1, 90), "C10": (-4.6, 2.2, 180),
-    "C17": (4.6, -1.2, 0), "C18": (7.4, -1.2, 180), "R1": (6.4, 0.6, 0), "C5": (6.4, 2.2, 0),
-    "R2": (6.4, 3.8, 180), "R3": (6.4, 5.4, 0), "R4": (-0.5, 7.8, 0), "JP2": (-2.8, 7.8, 90),
-    "TP2": (-2.4, 5.0, 0),
-}
-PLACE = {r: (UX + x, UY + y, a) for r, (x, y, a) in REL.items()}
+# Charger cluster (../xiao-solar/tools/charger.py) turned by 270 degrees so its long side
+# runs down the board: inductor to the right, CE/I2C pins to the left, PMID end under the
+# stack, SYS/BAT end towards the connectors.
+CHARGER_FRAME = charger.Frame(11.0, 32.8, 270)
+PLACE = charger.place(CHARGER_FRAME, set(charger.PLACE))
 PLACE.update({
     # XIAO + Wio stack on top, USB end at the board edge; only flat parts under it
     "U2": (11.5, 10.5, 0), "R11": (11.5, 13.5, 0), "R12": (11.5, 15.5, 0),
-    # ship FET and BATP sense in the strip right of the BAT caps
-    "Q2": (21.1, 30.5, 90), "R8": (21.1, 34.3, 90),
-    # output diode at the SYS caps, cap right below the stack's 5V pin
-    "D5": (21.6, 24.2, 90), "C20": (21.6, 20.0, 90),
-    # below the charger: VBUS caps, output cap, STAT LED; then input diode and TVS
-    "C1": (3.3, 43.4, 0), "C3": (7.3, 43.4, 0),
-    "R6": (12.5, 43.4, 0), "D4": (15.7, 43.4, 0),
-    "D1": (3.7, 46.9, 180), "D3": (11.5, 47.0, 0),
-    # connectors along the bottom edge, pin 1 left; BAT at the right, under the ship FET
-    "J1": (2.3, 50.5, 90), "J5": (7.8, 50.5, 90), "J4": (18.2, 50.5, 90),
+    # output diode + cap right of the SYS caps, fed from the SYS copper between C12 and C13
+    "D5": (21.4, 42.45, 90), "C20": (21.4, 46.6, 270),
+    # input diode and TVS below the charger, connectors along the bottom edge (pin 1 left)
+    "D1": (3.7, 50.6, 180), "D3": (11.8, 50.7, 0),
+    "J1": (2.3, 54.5, 90), "J5": (7.8, 54.5, 90), "J4": (18.2, 54.5, 90),
 })
 
 NETCLASSES = {
-    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "SOLAR_IN", "VOUT"]),
-    "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["VBUS", "PMID", "SYS", "BAT", "SW1", "SW2"]),
+    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "SOLAR_IN", "VOUT", "VBUS", "SYS", "BAT", "PMID"]),
+    # SW nodes are copper zones at the charger; nothing else routes them.
+    "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["SW1", "SW2"]),
     "Supply": (0.4, 0.13, 0.6, 0.3, ["3V3", "GND"]),
 }
 
@@ -99,7 +91,7 @@ def build():
         board.Add(fp)
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
-    base.preroute_charger(board)
+    charger.preroute(board, CHARGER_FRAME)
     corners = [(0, 0), (W, 0), (W, H), (0, H)]
     for i in range(4):
         s = pcbnew.PCB_SHAPE(board)
@@ -119,25 +111,22 @@ def build():
         for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(ka)
-    # keep signal tracks away from the switch node: nothing between the L1 pads on F.Cu
-    # (the SW1/SW2 tracks enter that gap only below the pads) and nothing under L1 on B.Cu
-    lx, ly = PLACE["L1"][:2]
-    for lset, (x0, y0, x1, y1) in ((pcbnew.F_Cu, (lx - 0.65, ly - 2.5, lx + 0.65, ly + 1.6)),
-                                   (pcbnew.B_Cu, (lx - 2.6, ly - 2.3, lx + 2.6, ly + 2.3))):
-        ka = pcbnew.ZONE(board)
-        ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
-        ka.SetDoNotAllowTracks(True); ka.SetDoNotAllowVias(True); ka.SetDoNotAllowPads(False)
-        ka.SetDoNotAllowFootprints(False)
-        ka.SetLayer(lset)
-        ol = ka.Outline(); ol.NewOutline()
-        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
-            ol.Append(mm(OX + x), mm(OY + y))
-        board.Add(ka)
+    charger.add_zones(board, CHARGER_FRAME)
+    # SYS copper out between the C12/C13 GND pads to D5
+    z = pcbnew.ZONE(board)
+    z.SetLayer(pcbnew.F_Cu); z.SetNet(net("SYS")); z.SetAssignedPriority(1)
+    z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
+    z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
+    z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+    ol = z.Outline(); ol.NewOutline()
+    for (x, y) in [(17.0, 40.35), (21.9, 40.35), (21.9, 41.25), (17.0, 41.25)]:
+        ol.Append(mm(OX + x), mm(OY + y))
+    board.Add(z)
     for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
         z = pcbnew.ZONE(board)
         z.SetLayer(layer); z.SetNet(net("GND"))
         z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
-        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THT_THERMAL)
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
         z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
         z.SetThermalReliefGap(mm(0.3)); z.SetThermalReliefSpokeWidth(mm(0.4))
         ol = z.Outline(); ol.NewOutline()
@@ -153,7 +142,7 @@ def build():
     for ref, s in (("J1", "SOL + -"), ("J4", "BAT + -"), ("J5", "SCL SDA 3V3 GND")):
         x, y, _ = PLACE[ref]
         text(s, x + 1.27 * (3 if ref == "J5" else 1), y + 1.75, 0.55)
-    text("xiao-solar-lite v0.2", 11.5, 19.5, 0.7)
+    text("xiao-solar-lite v0.3", 11.5, 19.5, 0.7)
     return board
 
 def write_project():

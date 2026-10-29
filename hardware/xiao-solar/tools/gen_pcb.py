@@ -12,6 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import gen_sch  # noqa: E402  (builds the part list on import)
+import charger  # noqa: E402
 
 PROJECT = "xiao-solar"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
@@ -33,7 +34,7 @@ PLACE = {
     # modules, rotated so the USB / pin-1 end faces the left edge
     "U4": (11.5, 12.0, 90), "U3": (11.5, 35.0, 90),
     # between the modules: Xiao 5V feed and 3V3 decoupling
-    "D5": (5.5, 23.5, 0), "C20": (9.8, 23.5, 0), "C21": (13.9, 23.5, 0), "C22": (16.8, 23.5, 0),
+    "D5": (5.5, 23.5, 0), "C20": (9.8, 23.5, 0), "C21": (13.9, 23.5, 0), "C22": (17.1, 23.5, 0),
     # right column connectors (pin 1 at the given point, pins go down)
     "J5": (45.5, 3.5, 0), "J7": (45.5, 14.5, 0), "J8": (45.5, 20.5, 0), "J9": (45.5, 26.5, 0),
     "J4": (45.5, 60.0, 0), "J3": (45.5, 52.0, 0),
@@ -42,7 +43,7 @@ PLACE = {
     # SHT40 sits on a tongue cut free by slots (SENSOR_TONGUE), away from the loads
     "U5": (26.0, 2.6, 0), "C23": (28.6, 2.6, 90), "R11": (33.0, 2.4, 0), "R12": (33.0, 4.4, 0),
     # PWM driver and outputs
-    "U6": (29.0, 15.5, 180), "C24": (23.7, 17.45, 0),
+    "U6": (29.0, 15.5, 180), "C24": (23.2, 17.45, 0),
     "R13": (35.5, 14.0, 0), "R14": (35.5, 15.8, 0), "Q4": (38.8, 15.5, 0), "D6": (41.8, 15.8, 90),
     "R15": (35.5, 20.0, 0), "R16": (35.5, 21.8, 0), "Q5": (38.8, 21.5, 0), "D7": (41.8, 21.8, 90),
     "R17": (35.5, 26.0, 0), "R18": (35.5, 27.8, 0), "Q6": (38.8, 27.5, 0), "D8": (41.8, 27.8, 90),
@@ -54,27 +55,15 @@ PLACE = {
     # battery / BMS (bottom right, next to J4)
     "R9": (35.5, 55.5, 0), "C19": (35.5, 58.0, 90),
     "U2": (39.0, 57.5, 0), "Q3": (39.5, 62.5, 0), "R10": (35.5, 61.5, 0),
-    # ship FET and BATP sense next to the charger's BAT pins
-    "Q2": (28.0, 62.0, 0), "R8": (28.0, 65.0, 180),
-    # charger, laid out per the BQ25798 datasheet layout guide: inductor over SW1/SW2,
-    # 100n PMID/SYS caps right at pins 29/25, bulk caps next to them, BAT caps at pins
-    # 22/23, BTST/REGN/PROG/TS parts at their pins.
-    "U1": (16.0, 63.0, 0), "L1": (16.0, 55.5, 0),
-    "C9": (13.4, 59.6, 180), "C16": (18.6, 59.6, 0),
-    "C6": (11.6, 56.0, 90), "C7": (9.2, 56.0, 90), "C8": (6.8, 56.0, 90),
-    "C11": (20.4, 56.0, 90), "C12": (22.8, 56.0, 90), "C13": (25.2, 56.0, 90),
-    "C14": (27.6, 56.0, 90), "C15": (30.0, 56.0, 90),
-    "C3": (12.2, 61.9, 180), "C4": (9.6, 62.9, 90), "C10": (11.4, 65.2, 180),
-    "C17": (20.6, 61.8, 0), "C18": (23.4, 61.8, 180), "R1": (22.4, 63.6, 0), "C5": (22.4, 65.2, 0),
-    "R2": (22.4, 66.8, 180), "R3": (22.4, 68.4, 0), "R4": (15.5, 70.8, 0), "JP2": (13.2, 70.8, 90), "TP2": (13.6, 68.0, 0),
-    "R6": (6.0, 65.5, 0), "D4": (6.0, 68.0, 0),
     # inputs (bottom right, next to J1/J2)
     "D1": (37.5, 71.3, 180), "D2": (37.5, 78.3, 180), "D3": (29.5, 75.0, 90),
-    "C1": (9.0, 74.5, 90), "C2": (11.5, 74.5, 90), "C3": (14.0, 74.5, 90),
 }
+# charger cluster (tools/charger.py), U1 at its position before the DY shift below
+PLACE.update(charger.place(charger.Frame(16.0, 63.0), set(charger.PLACE)))
 # Everything except the SHT40 tongue moves down by DY to leave the top corners free for
 # the mounting holes: 2.8 mm (M2/M2.5) with 6 mm clear for the head, 3.5 mm from the edges.
 DY = 6.0
+CHARGER_FRAME = charger.Frame(16.0, 63.0 + DY)
 PLACE = {r: (x, y if r in ("U5", "C23") else y + DY, a) for r, (x, y, a) in PLACE.items()}
 PLACE.update({"H1": (3.5, 3.5, 0), "H2": (W - 3.5, 3.5, 0), "H3": (3.5, H - 3.5, 0), "H4": (W - 3.5, H - 3.5, 0)})
 
@@ -91,10 +80,10 @@ NETCLASSES = {
     # name: (track mm, clearance mm, via dia, via drill, nets)
     # Power: load and battery paths, 2 A (0.6 mm routed, widened to 0.8 by route.py where it fits).
     "Power": (0.6, 0.2, 0.8, 0.4, ["BATT+", "BATT-", "FS_D", "SOLAR_IN", "VIN2_IN", "VLOAD", "PGND",
-                                    "OUT1+", "OUT1-", "OUT2+", "OUT2-", "OUT3+", "OUT3-", "XIAO_5V"]),
-    # Charger nets that end on the 0.4 mm pitch QFN: routed at 0.3 mm, widened by
-    # tools/route.py away from U1.
-    "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["VBUS", "PMID", "SYS", "BAT", "SW1", "SW2"]),
+                                    "OUT1+", "OUT1-", "OUT2+", "OUT2-", "OUT3+", "OUT3-", "XIAO_5V",
+                                    "VBUS", "SYS", "BAT", "PMID"]),
+    # SW nodes are copper zones at the charger (tools/charger.py); nothing else routes them.
+    "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["SW1", "SW2"]),
     "Supply": (0.4, 0.15, 0.6, 0.3, ["3V3", "GND"]),
 }
 
@@ -115,6 +104,7 @@ def _pad(board, ref, num):
 def _track(board, a, b, net, width):
     t = pcbnew.PCB_TRACK(board)
     t.SetStart(a); t.SetEnd(b); t.SetWidth(mm(width)); t.SetLayer(pcbnew.F_Cu); t.SetNet(net)
+    t.SetLocked(True)  # exported as fixed wiring, so the router keeps it
     board.Add(t)
 
 def add_nt_via(board):
@@ -123,81 +113,11 @@ def add_nt_via(board):
     _track(board, pad.GetPosition(), at, pad.GetNet(), 0.4)
     v = pcbnew.PCB_VIA(board)
     v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(pad.GetNet())
-    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
     board.Add(v)
-
-def preroute_charger(board):
-    """Hand routes on the 0.4 mm pitch QFN that the autorouter cannot do:
-    GND pin 27 sits between SW1 and SW2 (0.45 mm pitch, no room for a via), so it runs
-    under the package (RQM has no exposed pad) to the GND pins 10/11 on the other side;
-    the doubled VBUS (2/3) and BAT (22/23) pins are tied together."""
-    p27, p11 = _pad(board, "U1", "27"), _pad(board, "U1", "11")
-    gnd = p27.GetNet()
-    a, b = p27.GetPosition(), p11.GetPosition()
-    pts = [a, pcbnew.VECTOR2I(a.x, b.y - mm(1.3)), pcbnew.VECTOR2I(b.x, b.y - mm(0.7)), b]
-    for s_, e_ in zip(pts, pts[1:]):
-        _track(board, s_, e_, gnd, 0.2)
-    # GND pins 10/11 tied and dropped to a via right below the package
-    p10 = _pad(board, "U1", "10")
-    _track(board, p10.GetPosition(), b, gnd, 0.2)
-    vg = pcbnew.VECTOR2I(p10.GetPosition().x, p10.GetPosition().y + mm(1.45))
-    _track(board, p10.GetPosition(), vg, gnd, 0.25)
-    v = pcbnew.PCB_VIA(board)
-    v.SetPosition(vg); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(gnd)
-    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-    board.Add(v)
-    # BAT: pins 22/23 straight out to C17, then over the caps to C18 (the GND pads sit
-    # between them so the 22 µF stays on one short loop)
-    bat = _pad(board, "U1", "22")
-    c17, c18 = _pad(board, "C17", "1"), _pad(board, "C18", "1")
-    _track(board, bat.GetPosition(), pcbnew.VECTOR2I(c17.GetPosition().x, bat.GetPosition().y), bat.GetNet(), 0.25)
-    up = mm(1.2)
-    a = pcbnew.VECTOR2I(c17.GetPosition().x, c17.GetPosition().y - up)
-    b = pcbnew.VECTOR2I(c18.GetPosition().x, c18.GetPosition().y - up)
-    for s, e in ((c17.GetPosition(), a), (a, b), (b, c18.GetPosition())):
-        _track(board, s, e, bat.GetNet(), 0.5)
-    # BATP (18) and BTST2 (19) drop to vias under the package (no exposed pad, the vias are
-    # tented) so the right-hand pins keep their escape lanes; both continue on B.Cu.
-    def drop(num, at, via_pts=()):
-        pad = _pad(board, "U1", num)
-        pts = [pad.GetPosition()] + [pcbnew.VECTOR2I(pad.GetPosition().x + mm(dx), pad.GetPosition().y + mm(dy))
-                                     for dx, dy in via_pts]
-        for s_, e_ in zip(pts, pts[1:]):
-            _track(board, s_, e_, pad.GetNet(), 0.2)
-        v = pcbnew.PCB_VIA(board)
-        v.SetPosition(pts[-1]); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(pad.GetNet())
-        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-        board.Add(v)
-    drop("18", None, [(-0.92, 0.0)])
-    drop("19", None, [(-0.26, 0.0), (-0.91, -0.53)])
-    # QON (12) straight down past the GND via to TP2, CE (13) to R4
-    p12, p13, tp2, r4 = _pad(board, "U1", "12"), _pad(board, "U1", "13"), _pad(board, "TP2", "1"), _pad(board, "R4", "2")
-    a12 = p12.GetPosition()
-    pts = [a12, pcbnew.VECTOR2I(a12.x, a12.y + mm(2.3)), pcbnew.VECTOR2I(a12.x - mm(1.2), a12.y + mm(3.1)),
-           pcbnew.VECTOR2I(tp2.GetPosition().x, a12.y + mm(3.1)), tp2.GetPosition()]
-    for s_, e_ in zip(pts, pts[1:]):
-        _track(board, s_, e_, p12.GetNet(), 0.2)
-    a13 = p13.GetPosition()
-    pts = [a13, pcbnew.VECTOR2I(a13.x, r4.GetPosition().y - mm(0.8)), r4.GetPosition()]
-    for s_, e_ in zip(pts, pts[1:]):
-        _track(board, s_, e_, p13.GetNet(), 0.2)
-    # SCL (14) / SDA (15) fan out down-right, clear of CE and the TS corner pad
-    for num, pts_ in (("14", [(0, 1.12), (1.6, 2.72)]), ("15", [(0, 0.72), (1.2, 1.92)])):
-        pad = _pad(board, "U1", num)
-        pts = [pad.GetPosition()] + [pcbnew.VECTOR2I(pad.GetPosition().x + mm(dx), pad.GetPosition().y + mm(dy)) for dx, dy in pts_]
-        for s_, e_ in zip(pts, pts[1:]):
-            _track(board, s_, e_, pad.GetNet(), 0.2)
-    # PROG (pin 20) to R1 above the BATP via
-    p20, r1 = _pad(board, "U1", "20"), _pad(board, "R1", "1")
-    pts = [p20.GetPosition(), pcbnew.VECTOR2I(r1.GetPosition().x, p20.GetPosition().y), r1.GetPosition()]
-    for s_, e_ in zip(pts, pts[1:]):
-        _track(board, s_, e_, p20.GetNet(), 0.2)
-    for a, b in (("2", "3"), ("22", "23")):
-        pa, pb = _pad(board, "U1", a), _pad(board, "U1", b)
-        _track(board, pa.GetPosition(), pb.GetPosition(), pa.GetNet(), 0.2)
 
 def preroute(board):
-    preroute_charger(board)
+    charger.preroute(board, CHARGER_FRAME)
     # SHT40 tongue: the rule area keeps pour and vias off it, so its four nets are
     # drawn here and run out through the neck (SDA, SCL, 3V3, GND from left to right).
     def path(net, pts):
@@ -221,7 +141,7 @@ def preroute(board):
     _track(board, c20.GetPosition(), at, c20.GetNet(), 0.4)
     v = pcbnew.PCB_VIA(board)
     v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(c20.GetNet())
-    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
     board.Add(v)
     # PWM3 (U6 pin 6) has to cross PWM1/PWM2: via under the TSSOP body, B.Cu down to R17
     p6, r17 = _pad(board, "U6", "6"), _pad(board, "R17", "1")
@@ -232,11 +152,11 @@ def preroute(board):
     for at in (v1, v2):
         v = pcbnew.PCB_VIA(board)
         v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(p6.GetNet())
-        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
         board.Add(v)
     for s_, e_ in ((v1, pcbnew.VECTOR2I(v1.x, v2.y)), (pcbnew.VECTOR2I(v1.x, v2.y), v2)):
         t = pcbnew.PCB_TRACK(board)
-        t.SetStart(s_); t.SetEnd(e_); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.B_Cu); t.SetNet(p6.GetNet())
+        t.SetStart(s_); t.SetEnd(e_); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.B_Cu); t.SetNet(p6.GetNet()); t.SetLocked(True)
         board.Add(t)
     _track(board, v2, ar, p6.GetNet(), 0.25)
     # PCA9685 VDD (28) and A0 (1, tied high) sit at the same end of the two pin rows
@@ -300,6 +220,7 @@ def build():
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
     preroute(board)
+    charger.add_zones(board, CHARGER_FRAME)
     # outline; the 1 mm slots around the SHT40 tongue are part of it
     corners = OUTLINE
     for i in range(len(corners)):
@@ -326,7 +247,7 @@ def build():
         z.SetNet(net("GND"))
         z.SetLocalClearance(mm(0.2))
         z.SetMinThickness(mm(0.2))
-        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THT_THERMAL)
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
         z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
         z.SetThermalReliefGap(mm(0.3)); z.SetThermalReliefSpokeWidth(mm(0.4))
         ol = z.Outline()
@@ -347,7 +268,7 @@ def build():
         t.SetTextAngleDegrees(90)
         board.Add(t)
     t = pcbnew.PCB_TEXT(board)
-    t.SetText("xiao-solar v0.2  n3tk0/MeshCore")
+    t.SetText("xiao-solar v0.3  n3tk0/MeshCore")
     t.SetPosition(pt(14.0, H - 1.5)); t.SetLayer(pcbnew.F_SilkS)
     t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
     board.Add(t)

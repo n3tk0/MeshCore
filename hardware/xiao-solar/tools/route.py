@@ -4,7 +4,8 @@
 1. export Specctra DSN (net classes fixed up by dsn_classes.py)
 2. freerouting (FREEROUTING_JAR, run under xvfb-run)
 3. import the SES wires and vias (KiCad 7's ImportSpecctraSES needs the GUI)
-4. widen PowerQFN tracks away from U1, add GND stitching vias, fill zones
+4. widen power tracks away from U1, add GND stitching vias, fill zones
+(the charger's power zones go into the DSN as fixed copper, see dsn_classes.add_zone_copper)
 5. write DRC report to production/drc.rpt
 
 Run: FREEROUTING_JAR=/path/freerouting-1.9.0.jar python3 tools/route.py
@@ -85,7 +86,7 @@ def widen(board, tmp):
     nets = set(gen_pcb.NETCLASSES["PowerQFN"][4]) | set(gen_pcb.NETCLASSES["Power"][4])
     changed, orig = [], {}
     for t in board.GetTracks():
-        if t.GetClass() != "PCB_TRACK" or t.GetNetname() not in nets:
+        if t.GetClass() != "PCB_TRACK" or t.IsLocked() or t.GetNetname() not in nets:
             continue
         far = all(((p.x - u1.x) ** 2 + (p.y - u1.y) ** 2) ** 0.5 > mm(2.6) for p in (t.GetStart(), t.GetEnd()))
         if far:
@@ -159,7 +160,7 @@ def drop_dangling(board, tmp):
                 pts.add((round(float(m.group(1)), 3), round(float(m.group(2)), 3)))
     n = 0
     for v in list(board.GetTracks()):
-        if v.GetClass() == "PCB_VIA" and v.GetNetname() == "GND":
+        if v.GetClass() == "PCB_VIA" and v.GetNetname() == "GND" and not v.IsLocked():
             p = (round(pcbnew.ToMM(v.GetPosition().x), 3), round(pcbnew.ToMM(v.GetPosition().y), 3))
             if p in pts:
                 board.Remove(v); n += 1
@@ -218,6 +219,9 @@ def _in_free_area(board, via):
     x0, y0, x1, y1 = getattr(gen_pcb, "SENSOR_TONGUE", (-9, -9, -9, -9))
     if mm(gen_pcb.OX + x0 - 1.5) < p.x < mm(gen_pcb.OX + x1 + 1.5) and p.y < mm(gen_pcb.OY + y1 + 2.0):
         return False
+    for z in board.Zones():
+        if not z.GetIsRuleArea() and z.GetNetname() != "GND" and z.Outline().Collide(p, mm(0.6)):
+            return False
     for fp in board.GetFootprints():
         if fp.GetReference()[0] in "UH" or fp.GetReference().startswith(("J", "NT")):
             bb = fp.GetBoundingBox(False, False)
@@ -230,11 +234,13 @@ def main():
     jar = os.environ.get("FREEROUTING_JAR")
     if not jar:
         raise SystemExit("set FREEROUTING_JAR")
-    tmp = tempfile.mkdtemp()
+    tmp = os.environ.get("RT_TMP") or tempfile.mkdtemp()
     dsn, ses = os.path.join(tmp, "xs.dsn"), os.path.join(tmp, "xs.ses")
     board = pcbnew.LoadBoard(PCB)
+    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.ExportSpecctraDSN(board, dsn)
     dsn_classes.fix(dsn)
+    dsn_classes.add_zone_copper(board, dsn)
     subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "200"],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("ses: %d segments, %d vias" % import_ses(board, ses))

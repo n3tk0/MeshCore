@@ -20,7 +20,7 @@ base.ROOT = ROOT
 base.PROJECT = "xiao-solar-lite"
 base.ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0002"
 base.TITLE = "Solar charger layer for XIAO + Wio (BQ25798)"
-base.REV = "0.1"
+base.REV = "0.3"
 P, R, C, T = base.P, base.R, base.C, base.T
 parts, ROOT_UUID = base.parts, base.ROOT_UUID
 C0603, C1206, CONN2 = base.C0603, base.C1206, base.CONN2
@@ -32,6 +32,7 @@ P("J1", "Connector_Generic:Conn_01x02", "SOLAR", 20, 35, {"1": "SOLAR_IN", "2": 
 P("D1", "Device:D_Schottky", "SS34", 45, 30, {"2": "SOLAR_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C8678")
 P("D3", "xiao_solar:SMBJ24A-C87268", "SMBJ24A", 65, 40, {"1": "VBUS", "2": "GND"}, "xiao_solar:SMB_L4.6-W3.6-LS5.3-RD", "C19077578")
 C("C1", "10u/50V", 78, 40, "VBUS", "GND", C10U50, C1206)
+C("C2", "10u/50V", 88, 40, "VBUS", "GND", C10U50, C1206)
 C("C3", "100n", 98, 40, "VBUS", "GND", C100N, C0603)
 T(15, 55, "SS34: защита от обратна полярност и от връщане към панела. VAC1=VAC2=VBUS, ACDRV към GND.", 1.27)
 
@@ -50,12 +51,15 @@ C("C4", "47n", 125, 112, "BTST1", "SW1", C47N, C0603)
 C("C5", "47n", 135, 112, "BTST2", "SW2", C47N, C0603)
 C("C6", "10u/50V", 110, 140, "PMID", "GND", C10U50, C1206)
 C("C7", "10u/50V", 118, 140, "PMID", "GND", C10U50, C1206)
+C("C8", "10u/50V", 126, 140, "PMID", "GND", C10U50, C1206)
 C("C9", "100n", 134, 140, "PMID", "GND", C100N, C0603)
 C("C10", "4.7u/25V", 142, 140, "REGN", "GND", C4U7)
 R("R1", "4.7k 1%", 150, 140, "PROG", "GND", "C23162")
 C("C11", "10u/25V", 110, 160, "SYS", "GND", C10U)
 C("C12", "10u/25V", 118, 160, "SYS", "GND", C10U)
 C("C13", "10u/25V", 126, 160, "SYS", "GND", C10U)
+C("C14", "10u/25V", 134, 160, "SYS", "GND", C10U)
+C("C15", "10u/25V", 142, 160, "SYS", "GND", C10U)
 C("C16", "100n", 150, 160, "SYS", "GND", C100N, C0603)
 C("C17", "10u/25V", 158, 160, "BAT", "GND", C10U)
 C("C18", "10u/25V", 166, 160, "BAT", "GND", C10U)
