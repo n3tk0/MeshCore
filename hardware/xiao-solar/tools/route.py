@@ -13,11 +13,11 @@ import os, re, subprocess, sys, tempfile
 import pcbnew
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, HERE)
+if HERE not in sys.path:
+    sys.path.append(HERE)
 import gen_pcb, dsn_classes  # noqa: E402
 
-PCB = os.path.join(ROOT, "xiao-solar.kicad_pcb")
+ROOT, PCB = gen_pcb.ROOT, gen_pcb.PCB
 
 def mm(v):
     return pcbnew.FromMM(v)
@@ -215,7 +215,7 @@ def _in_free_area(board, via):
     """Keep vias out of module footprints (XIAO/Wio sit on the board), mounting holes and
     the SHT40 tongue."""
     p = via.GetPosition()
-    x0, y0, x1, y1 = gen_pcb.SENSOR_TONGUE
+    x0, y0, x1, y1 = getattr(gen_pcb, "SENSOR_TONGUE", (-9, -9, -9, -9))
     if mm(gen_pcb.OX + x0 - 1.5) < p.x < mm(gen_pcb.OX + x1 + 1.5) and p.y < mm(gen_pcb.OY + y1 + 2.0):
         return False
     for fp in board.GetFootprints():

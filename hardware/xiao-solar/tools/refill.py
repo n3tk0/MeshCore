@@ -4,7 +4,8 @@ report, without re-running the autorouter."""
 import os, re, sys
 import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+if HERE not in sys.path:
+    sys.path.append(HERE)
 import route  # noqa: E402
 
 STEPS = {0.8: 0.5, 0.5: 0.3, 0.3: 0.25}

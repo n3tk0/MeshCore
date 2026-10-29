@@ -8,8 +8,11 @@ Run: python3 tools/export.py   (needs kicad-cli 7)
 import csv, os, shutil, subprocess, sys, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-PCB = os.path.join(ROOT, "xiao-solar.kicad_pcb")
+if HERE not in sys.path:
+    sys.path.append(HERE)
+import gen_pcb, gen_sch  # noqa: E402  (the board's own ones when its tools dir comes first)
+
+ROOT, PCB = gen_pcb.ROOT, gen_pcb.PCB
 OUT = os.path.join(ROOT, "production")
 GERB = os.path.join(OUT, "gerber")
 LAYERS = "F.Cu,B.Cu,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
@@ -24,7 +27,7 @@ def gerbers():
         "--no-x2", "-o", GERB + "/", PCB)
     run("pcb", "export", "drill", "--format", "excellon", "--drill-origin", "absolute",
         "--excellon-units", "mm", "--excellon-separate-th", "-o", GERB + "/", PCB)
-    z = os.path.join(OUT, "xiao-solar-gerber.zip")
+    z = os.path.join(OUT, gen_pcb.PROJECT + "-gerber.zip")
     with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in sorted(os.listdir(GERB)):
             zf.write(os.path.join(GERB, f), f)
@@ -33,8 +36,6 @@ def gerbers():
 def cpl():
     """KiCad position file -> JLC CPL (Designator, Mid X, Mid Y, Layer, Rotation).
     Only parts with an LCSC number (the ones JLC places) are kept."""
-    sys.path.insert(0, HERE)
-    import gen_sch  # noqa: E402
     jlc = {p["ref"] for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
     tmp = os.path.join(OUT, "pos.csv")
     run("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",

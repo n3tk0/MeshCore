@@ -13,6 +13,8 @@ SYSLIB = "/usr/share/kicad/symbols"
 LOCAL = os.path.join(ROOT, "lib", "xiao_solar.kicad_sym")
 PROJECT = "xiao-solar"
 ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0001"
+TITLE = "Xiao nRF52840 + Wio-SX1262 solar board"
+REV = "0.2"
 
 def uid():
     return str(uuid.uuid4())
@@ -322,7 +324,7 @@ def emit():
             used.append(p["lib"])
     install_custom()
     out = ['(kicad_sch (version 20230121) (generator eeschema)', '  (uuid %s)' % ROOT_UUID, '  (paper "A3")',
-           '  (title_block (title "Xiao nRF52840 + Wio-SX1262 solar board") (date "2026-10-29") (rev "0.1") (company "n3tk0/MeshCore"))',
+           '  (title_block (title "%s") (date "2026-10-29") (rev "%s") (company "n3tk0/MeshCore"))' % (TITLE, REV),
            '  (lib_symbols']
     for lid in used:
         out.append(symbol_def(lid))

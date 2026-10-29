@@ -8,7 +8,8 @@ Run: FREEROUTING_JAR=/path/freerouting-1.9.0.jar python3 tools/finish.py
 import os, subprocess, sys, tempfile
 import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+if HERE not in sys.path:
+    sys.path.append(HERE)
 import dsn_classes, refill, route  # noqa: E402
 
 def main():

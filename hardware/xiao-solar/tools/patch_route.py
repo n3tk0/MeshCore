@@ -11,10 +11,11 @@ import heapq, math, os, sys
 import pcbnew
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+if HERE not in sys.path:
+    sys.path.append(HERE)
 import gen_pcb  # noqa: E402
 
-PCB = os.path.join(os.path.dirname(HERE), "xiao-solar.kicad_pcb")
+PCB = gen_pcb.PCB
 STEP = 0.1
 CLEAR = 0.2
 

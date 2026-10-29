@@ -13,6 +13,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import gen_sch  # noqa: E402  (builds the part list on import)
 
+PROJECT = "xiao-solar"
+PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
 FPLIB_SYS = "/usr/share/kicad/footprints"
 FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
 W, H = 48.0, 94.0          # board size, mm
@@ -124,7 +126,7 @@ def add_nt_via(board):
     v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
     board.Add(v)
 
-def preroute(board):
+def preroute_charger(board):
     """Hand routes on the 0.4 mm pitch QFN that the autorouter cannot do:
     GND pin 27 sits between SW1 and SW2 (0.45 mm pitch, no room for a via), so it runs
     under the package (RQM has no exposed pad) to the GND pins 10/11 on the other side;
@@ -144,18 +146,6 @@ def preroute(board):
     v.SetPosition(vg); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(gnd)
     v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
     board.Add(v)
-    # SHT40 tongue: the rule area keeps pour and vias off it, so its four nets are
-    # drawn here and run out through the neck (SDA, SCL, 3V3, GND from left to right).
-    def path(net, pts):
-        n = board.FindNet(net)
-        for a, b in zip(pts, pts[1:]):
-            _track(board, pt(*a), pt(*b), n, 0.25)
-    path("SDA", [(25.32, 2.2), (24.4, 2.2), (24.4, 4.8), (25.4, 5.8), (25.4, 7.8)])
-    path("SCL", [(25.32, 3.0), (25.0, 3.0), (25.0, 4.6), (26.0, 5.6), (26.0, 7.8)])
-    path("3V3", [(26.68, 3.0), (26.7, 4.2), (26.7, 7.8)])
-    path("3V3", [(28.6, 3.375), (28.6, 4.2), (26.7, 4.2)])
-    path("GND", [(26.0, 2.2), (26.68, 2.2), (27.3, 1.825), (28.6, 1.825), (29.4, 1.825),
-                 (29.4, 5.0), (27.5, 5.0), (27.5, 7.8)])
     # BAT: pins 22/23 straight out to C17, then over the caps to C18 (the GND pads sit
     # between them so the 22 µF stays on one short loop)
     bat = _pad(board, "U1", "22")
@@ -197,6 +187,29 @@ def preroute(board):
         pts = [pad.GetPosition()] + [pcbnew.VECTOR2I(pad.GetPosition().x + mm(dx), pad.GetPosition().y + mm(dy)) for dx, dy in pts_]
         for s_, e_ in zip(pts, pts[1:]):
             _track(board, s_, e_, pad.GetNet(), 0.2)
+    # PROG (pin 20) to R1 above the BATP via
+    p20, r1 = _pad(board, "U1", "20"), _pad(board, "R1", "1")
+    pts = [p20.GetPosition(), pcbnew.VECTOR2I(r1.GetPosition().x, p20.GetPosition().y), r1.GetPosition()]
+    for s_, e_ in zip(pts, pts[1:]):
+        _track(board, s_, e_, p20.GetNet(), 0.2)
+    for a, b in (("2", "3"), ("22", "23")):
+        pa, pb = _pad(board, "U1", a), _pad(board, "U1", b)
+        _track(board, pa.GetPosition(), pb.GetPosition(), pa.GetNet(), 0.2)
+
+def preroute(board):
+    preroute_charger(board)
+    # SHT40 tongue: the rule area keeps pour and vias off it, so its four nets are
+    # drawn here and run out through the neck (SDA, SCL, 3V3, GND from left to right).
+    def path(net, pts):
+        n = board.FindNet(net)
+        for a, b in zip(pts, pts[1:]):
+            _track(board, pt(*a), pt(*b), n, 0.25)
+    path("SDA", [(25.32, 2.2), (24.4, 2.2), (24.4, 4.8), (25.4, 5.8), (25.4, 7.8)])
+    path("SCL", [(25.32, 3.0), (25.0, 3.0), (25.0, 4.6), (26.0, 5.6), (26.0, 7.8)])
+    path("3V3", [(26.68, 3.0), (26.7, 4.2), (26.7, 7.8)])
+    path("3V3", [(28.6, 3.375), (28.6, 4.2), (26.7, 4.2)])
+    path("GND", [(26.0, 2.2), (26.68, 2.2), (27.3, 1.825), (28.6, 1.825), (29.4, 1.825),
+                 (29.4, 5.0), (27.5, 5.0), (27.5, 7.8)])
     # NT1 GND side gets its own via so the star point reaches both GND pours
     add_nt_via(board)
     # C24 GND pad straight onto the PCA9685 GND pins 24/25
@@ -226,11 +239,6 @@ def preroute(board):
         t.SetStart(s_); t.SetEnd(e_); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.B_Cu); t.SetNet(p6.GetNet())
         board.Add(t)
     _track(board, v2, ar, p6.GetNet(), 0.25)
-    # PROG (pin 20) to R1 above the BATP via
-    p20, r1 = _pad(board, "U1", "20"), _pad(board, "R1", "1")
-    pts = [p20.GetPosition(), pcbnew.VECTOR2I(r1.GetPosition().x, p20.GetPosition().y), r1.GetPosition()]
-    for s_, e_ in zip(pts, pts[1:]):
-        _track(board, s_, e_, p20.GetNet(), 0.2)
     # PCA9685 VDD (28) and A0 (1, tied high) sit at the same end of the two pin rows
     u6_1, u6_28 = _pad(board, "U6", "1"), _pad(board, "U6", "28")
     yb = u6_1.GetPosition().y + mm(0.9)
@@ -240,9 +248,6 @@ def preroute(board):
     pts = [c24.GetPosition(), pcbnew.VECTOR2I(c24.GetPosition().x, yb)] + pts
     for s, e in zip(pts, pts[1:]):
         _track(board, s, e, u6_1.GetNet(), 0.3)
-    for a, b in (("2", "3"), ("22", "23")):
-        pa, pb = _pad(board, "U1", a), _pad(board, "U1", b)
-        _track(board, pa.GetPosition(), pb.GetPosition(), pa.GetNet(), 0.2)
 
 def build():
     board = pcbnew.BOARD()

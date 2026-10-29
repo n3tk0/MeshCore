@@ -3,7 +3,8 @@
 net in kicad_default. This moves the nets of gen_pcb.NETCLASSES into their own class
 blocks (track width and clearance from NETCLASSES) right after the default one."""
 import re, sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import gen_pcb
 
 def quote(n):
