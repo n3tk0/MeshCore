@@ -19,11 +19,13 @@ def main():
     before = board.GetConnectivity().GetUnconnectedCount(True)
     pcbnew.ExportSpecctraDSN(board, dsn)
     dsn_classes.fix(dsn)
-    subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "100"],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "30"],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
     for t in list(board.GetTracks()):
-        board.Remove(t)
+        board.Delete(t)
     print("ses: %d segments, %d vias" % route.import_ses(board, ses))
+    board.Save(route.PCB)
+    board = pcbnew.LoadBoard(route.PCB)
     board.BuildConnectivity()
     print("unconnected before/after: %d/%d" % (before, board.GetConnectivity().GetUnconnectedCount(True)))
     board.Save(route.PCB)

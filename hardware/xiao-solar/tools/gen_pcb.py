@@ -31,7 +31,7 @@ PLACE = {
     # modules, rotated so the USB / pin-1 end faces the left edge
     "U4": (11.5, 12.0, 90), "U3": (11.5, 35.0, 90),
     # between the modules: Xiao 5V feed and 3V3 decoupling
-    "D5": (5.5, 23.5, 0), "C20": (9.8, 23.5, 0), "C21": (13.6, 23.5, 0), "C22": (16.8, 23.5, 0),
+    "D5": (5.5, 23.5, 0), "C20": (9.8, 23.5, 0), "C21": (13.9, 23.5, 0), "C22": (16.8, 23.5, 0),
     # right column connectors (pin 1 at the given point, pins go down)
     "J5": (45.5, 3.5, 0), "J7": (45.5, 14.5, 0), "J8": (45.5, 20.5, 0), "J9": (45.5, 26.5, 0),
     "J4": (45.5, 60.0, 0), "J3": (45.5, 52.0, 0),
@@ -40,7 +40,7 @@ PLACE = {
     # SHT40 sits on a tongue cut free by slots (SENSOR_TONGUE), away from the loads
     "U5": (26.0, 2.6, 0), "C23": (28.6, 2.6, 90), "R11": (33.0, 2.4, 0), "R12": (33.0, 4.4, 0),
     # PWM driver and outputs
-    "U6": (29.0, 15.5, 180), "C24": (24.0, 19.7, 90),
+    "U6": (29.0, 15.5, 180), "C24": (23.7, 17.45, 0),
     "R13": (35.5, 14.0, 0), "R14": (35.5, 15.8, 0), "Q4": (38.8, 15.5, 0), "D6": (41.8, 15.8, 90),
     "R15": (35.5, 20.0, 0), "R16": (35.5, 21.8, 0), "Q5": (38.8, 21.5, 0), "D7": (41.8, 21.8, 90),
     "R17": (35.5, 26.0, 0), "R18": (35.5, 27.8, 0), "Q6": (38.8, 27.5, 0), "D8": (41.8, 27.8, 90),
@@ -64,9 +64,8 @@ PLACE = {
     "C14": (27.6, 56.0, 90), "C15": (30.0, 56.0, 90),
     "C3": (12.2, 61.9, 180), "C4": (9.6, 62.9, 90), "C10": (11.4, 65.2, 180),
     "C17": (20.6, 61.8, 0), "C18": (23.4, 61.8, 180), "R1": (22.4, 63.6, 0), "C5": (22.4, 65.2, 0),
-    "R2": (22.4, 66.8, 180), "R3": (22.4, 68.4, 0), "R4": (16.2, 67.2, 90), "JP2": (16.2, 70.2, 0),
-    "R6": (6.0, 65.5, 0), "D4": (6.0, 68.0, 0), "R7": (24.0, 71.5, 0),
-    "TP1": (27.5, 68.5, 0), "TP2": (30.0, 68.5, 0),
+    "R2": (22.4, 66.8, 180), "R3": (22.4, 68.4, 0), "R4": (15.5, 70.8, 0), "JP2": (13.2, 70.8, 90), "TP2": (13.6, 68.0, 0),
+    "R6": (6.0, 65.5, 0), "D4": (6.0, 68.0, 0),
     # inputs (bottom right, next to J1/J2)
     "D1": (37.5, 71.3, 180), "D2": (37.5, 78.3, 180), "D3": (29.5, 75.0, 90),
     "C1": (9.0, 74.5, 90), "C2": (11.5, 74.5, 90), "C3": (14.0, 74.5, 90),
@@ -88,8 +87,8 @@ OUTLINE = [(0, 0), (_tx0 - 1, 0), (_tx0 - 1, _ty1 + 1), (NECK[0], _ty1 + 1), (NE
 
 NETCLASSES = {
     # name: (track mm, clearance mm, via dia, via drill, nets)
-    # Power: load and battery paths, 2 A.
-    "Power": (0.8, 0.2, 0.8, 0.4, ["BATT+", "BATT-", "FS_D", "SOLAR_IN", "VIN2_IN", "VLOAD", "PGND",
+    # Power: load and battery paths, 2 A (0.6 mm routed, widened to 0.8 by route.py where it fits).
+    "Power": (0.6, 0.2, 0.8, 0.4, ["BATT+", "BATT-", "FS_D", "SOLAR_IN", "VIN2_IN", "VLOAD", "PGND",
                                     "OUT1+", "OUT1-", "OUT2+", "OUT2-", "OUT3+", "OUT3-", "XIAO_5V"]),
     # Charger nets that end on the 0.4 mm pitch QFN: routed at 0.3 mm, widened by
     # tools/route.py away from U1.
@@ -115,6 +114,15 @@ def _track(board, a, b, net, width):
     t = pcbnew.PCB_TRACK(board)
     t.SetStart(a); t.SetEnd(b); t.SetWidth(mm(width)); t.SetLayer(pcbnew.F_Cu); t.SetNet(net)
     board.Add(t)
+
+def add_nt_via(board):
+    pad = _pad(board, "NT1", "2")
+    at = pcbnew.VECTOR2I(pad.GetPosition().x + mm(0.9), pad.GetPosition().y)
+    _track(board, pad.GetPosition(), at, pad.GetNet(), 0.4)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(pad.GetNet())
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    board.Add(v)
 
 def preroute(board):
     """Hand routes on the 0.4 mm pitch QFN that the autorouter cannot do:
@@ -158,14 +166,66 @@ def preroute(board):
     b = pcbnew.VECTOR2I(c18.GetPosition().x, c18.GetPosition().y - up)
     for s, e in ((c17.GetPosition(), a), (a, b), (b, c18.GetPosition())):
         _track(board, s, e, bat.GetNet(), 0.5)
-    # BATP (pin 18) is boxed in by the side-pin parts: short stub to a via, B.Cu to R8
-    p18 = _pad(board, "U1", "18")
-    v18 = pcbnew.VECTOR2I(p18.GetPosition().x + mm(1.0), p18.GetPosition().y)
-    _track(board, p18.GetPosition(), v18, p18.GetNet(), 0.2)
+    # BATP (18) and BTST2 (19) drop to vias under the package (no exposed pad, the vias are
+    # tented) so the right-hand pins keep their escape lanes; both continue on B.Cu.
+    def drop(num, at, via_pts=()):
+        pad = _pad(board, "U1", num)
+        pts = [pad.GetPosition()] + [pcbnew.VECTOR2I(pad.GetPosition().x + mm(dx), pad.GetPosition().y + mm(dy))
+                                     for dx, dy in via_pts]
+        for s_, e_ in zip(pts, pts[1:]):
+            _track(board, s_, e_, pad.GetNet(), 0.2)
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(pts[-1]); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(pad.GetNet())
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        board.Add(v)
+    drop("18", None, [(-0.92, 0.0)])
+    drop("19", None, [(-0.26, 0.0), (-0.91, -0.53)])
+    # QON (12) straight down past the GND via to TP2, CE (13) to R4
+    p12, p13, tp2, r4 = _pad(board, "U1", "12"), _pad(board, "U1", "13"), _pad(board, "TP2", "1"), _pad(board, "R4", "2")
+    a12 = p12.GetPosition()
+    pts = [a12, pcbnew.VECTOR2I(a12.x, a12.y + mm(2.3)), pcbnew.VECTOR2I(a12.x - mm(1.2), a12.y + mm(3.1)),
+           pcbnew.VECTOR2I(tp2.GetPosition().x, a12.y + mm(3.1)), tp2.GetPosition()]
+    for s_, e_ in zip(pts, pts[1:]):
+        _track(board, s_, e_, p12.GetNet(), 0.2)
+    a13 = p13.GetPosition()
+    pts = [a13, pcbnew.VECTOR2I(a13.x, r4.GetPosition().y - mm(0.8)), r4.GetPosition()]
+    for s_, e_ in zip(pts, pts[1:]):
+        _track(board, s_, e_, p13.GetNet(), 0.2)
+    # SCL (14) / SDA (15) fan out down-right, clear of CE and the TS corner pad
+    for num, pts_ in (("14", [(0, 1.12), (1.6, 2.72)]), ("15", [(0, 0.72), (1.2, 1.92)])):
+        pad = _pad(board, "U1", num)
+        pts = [pad.GetPosition()] + [pcbnew.VECTOR2I(pad.GetPosition().x + mm(dx), pad.GetPosition().y + mm(dy)) for dx, dy in pts_]
+        for s_, e_ in zip(pts, pts[1:]):
+            _track(board, s_, e_, pad.GetNet(), 0.2)
+    # NT1 GND side gets its own via so the star point reaches both GND pours
+    add_nt_via(board)
+    # C24 GND pad straight onto the PCA9685 GND pins 24/25
+    c24g, p24 = _pad(board, "C24", "2"), _pad(board, "U6", "24")
+    _track(board, c24g.GetPosition(), pcbnew.VECTOR2I(p24.GetPosition().x, c24g.GetPosition().y), c24g.GetNet(), 0.25)
+    # C20 GND between the module rows is cut off by the 5V/3V3 traces: own via
+    c20 = _pad(board, "C20", "2")
+    at = pcbnew.VECTOR2I(c20.GetPosition().x + mm(1.1), c20.GetPosition().y)
+    _track(board, c20.GetPosition(), at, c20.GetNet(), 0.4)
     v = pcbnew.PCB_VIA(board)
-    v.SetPosition(v18); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(p18.GetNet())
+    v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(c20.GetNet())
     v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
     board.Add(v)
+    # PWM3 (U6 pin 6) has to cross PWM1/PWM2: via under the TSSOP body, B.Cu down to R17
+    p6, r17 = _pad(board, "U6", "6"), _pad(board, "R17", "1")
+    a6, ar = p6.GetPosition(), r17.GetPosition()
+    v1 = pcbnew.VECTOR2I(a6.x - mm(1.6), a6.y)
+    v2 = pcbnew.VECTOR2I(ar.x - mm(1.1), ar.y)
+    _track(board, a6, v1, p6.GetNet(), 0.25)
+    for at in (v1, v2):
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(p6.GetNet())
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        board.Add(v)
+    for s_, e_ in ((v1, pcbnew.VECTOR2I(v1.x, v2.y)), (pcbnew.VECTOR2I(v1.x, v2.y), v2)):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(s_); t.SetEnd(e_); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.B_Cu); t.SetNet(p6.GetNet())
+        board.Add(t)
+    _track(board, v2, ar, p6.GetNet(), 0.25)
     # PROG (pin 20) to R1 above the BATP via
     p20, r1 = _pad(board, "U1", "20"), _pad(board, "R1", "1")
     pts = [p20.GetPosition(), pcbnew.VECTOR2I(r1.GetPosition().x, p20.GetPosition().y), r1.GetPosition()]
@@ -229,6 +289,8 @@ def build():
         fp.Reference().SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8)))
         fp.Reference().SetTextThickness(mm(0.12))
         fp.Value().SetVisible(False)
+        if ref.startswith("H"):
+            fp.Reference().SetVisible(False)
         board.Add(fp)
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
@@ -280,7 +342,7 @@ def build():
         t.SetTextAngleDegrees(90)
         board.Add(t)
     t = pcbnew.PCB_TEXT(board)
-    t.SetText("xiao-solar v0.1  n3tk0/MeshCore")
+    t.SetText("xiao-solar v0.2  n3tk0/MeshCore")
     t.SetPosition(pt(14.0, H - 1.5)); t.SetLayer(pcbnew.F_SilkS)
     t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
     board.Add(t)

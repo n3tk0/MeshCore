@@ -82,7 +82,7 @@ def drc(board, path):
 def widen(board, tmp):
     """Widen PowerQFN tracks to 0.8 mm except near U1, then undo any that break clearance."""
     u1 = board.FindFootprintByReference("U1").GetPosition()
-    nets = set(gen_pcb.NETCLASSES["PowerQFN"][4])
+    nets = set(gen_pcb.NETCLASSES["PowerQFN"][4]) | set(gen_pcb.NETCLASSES["Power"][4])
     changed, orig = [], {}
     for t in board.GetTracks():
         if t.GetClass() != "PCB_TRACK" or t.GetNetname() not in nets:
@@ -107,7 +107,7 @@ def widen(board, tmp):
             pts = [(round(pcbnew.ToMM(p.x), 2), round(pcbnew.ToMM(p.y), 2)) for p in (t.GetStart(), t.GetEnd())]
             if any(_near_seg(b, pts) for b in bad):
                 nxt = steps[width]
-                t.SetWidth(mm(nxt) if nxt else orig[t]); reverted += 1
+                t.SetWidth(mm(nxt) if nxt and mm(nxt) > orig[t] else orig[t]); reverted += 1
         print("widen: %d tracks at %.1f mm, %d stepped down" % (len(changed), width, reverted))
 
 def _near_seg(p, seg, tol=0.5):

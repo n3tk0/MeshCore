@@ -183,7 +183,7 @@ T(15, 80, "2. MPPT ЗАРЯДНО BQ25798 (1S, 750 kHz, 2.2 uH), I2C 0x6B", 2.0)
 bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": None, "7": None,
       "8": "VBUS", "9": "VBUS", "10": "GND", "11": "GND", "12": "QON", "13": "CE", "14": "SCL",
       "15": "SDA", "16": "TS", "17": "REGN", "18": "BATP", "19": "BTST2", "20": "PROG",
-      "21": "INT", "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
+      "21": None, "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
       "28": "SW1", "29": "PMID"}
 P("U1", "xiao_solar:BQ25798RQMR", "BQ25798RQMR", 70, 125, bq,
   "xiao_solar:QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR", "C2876593")
@@ -218,8 +218,8 @@ P("JP2", "Jumper:SolderJumper_3_Bridged12", "CE: 1-2 Li-ion / 2-3 LiFePO4", 30, 
 # STAT LED (only lit while charging, firmware can disable with DIS_STAT)
 R("R6", "2.2k", 55, 160, "REGN", "LED_STAT", "C4190")
 P("D4", "Device:LED", "green", 55, 175, {"1": "STAT", "2": "LED_STAT"}, "LED_SMD:LED_0805_2012Metric", "C2297")
-R("R7", "10k", 70, 160, "3V3", "INT", "C25804")
-P("TP1", "Connector:TestPoint", "INT", 80, 165, {"1": "INT"}, "TestPoint:TestPoint_Pad_D1.0mm")
+# INT (pin 21) is left open: the firmware polls the status registers, and the pin has no
+# room to escape between the BAT caps and PROG.
 P("TP2", "Connector:TestPoint", "QON (to GND = wake)", 90, 165, {"1": "QON"}, "TestPoint:TestPoint_Pad_D1.0mm")
 T(15, 192, "CE: JP2 1-2 (Li-ion) зарежда и без Xiao; 2-3 (LiFePO4) само след запис на VREG и D0=0. Watchdog off. D+/D- не се ползват.", 1.27)
 
@@ -268,7 +268,8 @@ C("C23", "100n", 275, 140, "3V3", "GND", C100N, C0603)
 
 # ---- 6. Loads ---------------------------------------------------------------------------
 T(205, 160, "6. ИЗХОДИ ЗА ТОВАРИ (PWM, до 2 A): нагревател, вентилатор, резерв", 2.0)
-pca = {"1": "3V3", "2": "GND", "3": "GND", "4": "GND", "5": "GND", "6": "PWM1", "7": "PWM2", "8": "PWM3",
+# LED2 (pin 8) drives OUT1 and LED0 (pin 6) OUT3: the pin order then matches the output order on the board
+pca = {"1": "3V3", "2": "GND", "3": "GND", "4": "GND", "5": "GND", "6": "PWM3", "7": "PWM2", "8": "PWM1",
        "14": "GND", "23": "GND", "24": "GND", "25": "GND", "26": "SCL", "27": "SDA", "28": "3V3"}
 for n in range(9, 23):
     if str(n) not in pca:
