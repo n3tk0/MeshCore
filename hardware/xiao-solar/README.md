@@ -51,6 +51,13 @@ v0.4 (2026-10-30, след прегледа на Argon и предложения
 | `production/bom-hand.csv` | Части, които се запояват на ръка |
 | `xiao-solar.kicad_pcb` | Платката; `tools/gen_pcb.py` (разположение) + `tools/route.py` (Freerouting, GND зони, DRC) |
 | `production/gerber/`, `production/*-pos.csv` | Gerber + сондажи и CPL за JLC |
+| `panel/` | Панел за JLC: 2 платки на 96×81.5 mm, V-cut, релси 5 mm с tooling отвори и fiducial-и; `tools/panel.py` (KiKit), Gerber/BOM/CPL в `panel/production/` |
+
+### Панел и цени (JLC Economic PCBA, 2026-10-30, без доставка и ДДС)
+Заготовка до 100×100 mm е най-евтина, затова поръчката е на панел: 2 платки, разделени с V-cut.
+В поръчката: "Panel by Customer", V-cut "Yes", 5 панела. Медта стои на 0.4 mm от всеки ръб (изискване на JLC за V-cut).
+Части ~$7.4 на платка; 8 extended части по $3; setup $8 + шаблон $1.5.
+5 панела (10 платки), всички сглобени: ~$112, ~$11 на платка. Xiao, Wio и гребените не са включени.
 
 ## Блокове
 

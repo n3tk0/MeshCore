@@ -55,9 +55,15 @@ v0.4 (2026-10-30, Argon review + v0.4 proposals, shared with the main board):
   SFET_PRESENT (only with Q2) and VREG again.
 
 ## JLC
-19 BOM lines, 2 extended parts with a setup fee (BQ25798, LM66100; MWSA0402S inductor); SMBJ24A is
-a preferred extended part (no fee), everything else is basic. Headers are hand-soldered
+21 BOM lines, 4 extended parts with a $3 fee (BQ25798, LM66100, MWSA0402S inductor, 100n/50V 0402);
+SMBJ24A is a preferred extended part (no fee), everything else is basic. Headers are hand-soldered
 (`production/bom-hand.csv`).
+
+Panel: `panel/` holds 4 boards on 92×67 mm (V-cut, 5 mm rails with tooling holes and fiducials),
+made by `python3 tools/run.py panel` (KiKit; Gerber/BOM/CPL in `panel/production/`). Order it as
+"Panel by Customer" with V-cut. Copper keeps 0.4 mm from every edge, as JLC wants next to a V-cut.
+Cost (JLC Economic PCBA, 2026-10-30, no shipping/VAT): parts ~$4.4 per board; 5 panels (20 boards)
+all assembled ~$114, ~$5.7 per board.
 
 ## Files and tools
 - `tools/gen_sch.py`: schematic + BOM; reuses the writer and the symbol/footprint library of `../xiao-solar`.

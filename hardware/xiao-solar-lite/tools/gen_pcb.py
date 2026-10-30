@@ -73,7 +73,7 @@ def build():
     ds.m_MinThroughDrill = mm(0.3)
     ds.m_MinClearance = mm(0.127)
     ds.m_HoleClearance = mm(0.25)
-    ds.m_CopperEdgeClearance = mm(0.3)
+    ds.m_CopperEdgeClearance = mm(0.4)   # V-cut panels: JLC wants copper >= 0.4 mm from the cut
     nc = ds.m_NetSettings.m_DefaultNetClass
     nc.SetTrackWidth(mm(0.25)); nc.SetClearance(mm(0.13)); nc.SetViaDiameter(mm(0.6)); nc.SetViaDrill(mm(0.3))
     nets = {}
