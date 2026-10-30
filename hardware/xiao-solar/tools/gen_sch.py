@@ -792,7 +792,9 @@ def write_bom():
         if not p["lcsc"]:
             hand.append(p)
             continue
-        k = (p["value"], p["fp"].split(":")[-1], p["lcsc"])
+        # one row per LCSC part: JLC rejects a part number that shows up on two rows
+        # (R1 "4.7k 1%" and R11/R12 "4.7k" are the same C23162)
+        k = next((g for g in groups if g[2] == p["lcsc"]), (p["value"], p["fp"].split(":")[-1], p["lcsc"]))
         groups.setdefault(k, []).append(r)
     os.makedirs(os.path.join(ROOT, "production"), exist_ok=True)
     with open(os.path.join(ROOT, "production", "bom-jlc.csv"), "w", newline="") as f:
