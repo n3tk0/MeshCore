@@ -94,7 +94,7 @@ def free_spot(board, region, prefer, need, ox=100.0, oy=100.0, inside=None, net=
     return None
 
 def add_fiducials(board, regions, load_fp, ox=100.0, oy=100.0):
-    """One fiducial per region (x0, y0, x1, y1, prefer_x, prefer_y): 1 mm copper, 0.5 mm
+    """One fiducial per region (x0, y0, x1, y1, prefer_x, prefer_y): 1 mm copper, 0.65 mm
     clearance, 2 mm mask opening; kept off the BOM and the placement file."""
     placed = []
     for k, (x0, y0, x1, y1, px, py) in enumerate(regions):
@@ -106,6 +106,10 @@ def add_fiducials(board, regions, load_fp, ox=100.0, oy=100.0):
         fp.SetPosition(vec(mm(ox + at[0]), mm(oy + at[1])))
         fp.SetAttributes(fp.GetAttributes() | pcbnew.FP_EXCLUDE_FROM_POS_FILES | pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_BOARD_ONLY)
         fp.Reference().SetVisible(False); fp.Value().SetVisible(False)
+        # the library's 0.5 mm clearance puts the pour right on the edge of the 2 mm mask
+        # opening (JLC DFM: "solder mask opening exposing trace"); 0.65 mm keeps it under mask
+        for pad in fp.Pads():
+            pad.SetLocalClearance(mm(0.65))
         board.Add(fp)
         placed.append(at)
     return placed
