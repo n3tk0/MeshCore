@@ -10,7 +10,7 @@ import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.append(HERE)
-import dsn_classes, refill, route  # noqa: E402
+import dfm, dsn_classes, refill, route  # noqa: E402
 
 def main():
     jar = os.environ["FREEROUTING_JAR"]
@@ -18,10 +18,12 @@ def main():
     dsn, ses = os.path.join(tmp, "xs.dsn"), os.path.join(tmp, "xs.ses")
     board = pcbnew.LoadBoard(route.PCB)
     before = board.GetConnectivity().GetUnconnectedCount(True)
+    dfm.remove_teardrops(board)
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.ExportSpecctraDSN(board, dsn)
     dsn_classes.fix(dsn)
     dsn_classes.add_zone_copper(board, dsn)
+    dsn_classes.add_keepouts(board, dsn, route.b_clear(board))
     subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "30"],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
     # the session leaves out the fixed (locked, hand-routed) wiring, so that stays on the board

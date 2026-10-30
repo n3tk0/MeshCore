@@ -6,7 +6,7 @@ import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.append(HERE)
-import route  # noqa: E402
+import dfm, route  # noqa: E402
 
 STEPS = {0.8: 0.5, 0.5: 0.3, 0.3: 0.25}
 
@@ -60,6 +60,8 @@ def drop_dangling(board, tmp):
                 pts.add((round(float(m.group(1)), 2), round(float(m.group(2)), 2)))
     n = 0
     for v in list(board.GetTracks()):
+        if v.IsLocked():
+            continue  # hand-routed (charger.preroute): the router is meant to reach it
         if v.GetClass() == "PCB_VIA":
             ends = [v.GetPosition()]
         else:
@@ -80,6 +82,7 @@ def double_power_vias(board):
     pads = [p for fp in board.GetFootprints() for p in fp.Pads()]
     areas = [z for z in board.Zones() if z.GetIsRuleArea() or z.GetNetname() not in ("GND",)]
     edge = board.GetBoardEdgesBoundingBox()
+    cys = dfm.smd_courtyards(board)
     added = 0
     for v in vias:
         pos, net = v.GetPosition(), v.GetNetCode()
@@ -91,6 +94,8 @@ def double_power_vias(board):
             c = pcbnew.VECTOR2I(pos.x + int(mm(d) * math.cos(a)), pos.y + int(mm(d) * math.sin(a)))
             if not (edge.GetX() + mm(0.8) < c.x < edge.GetRight() - mm(0.8)
                     and edge.GetY() + mm(0.8) < c.y < edge.GetBottom() - mm(0.8)):
+                continue
+            if dfm.in_courtyard(cys, c):
                 continue
             shape = pcbnew.SHAPE_SEGMENT(pos, c, max(mm(0.6), v.GetWidth()))
             ok = True
@@ -129,8 +134,26 @@ def double_power_vias(board):
     print("second power vias:", added)
     return added
 
+def gnd_passes(board):
+    """v0.4 GND vias (tools/dfm.py): edge fence and grid, capacitor and signal-via return
+    vias, then at least two vias in every F.Cu GND piece."""
+    fill = lambda: pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    g = route.gen_pcb
+    fill()
+    dfm.stitch(board, route.free_point, g.OX, g.OY, g.W, g.H)
+    fill()
+    dfm.cap_vias(board, route.free_point)
+    dfm.signal_return_vias(board, route.free_point, route.signal_nets(board))
+    for _ in range(3):
+        fill()
+        added, _short = dfm.fragment_vias(board, route.free_point)
+        if not added:
+            break
+    fill()
+
 def main():
     board = pcbnew.LoadBoard(route.PCB)
+    dfm.remove_teardrops(board)
     dedupe(board)
     board.Save(route.PCB)
     board = pcbnew.LoadBoard(route.PCB)
@@ -149,14 +172,20 @@ def main():
     if drop_dangling(board, tmp):
         board.Save(route.PCB)
         board = pcbnew.LoadBoard(route.PCB)
-        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-    while route.stitch_islands(board):
-        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    gnd_passes(board)
+    if drop_dangling(board, tmp):
+        gnd_passes(board)
+    dfm.teardrops(board)
+    # the stitching vias are new: move the silk references off them again
+    hidden = dfm.place_silk(board)
+    print("silk: hidden refs", " ".join(hidden) or "none")
+    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     board.BuildConnectivity()
     board.Save(route.PCB)
     rep = route.drc(board, os.path.join(route.ROOT, "production", "drc.rpt"))
     print("unconnected:", board.GetConnectivity().GetUnconnectedCount(True))
     print(re.findall(r"\*\* Found \d+ [^*]+", rep))
+    dfm.report(board)
 
 if __name__ == "__main__":
     main()

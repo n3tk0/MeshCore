@@ -54,7 +54,18 @@ def add_zone_copper(board, path, w=0.3, pitch=0.25):
     from shapely.ops import unary_union
     wires = []
     def emit(coords, lname, net):
-        xy = " ".join("%d %d" % (round(x * 1000), -round(y * 1000)) for x, y in coords)
+        # repeated points and few-um segments (arcs of the fill) make Freerouting report
+        # "offset_shapes: shape is empty" in a modal dialog, and then it hangs: drop them
+        if len(coords) > 2:
+            coords = list(LineString(coords).simplify(0.02).coords)
+        pts = []
+        for x, y in coords:
+            q = (round(x * 1000), -round(y * 1000))
+            if not pts or q != pts[-1]:
+                pts.append(q)
+        if len(pts) < 2:
+            return
+        xy = " ".join("%d %d" % q for q in pts)
         wires.append("    (wire (path %s %d %s)(net %s)(type fix))" % (lname, round(w * 1000), xy, quote(net)))
     for z in board.Zones():
         if z.GetIsRuleArea() or z.GetNetname() in ("", "GND"):
@@ -92,3 +103,50 @@ def add_zone_copper(board, path, w=0.3, pitch=0.25):
     s = s[:i] + "\n" + "\n".join(wires) + s[i:]
     open(path, "w").write(s)
     return len(wires)
+
+def _poly_str(lname, ps):
+    import pcbnew
+    out = []
+    for i in range(ps.OutlineCount()):
+        ol = ps.Outline(i)
+        pts = [ol.CPoint(k) for k in range(ol.PointCount())]
+        if len(pts) < 3:
+            continue
+        xy = "  ".join("%d %d" % (round(pcbnew.ToMM(p.x) * 1000), -round(pcbnew.ToMM(p.y) * 1000)) for p in pts)
+        out.append("(polygon %s 0  %s)" % (lname, xy))
+    return out
+
+def add_keepouts(board, path, b_clear=(), b_cost=3.0):
+    """v0.4 routing rules the KiCad export cannot carry:
+    - via keepouts on the courtyards of SMD parts (but U1, whose vias are hand placed),
+      shrunk by 0.25 mm so a via may touch the courtyard margin but not the part,
+    - B.Cu keepouts (tracks and vias) over the given board rectangles (charger, radio),
+      so B.Cu stays a whole ground plane there; fixed (hand routed) copper stays,
+    - B.Cu trace cost `b_cost` times that of F.Cu, so signals run on top and B.Cu only
+      takes short jumps."""
+    import pcbnew, dfm
+    lines = []
+    for ref, cy in dfm.smd_courtyards(board):
+        cy = cy.CloneDropTriangulation()
+        cy.Deflate(pcbnew.FromMM(0.25), 16)
+        for lname in ("F.Cu", "B.Cu"):
+            lines += ['    (via_keepout "" %s)' % p for p in _poly_str(lname, cy)]
+    for x0, y0, x1, y1 in b_clear:
+        ps = pcbnew.SHAPE_POLY_SET(); ps.NewOutline()
+        for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+            ps.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        lines += ['    (keepout "" %s)' % p for p in _poly_str("B.Cu", ps)]
+    s = open(path).read()
+    i = s.index("(structure") + len("(structure")
+    # an autoroute_settings block replaces Freerouting's defaults: without (vias on) it
+    # routes with no vias at all
+    rules = ('\n    (autoroute_settings\n      (fanout off) (autoroute on) (postroute on) (vias on) (via_costs 50)'
+             ' (plane_via_costs 5) (start_ripup_costs 100) (start_pass_no 1)\n      (layer_rule F.Cu (active on) (preferred_direction horizontal)'
+             ' (preferred_direction_trace_costs 1.0) (against_preferred_direction_trace_costs 1.2))\n'
+             '      (layer_rule B.Cu (active on) (preferred_direction vertical)'
+             ' (preferred_direction_trace_costs %.1f) (against_preferred_direction_trace_costs %.1f))\n    )'
+             % (b_cost, b_cost * 1.2))
+    j = s.index("(boundary", i)
+    s = s[:j] + rules.strip() + "\n    " + "\n".join(lines).strip() + "\n    " + s[j:]
+    open(path, "w").write(s)
+    return len(lines)

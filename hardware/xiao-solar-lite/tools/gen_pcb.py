@@ -20,6 +20,7 @@ if SHARED not in sys.path:
     sys.path.append(SHARED)
 _spec.loader.exec_module(base)
 import charger  # noqa: E402
+import dfm  # noqa: E402
 mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "xiao-solar-lite"
@@ -34,12 +35,27 @@ PLACE = charger.place(CHARGER_FRAME, set(charger.PLACE))
 PLACE.update({
     # XIAO + Wio stack on top, USB end at the board edge; only flat parts under it
     "U2": (11.5, 10.5, 0), "R11": (11.5, 13.5, 0), "R12": (11.5, 15.5, 0),
-    # output diode + cap right of the SYS caps, fed from the SYS copper between C12 and C13
-    "D5": (21.4, 42.45, 90), "C20": (21.4, 46.6, 270),
+    # ideal diode right of the SYS caps, VIN (pin 1, bottom left) fed from the SYS copper
+    # between C12 and C13; parts 1 mm or more from the edge
+    "D5": (21.15, 40.8, 90), "C20": (21.0, 46.6, 270),
     # input diode and TVS below the charger, connectors along the bottom edge (pin 1 left)
-    "D1": (3.7, 50.6, 180), "D3": (11.8, 50.7, 0),
-    "J1": (2.3, 54.5, 90), "J5": (7.8, 54.5, 90), "J4": (18.2, 54.5, 90),
+    "D1": (4.5, 50.2, 180), "D3": (11.8, 50.3, 0),
+    "J1": (2.1, 54.0, 90), "J5": (7.4, 54.0, 90), "J4": (17.9, 54.0, 90),
+    # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
+    "JP3": (7.1, 43.2, 90),
 })
+# Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
+TEST_POINTS = {
+    "VBUS": (8.0, 25.0, 13.0, 32.0, 9.5, 27.0), "PMID": (13.0, 21.0, 17.6, 33.0, 15.0, 23.0),
+    "SYS": (13.0, 33.0, 17.6, 49.0, 15.0, 47.5), "BAT": (10.0, 35.0, 13.5, 47.0, 11.8, 45.5),
+    "GND": (0.8, 21.3, 22.2, 25.0, 3.0, 22.5), "3V3": (0.8, 21.3, 22.2, 25.0, 5.0, 22.5),
+    "SCL": (0.8, 21.3, 22.2, 25.0, 7.0, 22.5), "SDA": (0.8, 21.3, 22.2, 25.0, 9.0, 22.5),
+}
+FIDUCIALS = [(0.8, 21.3, 8.0, 50.0, 1.5, 26.0), (15.0, 21.3, 22.2, 52.0, 21.5, 22.0), (0.8, 40.0, 9.0, 51.0, 1.5, 47.5)]
+B_CLEAR = []
+# B.Cu stays whole GND under U1, L1 and the BTST caps only (charger frame, mm): with the whole
+# charger kept free (charger.B_CLEAR) the board is too narrow and Freerouting did not finish.
+CHARGER_B_CLEAR = (-4.5, -10.4, 4.5, 1.0)
 
 NETCLASSES = {
     "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "SOLAR_IN", "VOUT", "VBUS", "SYS", "BAT", "PMID"]),
@@ -68,17 +84,20 @@ def build():
             nets[name] = n
         return nets[name]
     missing = []
+    tps = {}
     for p in gen_sch.parts:
         ref = p["ref"]
         if ref.startswith("#"):
             continue
-        if ref not in PLACE:
+        if ref not in PLACE and not ref.startswith("TP"):
             missing.append(ref)
             continue
         fp = base.load_fp(p["fp"])
         fp.SetReference(ref); fp.SetValue(p["value"]); fp.SetFPIDAsString(p["fp"])
-        x, y, rot = PLACE[ref]
+        x, y, rot = PLACE.get(ref, (0, 0, 0))
         fp.SetPosition(pt(x, y)); fp.SetOrientationDegrees(rot)
+        if fp.HasProperty("LCSC Part"):
+            fp.SetProperty("LCSC Part", p["lcsc"] or "")
         if not p["lcsc"]:
             fp.SetAttributes(fp.GetAttributes() | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
         for pad in fp.Pads():
@@ -88,6 +107,15 @@ def build():
         fp.Reference().SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8)))
         fp.Reference().SetTextThickness(mm(0.12))
         fp.Value().SetVisible(False)
+        if ref.startswith("TP") and ref not in PLACE:
+            fp.Reference().SetVisible(False)
+            tps[ref] = (fp, p["nets"]["1"])
+            continue
+        if ref in ("J1", "J4", "J5"):
+            # the header outlines of the three touch each other; the labels below say it
+            for g in list(fp.GraphicalItems()):
+                if g.GetLayer() == pcbnew.F_SilkS and isinstance(g, pcbnew.PCB_SHAPE):
+                    g.SetLayer(pcbnew.F_Fab)
         board.Add(fp)
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
@@ -95,8 +123,9 @@ def build():
     # VBUS from the input diodes up into the VBUS copper: one wide B.Cu run, two vias at
     # each end (the autorouter made three single-via layer changes of it)
     vbus = net("VBUS")
-    top, bot = [pt(8.75, 30.0), pt(8.75, 30.8)], [pt(8.75, 48.9), pt(9.65, 48.9)]
-    for a_, b_ in zip(top + bot, (top + bot)[1:]):
+    top, bot = [pt(8.75, 30.0), pt(8.75, 30.8)], [pt(8.75, 49.2), pt(8.75, 50.1)]
+    run = top + [pt(6.7, 30.8), pt(6.7, 49.2)] + bot
+    for a_, b_ in zip(run, run[1:]):
         charger._track(board, a_, b_, vbus, 0.8, pcbnew.B_Cu)
     d3 = charger._pad(board, "D3", "1").GetPosition()
     for v in top + bot:
@@ -130,7 +159,7 @@ def build():
     z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
     z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
     ol = z.Outline(); ol.NewOutline()
-    for (x, y) in [(17.0, 40.35), (21.9, 40.35), (21.9, 41.25), (17.0, 41.25)]:
+    for (x, y) in [(17.0, 41.3), (20.65, 41.3), (20.65, 42.2), (17.0, 42.2)]:
         ol.Append(mm(OX + x), mm(OY + y))
     board.Add(z)
     for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
@@ -144,16 +173,28 @@ def build():
         for (x, y) in [(0.3, 0.3), (W - 0.3, 0.3), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(z)
-    def text(s, x, y, size=0.6, angle=0):
+    base.place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
+    dfm.add_fiducials(board, FIDUCIALS, base.load_fp)
+    base.plus_marks(board, ["J1", "J4"], dx=0.0, dy=-1.6)
+    charger.pin1_dot(board, CHARGER_FRAME)
+    def text(s, x, y, size=0.8, angle=0):
         t = pcbnew.PCB_TEXT(board)
         t.SetText(s); t.SetPosition(pt(x, y)); t.SetLayer(pcbnew.F_SilkS)
-        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.1))
+        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.12))
         t.SetTextAngleDegrees(angle)
         board.Add(t)
-    for ref, s in (("J1", "SOL + -"), ("J4", "BAT + -"), ("J5", "SCL SDA 3V3 GND")):
-        x, y, _ = PLACE[ref]
-        text(s, x + 1.27 * (3 if ref == "J5" else 1), y + 1.75, 0.55)
-    text("xiao-solar-lite v0.3", 11.5, 19.5, 0.7)
+    # one label per pin, under the pin
+    for ref, names in (("J1", ("SOLAR",)), ("J4", ("BAT",)), ("J5", ("SCL", "SDA", "3V3", "GND"))):
+        p1 = charger._pad(board, ref, "1").GetPosition()
+        x1 = pcbnew.ToMM(p1.x) - OX
+        if len(names) == 1:
+            text(names[0], x1 + 1.27, H - 0.9)
+        else:
+            for i, s in enumerate(names):
+                text(s, x1 + 2.54 * i, H - 0.9)
+    text("xiao-solar-lite v0.4", 11.5, 19.5)
+    hidden = dfm.place_silk(board)
+    print("silk: hidden refs", " ".join(hidden) or "none")
     return board
 
 def write_project():

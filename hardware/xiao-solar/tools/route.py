@@ -215,10 +215,29 @@ def stitch_islands(board):
     print("island vias:", added)
     return added
 
+def b_clear(board):
+    """Board rectangles (absolute mm) where B.Cu stays a whole GND plane: the board's
+    B_CLEAR list (gen_pcb.py) plus the charger core from charger.B_CLEAR."""
+    import charger
+    out = [(gen_pcb.OX + x0, gen_pcb.OY + y0, gen_pcb.OX + x1, gen_pcb.OY + y1)
+           for x0, y0, x1, y1 in getattr(gen_pcb, "B_CLEAR", [])]
+    # a board may narrow the charger's B.Cu-free area (relative to the charger frame)
+    x0, y0, x1, y1 = getattr(gen_pcb, "CHARGER_B_CLEAR", charger.B_CLEAR)
+    a, b = gen_pcb.CHARGER_FRAME.xy(x0, y0), gen_pcb.CHARGER_FRAME.xy(x1, y1)
+    out.append((gen_pcb.OX + min(a[0], b[0]), gen_pcb.OY + min(a[1], b[1]),
+                gen_pcb.OX + max(a[0], b[0]), gen_pcb.OY + max(a[1], b[1])))
+    return out
+
+def signal_nets(board):
+    power = set(gen_pcb.NETCLASSES["Power"][4]) | set(gen_pcb.NETCLASSES["PowerQFN"][4])
+    return {n for n in board.GetNetsByName().keys() if str(n) and str(n) not in power and str(n) != "GND"}
+
 def _in_free_area(board, via):
+    return free_point(board, via.GetPosition())
+
+def free_point(board, p):
     """Keep vias out of module footprints (XIAO/Wio sit on the board), mounting holes and
     the SHT40 tongue."""
-    p = via.GetPosition()
     x0, y0, x1, y1 = getattr(gen_pcb, "SENSOR_TONGUE", (-9, -9, -9, -9))
     if mm(gen_pcb.OX + x0 - 1.5) < p.x < mm(gen_pcb.OX + x1 + 1.5) and p.y < mm(gen_pcb.OY + y1 + 2.0):
         return False
@@ -244,20 +263,12 @@ def main():
     pcbnew.ExportSpecctraDSN(board, dsn)
     dsn_classes.fix(dsn)
     dsn_classes.add_zone_copper(board, dsn)
+    dsn_classes.add_keepouts(board, dsn, b_clear(board))
     subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "200"],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("ses: %d segments, %d vias" % import_ses(board, ses))
     rep_tmp = os.path.join(tmp, "drc.rpt")
     widen(board, rep_tmp)
-    stitch(board, rep_tmp)
-    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-    while stitch_islands(board):
-        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-    board.BuildConnectivity()
-    if drop_dangling(board, rep_tmp):
-        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-        while stitch_islands(board):
-            pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     board.BuildConnectivity()
     board.Save(PCB)
     import refill  # noqa: E402  (narrows widened tracks that DRC flags, refills, writes DRC)

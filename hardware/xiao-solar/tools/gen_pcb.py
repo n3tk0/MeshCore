@@ -13,12 +13,13 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import gen_sch  # noqa: E402  (builds the part list on import)
 import charger  # noqa: E402
+import dfm  # noqa: E402
 
 PROJECT = "xiao-solar"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
 FPLIB_SYS = "/usr/share/kicad/footprints"
 FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
-W, H = 48.0, 94.0          # board size, mm
+W, H = 48.0, 71.5          # board size, mm
 OX, OY = 100.0, 100.0      # board origin on the sheet
 
 def mm(v):
@@ -28,42 +29,35 @@ def pt(x, y):
     return pcbnew.VECTOR2I(mm(OX + x), mm(OY + y))
 
 # ref: (x, y, rotation_deg). Coordinates are mm from the board's top-left corner.
-# Columns: XIAO/Wio on the left (USB to the left edge), loads top right,
-# charger + battery at the bottom, all connectors in one column at the right edge.
+# Columns: XIAO/Wio on the left (USB to the left edge), inputs, BMS and INA219 on the right,
+# charger below the modules, all connectors in one column at the right edge.
 PLACE = {
     # modules, rotated so the USB / pin-1 end faces the left edge
     "U4": (11.5, 12.0, 90), "U3": (11.5, 35.0, 90),
     # between the modules: Xiao 5V feed and 3V3 decoupling
-    "D5": (5.5, 23.5, 0), "C20": (9.8, 23.5, 0), "C21": (13.9, 23.5, 0), "C22": (17.1, 23.5, 0),
+    "D5": (5.5, 23.5, 180), "C20": (9.8, 23.5, 0), "C21": (13.9, 23.5, 180), "C22": (17.1, 23.5, 0),
     # right column connectors (pin 1 at the given point, pins go down)
-    "J5": (45.5, 3.5, 0), "J7": (45.5, 14.5, 0), "J8": (45.5, 20.5, 0), "J9": (45.5, 26.5, 0),
-    "J4": (45.5, 60.0, 0), "J3": (45.5, 52.0, 0),
-    "J1": (45.5, 70.0, 0), "J2": (45.5, 77.0, 0),
+    "J5": (45.5, 3.5, 0), "J3": (45.5, 15.0, 0), "J1": (45.5, 21.5, 0), "J2": (45.5, 28.0, 0),
+    "J4": (45.5, 37.0, 0),
     # I2C / sensor, top right (away from the charger heat)
-    # SHT40 sits on a tongue cut free by slots (SENSOR_TONGUE), away from the loads
+    # SHT40 sits on a tongue cut free by slots (SENSOR_TONGUE)
     "U5": (26.0, 2.6, 0), "C23": (28.6, 2.6, 90), "R11": (33.0, 2.4, 0), "R12": (33.0, 4.4, 0),
-    # PWM driver and outputs
-    "U6": (29.0, 15.5, 180), "C24": (23.2, 17.45, 0),
-    "R13": (35.5, 14.0, 0), "R14": (35.5, 15.8, 0), "Q4": (38.8, 15.5, 0), "D6": (41.8, 15.8, 90),
-    "R15": (35.5, 20.0, 0), "R16": (35.5, 21.8, 0), "Q5": (38.8, 21.5, 0), "D7": (41.8, 21.8, 90),
-    "R17": (35.5, 26.0, 0), "R18": (35.5, 27.8, 0), "Q6": (38.8, 27.5, 0), "D8": (41.8, 27.8, 90),
-    "F1": (27.0, 23.5, 0), "F2": (27.0, 27.0, 0), "F3": (27.0, 30.5, 0),
-    # load supply filter at the load end, PGND star point NT1 next to the bulk caps
-    "FB1": (27.0, 35.0, 0), "C25": (31.0, 34.0, 90), "C26": (33.4, 34.0, 90), "C27": (35.6, 34.0, 90),
-    "NT1": (33.4, 37.2, 0),
-    "C28": (43.3, 18.5, 90), "C29": (43.3, 24.5, 90), "C30": (43.3, 30.5, 90),
-    # battery / BMS (bottom right, next to J4)
-    "R9": (35.5, 55.5, 0), "C19": (35.5, 58.0, 90),
-    "U2": (39.0, 57.5, 0), "Q3": (39.5, 62.5, 0), "R10": (35.5, 61.5, 0),
-    # inputs (bottom right, next to J1/J2)
-    "D1": (37.5, 71.3, 180), "D2": (37.5, 78.3, 180), "D3": (29.5, 75.0, 90),
+    # inputs beside J1/J2, TVS where the two cathodes meet
+    "D1": (38.5, 22.8, 0), "D2": (38.5, 29.3, 0), "D3": (31.5, 26.0, 90),
+    # battery / BMS (right of the charger, next to J4)
+    "R9": (35.5, 32.5, 0), "C19": (35.5, 35.0, 90),
+    "U2": (39.0, 34.5, 0), "Q3": (39.5, 39.5, 0), "R10": (35.5, 38.5, 0),
+    # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
+    "JP3": (32.8, 58.0, 90),
+    # INA219 on the battery lead: RS1 between J4 and Q2, U7 Kelvin-sensing its pads
+    "RS1": (36.0, 44.0, 180), "U7": (39.5, 48.0, 0), "C24": (41.5, 51.0, 0),
 }
 # charger cluster (tools/charger.py), U1 at its position before the DY shift below
-PLACE.update(charger.place(charger.Frame(16.0, 63.0), set(charger.PLACE)))
+PLACE.update(charger.place(charger.Frame(16.0, 55.0), set(charger.PLACE)))
 # Everything except the SHT40 tongue moves down by DY to leave the top corners free for
 # the mounting holes: 2.8 mm (M2/M2.5) with 6 mm clear for the head, 3.5 mm from the edges.
 DY = 6.0
-CHARGER_FRAME = charger.Frame(16.0, 63.0 + DY)
+CHARGER_FRAME = charger.Frame(16.0, 55.0 + DY)
 PLACE = {r: (x, y if r in ("U5", "C23") else y + DY, a) for r, (x, y, a) in PLACE.items()}
 PLACE.update({"H1": (3.5, 3.5, 0), "H2": (W - 3.5, 3.5, 0), "H3": (3.5, H - 3.5, 0), "H4": (W - 3.5, H - 3.5, 0)})
 
@@ -76,11 +70,53 @@ OUTLINE = [(0, 0), (_tx0 - 1, 0), (_tx0 - 1, _ty1 + 1), (NECK[0], _ty1 + 1), (NE
            (_tx0, _ty1), (_tx0, 0), (_tx1, 0), (_tx1, _ty1), (NECK[1], _ty1), (NECK[1], _ty1 + 1),
            (_tx1 + 1, _ty1 + 1), (_tx1 + 1, 0), (W, 0), (W, H), (0, H)]
 
+# Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y). Charger nets sit
+# inside their copper zone when there is room; the others are wired by the router.
+TEST_POINTS = {
+    "VBUS": (9.0, 58.0, 15.0, 64.0, 10.0, 61.5), "PMID": (4.5, 54.0, 12.0, 59.0, 6.0, 58.0),
+    "SYS": (20.0, 54.0, 32.0, 59.0, 30.5, 55.5), "BAT": (18.0, 58.5, 30.0, 62.0, 22.0, 61.5),
+    "SCL": (35.0, 6.0, 43.0, 14.0, 37.5, 7.5), "SDA": (35.0, 6.0, 43.0, 14.0, 39.5, 7.5),
+    "3V3": (35.0, 6.0, 43.0, 14.0, 37.5, 10.0), "GND": (35.0, 6.0, 43.0, 14.0, 39.5, 10.0),
+    "BATS": (31.0, 46.0, 42.0, 64.0, 34.0, 52.0),
+}
+# three fiducials: region x0, y0, x1, y1 and the preferred point
+FIDUCIALS = [(6.5, 1.0, 21.0, 6.0, 8.0, 2.5), (32.0, 1.0, 41.0, 6.0, 40.0, 2.5), (6.5, H - 6.0, 26.0, H - 1.0, 8.0, H - 2.0)]
+# B.Cu stays whole GND under the Wio (U4) as well as under the charger (charger.B_CLEAR)
+# (between its two pin rows only: the Xiao-Wio links need B.Cu at the rows)
+B_CLEAR = [(0.7, 11.8, 22.3, 23.8)]
+
+def place_test_points(board, tps, frame, spec, ox=OX, oy=OY):
+    """tps: ref -> (footprint, net name). Each goes into its charger zone when it fits there,
+    else to the free spot nearest the preferred point."""
+    placed = {}
+    for ref, (fp, net) in sorted(tps.items(), key=lambda t: int(t[0][2:])):
+        x0, y0, x1, y1, px, py = spec[net]
+        inside = charger.zone_poly(frame, net, 0.7) if net in charger.ZONES else None
+        at = None
+        if inside is not None and inside.OutlineCount():
+            at = dfm.free_spot(board, (x0, y0, x1, y1), (px, py), (1.05, 0.75), ox, oy, inside=inside, net=net)
+        if at is None:
+            at = dfm.free_spot(board, (x0, y0, x1, y1), (px, py), (1.05, 0.75), ox, oy, net=net)
+        if at is None:
+            raise SystemExit("no room for test point %s (%s)" % (ref, net))
+        fp.SetPosition(pt(*at))
+        board.Add(fp)
+        placed[ref] = at
+    return placed
+
+def plus_marks(board, refs, dx=0.0, dy=-1.8, size=0.8):
+    """A '+' next to pin 1 of the power connectors."""
+    for ref in refs:
+        p = _pad(board, ref, "1").GetPosition()
+        t = pcbnew.PCB_TEXT(board)
+        t.SetText("+"); t.SetPosition(pcbnew.VECTOR2I(p.x + mm(dx), p.y + mm(dy))); t.SetLayer(pcbnew.F_SilkS)
+        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.15))
+        board.Add(t)
+
 NETCLASSES = {
     # name: (track mm, clearance mm, via dia, via drill, nets)
-    # Power: load and battery paths, 2 A (0.6 mm routed, widened to 0.8 by route.py where it fits).
-    "Power": (0.6, 0.2, 0.8, 0.4, ["BATT+", "BATT-", "FS_D", "SOLAR_IN", "VIN2_IN", "VLOAD", "PGND",
-                                    "OUT1+", "OUT1-", "OUT2+", "OUT2-", "OUT3+", "OUT3-", "XIAO_5V",
+    # Power: input and battery paths, up to 3 A (0.6 mm routed, widened to 0.8 by route.py where it fits).
+    "Power": (0.6, 0.2, 0.8, 0.4, ["BATT+", "BATT-", "BATS", "FS_D", "SOLAR_IN", "VIN2_IN", "XIAO_5V",
                                     "VBUS", "SYS", "BAT", "PMID"]),
     # SW nodes are copper zones at the charger (tools/charger.py); nothing else routes them.
     "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["SW1", "SW2"]),
@@ -107,15 +143,6 @@ def _track(board, a, b, net, width):
     t.SetLocked(True)  # exported as fixed wiring, so the router keeps it
     board.Add(t)
 
-def add_nt_via(board):
-    pad = _pad(board, "NT1", "2")
-    at = pcbnew.VECTOR2I(pad.GetPosition().x + mm(0.9), pad.GetPosition().y)
-    _track(board, pad.GetPosition(), at, pad.GetNet(), 0.4)
-    v = pcbnew.PCB_VIA(board)
-    v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(pad.GetNet())
-    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
-    board.Add(v)
-
 def preroute(board):
     charger.preroute(board, CHARGER_FRAME)
     # the input bus comes up on B.Cu: two vias into the VBUS copper for it to land on
@@ -136,11 +163,6 @@ def preroute(board):
     path("3V3", [(28.6, 3.375), (28.6, 4.2), (26.7, 4.2)])
     path("GND", [(26.0, 2.2), (26.68, 2.2), (27.3, 1.825), (28.6, 1.825), (29.4, 1.825),
                  (29.4, 5.0), (27.5, 5.0), (27.5, 7.8)])
-    # NT1 GND side gets its own via so the star point reaches both GND pours
-    add_nt_via(board)
-    # C24 GND pad straight onto the PCA9685 GND pins 24/25
-    c24g, p24 = _pad(board, "C24", "2"), _pad(board, "U6", "24")
-    _track(board, c24g.GetPosition(), pcbnew.VECTOR2I(p24.GetPosition().x, c24g.GetPosition().y), c24g.GetNet(), 0.25)
     # C20 and C22 GND between the module rows get cut off by the traces there: own vias
     for ref in ("C20", "C22"):
         cg = _pad(board, ref, "2")
@@ -150,31 +172,24 @@ def preroute(board):
         v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(cg.GetNet())
         v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
         board.Add(v)
-    # PWM3 (U6 pin 6) has to cross PWM1/PWM2: via under the TSSOP body, B.Cu down to R17
-    p6, r17 = _pad(board, "U6", "6"), _pad(board, "R17", "1")
-    a6, ar = p6.GetPosition(), r17.GetPosition()
-    v1 = pcbnew.VECTOR2I(a6.x - mm(1.6), a6.y)
-    v2 = pcbnew.VECTOR2I(ar.x - mm(1.1), ar.y)
-    _track(board, a6, v1, p6.GetNet(), 0.25)
-    for at in (v1, v2):
-        v = pcbnew.PCB_VIA(board)
-        v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(p6.GetNet())
-        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
-        board.Add(v)
-    for s_, e_ in ((v1, pcbnew.VECTOR2I(v1.x, v2.y)), (pcbnew.VECTOR2I(v1.x, v2.y), v2)):
-        t = pcbnew.PCB_TRACK(board)
-        t.SetStart(s_); t.SetEnd(e_); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.B_Cu); t.SetNet(p6.GetNet()); t.SetLocked(True)
-        board.Add(t)
-    _track(board, v2, ar, p6.GetNet(), 0.25)
-    # PCA9685 VDD (28) and A0 (1, tied high) sit at the same end of the two pin rows
-    u6_1, u6_28 = _pad(board, "U6", "1"), _pad(board, "U6", "28")
-    yb = u6_1.GetPosition().y + mm(0.9)
-    pts = [u6_28.GetPosition(), pcbnew.VECTOR2I(u6_28.GetPosition().x, yb),
-           pcbnew.VECTOR2I(u6_1.GetPosition().x, yb), u6_1.GetPosition()]
-    c24 = _pad(board, "C24", "1")
-    pts = [c24.GetPosition(), pcbnew.VECTOR2I(c24.GetPosition().x, yb)] + pts
-    for s, e in zip(pts, pts[1:]):
-        _track(board, s, e, u6_1.GetNet(), 0.3)
+    # INA219 Kelvin sense: thin runs from the inner ends of the RS1 pads to IN+ / IN-
+    # (the 0.65 mm pitch pins cannot take the 0.6 mm power class)
+    rs_p, rs_n = _pad(board, "RS1", "1").GetPosition(), _pad(board, "RS1", "2").GetPosition()
+    inp, inn = _pad(board, "U7", "1").GetPosition(), _pad(board, "U7", "2").GetPosition()
+    for net, pts in (("BATT+", [pcbnew.VECTOR2I(rs_p.x, rs_p.y + mm(0.6)), pcbnew.VECTOR2I(rs_p.x, inp.y), inp]),
+                     ("BATS", [pcbnew.VECTOR2I(rs_n.x + mm(0.25), rs_n.y + mm(0.6)),
+                               pcbnew.VECTOR2I(rs_n.x + mm(0.25), inn.y), inn])):
+        for a_, b_ in zip(pts, pts[1:]):
+            _track(board, a_, b_, board.FindNet(net), 0.25)
+    # SYS to the Xiao: one 0.8 mm run from the right end of the SYS copper (the bulk caps
+    # close its top side) up past RS1, across to the channel between the modules and the
+    # right column and along it to the LM66100 input
+    sys_ = board.FindNet("SYS")
+    vin = _pad(board, "D5", "1").GetPosition()
+    pts = [pt(31.3, 57.6), pt(32.6, 56.3), pt(32.6, 39.8), pt(23.8, 31.0), pcbnew.VECTOR2I(vin.x, mm(OY + 31.0))]
+    for a_, b_ in zip(pts, pts[1:]):
+        _track(board, a_, b_, sys_, 0.8)
+    _track(board, pts[-1], vin, sys_, 0.3)  # the SC-70 pins are 0.65 mm apart
 
 def build():
     board = pcbnew.BOARD()
@@ -196,22 +211,27 @@ def build():
             nets[name] = n
         return nets[name]
     missing = []
+    tps = {}
     for p in gen_sch.parts:
         ref = p["ref"]
         if ref.startswith("#"):
             continue
-        if ref not in PLACE:
+        if ref not in PLACE and not ref.startswith("TP"):
             missing.append(ref)
             continue
         fp = load_fp(p["fp"])
         fp.SetReference(ref)
         fp.SetValue(p["value"])
         fp.SetFPIDAsString(p["fp"])
-        x, y, rot = PLACE[ref]
+        x, y, rot = PLACE.get(ref, (0, 0, 0))
         fp.SetPosition(pt(x, y))
         fp.SetOrientationDegrees(rot)
         if p["lcsc"]:
             fp.SetField("LCSC", p["lcsc"]) if hasattr(fp, "SetField") else None
+        # footprints imported with easyeda2kicad carry the LCSC code of the part they came
+        # from (Q3 uses the DW01A one): always the code of this part
+        if fp.HasProperty("LCSC Part"):
+            fp.SetProperty("LCSC Part", p["lcsc"] or "")
         if not p["lcsc"]:
             fp.SetAttributes(fp.GetAttributes() | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
         for pad in fp.Pads():
@@ -223,11 +243,16 @@ def build():
         fp.Value().SetVisible(False)
         if ref.startswith("H"):
             fp.Reference().SetVisible(False)
+        if ref.startswith("TP") and ref not in PLACE:
+            fp.Reference().SetVisible(False)
+            tps[ref] = (fp, p["nets"]["1"])
+            continue
         board.Add(fp)
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
     preroute(board)
     charger.add_zones(board, CHARGER_FRAME)
+    charger.pin1_dot(board, CHARGER_FRAME)
     # outline; the 1 mm slots around the SHT40 tongue are part of it
     corners = OUTLINE
     for i in range(len(corners)):
@@ -262,23 +287,27 @@ def build():
         for (x, y) in [(0.3, 0.3), (W - 0.3, 0.3), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(z)
-    # silkscreen labels for the connectors
-    labels = {"J5": "SCL SDA 3V3 GND", "J7": "OUT1 heat", "J8": "OUT2 fan", "J9": "OUT3",
-              "J4": "BAT +/-", "J3": "NTC", "J1": "SOLAR +/-", "J2": "VIN2 +/-"}
+    place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
+    dfm.add_fiducials(board, FIDUCIALS, load_fp)
+    plus_marks(board, ["J1", "J2", "J4"], dx=-2.2, dy=0.0)
+    # silkscreen labels for the connectors, beside pin 2 so the "+" keeps pin 1
+    labels = {"J5": "GND 3V3 SDA SCL", "J4": "BAT", "J3": "NTC", "J1": "SOLAR", "J2": "VIN2"}
     for ref, txt in labels.items():
         x, y, _ = PLACE[ref]
         t = pcbnew.PCB_TEXT(board)
         t.SetText(txt)
-        t.SetPosition(pt(x - 2.4, y + 1.27 * (3 if ref == "J5" else 1)))
+        t.SetPosition(pt(x - 2.2, y + 1.27 * 3 if ref == "J5" else y + 2.54 + 0.4 * len(txt) / 2 - 0.4))
         t.SetLayer(pcbnew.F_SilkS)
-        t.SetTextSize(pcbnew.VECTOR2I(mm(0.6), mm(0.6))); t.SetTextThickness(mm(0.1))
+        t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
         t.SetTextAngleDegrees(90)
         board.Add(t)
     t = pcbnew.PCB_TEXT(board)
-    t.SetText("xiao-solar v0.3  n3tk0/MeshCore")
-    t.SetPosition(pt(14.0, H - 1.5)); t.SetLayer(pcbnew.F_SilkS)
+    t.SetText("xiao-solar v0.4  n3tk0/MeshCore")
+    t.SetPosition(pt(26.0, H - 1.5)); t.SetLayer(pcbnew.F_SilkS)
     t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
     board.Add(t)
+    hidden = dfm.place_silk(board)
+    print("silk: hidden refs", " ".join(hidden) or "none")
     return board
 
 def write_project():

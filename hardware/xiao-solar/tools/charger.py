@@ -3,12 +3,13 @@
 
 Laid out after the BQ25798 layout guide (SLUSDV2C 8.4.1), adapted to two layers with all
 parts on the top side:
-- SW1/SW2 run from their pins straight up to the inductor as short, wide copper (zones),
-- the 100 nF PMID/SYS caps sit right next to the PMID/SYS pins, bulk caps in a row behind them,
-- PMID, SYS, VBUS and BAT are copper zones, not autorouted tracks,
-- GND pin 27 (between the SW pins), BTST1/2 and REGN leave through vias under the
-  package (RQM has no exposed pad, the vias are tented), which keeps the pin rows free for
-  the power copper.
+- the 0402 100 nF PMID-GND and SYS-GND caps sit right on top of pins 29/27/25 (layout
+  guide priority 1), GND pin 27 runs up through both cap GND pads to two GND vias,
+- so SW1/SW2 leave their pins inwards to three vias each under the package (priority 2) and
+  run on B.Cu as short copper to two vias at each inductor pad,
+- BTST1/2 and REGN also drop to vias under the package (RQM has no exposed pad; the vias
+  are tented), the bootstrap caps sit next to the inductor pads,
+- PMID, SYS, VBUS and BAT are copper zones, not autorouted tracks.
 
 Coordinates are mm relative to U1 with the inductor up (-y). A board places the cluster
 with a frame (ux, uy, rot): rot is a KiCad rotation in degrees (0 or a multiple of 90).
@@ -21,35 +22,43 @@ def mm(v):
 
 # ref: (x, y, rotation)
 PLACE = {
-    "U1": (0, 0, 0), "L1": (0, -7.5, 0),
-    # bootstrap caps between the SW copper and a via to the BTST pins
-    "C4": (-2.9, -5.65, 90), "C5": (2.9, -5.65, 90),
-    # 100 nF PMID / SYS caps at the pins, bulk caps in a row behind them
-    "C9": (-4.4, -3.0, 180), "C16": (4.4, -3.0, 0),
-    "C6": (-5.0, -7.0, 90), "C7": (-7.4, -7.0, 90), "C8": (-9.8, -7.0, 90),
-    "C11": (4.4, -7.0, 90), "C12": (6.8, -7.0, 90), "C13": (9.2, -7.0, 90),
-    "C14": (11.6, -7.0, 90), "C15": (14.0, -7.0, 90),
+    "U1": (0, 0, 0), "L1": (0, -8.0, 0),
+    # bootstrap caps beside the inductor pads, fed from a via each
+    "C4": (-3.6, -5.65, 90), "C5": (3.6, -5.65, 90),
+    # 0402 100 nF on top of the pins: C9 across PMID(29)-GND(27), C16 across SYS(25)-GND(27)
+    "C9": (-0.48, -2.75, 0), "C16": (0.48, -3.75, 180),
+    # bulk caps in a row behind them, clear of the bootstrap caps' courtyards
+    "C6": (-5.5, -7.0, 90), "C7": (-7.9, -7.0, 90), "C8": (-10.3, -7.0, 90),
+    "C11": (5.35, -7.0, 90), "C12": (7.75, -7.0, 90), "C13": (10.15, -7.0, 90),
+    "C14": (12.55, -7.0, 90), "C15": (14.95, -7.0, 90),
     # VBUS (left pins): 100 nF next to the pins, bulk further out
-    "C3": (-3.75, -0.8, 180), "C1": (-7.6, -0.6, 180), "C2": (-7.6, 1.6, 180),
+    "C3": (-3.75, -0.8, 180), "C1": (-7.6, -0.6, 180), "C2": (-7.6, 1.75, 180),
     # BAT caps at pins 22/23 with their GND pads facing each other around one via
     "C17": (5.5, -1.2, 0), "C18": (9.1, -1.2, 180),
     "C10": (-3.4, 3.6, 0), "R1": (6.4, 0.6, 0), "R2": (6.4, 3.8, 180), "R3": (6.4, 5.4, 0),
-    "TP2": (-2.4, 5.0, 0), "R4": (-0.5, 7.8, 0), "JP2": (-2.8, 7.8, 90),
-    "D4": (-11.0, -0.4, 270), "R6": (-11.0, 2.4, 90),
+    "TP2": (-1.3, 5.6, 0), "R4": (-0.5, 7.8, 0), "JP2": (-3.6, 7.65, 90),
+    "D4": (-11.0, -0.8, 270), "R6": (-11.0, 2.4, 90),
     "Q2": (13.6, -1.0, 0), "R8": (13.6, 2.0, 180),
 }
 
 # Power copper on F.Cu: net -> polygons. The fills keep their clearance to everything else,
 # so the outlines may run over other nets' pads.
 ZONES = {
-    "SW1": [[(-0.62, -2.25), (-0.28, -2.25), (-0.28, -5.75), (-2.3, -5.75), (-2.3, -6.9),
-             (-3.35, -6.9), (-3.35, -4.95), (-2.3, -4.95), (-2.3, -3.45), (-0.62, -3.45)]],
-    "PMID": [[(-0.79, -2.6), (-0.79, -3.2), (-3.6, -3.2), (-3.6, -6.4), (-11.0, -6.4), (-11.0, -2.6)]],
+    "PMID": [[(-0.68, -2.35), (-0.68, -3.3), (-4.45, -3.3), (-4.45, -6.4), (-11.5, -6.4), (-11.5, -2.35)]],
+    "SYS": [[(0.68, -2.35), (0.68, -4.1), (1.3, -4.1), (1.3, -3.3), (4.45, -3.3), (4.45, -6.4), (15.8, -6.4),
+             (15.8, -2.6), (4.45, -2.6), (4.45, -2.35)]],
+    # SW1 on top only around the inductor pad, the bootstrap cap and the two vias down
+    "SW1": [[(-1.1, -4.85), (-2.7, -4.85), (-2.7, -6.1), (-4.0, -6.1), (-4.0, -7.0), (-1.1, -7.0)]],
     "VBUS": [[(-1.9, -1.4), (-6.9, -1.4), (-6.9, 2.6), (-1.45, 2.6), (-1.45, 1.5), (-1.9, 1.5)]],
     "BAT": [[(2.6, -0.3), (11.4, -0.3), (11.4, 0.35), (13.5, 0.35), (13.5, -2.0), (2.6, -2.0)]],
 }
 ZONES["SW2"] = [[(-x, y) for x, y in ZONES["SW1"][0]][::-1]]
-ZONES["SYS"] = [[(-x, y) for x, y in ZONES["PMID"][0][:4]] + [(14.8, -6.4), (14.8, -2.6)]]
+# SW1/SW2 on B.Cu: from the three vias under the package up to the two vias at the inductor
+B_ZONES = {"SW1": [[(-0.15, 1.2), (-0.15, -2.3), (-1.0, -4.6), (-1.0, -5.55), (-2.7, -5.55), (-2.7, -4.9),
+                    (-1.45, -3.2), (-1.45, -0.75), (-0.7, -0.75), (-0.7, 1.2)]]}
+B_ZONES["SW2"] = [[(-x, y) for x, y in B_ZONES["SW1"][0]][::-1]]
+SW_VIAS = {"SW1": [(-0.4, -0.75), (-0.4, 0.05), (-0.4, 0.85), (-1.5, -5.2), (-2.3, -5.2)]}
+SW_VIAS["SW2"] = [(-x, y) for x, y in SW_VIAS["SW1"]]
 
 # Parts whose GND pads stay solid to the pours (power and HF return paths); the rest of
 # the small parts get thermal spokes.
@@ -57,7 +66,10 @@ SOLID = {"U1", "C1", "C2", "C3", "C6", "C7", "C8", "C9", "C11", "C12", "C13", "C
          "C16", "C17", "C18"}
 
 # Signal tracks stay out from between the L1 pads on F.Cu and from under L1 on B.Cu.
-KEEPOUTS = [(pcbnew.F_Cu, (-0.65, -9.5, 0.65, -5.8)), (pcbnew.B_Cu, (-2.6, -9.8, 2.6, -5.2))]
+KEEPOUTS = [(pcbnew.F_Cu, (-0.85, -9.25, 0.85, -6.75)), (pcbnew.B_Cu, (-2.85, -10.35, 2.85, -5.7))]
+
+# B.Cu stays a whole GND plane here (no autorouted copper): the charger core, rel. to U1
+B_CLEAR = (-11.5, -10.4, 15.8, 1.0)
 
 
 class Frame:
@@ -118,22 +130,48 @@ def _via(board, at, net, dia=0.6, drill=0.3):
     board.Add(v)
 
 
+def zone_poly(frame, net, inset=0.0):
+    """The top-layer copper polygon(s) of a charger net on the board, shrunk by `inset` mm."""
+    ps = pcbnew.SHAPE_POLY_SET()
+    for poly in ZONES.get(net, []):
+        ps.NewOutline()
+        for x, y in poly:
+            p = frame.pt(x, y)
+            ps.Append(p.x, p.y)
+    if inset:
+        ps.Deflate(mm(inset), 16)
+    return ps
+
+def pin1_dot(board, frame):
+    """A clear pin-1 dot next to the BQ25798's pin-1 corner (the footprint's own is tiny)."""
+    u1 = board.FindFootprintByReference("U1")
+    c = frame.pt(-2.45, -2.4)
+    for g in list(u1.GraphicalItems()):
+        # the footprint's own 0.26 mm dot: replaced by ours, at its place
+        if g.GetLayer() == pcbnew.F_SilkS and isinstance(g, pcbnew.PCB_SHAPE) and g.GetShape() == pcbnew.SHAPE_T_CIRCLE:
+            c = g.GetCenter()
+            g.SetLayer(pcbnew.F_Fab)
+    s = pcbnew.PCB_SHAPE(board)
+    s.SetShape(pcbnew.SHAPE_T_CIRCLE)
+    s.SetCenter(c); s.SetEnd(pcbnew.VECTOR2I(c.x + mm(0.12), c.y))
+    s.SetWidth(mm(0.24)); s.SetFilled(True); s.SetLayer(pcbnew.F_SilkS)
+    board.Add(s)
+
 def add_zones(board, frame, priority=1):
     """Power zones (above the GND pours) and the L1 keepouts."""
-    for net, polys in ZONES.items():
-        n = board.FindNet(net)
-        for poly in polys:
-            z = pcbnew.ZONE(board)
-            z.SetLayer(pcbnew.F_Cu); z.SetNet(n)
-            z.SetAssignedPriority(priority)
-            z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
-            z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
-            z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
-            ol = z.Outline(); ol.NewOutline()
-            for x, y in poly:
-                p = frame.pt(x, y)
-                ol.Append(p.x, p.y)
-            board.Add(z)
+    for layer, net, poly in [(l, n, p) for l, zs in ((pcbnew.F_Cu, ZONES), (pcbnew.B_Cu, B_ZONES))
+                             for n, ps in zs.items() for p in ps]:
+        z = pcbnew.ZONE(board)
+        z.SetLayer(layer); z.SetNet(board.FindNet(net))
+        z.SetAssignedPriority(priority)
+        z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
+        z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+        ol = z.Outline(); ol.NewOutline()
+        for x, y in poly:
+            p = frame.pt(x, y)
+            ol.Append(p.x, p.y)
+        board.Add(z)
     for layer, (x0, y0, x1, y1) in KEEPOUTS:
         ka = pcbnew.ZONE(board)
         ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
@@ -154,23 +192,45 @@ def preroute(board, frame):
     """Hand routes at the 0.4 mm pitch QFN; the power copper itself comes from add_zones."""
     U = lambda n: _pad(board, "U1", n)
     gnd = U("27").GetNet()
-    # GND pin 27 (between SW1 and SW2) and the pin rows' inner signals drop to vias under
-    # the package: GND at the centre, BTST1/REGN on the left, BTST2 on the right.
-    # (each leaves its pad straight inwards first, clear of the neighbouring pads)
-    for num, inner, via, w in (("27", None, (0.0, -0.6), 0.22), ("4", (-1.45, -0.42), (-0.95, -0.4), 0.2),
-                               ("5", (-1.45, -0.02), (-1.0, 0.5), 0.2), ("19", (1.45, 0.38), (1.0, -0.2), 0.2)):
+    # SW1 (28) / SW2 (26) leave their pins inwards (0.22 mm between the pins, then 0.5 mm)
+    # to three vias each under the package; on B.Cu the SW copper (B_ZONES) takes them up to
+    # two vias next to each inductor pad, where the top SW copper (ZONES) meets the pad.
+    for net, x in (("SW1", -0.45), ("SW2", 0.45)):
+        pad = U("28" if net == "SW1" else "26")
+        n = pad.GetNet()
+        col = [frame.pt(*v) for v in SW_VIAS[net][:3]]
+        _track(board, pad.GetPosition(), frame.pt(x, -0.95), n, 0.22)
+        _path(board, [frame.pt(x, -0.95), col[0], col[-1]], n, 0.5)
+        for v in SW_VIAS[net]:
+            _via(board, frame.pt(*v), n)
+    # GND pin 27 runs up through the GND pads of C9 and C16 to two vias above them, so the
+    # 100 nF loops PMID-C9-GND(27) and SYS-C16-GND(27) close on the top layer
+    p27 = U("27").GetPosition()
+    _track(board, p27, frame.pt(0, -2.44), gnd, 0.22)
+    _path(board, [frame.pt(0, -2.44), frame.pt(0, -4.55), frame.pt(0, -5.35)], gnd, 0.5)
+    for v in ((0, -4.55), (0, -5.35)):
+        _via(board, frame.pt(*v), gnd)
+    # PMID (29) and SYS (25) straight up into their 100 nF caps (and the zones there)
+    _track(board, U("29").GetPosition(), _pad(board, "C9", "1").GetPosition(), U("29").GetNet(), 0.22)
+    p25, c16 = U("25").GetPosition(), _pad(board, "C16", "1").GetPosition()
+    _path(board, [p25, frame.pt(0.9, -2.44), c16], U("25").GetNet(), 0.25)
+    # BTST1 (4), REGN (5) and BTST2 (19) leave their pads inwards to vias under the package
+    for num, inner, via in (("4", (-1.45, -0.42), (-1.2, -0.6)), ("5", (-1.45, -0.02), (-1.2, 0.45)),
+                            ("19", (1.45, 0.42), (1.2, 0.45))):
         pad = U(num)
         at = frame.pt(*via)
         pts = [pad.GetPosition()] + ([frame.pt(*inner)] if inner else []) + [at]
-        _path(board, pts, pad.GetNet(), w)
+        _path(board, pts, pad.GetNet(), 0.2)
         _via(board, at, pad.GetNet())
-    # BTST1/2 on B.Cu from those vias to a via just above the bootstrap cap, clear of the
-    # PMID/SYS strips (the autorouter would drop its via into them)
-    for num, cap, x in (("4", "C4", -2.9), ("19", "C5", 2.9)):
+    # REGN on B.Cu out below the package, where the router picks it up
+    _track(board, frame.pt(-1.2, 0.45), frame.pt(-1.2, 2.5), U("5").GetNet(), 0.3, pcbnew.B_Cu)
+    # BTST1/2 on B.Cu outside the SW copper to a via just below the bootstrap cap
+    for num, cap, sx, pts in (("4", "C4", -1, [(-1.2, -0.6), (-1.9, -0.6), (-1.9, -2.6), (-3.6, -3.85)]),
+                              ("19", "C5", 1, [(1.2, 0.45), (1.9, -0.25), (1.9, -2.6), (3.6, -3.85)])):
         net = U(num).GetNet()
-        start = frame.pt(-0.95 if x < 0 else 1.0, -0.4 if x < 0 else -0.2)
-        at = frame.pt(x, -3.9)
-        _track(board, start, at, net, 0.3, pcbnew.B_Cu)
+        for p, q in zip(pts, pts[1:]):
+            _track(board, frame.pt(*p), frame.pt(*q), net, 0.3, pcbnew.B_Cu)
+        at = frame.pt(*pts[-1])
         _via(board, at, net)
         _track(board, at, _pad(board, cap, "1").GetPosition(), net, 0.3)
     # BAT pins 22/23 together straight to the first BAT cap (a zone there would be too thin)
@@ -207,8 +267,8 @@ def preroute(board, frame):
     else:
         mid = pcbnew.VECTOR2I(corner.x, q.y)
     _path(board, [sdrv.GetPosition(), corner, mid, q], sdrv.GetNet(), 0.2)
-    # 100 nF caps and the BAT caps: GND pads straight to a via
-    for ref, via in (("C9", (-6.2, -3.0)), ("C16", (6.2, -3.0)), ("C3", (-4.525, 0.3))):
+    # VBUS 100 nF and the BAT caps: GND pads straight to a via
+    for ref, via in (("C3", (-4.525, 0.3)),):
         pad = _pad(board, ref, "2")
         at = frame.pt(*via)
         _track(board, pad.GetPosition(), at, pad.GetNet(), 0.4)
@@ -237,11 +297,6 @@ def preroute(board, frame):
     else:
         mid = pcbnew.VECTOR2I(a20.x, ar.y)
     _path(board, [a20, mid, ar], p20.GetNet(), 0.2)
-    # PMID (29) and SYS (25) up into their copper: the strip between the SW necks and the
-    # pin corners is too narrow for the fill alone
-    for num, x in (("29", -0.9), ("25", 0.9)):
-        pad = U(num)
-        _track(board, pad.GetPosition(), frame.pt(x, -2.9), pad.GetNet(), 0.22)
     # the doubled VBUS (2/3) and BAT (22/23) pins
     for a, b in (("2", "3"), ("22", "23")):
         pa, pb = U(a), U(b)
