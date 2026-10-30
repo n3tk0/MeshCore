@@ -16,6 +16,7 @@ PMID, SYS, VBUS and BAT are copper areas, SW1/SW2 run short and wide to the indu
 PMID/SYS caps sit at the pins, BTST/REGN/GND leave through vias under the package. Cap counts as
 TI recommends (VBUS 2, PMID 3, SYS 5, BAT 2 × 10 µF), so the board grew by 4 mm. Small parts get
 thermal spokes to GND (easier hand rework), the charger power caps stay solid.
+Every layer change on a power net has two vias (no single-via hot spot), and no via sits in a pad.
 
 ## Connections
 | Where | Pins | Notes |

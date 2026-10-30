@@ -118,6 +118,12 @@ def add_nt_via(board):
 
 def preroute(board):
     charger.preroute(board, CHARGER_FRAME)
+    # the input bus comes up on B.Cu: two vias into the VBUS copper for it to land on
+    vbus = board.FindNet("VBUS")
+    vv = [CHARGER_FRAME.pt(-5.0, 1.9), CHARGER_FRAME.pt(-4.2, 1.9)]
+    charger._track(board, vv[0], vv[1], vbus, 0.8, pcbnew.B_Cu)
+    for v in vv:
+        charger._via(board, v, vbus)
     # SHT40 tongue: the rule area keeps pour and vias off it, so its four nets are
     # drawn here and run out through the neck (SDA, SCL, 3V3, GND from left to right).
     def path(net, pts):
@@ -135,14 +141,15 @@ def preroute(board):
     # C24 GND pad straight onto the PCA9685 GND pins 24/25
     c24g, p24 = _pad(board, "C24", "2"), _pad(board, "U6", "24")
     _track(board, c24g.GetPosition(), pcbnew.VECTOR2I(p24.GetPosition().x, c24g.GetPosition().y), c24g.GetNet(), 0.25)
-    # C20 GND between the module rows is cut off by the 5V/3V3 traces: own via
-    c20 = _pad(board, "C20", "2")
-    at = pcbnew.VECTOR2I(c20.GetPosition().x + mm(1.1), c20.GetPosition().y)
-    _track(board, c20.GetPosition(), at, c20.GetNet(), 0.4)
-    v = pcbnew.PCB_VIA(board)
-    v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(c20.GetNet())
-    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
-    board.Add(v)
+    # C20 and C22 GND between the module rows get cut off by the traces there: own vias
+    for ref in ("C20", "C22"):
+        cg = _pad(board, ref, "2")
+        at = pcbnew.VECTOR2I(cg.GetPosition().x + mm(1.1), cg.GetPosition().y)
+        _track(board, cg.GetPosition(), at, cg.GetNet(), 0.4)
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(cg.GetNet())
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
+        board.Add(v)
     # PWM3 (U6 pin 6) has to cross PWM1/PWM2: via under the TSSOP body, B.Cu down to R17
     p6, r17 = _pad(board, "U6", "6"), _pad(board, "R17", "1")
     a6, ar = p6.GetPosition(), r17.GetPosition()

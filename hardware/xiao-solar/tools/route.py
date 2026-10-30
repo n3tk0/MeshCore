@@ -175,6 +175,9 @@ def _near_nettie(board, p):
                 return True
     return False
 
+def _on_pad(board, p):
+    return any(pad.GetEffectivePolygon().Collide(p, mm(0.35)) for fp in board.GetFootprints() for pad in fp.Pads())
+
 def stitch_islands(board):
     """Gives every F.Cu GND fragment without a via or THT GND pad one via, at a point where
     both layers' fills leave room for it (fills already keep clearance to other nets)."""
@@ -202,7 +205,7 @@ def stitch_islands(board):
             x = bb.GetX()
             while x < bb.GetRight() and not done:
                 p = pcbnew.VECTOR2I(x, y)
-                if frag.Contains(p) and back.Contains(p) and not _near_nettie(board, p):
+                if frag.Contains(p) and back.Contains(p) and not _near_nettie(board, p) and not _on_pad(board, p):
                     v = pcbnew.PCB_VIA(board)
                     v.SetPosition(p); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(gnd)
                     v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
@@ -228,7 +231,7 @@ def _in_free_area(board, via):
             bb.Inflate(mm(0.5))
             if bb.Contains(p):
                 return False
-    return True
+    return not _on_pad(board, p)  # a via in a pad wicks the solder away
 
 def main():
     jar = os.environ.get("FREEROUTING_JAR")

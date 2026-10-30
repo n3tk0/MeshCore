@@ -32,11 +32,11 @@ PLACE = {
     # VBUS (left pins): 100 nF next to the pins, bulk further out
     "C3": (-3.75, -0.8, 180), "C1": (-7.6, -0.6, 180), "C2": (-7.6, 1.6, 180),
     # BAT caps at pins 22/23 with their GND pads facing each other around one via
-    "C17": (3.9, -1.2, 0), "C18": (7.5, -1.2, 180),
+    "C17": (5.5, -1.2, 0), "C18": (9.1, -1.2, 180),
     "C10": (-3.4, 3.6, 0), "R1": (6.4, 0.6, 0), "R2": (6.4, 3.8, 180), "R3": (6.4, 5.4, 0),
     "TP2": (-2.4, 5.0, 0), "R4": (-0.5, 7.8, 0), "JP2": (-2.8, 7.8, 90),
     "D4": (-11.0, -0.4, 270), "R6": (-11.0, 2.4, 90),
-    "Q2": (12.0, -1.0, 0), "R8": (12.0, 2.0, 180),
+    "Q2": (13.6, -1.0, 0), "R8": (13.6, 2.0, 180),
 }
 
 # Power copper on F.Cu: net -> polygons. The fills keep their clearance to everything else,
@@ -46,7 +46,7 @@ ZONES = {
              (-3.35, -6.9), (-3.35, -4.95), (-2.3, -4.95), (-2.3, -3.45), (-0.62, -3.45)]],
     "PMID": [[(-0.79, -2.6), (-0.79, -3.2), (-3.6, -3.2), (-3.6, -6.4), (-11.0, -6.4), (-11.0, -2.6)]],
     "VBUS": [[(-1.9, -1.4), (-6.9, -1.4), (-6.9, 2.6), (-1.45, 2.6), (-1.45, 1.5), (-1.9, 1.5)]],
-    "BAT": [[(2.6, -0.3), (9.8, -0.3), (9.8, 0.35), (11.9, 0.35), (11.9, -2.0), (2.6, -2.0)]],
+    "BAT": [[(2.6, -0.3), (11.4, -0.3), (11.4, 0.35), (13.5, 0.35), (13.5, -2.0), (2.6, -2.0)]],
 }
 ZONES["SW2"] = [[(-x, y) for x, y in ZONES["SW1"][0]][::-1]]
 ZONES["SYS"] = [[(-x, y) for x, y in ZONES["PMID"][0][:4]] + [(14.8, -6.4), (14.8, -2.6)]]
@@ -177,17 +177,15 @@ def preroute(board, frame):
     p22, p23 = U("22").GetPosition(), U("23").GetPosition()
     mid = pcbnew.VECTOR2I((p22.x + p23.x) // 2, (p22.y + p23.y) // 2)
     bat = U("22").GetNet()
-    _track(board, mid, frame.off(mid, 1.0, 0), bat, 0.6)
+    _track(board, mid, frame.off(mid, 2.6, 0), bat, 0.6)
     # the C17/C18 GND pads and their via split the BAT copper: the two halves join on B.Cu
-    # (one via in the pin track, two right of C18, 0.8 mm under the GND via's clearance)
-    a = frame.off(mid, 0.5, 0)
-    _via(board, a, bat)
-    pts = [a, frame.pt(3.2, -0.2), frame.pt(8.7, -0.2), frame.pt(9.45, -0.9)]
+    # (two vias in the pin track, two right of C18, 0.8 mm past the GND via's clearance)
+    a, b = frame.off(mid, 0.8, 0), frame.off(mid, 1.6, 0)
+    pts = [a, b, frame.off(mid, 2.35, 0.82), frame.pt(10.3, -0.2), frame.pt(11.05, -0.9), frame.pt(11.05, -1.6)]
     for p, q in zip(pts, pts[1:]):
         _track(board, p, q, bat, 0.8, pcbnew.B_Cu)
-    for y in (-0.9, -1.6):
-        _via(board, frame.pt(9.45, y), bat)
-    _track(board, frame.pt(9.45, -0.9), frame.pt(9.45, -1.6), bat, 0.8, pcbnew.B_Cu)
+    for at in (a, b, frame.pt(11.05, -0.9), frame.pt(11.05, -1.6)):
+        _via(board, at, bat)
     # GND pins 10/11 tied and dropped to a via right below the package
     p10, p11 = U("10"), U("11")
     _track(board, p10.GetPosition(), p11.GetPosition(), gnd, 0.2)
@@ -215,7 +213,7 @@ def preroute(board, frame):
         at = frame.pt(*via)
         _track(board, pad.GetPosition(), at, pad.GetNet(), 0.4)
         _via(board, at, pad.GetNet())
-    at = frame.pt(5.7, -1.2)
+    at = frame.pt(7.3, -1.2)
     for ref in ("C17", "C18"):
         pad = _pad(board, ref, "2")
         _track(board, pad.GetPosition(), at, pad.GetNet(), 0.5)

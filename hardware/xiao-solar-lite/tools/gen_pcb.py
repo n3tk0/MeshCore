@@ -92,6 +92,17 @@ def build():
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
     charger.preroute(board, CHARGER_FRAME)
+    # VBUS from the input diodes up into the VBUS copper: one wide B.Cu run, two vias at
+    # each end (the autorouter made three single-via layer changes of it)
+    vbus = net("VBUS")
+    top, bot = [pt(8.75, 30.0), pt(8.75, 30.8)], [pt(8.75, 48.9), pt(9.65, 48.9)]
+    for a_, b_ in zip(top + bot, (top + bot)[1:]):
+        charger._track(board, a_, b_, vbus, 0.8, pcbnew.B_Cu)
+    d3 = charger._pad(board, "D3", "1").GetPosition()
+    for v in top + bot:
+        charger._via(board, v, vbus)
+    for v in bot:
+        charger._track(board, v, d3, vbus, 0.8)
     corners = [(0, 0), (W, 0), (W, H), (0, H)]
     for i in range(4):
         s = pcbnew.PCB_SHAPE(board)

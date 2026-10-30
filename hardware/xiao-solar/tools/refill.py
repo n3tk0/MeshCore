@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Re-applies zone settings from gen_pcb.py, refills, adds island vias and writes the DRC
 report, without re-running the autorouter."""
-import os, re, sys
+import math, os, re, sys
 import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -69,12 +69,73 @@ def drop_dangling(board, tmp):
     print("dangling vias removed:", n)
     return n
 
+def double_power_vias(board):
+    """Every layer change on a power net gets a second via next to the first (shared
+    current, no hot spot), placed where it and its two short links clear other nets.
+    The added vias are locked, so a later finish.py pass keeps them."""
+    mm = pcbnew.FromMM
+    nets = set(route.gen_pcb.NETCLASSES["Power"][4])
+    vias = [t for t in board.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() in nets]
+    others = [t for t in board.GetTracks()]
+    pads = [p for fp in board.GetFootprints() for p in fp.Pads()]
+    areas = [z for z in board.Zones() if z.GetIsRuleArea() or z.GetNetname() not in ("GND",)]
+    edge = board.GetBoardEdgesBoundingBox()
+    added = 0
+    for v in vias:
+        pos, net = v.GetPosition(), v.GetNetCode()
+        if any(o.GetClass() == "PCB_VIA" and o.GetNetCode() == net
+               and 0 < (o.GetPosition() - pos).EuclideanNorm() < mm(1.0) for o in others):
+            continue
+        for d, k in [(d, k) for d in (0.8, 1.0, 1.2) for k in range(16)]:
+            a = math.radians(22.5 * k)
+            c = pcbnew.VECTOR2I(pos.x + int(mm(d) * math.cos(a)), pos.y + int(mm(d) * math.sin(a)))
+            if not (edge.GetX() + mm(0.8) < c.x < edge.GetRight() - mm(0.8)
+                    and edge.GetY() + mm(0.8) < c.y < edge.GetBottom() - mm(0.8)):
+                continue
+            shape = pcbnew.SHAPE_SEGMENT(pos, c, max(mm(0.6), v.GetWidth()))
+            ok = True
+            for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+                for o in others:
+                    if o.GetNetCode() != net and o.IsOnLayer(layer) and o.GetEffectiveShape(layer).Collide(shape, mm(0.2)):
+                        ok = False; break
+                if ok:
+                    for pd in pads:
+                        if pd.IsOnLayer(layer) and (pd.GetNetCode() != net or pd.GetAttribute() == pcbnew.PAD_ATTRIB_SMD) \
+                                and pd.GetEffectivePolygon().Collide(c, mm(0.5)):
+                            ok = False; break
+                if ok:
+                    for z in areas:
+                        if z.IsOnLayer(layer) and z.GetNetCode() != net and z.Outline().Collide(c, mm(0.5)):
+                            if not z.GetIsRuleArea() or z.GetDoNotAllowVias():
+                                ok = False; break
+                if not ok:
+                    break
+            if not ok:
+                continue
+            nv = pcbnew.PCB_VIA(board)
+            nv.SetPosition(c); nv.SetWidth(v.GetWidth()); nv.SetDrill(v.GetDrill()); nv.SetNet(v.GetNet())
+            nv.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); nv.SetLocked(True)
+            board.Add(nv)
+            for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+                t = pcbnew.PCB_TRACK(board)
+                t.SetStart(pos); t.SetEnd(c); t.SetWidth(mm(0.6)); t.SetLayer(layer); t.SetNet(v.GetNet())
+                t.SetLocked(True)
+                board.Add(t)
+            others += [nv]
+            added += 1
+            break
+        else:
+            print("no room for a second via at %.2f %.2f (%s)" % (pcbnew.ToMM(pos.x) - 100, pcbnew.ToMM(pos.y) - 100, v.GetNetname()))
+    print("second power vias:", added)
+    return added
+
 def main():
     board = pcbnew.LoadBoard(route.PCB)
     dedupe(board)
     board.Save(route.PCB)
     board = pcbnew.LoadBoard(route.PCB)
     narrow(board, "/tmp/claude-0/narrow.rpt" if os.path.isdir("/tmp/claude-0") else route.PCB + ".rpt")
+    double_power_vias(board)
     for z in board.Zones():
         if z.GetIsRuleArea():
             continue
