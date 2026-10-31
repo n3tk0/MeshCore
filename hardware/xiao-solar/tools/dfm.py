@@ -501,8 +501,11 @@ def place_silk(board, size=0.8, thick=0.12, gap=0.12, edge=0.4, max_move=4.0):
             if pad.IsOnLayer(pcbnew.F_Mask):
                 obst.append(_box(pad.GetBoundingBox(), 0.1 + gap))
         for g in fp.GraphicalItems():
-            if g.GetLayer() == pcbnew.F_SilkS and isinstance(g, pcbnew.PCB_SHAPE):
-                obst.append(_shape_geom(g, gap))
+            if g.GetLayer() == pcbnew.F_SilkS:
+                if isinstance(g, pcbnew.PCB_SHAPE):
+                    obst.append(_shape_geom(g, gap))
+                elif isinstance(g, pcbnew.PCB_TEXT):
+                    obst.append(_box(g.GetBoundingBox(), gap))
     for d in board.GetDrawings():
         if d.GetLayer() == pcbnew.F_SilkS and isinstance(d, pcbnew.PCB_SHAPE):
             obst.append(_shape_geom(d, gap))

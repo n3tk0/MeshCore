@@ -2168,6 +2168,83 @@
 			(layer "F.CrtYd")
 			(uuid "2a5fb28b-b0e3-4e70-9555-3c88b6c9dcf0")
 		)
+		(fp_text user "D0"
+			(at -5.1 -7.62 0)
+			(layer "F.SilkS")
+			(uuid "a45ecfb4-a16e-41e9-b0b2-b3833c47fa27")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D1"
+			(at -5.1 -5.08 0)
+			(layer "F.SilkS")
+			(uuid "1bdb3379-0505-4708-a8df-2d4c2a3cc5df")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D2"
+			(at -5.1 -2.54 0)
+			(layer "F.SilkS")
+			(uuid "5c61bff2-0412-4a4b-b95b-b60074d51e77")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D3"
+			(at -5.1 0 0)
+			(layer "F.SilkS")
+			(uuid "e731a477-6d73-464a-8e66-c1cd1a75bbd6")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D4"
+			(at -5.1 2.54 0)
+			(layer "F.SilkS")
+			(uuid "fbde47ec-97ca-43f5-912e-60fb28d2872f")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D5"
+			(at -5.1 5.08 0)
+			(layer "F.SilkS")
+			(uuid "ee768453-74d4-4088-b13c-9e6c5694e986")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D6"
+			(at -5.1 7.62 0)
+			(layer "F.SilkS")
+			(uuid "e8756a85-8268-489d-95cc-92a39d159d30")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
 		(fp_text user "USB"
 			(at 0 -9.3 0)
 			(layer "F.SilkS")
@@ -2175,6 +2252,94 @@
 			(effects
 				(font
 					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "XIAO+Wio"
+			(at 0 -5.8 0)
+			(layer "F.SilkS")
+			(uuid "2c153c0a-e9cc-4146-b8a7-8f22e09e3f22")
+			(effects
+				(font
+					(size 0.8 0.8)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "5V"
+			(at 5 -7.62 0)
+			(layer "F.SilkS")
+			(uuid "9f12df17-7efc-4267-8fb0-032f84882f35")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "GND"
+			(at 5 -5.08 0)
+			(layer "F.SilkS")
+			(uuid "0532b45a-d14b-49d9-89ea-64b1bcdbd408")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "3V3"
+			(at 5 -2.54 0)
+			(layer "F.SilkS")
+			(uuid "09b58fd5-ff89-45f3-86b7-8c3440f30de5")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D10"
+			(at 5 0 0)
+			(layer "F.SilkS")
+			(uuid "42c02de5-6e4c-41e4-8197-8cac7669dccb")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D9"
+			(at 5 2.54 0)
+			(layer "F.SilkS")
+			(uuid "8b605509-a79e-4190-9e8d-ee3829713a17")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D8"
+			(at 5 5.08 0)
+			(layer "F.SilkS")
+			(uuid "0754637c-a228-4f34-9066-64723b2e8242")
+			(effects
+				(font
+					(size 0.7 0.7)
+					(thickness 0.12)
+				)
+			)
+		)
+		(fp_text user "D7"
+			(at 5 7.62 0)
+			(layer "F.SilkS")
+			(uuid "d37658df-1e57-4663-8e65-488d120530ad")
+			(effects
+				(font
+					(size 0.7 0.7)
 					(thickness 0.12)
 				)
 			)
@@ -3933,7 +4098,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R6"
-			(at -1.339393 -3.233579 0)
+			(at -2.4 -1.8 0)
 			(layer "F.SilkS")
 			(uuid "9b928f17-eaa1-4c09-abf3-7cf769c043d0")
 			(effects
@@ -10544,6 +10709,17 @@
 		(layer "Edge.Cuts")
 		(uuid "9a82fe9d-2b6e-4f19-90e8-4d57d6931020")
 	)
+	(gr_text "xiao-solar-lite v0.4"
+		(at 113.5 120 0)
+		(layer "F.SilkS")
+		(uuid "58420b7e-7bb7-421a-8177-241a1ffc1775")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.12)
+			)
+		)
+	)
 	(gr_text "NTC"
 		(at 102.807106 136.592893 0)
 		(layer "F.SilkS")
@@ -10581,17 +10757,6 @@
 		(at 111.825194 160.822836 0)
 		(layer "F.SilkS")
 		(uuid "6a8431c1-66f2-4dc4-bdd4-2a21d79be898")
-		(effects
-			(font
-				(size 0.8 0.8)
-				(thickness 0.12)
-			)
-		)
-	)
-	(gr_text "xiao-solar-lite v0.4"
-		(at 111.924264 119.924264 0)
-		(layer "F.SilkS")
-		(uuid "58420b7e-7bb7-421a-8177-241a1ffc1775")
 		(effects
 			(font
 				(size 0.8 0.8)
