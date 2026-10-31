@@ -1,0 +1,8 @@
+Designator,Value,Footprint
+J1,SOLAR,PinHeader_1x02_P2.54mm_Vertical
+J2,VIN2 5-20V,PinHeader_1x02_P2.54mm_Vertical
+J3,NTC 10k (103AT),PinHeader_1x02_P2.54mm_Vertical
+J4,BATTERY,PinHeader_1x02_P2.54mm_Vertical
+U4,Wio-SX1262 for XIAO,XIAO_14P_2.54_21x17.8mm
+U3,XIAO nRF52840,XIAO_14P_2.54_21x17.8mm
+J5,I2C rail,PinHeader_1x04_P2.54mm_Vertical
