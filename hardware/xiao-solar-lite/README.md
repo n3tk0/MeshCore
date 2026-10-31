@@ -29,7 +29,7 @@ v0.4 (2026-10-30, Argon review + v0.4 proposals, shared with the main board):
   fence, GND vias at caps and signal vias, B.Cu kept whole under the charger, teardrops,
   3 fiducials, test points VBUS/PMID/SYS/BAT/GND/3V3/SCL/SDA, parts ≥ 1 mm from the edge,
   silk ≥ 0.8 mm without overlaps (some refs in tight spots are hidden, they stay on F.Fab).
-- Check D5 (SC-70-6) rotation in JLC's 3D preview before ordering.
+- All polarized part rotations (U1, Q2, D1, D3, D4, D5) verified in JLC's placement preview.
 
 ## Connections
 | Where | Pins | Notes |
