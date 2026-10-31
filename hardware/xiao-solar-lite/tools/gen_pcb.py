@@ -25,7 +25,7 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "xiao-solar-lite"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 23.0, 57.0
+W, H = 23.0, 62.0
 
 # Charger cluster (../xiao-solar/tools/charger.py) turned by 270 degrees so its long side
 # runs down the board: inductor to the right, CE/I2C pins to the left, PMID end under the
@@ -34,15 +34,21 @@ CHARGER_FRAME = charger.Frame(11.0, 32.8, 270)
 PLACE = charger.place(CHARGER_FRAME, set(charger.PLACE))
 PLACE.update({
     # XIAO + Wio stack on top, USB end at the board edge; only flat parts under it
-    "U2": (11.5, 10.5, 0), "R11": (11.5, 13.5, 0), "R12": (11.5, 15.5, 0),
+    "U3": (11.5, 10.5, 0), "R11": (11.5, 13.5, 0), "R12": (11.5, 15.5, 0),
     # ideal diode right of the SYS caps, VIN (pin 1, bottom left) fed from the SYS copper
     # between C12 and C13; parts 1 mm or more from the edge
     "D5": (21.15, 40.8, 90), "C20": (21.0, 46.6, 270),
-    # input diode and TVS below the charger, connectors along the bottom edge (pin 1 left)
-    "D1": (4.5, 50.2, 180), "D3": (11.8, 50.3, 0),
-    "J1": (2.1, 54.0, 90), "J5": (7.4, 54.0, 90), "J4": (17.9, 54.0, 90),
+    # optional NTC header on the left edge right beside the R2/R3 TS divider
+    "J3": (2.1, 39.2, 0),
     # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
     "JP3": (7.1, 43.2, 90),
+    # input diode and TVS on the bottom-left above J1
+    "D3": (4.8, 50.5, 180), "D1": (4.5, 54.8, 180),
+    # DW01A + HJ8205 BMS on the bottom-right between Q2 and J4
+    "U2": (16.0, 50.8, 0), "Q3": (16.0, 55.0, 0),
+    "R9": (11.5, 50.2, 0), "C19": (11.5, 52.4, 0), "R10": (11.5, 54.6, 180),
+    # connectors along the bottom edge (pin 1 left)
+    "J1": (2.1, 59.0, 90), "J5": (7.4, 59.0, 90), "J4": (17.9, 59.0, 90),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -51,14 +57,18 @@ TEST_POINTS = {
     "GND": (0.8, 21.3, 22.2, 25.0, 3.0, 22.5), "3V3": (0.8, 21.3, 22.2, 25.0, 5.0, 22.5),
     "SCL": (0.8, 21.3, 22.2, 25.0, 7.0, 22.5), "SDA": (0.8, 21.3, 22.2, 25.0, 9.0, 22.5),
 }
-FIDUCIALS = [(0.8, 21.3, 8.0, 50.0, 1.5, 26.0), (15.0, 21.3, 22.2, 52.0, 21.5, 22.0), (0.8, 40.0, 9.0, 51.0, 1.5, 47.5)]
+FIDUCIALS = [
+    (0.8, 20.0, 12.0, 38.0, 3.5, 26.5),
+    (15.0, 48.0, 22.2, 58.0, 20.8, 53.0),
+    (0.8, 40.0, 22.2, 58.0, 20.8, 56.5),
+]
 B_CLEAR = []
 # B.Cu stays whole GND under U1, L1 and the BTST caps only (charger frame, mm): with the whole
 # charger kept free (charger.B_CLEAR) the board is too narrow and Freerouting did not finish.
 CHARGER_B_CLEAR = (-4.5, -10.4, 4.5, 1.0)
 
 NETCLASSES = {
-    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "SOLAR_IN", "VOUT", "VBUS", "SYS", "BAT", "PMID"]),
+    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "BATT-", "FS_D", "SOLAR_IN", "VOUT", "VBUS", "SYS", "BAT", "PMID"]),
     # SW nodes are copper zones at the charger; nothing else routes them.
     "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["SW1", "SW2"]),
     "Supply": (0.4, 0.13, 0.6, 0.3, ["3V3", "GND"]),
@@ -96,6 +106,8 @@ def build():
         fp.SetReference(ref); fp.SetValue(p["value"]); fp.SetFPIDAsString(p["fp"])
         x, y, rot = PLACE.get(ref, (0, 0, 0))
         fp.SetPosition(pt(x, y)); fp.SetOrientationDegrees(rot)
+        if p["lcsc"]:
+            fp.SetField("LCSC", p["lcsc"]) if hasattr(fp, "SetField") else None
         if fp.HasProperty("LCSC Part"):
             fp.SetProperty("LCSC Part", p["lcsc"] or "")
         if not p["lcsc"]:
@@ -107,12 +119,15 @@ def build():
         fp.Reference().SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8)))
         fp.Reference().SetTextThickness(mm(0.12))
         fp.Value().SetVisible(False)
+        for f in fp.GetFields():
+            if f.GetName() != "Reference":
+                f.SetVisible(False)
         if ref.startswith("TP") and ref not in PLACE:
             fp.Reference().SetVisible(False)
             tps[ref] = (fp, p["nets"]["1"])
             continue
-        if ref in ("J1", "J4", "J5"):
-            # the header outlines of the three touch each other; the labels below say it
+        if ref in ("J1", "J3", "J4", "J5"):
+            # the header outlines touch the edge or each other; the labels say it
             for g in list(fp.GraphicalItems()):
                 if g.GetLayer() == pcbnew.F_SilkS and isinstance(g, pcbnew.PCB_SHAPE):
                     g.SetLayer(pcbnew.F_Fab)
@@ -128,10 +143,25 @@ def build():
     for a_, b_ in zip(run, run[1:]):
         charger._track(board, a_, b_, vbus, 0.8, pcbnew.B_Cu)
     d3 = charger._pad(board, "D3", "1").GetPosition()
+    d1 = charger._pad(board, "D1", "1").GetPosition()
     for v in top + bot:
         charger._via(board, v, vbus)
     for v in bot:
         charger._track(board, v, d3, vbus, 0.8)
+    charger._track(board, d3, d1, vbus, 0.8)
+    # BMS DW_OC / DW_CS and CE up to U3 pin 1
+    for n_, lay, pts_, w_ in (
+        ("DW_OC", pcbnew.F_Cu, [(16.95, 51.95), (16.95, 52.3), (19.0, 52.3), (19.0, 53.85), (16.95, 53.85)], 0.22),
+        ("DW_CS", pcbnew.F_Cu, [(16.0, 51.95), (16.0, 52.75), (18.0, 52.95)], 0.22),
+        ("DW_CS", pcbnew.B_Cu, [(18.0, 52.95), (14.85, 56.1), (13.5, 56.1)], 0.25),
+        ("DW_CS", pcbnew.F_Cu, [(13.5, 56.1), (12.325, 54.925), (12.325, 54.6)], 0.25),
+        ("CE", pcbnew.B_Cu, [(4.30, 33.0), (3.6, 32.3), (3.6, 25.0), (1.6, 23.0), (1.6, 16.0)], 0.25),
+        ("CE", pcbnew.F_Cu, [(1.6, 16.0), (1.6, 3.88), (2.6, 2.88), (3.88, 2.88)], 0.25),
+    ):
+        for a_, b_ in zip(pts_, pts_[1:]):
+            charger._track(board, pt(*a_), pt(*b_), net(n_), w_, lay)
+    for n_, vx, vy in (("DW_CS", 18.0, 52.95), ("DW_CS", 13.5, 56.1), ("CE", 4.30, 33.0), ("CE", 1.6, 16.0)):
+        charger._via(board, pt(vx, vy), net(n_))
     corners = [(0, 0), (W, 0), (W, H), (0, H)]
     for i in range(4):
         s = pcbnew.PCB_SHAPE(board)
@@ -146,7 +176,7 @@ def build():
         ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
         ka.SetDoNotAllowTracks(True); ka.SetDoNotAllowVias(True); ka.SetDoNotAllowPads(False)
         ka.SetDoNotAllowFootprints(False)
-        ka.SetLayerSet(pcbnew.LSET(pcbnew.F_Cu).AddLayer(pcbnew.B_Cu))
+        ka.SetLayerSet(pcbnew.LSET.AllCuMask())
         ol = ka.Outline(); ol.NewOutline()
         for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
             ol.Append(mm(OX + x), mm(OY + y))
@@ -192,6 +222,7 @@ def build():
         else:
             for i, s in enumerate(names):
                 text(s, x1 + 2.54 * i, H - 0.9)
+    text("NTC", 2.1, 37.3)
     text("xiao-solar-lite v0.4", 11.5, 19.5)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
@@ -214,7 +245,7 @@ def write_project():
                                                      "min_copper_edge_clearance": 0.3, "min_hole_clearance": 0.25}}},
            "net_settings": {"classes": classes, "meta": {"version": 3}, "netclass_patterns": patterns},
            "schematic": {}, "sheets": [[gen_sch.ROOT_UUID, ""]]}
-    open(os.path.join(ROOT, PROJECT + ".kicad_pro"), "w").write(json.dumps(pro, indent=2) + "\n")
+    open(os.path.join(ROOT, PROJECT + ".kicad_pro"), "w", encoding="utf-8").write(json.dumps(pro, indent=2) + "\n")
 
 if __name__ == "__main__":
     write_project()

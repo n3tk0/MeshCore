@@ -12,7 +12,7 @@ def quote(n):
 
 def fix(path):
     s = open(path).read()
-    m = re.search(r'\(class kicad_default ""(.*?)\n(\s*)\(circuit', s, re.S)
+    m = re.search(r'\(class kicad_default(?: "")?(.*?)\n(\s*)\(circuit', s, re.S)
     toks = re.findall(r'"[^"]*"|\S+', m.group(1))
     names = [t.strip('"') for t in toks]
     ind = m.group(2)

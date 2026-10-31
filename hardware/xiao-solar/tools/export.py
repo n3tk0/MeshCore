@@ -18,11 +18,13 @@ GERB = os.path.join(OUT, "gerber")
 LAYERS = "F.Cu,B.Cu,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
 
 def run(*args):
-    subprocess.run(["kicad-cli", *args], check=True, stdout=subprocess.DEVNULL)
+    cli = shutil.which("kicad-cli") or "C:/Program Files/KiCad/10.0/bin/kicad-cli.exe"
+    subprocess.run([cli, *args], check=True, stdout=subprocess.DEVNULL)
 
 def gerbers():
-    shutil.rmtree(GERB, ignore_errors=True)
-    os.makedirs(GERB)
+    os.makedirs(GERB, exist_ok=True)
+    for f in os.listdir(GERB):
+        os.remove(os.path.join(GERB, f))
     run("pcb", "export", "gerbers", "--layers", LAYERS, "--subtract-soldermask",
         "--no-x2", "-o", GERB + "/", PCB)
     run("pcb", "export", "drill", "--format", "excellon", "--drill-origin", "absolute",
@@ -50,10 +52,10 @@ def cpl():
     tmp = os.path.join(OUT, "pos.csv")
     run("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",
         "--use-drill-file-origin", "-o", tmp, PCB)
-    rows = list(csv.DictReader(open(tmp)))
+    rows = list(csv.DictReader(open(tmp, encoding="utf-8")))
     os.remove(tmp)
     out = os.path.join(OUT, "cpl-jlc.csv")
-    with open(out, "w", newline="") as f:
+    with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
         for r in rows:

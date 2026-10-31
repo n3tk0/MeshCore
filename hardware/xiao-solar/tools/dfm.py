@@ -18,6 +18,31 @@ import pcbnew
 
 mm = pcbnew.FromMM
 
+if not hasattr(pcbnew.NET_SETTINGS, "m_DefaultNetClass"):
+    pcbnew.NET_SETTINGS.m_DefaultNetClass = property(lambda self: self.GetDefaultNetclass())
+if not hasattr(pcbnew.FOOTPRINT, "HasProperty"):
+    pcbnew.FOOTPRINT.HasProperty = lambda self, k: self.HasField(k)
+    pcbnew.FOOTPRINT.SetProperty = lambda self, k, v: self.SetField(k, v)
+if not hasattr(pcbnew.FOOTPRINT, "SetZoneConnection"):
+    pcbnew.FOOTPRINT.SetZoneConnection = lambda self, v: self.SetLocalZoneConnection(v)
+if not hasattr(pcbnew.ZONE, "SetDoNotAllowCopperPour"):
+    pcbnew.ZONE.SetDoNotAllowCopperPour = lambda self, v: self.SetDoNotAllowZoneFills(v)
+    pcbnew.ZONE.GetDoNotAllowCopperPour = lambda self: self.GetDoNotAllowZoneFills()
+if not hasattr(pcbnew.PCB_SHAPE, "IsFilled"):
+    pcbnew.PCB_SHAPE.IsFilled = lambda self: self.IsSolidFill()
+if not hasattr(pcbnew, "EDA_UNITS_MILLIMETRES"):
+    pcbnew.EDA_UNITS_MILLIMETRES = pcbnew.EDA_UNITS_MM
+if not hasattr(pcbnew.SHAPE_POLY_SET, "PM_FAST"):
+    pcbnew.SHAPE_POLY_SET.PM_FAST = True
+    _orig_deflate = pcbnew.SHAPE_POLY_SET.Deflate
+    _orig_inflate = pcbnew.SHAPE_POLY_SET.Inflate
+    pcbnew.SHAPE_POLY_SET.Deflate = lambda self, amt, *a: _orig_deflate(self, amt, pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, mm(0.01)) if len(a) == 1 else _orig_deflate(self, amt, *a)
+    pcbnew.SHAPE_POLY_SET.Inflate = lambda self, amt, *a: _orig_inflate(self, amt, pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, mm(0.01)) if len(a) == 1 else _orig_inflate(self, amt, *a)
+    _orig_gbpo = pcbnew.BOARD.GetBoardPolygonOutlines
+    pcbnew.BOARD.GetBoardPolygonOutlines = lambda self, edge, *a: _orig_gbpo(self, edge, False) if not a else _orig_gbpo(self, edge, *a)
+    _orig_gep = pcbnew.PAD.GetEffectivePolygon
+    pcbnew.PAD.GetEffectivePolygon = lambda self, *a: _orig_gep(self, pcbnew.F_Cu) if not a else _orig_gep(self, *a)
+
 def vec(x, y):
     return pcbnew.VECTOR2I(int(x), int(y))
 
@@ -355,7 +380,7 @@ def teardrops(board, skip_refs=("U1",), skip_nets=("GND",), max_len=1.0):
             dx, dy = (other.x - end.x) / L, (other.y - end.y) / L
             v = vias.get((end.x, end.y))
             if v is not None:
-                c, R, perp = end, v.GetWidth() / 2, v.GetWidth()
+                c, R, perp = end, v.GetWidth(pcbnew.F_Cu) / 2, v.GetWidth(pcbnew.F_Cu)
             else:
                 pad = next((p for p in pads if p.GetNetCode() == t.GetNetCode() and p.IsOnLayer(layer)
                             and p.GetEffectivePolygon().Contains(end)), None)

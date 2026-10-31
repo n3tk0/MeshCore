@@ -22,11 +22,11 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "n.net")
         subprocess.run(["kicad-cli", "sch", "export", "netlist", "-o", out, sch], check=True, stdout=subprocess.DEVNULL)
-        text = open(out).read()
+        text = open(out, encoding="utf-8").read()
     got = {}
-    for m in re.finditer(r'\(net \(code "?\d+"?\) \(name "([^"]*)"\)(.*?)\)\s*(?=\(net |\)\s*\)\s*$)', text, re.S):
+    for m in re.finditer(r'\(net\s+\(code "?\d+"?\)\s+\(name "([^"]*)"\)(.*?)\)\s*(?=\(net\s|\)\s*\)\s*$)', text, re.S):
         name = m.group(1).lstrip("/")
-        nodes = set(re.findall(r'\(node \(ref "([^"]+)"\) \(pin "([^"]+)"\)', m.group(2)))
+        nodes = set(re.findall(r'\(node\s+\(ref "([^"]+)"\)\s+\(pin "([^"]+)"\)', m.group(2)))
         nodes = {n for n in nodes if not n[0].startswith("#PWR")}
         if nodes and not name.startswith("unconnected-"):
             got[name] = nodes

@@ -5,7 +5,7 @@ tracks and vias are then replaced by the session result (hand-routed copper is k
 
 Run: FREEROUTING_JAR=/path/freerouting-1.9.0.jar python3 tools/finish.py
 """
-import os, subprocess, sys, tempfile
+import os, shutil, subprocess, sys, tempfile
 import pcbnew
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -24,7 +24,8 @@ def main():
     dsn_classes.fix(dsn)
     dsn_classes.add_zone_copper(board, dsn)
     dsn_classes.add_keepouts(board, dsn, route.b_clear(board))
-    subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "30"],
+    cmd = (["xvfb-run", "-a"] if shutil.which("xvfb-run") else []) + ["java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "30"]
+    subprocess.run(cmd,
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
     # the session leaves out the fixed (locked, hand-routed) wiring, so that stays on the board
     for t in list(board.GetTracks()):

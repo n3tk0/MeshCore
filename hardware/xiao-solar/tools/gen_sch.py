@@ -10,6 +10,8 @@ import os, re, uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SYSLIB = "/usr/share/kicad/symbols"
+if not os.path.isdir(SYSLIB):
+    SYSLIB = "C:/Program Files/KiCad/10.0/share/kicad/symbols"
 LOCAL = os.path.join(ROOT, "lib", "xiao_solar.kicad_sym")
 PROJECT = "xiao-solar"
 ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0001"
@@ -47,7 +49,7 @@ _libcache = {}
 def lib_text(lib):
     if lib not in _libcache:
         path = LOCAL if lib == "xiao_solar" else os.path.join(SYSLIB, lib + ".kicad_sym")
-        _libcache[lib] = open(path).read()
+        _libcache[lib] = open(path, encoding="utf-8").read()
     return _libcache[lib]
 
 def find_symbol(lib, name):
@@ -108,7 +110,7 @@ custom_box("Wio-SX1262_for_XIAO", "U", WIO_L, WIO_R, width=22.86,
 
 def install_custom():
     """Keeps the hand-made XIAO/Wio symbols in lib/xiao_solar.kicad_sym too."""
-    t = open(LOCAL).read()
+    t = open(LOCAL, encoding="utf-8").read()
     for name, body in CUSTOM.items():
         m = re.search(r'\n  \(symbol "%s"' % re.escape(name), t)
         if m:
@@ -116,7 +118,7 @@ def install_custom():
             t = t.replace(old, body)
         else:
             t = t.rstrip()[:-1].rstrip() + "\n  " + body.replace("\n", "\n  ") + "\n)\n"
-    open(LOCAL, "w").write(t)
+    open(LOCAL, "w", encoding="utf-8").write(t)
     _libcache.pop("xiao_solar", None)
 
 def symbol_def(lib_id):
@@ -126,9 +128,10 @@ def symbol_def(lib_id):
         lib_id = "xiao_solar:" + name
     else:
         body = find_symbol(lib, name)
-        m = re.match(r'\(symbol "[^"]+" \(extends "([^"]+)"\)', body)
+        m = re.search(r'\(extends "([^"]+)"\)', body)
         if m:
-            raise ValueError("extends not supported: " + lib_id)
+            parent = m.group(1)
+            body = find_symbol(lib, parent).replace(parent, name)
     return body.replace('(symbol "%s"' % name, '(symbol "%s"' % lib_id, 1)
 
 def symbol_pins(lib_id):

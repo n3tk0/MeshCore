@@ -24,8 +24,10 @@ def narrow(board, tmp):
                     bad.add((round(float(m.group(1)), 2), round(float(m.group(2)), 2)))
         n = 0
         for t in board.GetTracks():
+            if t.GetClass() != "PCB_TRACK" or t.IsLocked() or t.GetNetname() not in nets:
+                continue
             w = round(pcbnew.ToMM(t.GetWidth()), 2)
-            if t.GetClass() != "PCB_TRACK" or t.IsLocked() or t.GetNetname() not in nets or w not in STEPS:
+            if w not in STEPS:
                 continue
             pts = [(round(pcbnew.ToMM(p.x), 2), round(pcbnew.ToMM(p.y), 2)) for p in (t.GetStart(), t.GetEnd())]
             if any(route._near_seg(b, pts) for b in bad):
@@ -65,7 +67,7 @@ def drop_dangling(board, tmp):
         if v.GetClass() == "PCB_VIA":
             ends = [v.GetPosition()]
         else:
-            ends = [v.GetStart(), v.GetEnd(), (v.GetStart() + v.GetEnd()) / 2]
+            ends = [v.GetStart(), v.GetEnd(), pcbnew.VECTOR2I((v.GetStart().x + v.GetEnd().x) // 2, (v.GetStart().y + v.GetEnd().y) // 2)]
         if any((round(pcbnew.ToMM(p.x), 2), round(pcbnew.ToMM(p.y), 2)) in pts for p in ends):
             board.Delete(v); n += 1
     print("dangling vias removed:", n)
@@ -97,7 +99,7 @@ def double_power_vias(board):
                 continue
             if dfm.in_courtyard(cys, c):
                 continue
-            shape = pcbnew.SHAPE_SEGMENT(pos, c, max(mm(0.6), v.GetWidth()))
+            shape = pcbnew.SHAPE_SEGMENT(pos, c, max(mm(0.6), v.GetWidth(pcbnew.F_Cu)))
             ok = True
             for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
                 for o in others:
@@ -118,7 +120,7 @@ def double_power_vias(board):
             if not ok:
                 continue
             nv = pcbnew.PCB_VIA(board)
-            nv.SetPosition(c); nv.SetWidth(v.GetWidth()); nv.SetDrill(v.GetDrill()); nv.SetNet(v.GetNet())
+            nv.SetPosition(c); nv.SetWidth(v.GetWidth(pcbnew.F_Cu)); nv.SetDrill(v.GetDrill()); nv.SetNet(v.GetNet())
             nv.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); nv.SetLocked(True)
             board.Add(nv)
             for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
@@ -185,6 +187,8 @@ def main():
     rep = route.drc(board, os.path.join(route.ROOT, "production", "drc.rpt"))
     print("unconnected:", board.GetConnectivity().GetUnconnectedCount(True))
     print(re.findall(r"\*\* Found \d+ [^*]+", rep))
+    if os.path.exists(route.PCB + ".rpt"):
+        os.remove(route.PCB + ".rpt")
     dfm.report(board)
 
 if __name__ == "__main__":

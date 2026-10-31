@@ -18,6 +18,8 @@ import dfm  # noqa: E402
 PROJECT = "xiao-solar"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
 FPLIB_SYS = "/usr/share/kicad/footprints"
+if not os.path.isdir(FPLIB_SYS):
+    FPLIB_SYS = "C:/Program Files/KiCad/10.0/share/kicad/footprints"
 FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
 W, H = 48.0, 71.5          # board size, mm
 OX, OY = 100.0, 100.0      # board origin on the sheet

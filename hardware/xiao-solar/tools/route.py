@@ -10,7 +10,7 @@
 
 Run: FREEROUTING_JAR=/path/freerouting-1.9.0.jar python3 tools/route.py
 """
-import os, re, subprocess, sys, tempfile
+import os, re, shutil, subprocess, sys, tempfile
 import pcbnew
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,8 +77,23 @@ def import_ses(board, path):
     return nseg, nvia
 
 def drc(board, path):
-    pcbnew.WriteDRCReport(board, path, pcbnew.EDA_UNITS_MILLIMETRES, True)
-    return open(path).read()
+    if hasattr(pcbnew, "WriteDRCReport") and sys.platform != "win32":
+        pcbnew.WriteDRCReport(board, path, pcbnew.EDA_UNITS_MILLIMETRES, True)
+        return open(path, encoding="utf-8").read()
+    tmp_pcb = path + ".kicad_pcb"
+    tmp_pro = path + ".kicad_pro"
+    pro_src = os.path.join(ROOT, gen_pcb.PROJECT + ".kicad_pro")
+    if os.path.exists(pro_src):
+        shutil.copyfile(pro_src, tmp_pro)
+    board.Save(tmp_pcb)
+    cli = shutil.which("kicad-cli") or "C:/Program Files/KiCad/10.0/bin/kicad-cli.exe"
+    env = dict(os.environ, USERPROFILE=tempfile.gettempdir(), APPDATA=tempfile.gettempdir())
+    subprocess.run([cli, "pcb", "drc", "--units", "mm", "-o", path, tmp_pcb],
+                   check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for f_ in (tmp_pcb, tmp_pro):
+        if os.path.exists(f_):
+            os.remove(f_)
+    return open(path, encoding="utf-8").read()
 
 def widen(board, tmp):
     """Widen PowerQFN tracks to 0.8 mm except near U1, then undo any that break clearance."""
@@ -90,7 +105,7 @@ def widen(board, tmp):
             continue
         far = all(((p.x - u1.x) ** 2 + (p.y - u1.y) ** 2) ** 0.5 > mm(2.6) for p in (t.GetStart(), t.GetEnd()))
         if far:
-            orig[t] = t.GetWidth()
+            orig[id(t)] = t.GetWidth()
             t.SetWidth(mm(0.8)); changed.append(t)
     steps = {0.8: 0.5, 0.5: 0.3, 0.3: None}
     for width in (0.8, 0.5, 0.3):
@@ -108,7 +123,7 @@ def widen(board, tmp):
             pts = [(round(pcbnew.ToMM(p.x), 2), round(pcbnew.ToMM(p.y), 2)) for p in (t.GetStart(), t.GetEnd())]
             if any(_near_seg(b, pts) for b in bad):
                 nxt = steps[width]
-                t.SetWidth(mm(nxt) if nxt and mm(nxt) > orig[t] else orig[t]); reverted += 1
+                t.SetWidth(mm(nxt) if nxt and mm(nxt) > orig[id(t)] else orig[id(t)]); reverted += 1
         print("widen: %d tracks at %.1f mm, %d stepped down" % (len(changed), width, reverted))
 
 def _near_seg(p, seg, tol=0.5):
@@ -264,7 +279,8 @@ def main():
     dsn_classes.fix(dsn)
     dsn_classes.add_zone_copper(board, dsn)
     dsn_classes.add_keepouts(board, dsn, b_clear(board))
-    subprocess.run(["xvfb-run", "-a", "java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "200"],
+    cmd = (["xvfb-run", "-a"] if shutil.which("xvfb-run") else []) + ["java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "200"]
+    subprocess.run(cmd,
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("ses: %d segments, %d vias" % import_ses(board, ses))
     rep_tmp = os.path.join(tmp, "drc.rpt")
