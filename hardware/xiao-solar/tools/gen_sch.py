@@ -63,7 +63,7 @@ def find_symbol(lib, name):
 
 CUSTOM = {}
 
-def custom_box(name, ref, left, right, top=(), bottom=(), width=15.24, fp=""):
+def custom_box(name, ref, left, right, top=(), bottom=(), width=15.24, fp="", pad_top=0.0, pad_bot=0.0):
     """left/right: lists of (number, name, type).
     top/bottom: lists of (number, name, type[, x_offset])."""
     rows = max(len(left), len(right), 1)
@@ -72,12 +72,14 @@ def custom_box(name, ref, left, right, top=(), bottom=(), width=15.24, fp=""):
     h = rows * 2.54 + 2.54
     w = width
     top_y = h / 2
+    r_top = top_y + pad_top
+    r_bot = -top_y - pad_bot
     out = ['(symbol "%s" (in_bom yes) (on_board yes)' % name,
-           '  (property "Reference" "%s" (at 0 %.2f 0) (effects (font (size 1.27 1.27))))' % (ref, top_y + 5.08),
-           '  (property "Value" "%s" (at 0 %.2f 0) (effects (font (size 1.27 1.27))))' % (name, top_y + 2.54),
+           '  (property "Reference" "%s" (at 0 %.2f 0) (effects (font (size 1.27 1.27))))' % (ref, r_top + 5.08),
+           '  (property "Value" "%s" (at 0 %.2f 0) (effects (font (size 1.27 1.27))))' % (name, r_top + 2.54),
            '  (property "Footprint" "%s" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))' % fp,
            '  (property "Datasheet" "" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))',
-           '  (symbol "%s_0_1" (rectangle (start %.2f %.2f) (end %.2f %.2f) (stroke (width 0.254) (type default)) (fill (type background))))' % (name, -w / 2, top_y, w / 2, -top_y),
+           '  (symbol "%s_0_1" (rectangle (start %.2f %.2f) (end %.2f %.2f) (stroke (width 0.254) (type default)) (fill (type background))))' % (name, -w / 2, r_top, w / 2, r_bot),
            '  (symbol "%s_1_1"' % name]
     def pin(num, pname, ptype, x, y, ang):
         out.append('    (pin %s line (at %.2f %.2f %d) (length 2.54) (name "%s" (effects (font (size 1.05 1.05)))) (number "%s" (effects (font (size 0.95 0.95)))))' % (ptype, x, y, ang, pname, num))
@@ -88,11 +90,11 @@ def custom_box(name, ref, left, right, top=(), bottom=(), width=15.24, fp=""):
     for i, item in enumerate(top):
         n, pn, t = item[:3]
         x = item[3] if len(item) > 3 else (-w / 2 + 2.54 * (i + 1))
-        pin(n, pn, t, x, top_y + 2.54, 270)
+        pin(n, pn, t, x, r_top + 2.54, 270)
     for i, item in enumerate(bottom):
         n, pn, t = item[:3]
         x = item[3] if len(item) > 3 else (-w / 2 + 2.54 * (i + 1))
-        pin(n, pn, t, x, -top_y - 2.54, 90)
+        pin(n, pn, t, x, r_bot - 2.54, 90)
     out.append('  )')
     out.append(')')
     CUSTOM[name] = "\n".join(out)
@@ -106,16 +108,16 @@ BQ_L = [("2", "VBUS", "power_in"), ("3", "VBUS", "power_in"),
 BQ_R = [("25", "SYS", "power_out"),
         ("14", "SCL", "input"), ("15", "SDA", "bidirectional"),
         ("24", "SDRV", "output"),
-        ("22", "BAT", "power_out"), ("23", "BAT", "power_out"),
+        ("22", "BAT", "power_out"), ("23", "BAT", "passive"),
         ("18", "BATP", "input"),
         ("1", "STAT", "open_collector"),
         ("5", "REGN", "power_out"), ("17", "ILIM_HIZ", "input"),
         ("16", "TS", "input"), ("20", "PROG", "passive")]
 BQ_T = [("4", "BTST1", "passive", -10.16), ("28", "SW1", "power_out", -5.08),
         ("26", "SW2", "power_out", 5.08), ("19", "BTST2", "passive", 10.16)]
-BQ_B = [("10", "ACDRV2", "output", -2.54), ("11", "ACDRV1", "output", 0.0), ("27", "GND", "power_in", 2.54)]
+BQ_B = [("10", "ACDRV2", "passive", -2.54), ("11", "ACDRV1", "passive", 0.0), ("27", "GND", "power_in", 2.54)]
 custom_box("BQ25798RQMR_FUNC", "U", BQ_L, BQ_R, top=BQ_T, bottom=BQ_B, width=25.4,
-           fp="xiao_solar:QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR")
+           fp="xiao_solar:QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR", pad_top=2.54)
 
 XIAO_PINS_L = [("1", "D0/A0", "bidirectional"), ("2", "D1", "bidirectional"), ("3", "D2", "bidirectional"),
                ("4", "D3", "bidirectional"), ("5", "D4", "bidirectional"), ("6", "D5", "bidirectional"),
@@ -138,8 +140,8 @@ custom_box("Wio-SX1262_for_XIAO", "U", WIO_L, WIO_R, width=22.86,
 custom_box("LM66100", "U",
            left=[("1", "VIN", "power_in")],
            right=[("6", "VOUT", "power_out"), ("3", "~{CE}", "input")],
-           bottom=[("4", "NC", "passive", -2.54), ("2", "GND", "power_in", 0.0), ("5", "~{ST}", "open_collector", 2.54)],
-           width=12.7, fp="Package_TO_SOT_SMD:SOT-363_SC-70-6")
+           bottom=[("4", "NC", "passive", -2.54), ("2", "GND", "power_in", 0.0), ("5", "~{ST}", "passive", 2.54)],
+           width=12.7, fp="Package_TO_SOT_SMD:SOT-363_SC-70-6", pad_bot=2.54)
 
 custom_box("DW01A_FUNC", "U",
            left=[("5", "VCC", "power_in"), ("6", "GND", "power_in"), ("4", "TD", "passive")],
@@ -156,13 +158,13 @@ custom_box("INA219_FUNC", "U",
            right=[("5", "SCL", "input"), ("6", "SDA", "bidirectional")],
            top=[("2", "IN-", "input", -2.54), ("1", "IN+", "input", 2.54)],
            bottom=[("7", "A0", "input", -2.54), ("3", "GND", "power_in", 0.0), ("8", "A1", "input", 2.54)],
-           width=12.7, fp="Package_TO_SOT_SMD:SOT-23-8")
+           width=12.7, fp="Package_TO_SOT_SMD:SOT-23-8", pad_top=2.54, pad_bot=2.54)
 
 custom_box("SHT40_FUNC", "U",
            left=[("2", "SCL", "input"), ("1", "SDA", "bidirectional"), ("3", "VDD", "power_in")],
            right=[],
            bottom=[("4", "VSS", "power_in", -1.27), ("5", "EP", "power_in", 1.27)],
-           width=12.7, fp="xiao_solar:DFN-4_L1.5-W1.5-P0.8-TL-EP")
+           width=12.7, fp="xiao_solar:DFN-4_L1.5-W1.5-P0.8-TL-EP", pad_bot=2.54)
 
 def install_custom():
     """Keeps the hand-made symbols in lib/xiao_solar.kicad_sym too."""
@@ -222,8 +224,8 @@ def P(ref, lib, value, x, y, nets, fp="", lcsc="", dnp=False, mpn="", rot=0, mir
                       block=b_idx, section=max(len(blocks) - 1, 0), rot=rot, mirror=mirror))
 
 TP_FP = "TestPoint:TestPoint_Pad_D1.0mm"
-def TP(ref, net, x, y, rot=0):
-    P(ref, "Connector:TestPoint", net, x, y, {"1": net}, TP_FP, rot=rot)
+def TP(ref, net, x, y, rot=0, value=None):
+    P(ref, "Connector:TestPoint", value or net, x, y, {"1": net}, TP_FP, rot=rot)
 
 def T(x, y, s, size=1.8):
     texts.append((x + OFF[0], y + OFF[1], s, size, max(len(blocks) - 1, 0)))
@@ -262,7 +264,7 @@ C100N0402HV = "C131394"  # 100nF 50V X7R 0402 (PMID: up to 25 V)
 
 # ---- 1. Solar & Aux Inputs -> VBUS & PMID rails (Left of U1) -----------------
 BLOCK(20, 22, "1. ВХОДОВЕ (5-22 V соларен панел + втори вход) -> MPPT ЗАРЯДНО BQ25798 (1S, 750 kHz, 2.2 uH)")
-P("J1", "Connector_Generic:Conn_01x02", "SOLAR 5-22V", 28, 78.0, {"1": "SOLAR_IN", "2": "GND"}, CONN2, mirror=True)
+P("J1", "Connector_Generic:Conn_01x02", "SOLAR", 28, 78.0, {"1": "SOLAR_IN", "2": "GND"}, CONN2, mirror=True)
 P("D1", "Device:D_Schottky", "SS54", 46, 78.0, {"2": "SOLAR_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C22452", mirror=True)
 P("J2", "Connector_Generic:Conn_01x02", "VIN2 5-20V", 28, 95.0, {"1": "VIN2_IN", "2": "GND"}, CONN2, mirror=True)
 P("D2", "Device:D_Schottky", "SS54", 46, 95.0, {"2": "VIN2_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C22452", mirror=True)
@@ -298,50 +300,50 @@ P("U1", "custom:BQ25798RQMR_FUNC", "BQ25798RQMR", 140, 125, bq,
   "xiao_solar:QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR", "C2876593")
 
 # Switching inductor L1 & bootstrap caps C4, C5 directly above U1
-P("L1", "xiao_solar:FNR4030S2R2MT", "2.2uH 4A (MWSA0402S)", 140, 72, {"1": "SW1", "2": "SW2"},
+P("L1", "xiao_solar:FNR4030S2R2MT", "2.2uH 4A molded (MWSA0402S)", 140, 72, {"1": "SW1", "2": "SW2"},
   "xiao_solar:IND-SMD_L4.4-W4.2_MWSA0402S", "C408335")
-RAIL("SW1", [(134.92, 104.68), (134.92, 72.0)])
-RAIL("SW2", [(145.08, 104.68), (145.08, 72.0)])
+RAIL("SW1", [(134.92, 102.14), (134.92, 72.0)])
+RAIL("SW2", [(145.08, 102.14), (145.08, 72.0)])
 C("C4", "47n", 125.0, 88, "BTST1", "SW1", C47N, C0603)
-RAIL("BTST1", [(129.84, 104.68), (129.84, 81.0), (125.0, 81.0), (125.0, 84.19)])
+RAIL("BTST1", [(129.84, 102.14), (129.84, 81.0), (125.0, 81.0), (125.0, 84.19)])
 RAIL("SW1", [(125.0, 91.81), (125.0, 95.0), (134.92, 95.0)])
 C("C5", "47n", 155.0, 88, "BTST2", "SW2", C47N, C0603)
-RAIL("BTST2", [(150.16, 104.68), (150.16, 81.0), (155.0, 81.0), (155.0, 84.19)])
+RAIL("BTST2", [(150.16, 102.14), (150.16, 81.0), (155.0, 81.0), (155.0, 84.19)])
 RAIL("SW2", [(155.0, 91.81), (155.0, 95.0), (145.08, 95.0)])
 
-# QON & CE (JP2 Li-ion/LiFePO4) on the lower-left of U1
-TP("TP2", "QON", 114.54, 122.62, rot=90)
-RAIL("QON", [(114.54, 122.62), (124.76, 122.62)])
+# QON & CE (JP2 Li-ion/LiFePO4) on the lower-left of U1 (TP2 at x=112 to the left of CE at x=118 so text is clear!)
+TP("TP2", "QON", 112.0, 122.62, rot=90, value="QON (to GND = wake)")
+RAIL("QON", [(112.0, 122.62), (124.76, 122.62)])
 
-R("R4", "100k", 108, 148, "CE", "CE_PULL", "C25803")
-RAIL("CE", [(108.0, 125.16), (124.76, 125.16)])
-RAIL("CE", [(108.0, 125.16), (108.0, 144.19)])
-P("JP2", "Jumper:SolderJumper_3_Bridged12", "1-2 Li-ion / 2-3 LiFePO4", 108, 162,
+R("R4", "100k", 118, 148, "CE_PULL", "CE", "C25803", rot=180)
+RAIL("CE", [(118.0, 125.16), (124.76, 125.16)])
+RAIL("CE", [(118.0, 125.16), (118.0, 144.19)])
+P("JP2", "Jumper:SolderJumper_3_Bridged12", "CE: 1-2 Li-ion / 2-3 LiFePO4", 118, 162,
   {"1": "GND", "2": "CE_PULL", "3": "3V3"}, "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm", rot=180)
-RAIL("CE_PULL", [(108.0, 151.81), (108.0, 158.19)])
+RAIL("CE_PULL", [(118.0, 151.81), (118.0, 158.19)])
 
 # STAT LED (D4 + R6), REGN (C10), NTC divider (R2/R3/J3), PROG (R1) on the bottom-right of U1
 # U1 right pins: STAT=127.70, REGN=130.24, ILIM_HIZ=132.78, TS=135.32, PROG=137.86
-P("D4", "Device:LED", "green", 172, 127.70, {"1": "STAT", "2": "LED_STAT"},
+P("D4", "Device:LED", "green", 168, 127.70, {"1": "STAT", "2": "LED_STAT"},
   "LED_SMD:LED_0805_2012Metric", "C2297")
-RAIL("STAT", [(155.24, 127.70), (168.19, 127.70)])
-R("R6", "2.2k", 184, 127.70, "LED_STAT", "REGN", "C4190", rot=90)
-RAIL("LED_STAT", [(175.81, 127.70), (180.19, 127.70)])
+RAIL("STAT", [(155.24, 127.70), (164.19, 127.70)])
+R("R6", "2.2k", 188, 127.70, "REGN", "LED_STAT", "C4190", rot=270)
+RAIL("LED_STAT", [(171.81, 127.70), (184.19, 127.70)])
 
 RAIL("REGN", [(155.24, 130.24), (196.0, 130.24)])
 RAIL("REGN", [(155.24, 132.78), (160.0, 132.78), (160.0, 130.24)])
-RAIL("REGN", [(187.81, 127.70), (190.0, 127.70), (190.0, 130.24)])
+RAIL("REGN", [(191.81, 127.70), (194.0, 127.70), (194.0, 130.24)])
 C("C10", "4.7u/25V", 182, 142, "REGN", "GND", C4U7)
 RAIL("REGN", [(182.0, 130.24), (182.0, 138.19)])
 
 R("R2", "5.1k 1%", 196, 142, "REGN", "TS", "C23186")
 RAIL("REGN", [(196.0, 130.24), (196.0, 138.19)])
-RAIL("TS", [(155.24, 135.32), (172.0, 135.32), (172.0, 150.0), (210.0, 150.0)])
+RAIL("TS", [(155.24, 135.32), (172.0, 135.32), (172.0, 150.0), (204.0, 150.0)])
 RAIL("TS", [(196.0, 145.81), (196.0, 150.0)])
 R("R3", "30k 1%", 196, 160, "TS", "GND", "C22984")
 RAIL("TS", [(196.0, 150.0), (196.0, 156.19)])
-P("J3", "Connector_Generic:Conn_01x02", "NTC 10k (103AT)", 215.08, 160, {"1": "TS", "2": "GND"}, CONN2)
-RAIL("TS", [(210.0, 150.0), (210.0, 160.0)])
+P("J3", "Connector_Generic:Conn_01x02", "NTC 10k (103AT)", 209.08, 160, {"1": "TS", "2": "GND"}, CONN2)
+RAIL("TS", [(204.0, 150.0), (204.0, 160.0)])
 
 R("R1", "4.7k 1%", 164, 152, "PROG", "GND", "C23162")
 RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
@@ -374,8 +376,8 @@ P("U3", "custom:XIAO_nRF52840", "XIAO nRF52840", 342, 62.62,
    "11": "SPI_MOSI", "10": "SPI_MISO", "9": "SPI_SCK", "8": "SDA"}, "xiao_solar:XIAO_14P_2.54_21x17.8mm")
 # Connect XIAO_5V directly from D5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
 RAIL("XIAO_5V", [(305.0, 55.0), (305.0, 42.0), (358.0, 42.0), (358.0, 55.0), (353.43, 55.0)])
-# Connect CE directly from U1.~CE (108.0, 125.16) over the top lane (y=36.0) into U3.D0 (330.57, 55.0)
-RAIL("CE", [(108.0, 125.16), (108.0, 36.0), (326.0, 36.0), (326.0, 55.0), (330.57, 55.0)])
+# Connect CE directly from U1.~CE (118.0, 125.16) over the top lane (y=36.0) into U3.D0 (330.57, 55.0)
+RAIL("CE", [(118.0, 125.16), (118.0, 36.0), (326.0, 36.0), (326.0, 55.0), (330.57, 55.0)])
 
 P("U4", "custom:Wio-SX1262_for_XIAO", "Wio-SX1262 for XIAO", 342, 108.34,
   {"1": None, "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
@@ -394,8 +396,8 @@ for i, net in enumerate(["3V3", "SPI_MOSI", "SPI_MISO", "SPI_SCK"]):
     y_u4 = 105.80 + 2.54 * i
     lane_x = 370.0 + 2.54 * i
     RAIL(net, [(353.43, y_u3), (lane_x, y_u3), (lane_x, y_u4), (355.97, y_u4)])
-RAIL("GND", [(353.43, 57.54), (362.0, 57.54), (362.0, 122.0)])
-RAIL("GND", [(355.97, 103.26), (362.0, 103.26)])
+RAIL("GND", [(353.43, 57.54), (363.0, 57.54), (363.0, 48.0), (368.0, 48.0)])
+RAIL("GND", [(355.97, 103.26), (363.0, 103.26), (363.0, 57.54)])
 
 # 3V3 decoupling caps right on the 3V3 rail next to U3/U4
 RAIL("3V3", [(370.0, 60.08), (398.0, 60.08)])
@@ -433,35 +435,35 @@ RAIL("SDA", [(353.43, 70.24), (364.0, 70.24), (364.0, 146.00), (323.11, 146.00)]
 BLOCK(20, 188, "3. БАТЕРИЯ 1S (Li-ion / LiFePO4): Ship FET (Q2 + JP3) -> Шунт RS1 (INA219) -> BMS (DW01A + HJ8205) -> J4")
 # Continuous BAT wire from U1.BAT (155.24, 120.08 & 122.62) down to y = 210 and right into Q2.2 (Source at 214.92, 210.0)
 RAIL("BAT", [(155.24, 120.08), (158.0, 120.08), (158.0, 122.62), (155.24, 122.62)])
-RAIL("BAT", [(158.0, 121.35), (222.0, 121.35), (222.0, 210.0), (254.92, 210.0)])
-C("C17", "10u/25V", 228, 219, "BAT", "GND", C10U)
-C("C18", "10u/25V", 240, 219, "BAT", "GND", C10U)
-TP("TP6", "BAT", 222, 210.0, rot=0)
+RAIL("BAT", [(158.0, 121.35), (232.0, 121.35), (232.0, 210.0), (259.92, 210.0)])
+C("C17", "10u/25V", 238, 219, "BAT", "GND", C10U)
+C("C18", "10u/25V", 248, 219, "BAT", "GND", C10U)
+TP("TP6", "BAT", 232, 210.0, rot=0)
 
-# Ship FET Q2 (rot=270 at (260, 207.46): Pin 1 Gate=(260, 202.38), Pin 2 Source=(254.92, 210.0), Pin 3 Drain=(265.08, 210.0))
-P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 260, 207.46,
+# Ship FET Q2 (rot=270 at (265, 207.46): Pin 1 Gate=(265, 202.38), Pin 2 Source=(259.92, 210.0), Pin 3 Drain=(270.08, 210.0))
+P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 265, 207.46,
   {"1": "SDRV", "2": "BAT", "3": "BATS"}, SOT23, "C20917", rot=270)
-RAIL("SDRV", [(155.24, 117.54), (226.0, 117.54), (226.0, 198.0), (260.0, 198.0), (260.0, 202.38)])
-P("JP3", "Jumper:SolderJumper_2_Open", "no ship FET (LiFePO4)", 260, 191.0,
+RAIL("SDRV", [(155.24, 117.54), (236.0, 117.54), (236.0, 198.0), (265.0, 198.0), (265.0, 202.38)])
+P("JP3", "Jumper:SolderJumper_2_Open", "no ship FET (LiFePO4)", 265, 191.0,
   {"1": "BAT", "2": "BATS"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm")
-RAIL("BAT", [(250.0, 210.0), (250.0, 191.0), (254.92, 191.0)])
-RAIL("BATS", [(265.08, 191.0), (270.0, 191.0), (270.0, 210.0)])
+RAIL("BAT", [(255.0, 210.0), (255.0, 191.0), (259.92, 191.0)])
+RAIL("BATS", [(270.08, 191.0), (275.0, 191.0), (275.0, 210.0)])
 
-# BATP Kelvin sense through R8 (100R) below Q2 to BATS (no crossover with SDRV!)
-R("R8", "100", 260, 224.0, "BATP", "BATS", "C22775", rot=90)
-RAIL("BATP", [(155.24, 125.16), (218.0, 125.16), (218.0, 224.0), (256.19, 224.0)])
-RAIL("BATS", [(263.81, 224.0), (270.0, 224.0), (270.0, 210.0)])
+# BATP Kelvin sense through R8 (100R) below Q2 to BATS (no crossover with SDRV or J3!)
+R("R8", "100", 265, 226.0, "BATS", "BATP", "C22775", rot=270)
+RAIL("BATP", [(155.24, 125.16), (228.0, 125.16), (228.0, 226.0), (261.19, 226.0)])
+RAIL("BATS", [(268.81, 226.0), (275.0, 226.0), (275.0, 210.0)])
 
 # Current sense shunt RS1 (0.05R 1W, rot=270 so Pin 2 BATS is at left 291.19 and Pin 1 BATT+ is at right 298.81!)
-RAIL("BATS", [(265.08, 210.0), (291.19, 210.0)])
-TP("TP11", "BATS", 276, 210.0, rot=0)
+RAIL("BATS", [(270.08, 210.0), (291.19, 210.0)])
+TP("TP11", "BATS", 281, 210.0, rot=0)
 P("RS1", "Device:R", "0.05 1W", 295, 210.0, {"1": "BATT+", "2": "BATS"},
   "Resistor_SMD:R_1206_3216Metric", "C154645", rot=270)
 P("U7", "custom:INA219_FUNC", "INA219AIDCNR", 295, 229.0,
   {"1": "BATT+", "2": "BATS", "3": "GND", "4": "3V3", "5": "SCL", "6": "SDA", "7": "GND", "8": "GND"},
   "Package_TO_SOT_SMD:SOT-23-8", "C87469")
-RAIL("BATS", [(292.46, 221.38), (292.46, 218.0), (288.0, 218.0), (288.0, 210.0)])
-RAIL("BATT+", [(297.54, 221.38), (297.54, 218.0), (302.0, 218.0), (302.0, 210.0)])
+RAIL("BATS", [(292.46, 218.84), (292.46, 216.0), (288.0, 216.0), (288.0, 210.0)])
+RAIL("BATT+", [(297.54, 218.84), (297.54, 216.0), (302.0, 216.0), (302.0, 210.0)])
 C("C24", "100n", 278, 233, "3V3", "GND", C100N, C0603)
 RAIL("3V3", [(278.0, 229.19), (278.0, 226.46), (286.11, 226.46)])
 RAIL("SCL", [(303.89, 226.46), (310.0, 226.46), (310.0, 143.46)])
@@ -500,13 +502,12 @@ TP("TP7", "GND", 202, 210.0, rot=0)
 RAIL("GND", [(202.0, 210.0), (202.0, 215.08)])
 T(20, 252, "Q2 (AO3400A): S към BAT, D към батерията; в shutdown спира разреждането. За LiFePO4: затвори JP3 (без Q2).", 1.27)
 T(20, 255.5, "BMS (DW01A + HJ8205) в минуса на батерията (BATT- към GND): защита от презареждане (4.3V), преразреждане (2.4V) и късо.", 1.27)
+T(20, 259, "LiFePO4: прагът 4.3V на DW01A е над 3.65V, т.е. от презареждане пази само VREG=3.6V на BQ25798; DW01A остава за 2.4V и късо/свръхток (~3A).", 1.27)
 
 # ERC power flags placed directly on their rail wires (so no detached PWR_FLAG box is needed!)
 for i, (net, fx, fy) in enumerate([
-        ("VBUS", 55.0, 78.0), ("PMID", 112.0, 120.08), ("SYS", 172.0, 55.0),
-        ("BAT", 222.0, 150.0), ("BATS", 275.0, 210.0), ("BATT+", 318.0, 210.0),
-        ("BATT-", 355.0, 212.54), ("REGN", 170.0, 130.24), ("XIAO_5V", 290.0, 55.0),
-        ("3V3", 376.0, 60.08), ("GND", 202.0, 212.54)]):
+        ("VBUS", 55.0, 78.0), ("BATS", 275.0, 210.0), ("BATT+", 318.0, 210.0),
+        ("BATT-", 355.0, 212.54), ("DW_VCC", 326.0, 228.0), ("GND", 202.0, 212.54)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
 for i in range(4):
     P("H%d" % (i + 1), "Mechanical:MountingHole", "M2/M2.5", 370 + (i % 2) * 18, 252 + (i // 2) * 10, {},
@@ -770,9 +771,25 @@ def wire_up(pinpts):
     for net, comps in clusters:
         local = len(nets_blocks.get(net, ())) <= 1 and len(comps) == 1
         if local and net not in POWER:
-            segs = [w for w in sh.wires if w[0] == net]
-            if segs:
-                w = max(segs, key=lambda w: abs(w[1] - w[3]) + abs(w[2] - w[4]))
+            segs = sorted([w for w in sh.wires if w[0] == net],
+                          key=lambda w: -(abs(w[1] - w[3]) + abs(w[2] - w[4])))
+            placed_name = False
+            for w in segs:
+                slen = abs(w[1] - w[3]) + abs(w[2] - w[4])
+                if slen < len(net) * 1.1 + 1.5:
+                    break
+                mx, my = (w[1] + w[3]) / 2, (w[2] + w[4]) / 2
+                hor = abs(w[2] - w[4]) < EPS
+                bx = (mx - 0.5, my - 2.2, mx + len(net) * 1.25 + 0.5, my - 0.3) if hor else (
+                      mx - 2.2, my - len(net) * 1.25 - 0.5, mx - 0.3, my + 0.5)
+                if not any(Sheet._hits_box(bx[0], bx[1], bx[2], bx[3], (b[1], b[2], b[3], b[4])) for b in sh.bodies) and (
+                   not any(Sheet._hits_box(bx[0], bx[1], bx[2], bx[3], t) for t in sh.texts)):
+                    sh.texts.append(bx)
+                    names.append((net, mx, my, 0 if hor else 90))
+                    placed_name = True
+                    break
+            if not placed_name and segs:
+                w = segs[0]
                 names.append((net, (w[1] + w[3]) / 2, (w[2] + w[4]) / 2, 0 if abs(w[2] - w[4]) < EPS else 90))
             continue
         for comp in comps:
@@ -794,17 +811,19 @@ def wire_up(pinpts):
                         pts_ |= {a_, b_}
                         grew = True
             pins_at = {(round(q["x"], 3), round(q["y"], 3)) for q in real_comp}
-            order = order + [dict(x=x, y=y, out=d, ref="") for (x, y) in sorted(pts_ - pins_at)
-                             for d in ((-1, 0), (1, 0), (0, -1), (0, 1))]
+            dirs = (pref,) + tuple(d for d in ((-1, 0), (1, 0), (0, -1), (0, 1)) if d != pref) if net in POWER else ((-1, 0), (1, 0), (0, -1), (0, 1))
+            order = order + [dict(x=x, y=y, out=d, ref="") for (x, y) in sorted(pts_ - pins_at) for d in dirs]
             for q in order:
                 dx, dy = q["out"]
                 tries = [([(q["x"] + dx * d, q["y"] + dy * d)], (dx, dy)) for d in (2.54, 5.08, 7.62)]
-                kinds = [(t, net in POWER) for t in tries]
-                if net in POWER and q["out"] != pref:
-                    kinds = [(([m, (m[0] + pref[0] * 2.54, m[1] + pref[1] * 2.54)], pref), True)
-                             for m in [(q["x"] + dx * d, q["y"] + dy * d) for d in (2.54, 5.08)]] + kinds
                 if net in POWER:
-                    kinds += [(t, False) for t in tries[:2]]
+                    if q["out"] == pref:
+                        kinds = [(t, True) for t in tries]
+                    else:
+                        kinds = [(([m, (m[0] + pref[0] * 2.54, m[1] + pref[1] * 2.54)], pref), True)
+                                 for m in [(q["x"] + dx * d, q["y"] + dy * d) for d in (2.54, 5.08, 7.62)]]
+                else:
+                    kinds = [(t, False) for t in tries]
                 for (pts, dirn), as_sym in kinds:
                     path = [(q["x"], q["y"])] + pts
                     ex, ey = pts[-1]
@@ -890,16 +909,22 @@ def emit():
             cy = p["y"] - sum(ys_) / len(ys_)
             rx, ry, vx, vy, j = p["x"] + 2.0, cy - 0.6, p["x"] + 2.0, cy + 1.6, " (justify left)"
         elif len(pins) <= 3 and not horiz:
-            rx, ry, vx, vy, j = p["x"] + max(xs_) + 1.6, p["y"] - 0.9, p["x"] + max(xs_) + 1.6, p["y"] + 1.4, " (justify left)"
+            if rot == 270 and len(pins) == 3:
+                rx, ry, vx, vy, j = p["x"], p["y"] + 6.2, p["x"], p["y"] + 8.2, ""
+            else:
+                rx, ry, vx, vy, j = p["x"] + max(xs_) + 1.6, p["y"] - 0.9, p["x"] + max(xs_) + 1.6, p["y"] + 1.4, " (justify left)"
         elif horiz:
             rx, ry, vx, vy, j = p["x"], p["y"] - 2.5, p["x"], p["y"] + 2.8, ""
         else:
             top = max(ys_ + [2.54])
             has_top_pins = any(q["ang"] == 270 for q in pins)
             if has_top_pins:
-                rx, ry, vx, vy, j = p["x"], p["y"] - 1.2, p["x"], p["y"] + 1.4, ""
+                if max(xs_) - min(xs_) < 20.0:
+                    rx, ry, vx, vy, j = p["x"] + 8.0, p["y"] + 4.8, p["x"] + 8.0, p["y"] + 6.8, " (justify left)"
+                else:
+                    rx, ry, vx, vy, j = p["x"], p["y"] - 1.2, p["x"], p["y"] + 1.4, ""
             else:
-                rx, ry, vx, vy, j = p["x"], p["y"] - top - 4.2, p["x"], p["y"] - top - 2.0, ""
+                rx, ry, vx, vy, j = p["x"], p["y"] - top - 5.5, p["x"], p["y"] - top - 3.6, ""
         fa = 90 if rot in (90, 270) else 0
         if mir or rot == 180:
             j = j.replace("right", "LEFT").replace("left", "right").replace("LEFT", "left")
