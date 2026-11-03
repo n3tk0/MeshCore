@@ -1,8 +1,8 @@
 ** Drc report for drc.rpt.kicad_pcb **
-** Created on 2026-11-03T22:52:53 **
+** Created on 2026-11-03T22:57:21 **
 ** Report includes: Errors, Warnings **
 
-** Found 96 DRC violations **
+** Found 86 DRC violations **
 [starved_thermal]: Thermal relief connection to zone incomplete (layer F.Cu; zone min spoke count 2; actual 1)
     Local override; error
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
@@ -63,172 +63,132 @@
     Rule: board setup constraints courtyard; error
     @(107.6800 mm, 103.0000 mm): Footprint J7
     @(102.6000 mm, 103.0000 mm): Footprint J6
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.1478 mm)
-    Local override; error
-    @(108.7500 mm, 163.2000 mm): Track [VBUS] on F.Cu, length 2.0538 mm
-    @(109.6000 mm, 163.4900 mm): Pad 2 [BAL2_G] of R40 on F.Cu
 [clearance]: Clearance violation ( clearance 0.1300 mm; actual 0.0162 mm)
     Local override; error
     @(110.6000 mm, 111.4500 mm): Track [GND] on F.Cu, length 1.0607 mm
     @(110.8500 mm, 112.3600 mm): Pad 3 [VAUX] of U6 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0560 mm)
+[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.1478 mm)
     Local override; error
-    @(109.9310 mm, 158.7837 mm): Track [BATT+] on F.Cu, length 2.0163 mm
-    @(109.0000 mm, 159.5750 mm): Pad 2 [BATP] of R8 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0517 mm)
+    @(108.7500 mm, 163.2000 mm): Track [VBUS] on F.Cu, length 2.0538 mm
+    @(109.6000 mm, 163.4900 mm): Pad 2 [BAL2_G] of R40 on F.Cu
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(102.4400 mm, 164.5000 mm): Pad 2 [GND] of D3 on F.Cu
-    @(100.9648 mm, 163.2169 mm): Track [BATT+] on F.Cu, length 2.5662 mm
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0517 mm)
-    Local override; error
-    @(102.9854 mm, 161.1963 mm): Track [BATT+] on F.Cu, length 2.8576 mm
-    @(102.4400 mm, 164.5000 mm): Pad 2 [GND] of D3 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0517 mm)
-    Local override; error
-    @(100.9648 mm, 165.7831 mm): Track [BATT+] on F.Cu, length 1.9051 mm
-    @(102.4400 mm, 164.5000 mm): Pad 2 [GND] of D3 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0577 mm)
-    Local override; error
-    @(107.6973 mm, 156.5500 mm): Track [BATT+] on F.Cu, length 3.1589 mm
-    @(107.1000 mm, 157.8500 mm): Pad 1 [BAT] of JP3 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0773 mm)
-    Local override; error
-    @(107.9396 mm, 172.9523 mm): Track [BATT+] on F.Cu, length 5.6144 mm
-    @(112.5375 mm, 171.6000 mm): Pad 2 [GND] of RS1 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.1014 mm)
-    Local override; error
-    @(103.5428 mm, 167.1302 mm): Track [BATT+] on F.Cu, length 1.3537 mm
-    @(102.5000 mm, 168.8000 mm): Pad 2 [SOLAR_IN] of D1 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.1014 mm)
-    Local override; error
-    @(104.5000 mm, 169.5127 mm): Track [BATT+] on F.Cu, length 4.8643 mm
-    @(106.5000 mm, 168.8000 mm): Pad 1 [VBUS] of D1 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0531 mm)
-    Local override; error
-    @(106.4628 mm, 155.5969 mm): Track [BAT] on F.Cu, length 1.7341 mm
-    @(107.1000 mm, 156.5500 mm): Pad 2 [BATT+] of JP3 on F.Cu
-[clearance]: Clearance violation ( clearance 0.1500 mm; actual 0.0477 mm)
-    Local override; error
-    @(105.8854 mm, 156.1743 mm): Track [BAT] on F.Cu, length 0.8166 mm
-    @(107.1000 mm, 156.5500 mm): Pad 2 [BATT+] of JP3 on F.Cu
+    @(103.8760 mm, 124.8560 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
+    @(103.7520 mm, 125.1920 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(115.6950 mm, 150.0200 mm): Zone 'teardrop' [BTST2] on F.Cu, priority 3
     @(114.9700 mm, 150.6400 mm): Zone 'teardrop' [BTST2] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(119.6740 mm, 118.9280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(119.7803 mm, 118.5447 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(109.2425 mm, 169.9149 mm): Zone 'teardrop' [SH_N] on F.Cu, priority 3
-    @(110.8514 mm, 169.2876 mm): Zone 'teardrop' [SH_N] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(111.3418 mm, 163.9081 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
-    @(113.7926 mm, 163.5901 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(105.3866 mm, 118.1628 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(103.3593 mm, 118.8414 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
     @(119.7803 mm, 118.5447 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(120.1128 mm, 118.6843 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(103.7520 mm, 125.1920 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
-    @(103.8760 mm, 124.8560 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(109.7280 mm, 163.7060 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
-    @(110.7953 mm, 163.3793 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(105.4938 mm, 152.0183 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-    @(104.3469 mm, 152.2697 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
+    @(105.7060 mm, 122.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(105.2740 mm, 122.0280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(105.4095 mm, 122.6341 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(105.7060 mm, 122.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(105.2960 mm, 118.5240 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(105.7440 mm, 119.2760 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(105.4095 mm, 122.6341 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(103.3840 mm, 122.9050 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(105.2960 mm, 118.5240 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(105.3866 mm, 118.1628 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(117.1150 mm, 113.3200 mm): Zone 'teardrop' [FB] on F.Cu, priority 3
-    @(115.9850 mm, 114.0800 mm): Zone 'teardrop' [FB] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(103.8760 mm, 120.8560 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
-    @(103.0710 mm, 121.6800 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(120.1060 mm, 119.6720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(119.6740 mm, 118.9280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(119.7803 mm, 118.5447 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(102.9334 mm, 125.3227 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
-    @(103.8760 mm, 124.8560 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
+    @(105.3867 mm, 118.1628 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(105.2960 mm, 118.5240 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(102.9334 mm, 125.3227 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
     @(103.7520 mm, 125.1920 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
+    @(102.9334 mm, 125.3227 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(105.4094 mm, 122.6341 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(105.7060 mm, 122.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(107.0100 mm, 152.0550 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+    @(105.7900 mm, 152.6950 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(105.4094 mm, 122.6341 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(103.3843 mm, 122.9054 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(110.7370 mm, 164.6490 mm): Zone 'teardrop' [BAL2_D] on F.Cu, priority 3
+    @(112.6632 mm, 164.3366 mm): Zone 'teardrop' [BAL2_D] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(107.5800 mm, 152.2150 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
     @(105.7900 mm, 152.6950 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(112.6631 mm, 164.3366 mm): Zone 'teardrop' [BAL2_D] on F.Cu, priority 3
-    @(110.7367 mm, 164.6493 mm): Zone 'teardrop' [BAL2_D] on F.Cu, priority 3
+    @(107.5800 mm, 152.2150 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+    @(107.0100 mm, 152.0550 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(115.6950 mm, 142.8200 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
-    @(114.9700 mm, 143.4400 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
+    @(115.9850 mm, 114.0800 mm): Zone 'teardrop' [FB] on F.Cu, priority 3
+    @(117.1150 mm, 113.3200 mm): Zone 'teardrop' [FB] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(120.1402 mm, 128.8693 mm): Zone 'teardrop' [ADC_CHEM] on F.Cu, priority 3
+    @(103.8760 mm, 124.8560 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
+    @(102.9334 mm, 125.3227 mm): Zone 'teardrop' [ADC_VBM] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
     @(119.6740 mm, 128.1280 mm): Zone 'teardrop' [ADC_CHEM] on F.Cu, priority 3
+    @(120.1402 mm, 128.8693 mm): Zone 'teardrop' [ADC_CHEM] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(120.1060 mm, 119.6720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(119.7803 mm, 118.5447 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(120.1060 mm, 119.6720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(119.6740 mm, 118.9280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(109.5850 mm, 136.1800 mm): Zone 'teardrop' [LED_STAT] on F.Cu, priority 3
     @(110.6675 mm, 135.2400 mm): Zone 'teardrop' [LED_STAT] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(119.6740 mm, 118.9280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(120.1060 mm, 119.6720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(105.7440 mm, 119.2760 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(105.2960 mm, 118.5240 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(107.0100 mm, 152.0550 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-    @(105.7900 mm, 152.6950 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(107.0100 mm, 152.0550 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-    @(107.5800 mm, 152.2150 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(121.9000 mm, 157.3125 mm): Zone 'teardrop' [BM] on F.Cu, priority 3
     @(120.5000 mm, 155.8875 mm): Zone 'teardrop' [BM] on F.Cu, priority 3
-[items_not_allowed]: Items not allowed (keepout area)
-    Rule: keepout area; error
-    @(102.1520 mm, 139.4645 mm): Via [GND] on F.Cu - B.Cu
+    @(121.9000 mm, 157.3125 mm): Zone 'teardrop' [BM] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(104.3470 mm, 152.2700 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+    @(105.4937 mm, 152.0183 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(110.8514 mm, 169.2876 mm): Zone 'teardrop' [SH_N] on F.Cu, priority 3
+    @(109.2420 mm, 169.9150 mm): Zone 'teardrop' [SH_N] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(114.9700 mm, 143.4400 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
+    @(115.6950 mm, 142.8200 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(109.7280 mm, 163.7060 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
+    @(110.7953 mm, 163.3793 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(103.8760 mm, 120.8560 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+    @(103.0710 mm, 121.6800 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(103.3590 mm, 118.8410 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(105.3867 mm, 118.1628 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(111.3418 mm, 163.9081 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
+    @(113.7930 mm, 163.5900 mm): Zone 'teardrop' [BAL2_G] on F.Cu, priority 3
 [items_not_allowed]: Items not allowed (keepout area)
     Rule: keepout area; error
     @(102.0000 mm, 142.0000 mm): Via [GND] on F.Cu - B.Cu
+[items_not_allowed]: Items not allowed (keepout area)
+    Rule: keepout area; error
+    @(102.1520 mm, 139.4640 mm): Via [GND] on F.Cu - B.Cu
 [silk_overlap]: Silkscreen clearance
     Rule: board setup constraints silk; warning
     @(111.5000 mm, 136.2000 mm): PCB text 'solar-smart-mppt v0.1' on F.Silkscreen
@@ -360,22 +320,18 @@
     Local override; warning
     @(110.5500 mm, 145.6000 mm): Track [REGN] on B.Cu, length 2.0500 mm
 
-** Found 20 unconnected pads **
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(103.2643 mm, 126.1524 mm): Track [3V3M] on B.Cu, length 0.8140 mm
-    @(104.6500 mm, 127.3000 mm): Pad 1 [3V3M] of C22 on F.Cu
+** Found 18 unconnected pads **
 [unconnected_items]: Missing connection between items
     Local override; error
     @(108.7000 mm, 124.6300 mm): Pad 6 [BAL1] of U4 on F.Cu
-    @(120.2500 mm, 163.4000 mm): Track [BAL1] on F.Cu, length 0.4709 mm
+    @(120.2500 mm, 163.4000 mm): Pad 5 [BAL1] of Q7 on F.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
+    @(115.5620 mm, 164.6810 mm): Track [OD_CTL] on F.Cu, length 0.2310 mm
     @(108.7000 mm, 127.1700 mm): Pad 8 [OD_CTL] of U4 on F.Cu
-    @(115.5625 mm, 164.9125 mm): Track [OD_CTL] on F.Cu, length 0.4625 mm
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(117.7326 mm, 127.1700 mm): Track [SDA_I] on F.Cu, length 0.3674 mm
+    @(117.7330 mm, 127.1700 mm): Track [SDA_I] on F.Cu, length 0.3670 mm
     @(120.9100 mm, 118.8000 mm): Pad 2 [SDA_I] of R13 on F.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
@@ -383,11 +339,7 @@
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(103.1500 mm, 127.3000 mm): Pad 2 [GND] of C21 on F.Cu
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
 [unconnected_items]: Missing connection between items
     Local override; error
@@ -396,7 +348,19 @@
 [unconnected_items]: Missing connection between items
     Local override; error
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+[unconnected_items]: Missing connection between items
+    Local override; error
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+[unconnected_items]: Missing connection between items
+    Local override; error
     @(112.7000 mm, 113.3900 mm): Pad 2 [GND] of R32 on F.Cu
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+[unconnected_items]: Missing connection between items
+    Local override; error
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
 [unconnected_items]: Missing connection between items
     Local override; error
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
@@ -412,35 +376,23 @@
 [unconnected_items]: Missing connection between items
     Local override; error
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on B.Cu, priority 0
 [unconnected_items]: Missing connection between items
     Local override; error
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
     @(121.2500 mm, 109.0900 mm): Pad 2 [GND] of R16 on F.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on B.Cu, priority 0
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(120.5000 mm, 155.8875 mm): Zone 'teardrop' [BM] on F.Cu, priority 3
+    @(121.2000 mm, 155.6620 mm): Track [BM] on F.Cu, length 0.0005 mm
     @(101.6000 mm, 125.1100 mm): Pad 1 [BM] of R27 on F.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(107.2651 mm, 111.9830 mm): Track [REG_EN] on F.Cu, length 2.0921 mm
+    @(107.2650 mm, 111.9830 mm): Track [REG_EN] on F.Cu, length 2.0920 mm
     @(102.7500 mm, 116.7000 mm): Pad 2 [REG_EN] of JP5 on F.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(101.2000 mm, 110.5000 mm): Pad 5 [OR_G] of U7 on F.Cu
-    @(101.6625 mm, 105.7500 mm): Pad 1 [OR_G] of Q5 on F.Cu
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(105.2894 mm, 130.5588 mm): Track [SYS] on F.Cu, length 1.5411 mm
     @(112.7200 mm, 147.7000 mm): Track [SYS] on F.Cu, length 0.7200 mm
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(105.3000 mm, 108.4000 mm): Zone [SYS] on F.Cu, priority 2
-    @(103.5375 mm, 106.7000 mm): Pad 3 [SYS] of Q5 on F.Cu
+    @(105.2890 mm, 130.5590 mm): Track [SYS] on F.Cu, length 1.5415 mm
 
 ** Found 0 Footprint errors **
 

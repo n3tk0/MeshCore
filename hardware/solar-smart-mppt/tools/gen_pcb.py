@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Builds solar-smart-mppt.kicad_pcb (23 x 70 mm): placement, outline, net classes, GND pours.
-The charger part is the xiao-solar-lite layout 8 mm lower (charger cluster of
-../xiao-solar/tools/charger.py, turned); the new top part has the outputs, the TPS63070,
-the LTC4412 and the ATtiny3226, the BMS sits at the bottom where the DW01A was.
+"""Builds solar-smart-mppt.kicad_pcb (23 x 83 mm): placement, outline, net classes, GND pours.
+Top: outputs, TPS63070, LTC4412, LEDs. Then the charger part of xiao-solar-lite (charger
+cluster of ../xiao-solar/tools/charger.py, turned), then the ATtiny3226 band and at the
+bottom the BMS it drives (most ATtiny pins go to the BMS), input diodes and connectors.
 
 Run: python3 tools/gen_pcb.py, then python3 tools/run.py route (see README)
 """
@@ -27,8 +27,10 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "solar-smart-mppt"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 23.0, 79.0
-DY = 14.0   # the xiao-solar-lite charger part sits 14 mm lower (the XIAO area is the new top part)
+W, H = 23.0, 83.0
+DY = 0.0    # the xiao-solar-lite charger part sits where it is on lite, under the new top part
+DA = 32.0   # ATtiny band: right under the charger, next to the BMS it drives
+DB = 18.0   # BMS, input diodes and the bottom connectors: under the ATtiny band
 base.FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
 
 CHARGER_FRAME = charger.Frame(11.0, 32.8 + DY, 270)
@@ -37,7 +39,7 @@ LITE = {
     "J3": (2.1, 39.2, 0), "JP3": (7.1, 43.2, 90),
     "D3": (4.8, 50.5, 180), "D1": (4.5, 54.8, 180),
 }
-PLACE.update({k: (x, y + DY, r) for k, (x, y, r) in LITE.items()})
+PLACE.update({k: (x, y + (DB if k in ("D3", "D1") else DY), r) for k, (x, y, r) in LITE.items()})
 PLACE.update({
     # one header row on top: J6 OUT (+ -), J7 U (+ -), J5 host I2C (SCL SDA 3V3 GND)
     "J6": (2.6, 3.0, 90), "J7": (7.68, 3.0, 90), "J5": (12.76, 3.0, 90),
@@ -49,40 +51,41 @@ PLACE.update({
     "C35": (13.6, 11.4, 270), "C36": (15.1, 7.4, 90), "C37": (17.1, 7.4, 90), "C38": (19.1, 7.4, 90),
     "C34": (10.85, 13.8, 270), "R33": (15.0, 13.7, 0), "R34": (15.0, 15.4, 0), "R35": (18.1, 13.7, 0),
     "R30": (9.35, 13.9, 90), "R31": (8.0, 14.3, 90), "R32": (12.7, 13.9, 90),
+    # EN / VSEL jumpers of J7 under the TPS63070 VIN caps
+    "JP5": (2.75, 16.7, 0), "JP6": (6.6, 16.5, 0),
     # LEDs top right, visible next to the I2C header
     "D6": (21.25, 6.9, 90), "R16": (21.25, 9.6, 90), "D7": (21.25, 12.9, 90), "R17": (19.8, 11.7, 90),
     # ATtiny3226 (SOIC-20W) upright: pins 1-10 on the left (VDD, ADC, BMS), 11-20 on the right
-    "U4": (13.4, 24.0, 270),
-    "C28": (6.0, 18.4, 0), "C29": (6.0, 19.4, 0),
-    "R23": (6.0, 21.9, 0), "R24": (6.0, 22.9, 0), "C24": (6.0, 24.0, 0), "C25": (6.0, 25.0, 0),
-    "R25": (1.6, 20.6, 90), "R26": (2.8, 20.6, 90), "C26": (4.0, 20.6, 90),
-    "R27": (1.6, 24.6, 90), "R28": (2.8, 24.6, 90), "C27": (4.0, 24.6, 90),
-    "JP5": (2.75, 16.7, 0), "JP6": (6.6, 16.5, 0),
-    "U5": (3.6, 30.6, 0), "C21": (2.2, 27.3, 0), "C22": (5.6, 27.3, 0),
-    "R13": (20.4, 18.8, 0), "R14": (20.4, 19.8, 0), "TP15": (19.6, 32.2, 0),
-    "JP4": (20.9, 24.0, 90), "R29": (20.4, 27.0, 0), "R36": (20.4, 28.0, 0), "C30": (20.4, 29.0, 0),
-    "TP11": (13.0, 32.2, 0), "TP12": (15.2, 32.2, 0), "TP13": (17.4, 32.2, 0),
+    "U4": (13.4, 24.0 + DA, 270),
+    "C28": (6.0, 18.4 + DA, 0), "C29": (6.0, 19.4 + DA, 0),
+    "R23": (6.0, 21.9 + DA, 0), "R24": (6.0, 22.9 + DA, 0), "C24": (6.0, 24.0 + DA, 0), "C25": (6.0, 25.0 + DA, 0),
+    "R25": (1.6, 20.6 + DA, 90), "R26": (2.8, 20.6 + DA, 90), "C26": (4.0, 20.6 + DA, 90),
+    "R27": (1.6, 24.6 + DA, 90), "R28": (2.8, 24.6 + DA, 90), "C27": (4.0, 24.6 + DA, 90),
+    "U5": (3.6, 30.6 + DA, 0), "C21": (2.2, 27.3 + DA, 0), "C22": (5.6, 27.3 + DA, 0),
+    "R13": (20.4, 18.8 + DA, 0), "R14": (20.4, 19.8 + DA, 0), "TP15": (19.6, 32.2 + DA, 0),
+    "JP4": (20.9, 24.0 + DA, 90), "R29": (20.4, 27.0 + DA, 0), "R36": (20.4, 28.0 + DA, 0), "C30": (20.4, 29.0 + DA, 0),
+    "TP11": (13.0, 32.2 + DA, 0), "TP12": (15.2, 32.2 + DA, 0), "TP13": (17.4, 32.2 + DA, 0),
     # BMS bottom right: Q3 in BATT-, shunt, its Kelvin taps, OD driver
-    "Q3": (19.6, 70.2, 0), "RS1": (14.0, 71.6, 180), "R21": (16.95, 70.0, 90), "R22": (11.0, 70.0, 90),
-    "Q6": (16.5, 65.4, 0), "R18": (14.6, 62.8, 0), "R19": (19.3, 66.9, 90), "R20": (22.0, 69.4, 90),
+    "Q3": (19.6, 56.2 + DB, 0), "RS1": (14.0, 57.6 + DB, 180), "R21": (16.95, 56.0 + DB, 90), "R22": (11.0, 56.0 + DB, 90),
+    "Q6": (16.5, 51.4 + DB, 0), "R18": (14.6, 48.8 + DB, 0), "R19": (19.3, 52.9 + DB, 90), "R20": (22.0, 55.4 + DB, 90),
     # 2S balancing in the free strip right of the SYS caps
-    "R37": (21.2, 54.2, 90), "R41": (21.2, 59.0, 90), "Q7": (21.2, 63.4, 0),
-    "R38": (20.3, 66.6, 90), "R39": (21.6, 66.6, 90), "Q8": (12.0, 64.6, 0), "R40": (9.6, 64.0, 90),
+    "R37": (21.2, 40.2 + DY, 90), "R41": (21.2, 45.0 + DY, 90), "Q7": (21.2, 49.4 + DB, 0),
+    "R38": (20.3, 52.6 + DB, 90), "R39": (21.6, 52.6 + DB, 90), "Q8": (12.0, 50.6 + DB, 0), "R40": (9.6, 50.0 + DB, 90),
     # connectors along the bottom edge (pin 1 left): J1 SOLAR, J4 BATT+ BM BATT-
-    "J1": (2.1, 76.0, 90), "J4": (15.4, 76.0, 90),
+    "J1": (2.1, 62.0 + DB, 90), "J4": (15.4, 62.0 + DB, 90),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
     "VBUS": (8.0, 25.0 + DY, 13.0, 32.0 + DY, 9.5, 27.0 + DY), "PMID": (13.0, 21.0 + DY, 17.6, 33.0 + DY, 15.0, 23.0 + DY),
     "SYS": (13.0, 33.0 + DY, 17.6, 49.0 + DY, 15.0, 47.5 + DY), "BAT": (10.0, 35.0 + DY, 13.5, 47.0 + DY, 11.8, 45.5 + DY),
-    "GND": (0.8, 21.0 + DY, 22.2, 25.0 + DY, 3.0, 22.5 + DY), "3V3M": (0.8, 15.0, 22.2, 25.0 + DY, 5.0, 22.5 + DY),
-    "SCL_I": (0.8, 21.0 + DY, 22.2, 25.0 + DY, 7.0, 22.5 + DY), "SDA_I": (0.8, 21.0 + DY, 22.2, 25.0 + DY, 9.0, 22.5 + DY),
+    "GND": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 7.0, 32.6 + DA), "3V3M": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 9.2, 32.6 + DA),
+    "SCL_I": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 20.6, 16.6 + DA), "SDA_I": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 18.4, 16.6 + DA),
     "VREG": (11.0, 4.6, 22.2, 11.0, 20.8, 6.0),
 }
 FIDUCIALS = [
     (0.8, 20.0 + DY, 12.0, 38.0 + DY, 3.5, 26.5 + DY),
-    (0.8, 4.5, 22.2, 34.0, 1.8, 34.0),
-    (0.8, 40.0 + DY, 22.2, 58.0 + DY, 8.8, 52.5 + DY),
+    (0.8, 4.5, 22.2, 19.5, 21.0, 18.5),
+    (0.8, 47.0 + DB, 22.2, 60.0 + DB, 9.6, 53.7 + DB),
 ]
 B_CLEAR = []
 CHARGER_B_CLEAR = (-4.5, -10.4, 4.5, 1.0)
@@ -196,8 +199,8 @@ def build():
     # VBUS from the input diodes up into the VBUS copper: one wide B.Cu run, two vias at
     # each end (the autorouter made three single-via layer changes of it)
     vbus = net("VBUS")
-    top, bot = [pt(8.75, 30.0 + DY), pt(8.75, 30.8 + DY)], [pt(8.75, 49.2 + DY), pt(8.75, 50.1 + DY)]
-    run = top + [pt(6.7, 30.8 + DY), pt(6.7, 49.2 + DY)] + bot
+    top, bot = [pt(8.75, 30.0 + DY), pt(8.75, 30.8 + DY)], [pt(8.75, 49.2 + DB), pt(8.75, 50.1 + DB)]
+    run = top + [pt(6.7, 30.8 + DY), pt(6.7, 49.2 + DB)] + bot
     for a_, b_ in zip(run, run[1:]):
         charger._track(board, a_, b_, vbus, 0.8, pcbnew.B_Cu)
     d3 = charger._pad(board, "D3", "1").GetPosition()
