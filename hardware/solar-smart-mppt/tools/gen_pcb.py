@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds solar-smart-mppt.kicad_pcb (23 x 83 mm): placement, outline, net classes, GND pours.
+"""Builds solar-smart-mppt.kicad_pcb (27 x 83 mm): placement, outline, net classes, GND pours.
 Top: outputs, TPS63070, LTC4412, LEDs. Then the charger part of xiao-solar-lite (charger
 cluster of ../xiao-solar/tools/charger.py, turned), then the ATtiny3226 band and at the
 bottom the BMS it drives (most ATtiny pins go to the BMS), input diodes and connectors.
@@ -27,7 +27,7 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "solar-smart-mppt"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 23.0, 83.0
+W, H = 27.0, 83.0   # 4 mm right strip: routing channel for the long ATtiny lines
 DY = 0.0    # the xiao-solar-lite charger part sits where it is on lite, under the new top part
 DA = 32.0   # ATtiny band: right under the charger, next to the BMS it drives
 DB = 18.0   # BMS, input diodes and the bottom connectors: under the ATtiny band
@@ -58,7 +58,8 @@ PLACE.update({
     # ATtiny3226 (SOIC-20W) upright: pins 1-10 on the left (VDD, ADC, BMS), 11-20 on the right
     "U4": (13.4, 24.0 + DA, 270),
     "C28": (6.0, 18.4 + DA, 0), "C29": (6.0, 19.4 + DA, 0),
-    "R23": (6.0, 21.9 + DA, 0), "R24": (6.0, 22.9 + DA, 0), "C24": (6.0, 24.0 + DA, 0), "C25": (6.0, 25.0 + DA, 0),
+    # shunt sense: SH_N (pin 4) pair above the SH_P (pin 5) pair, the SH pads all on the right
+    "R24": (6.0, 21.9 + DA, 0), "C25": (6.0, 22.9 + DA, 180), "R23": (6.0, 24.0 + DA, 0), "C24": (6.0, 25.0 + DA, 180),
     "R25": (1.6, 20.6 + DA, 90), "R26": (2.8, 20.6 + DA, 90), "C26": (4.0, 20.6 + DA, 90),
     "R27": (1.6, 24.6 + DA, 90), "R28": (2.8, 24.6 + DA, 90), "C27": (4.0, 24.6 + DA, 90),
     "U5": (3.6, 30.6 + DA, 0), "C21": (2.2, 27.3 + DA, 0), "C22": (5.6, 27.3 + DA, 0),
@@ -303,8 +304,29 @@ def write_project():
            "schematic": {}, "sheets": [[gen_sch.ROOT_UUID, ""]]}
     open(os.path.join(ROOT, PROJECT + ".kicad_pro"), "w", encoding="utf-8").write(json.dumps(pro, indent=2) + "\n")
 
+# SYS from the charger's SYS copper up to the TPS63070 VIN copper: routed before the
+# autorouter (which leaves it open) as one locked wide run, board mm
+SYS_RUN = ((17.05, 38.15), (6.0, 10.0))
+# the long ATtiny signals (across the charger or the BMS) go in first the same way, locked;
+# Freerouting closes them badly or not at all on this narrow board
+PRE_ROUTES = [("SDA_E", ("U4", "10"), ("J5", "2")), ("SCL_E", ("U4", "11"), ("J5", "1")),
+              ("LED", ("U4", "15"), ("D7", "1")), ("REG_CTL", ("U4", "19"), ("JP5", "3"))]
+
 if __name__ == "__main__":
     write_project()
     b = build()
     b.Save(PCB)
+    import patch2
+    b = pcbnew.LoadBoard(PCB)
+    print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0)))
+    def pad_mm(ref, num):
+        p = charger._pad(b, ref, num).GetPosition()
+        return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
+    for net_, a_, b_ in PRE_ROUTES:
+        try:
+            print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True, layer_cost=(1.3, 1.0)))
+        except RuntimeError as e:
+            print(e)
+    b.Save(PCB)
+    write_project()
     print("wrote", PCB)

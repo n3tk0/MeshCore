@@ -52,7 +52,13 @@ def item_poly(it, layer):
 def main():
     net = sys.argv[1]
     width = float(sys.argv[6]) if len(sys.argv) > 6 else 0.25
+    ends = ((float(sys.argv[2]), float(sys.argv[3])), (float(sys.argv[4]), float(sys.argv[5])))
     board = pcbnew.LoadBoard(PCB)
+    print(route_net(board, net, ends, width))
+    board.Save(PCB)
+
+def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None):
+    """Routes one connection on `board` (see the module doc); returns a one-line summary."""
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     board.BuildConnectivity()
     nc = board.FindNet(net).GetNetCode()
@@ -83,7 +89,10 @@ def main():
                 if z.GetDoNotAllowTracks():
                     obst[l] += polys(z.Outline())
                 continue
-            if z.GetNetname() == "GND" or z.GetNetCode() == nc:
+            if z.GetNetCode() == nc:
+                own[l] += [(g, z) for g in polys(z.GetFilledPolysList(l))]
+                continue
+            if z.GetNetname() == "GND":
                 continue
             obst[l] += polys(z.GetFilledPolysList(l))
     cys = []
@@ -91,8 +100,6 @@ def main():
         if fp.GetAttributes() & pcbnew.FP_SMD and fp.GetReference() != "U4":
             cys += polys(fp.GetCourtyard(pcbnew.F_CrtYd))
     conn = board.GetConnectivity()
-    ends = ((float(sys.argv[2]), float(sys.argv[3])), (float(sys.argv[4]), float(sys.argv[5])))
-    print("ends", ends)
     W, H = gen_pcb.W, gen_pcb.H
     nx, ny = int(W / STEP) + 1, int(H / STEP) + 1
     xs, ys = np.meshgrid(np.arange(nx) * STEP, np.arange(ny) * STEP)
@@ -104,15 +111,17 @@ def main():
         blocked[l] = shapely.contains_xy(u, xs, ys) | border
     vb = np.zeros_like(border)
     for l in LAYERS:
-        u = unary_union(obst[l]).buffer(VIA_R + CLEAR)
+        u = unary_union(obst[l]).buffer((via_w / 2) + CLEAR)
         vb |= shapely.contains_xy(u, xs, ys)
-    vb |= shapely.contains_xy(unary_union(pads_all).buffer(VIA_R + 0.05), xs, ys)
-    vb |= shapely.contains_xy(unary_union(cys).buffer(VIA_R), xs, ys)
+    vb |= shapely.contains_xy(unary_union(pads_all).buffer((via_w / 2) + 0.05), xs, ys)
+    vb |= shapely.contains_xy(unary_union(cys).buffer((via_w / 2)), xs, ys)
     vb |= (xs < 0.8) | (ys < 0.8) | (xs > W - 0.8) | (ys > H - 0.8)
     # start / goal sets: own copper of the island under each end, on each layer
-    def island_cells(pt):
+    def island_cells(pt, layers=(0, 1)):
         cells = set()
         for li, l in enumerate(LAYERS):
+            if li not in layers:
+                continue
             for g, it in own[l]:
                 if g.distance(Point(pt)) < 0.05:
                     gi = g.buffer(-width / 2 + 0.02) if g.area > 0.05 else g
@@ -122,11 +131,11 @@ def main():
                     for j, i in zip(*np.nonzero(m)):
                         cells.add((li, int(i), int(j)))
         return cells
-    S = island_cells(ends[0]); T = island_cells(ends[1])
+    S = island_cells(ends[0], start_layers); T = island_cells(ends[1]) - S
     if not S or not T:
-        raise SystemExit("ends not on copper: %d %d" % (len(S), len(T)))
+        raise RuntimeError("ends not on copper: %d %d" % (len(S), len(T)))
     tx, ty = ends[1][0] / STEP, ends[1][1] / STEP
-    h = lambda i, j: math.hypot(i - tx, j - ty) * 0.98
+    h = (lambda i, j: math.hypot(i - tx, j - ty) * 0.98) if heur else (lambda i, j: 0.0)
     best = {}
     came = {}
     pq = []
@@ -146,8 +155,10 @@ def main():
         nbrs = []
         for dx, dy, cost in moves:
             q = (li, int(i + dx), int(j + dy))
+            if window and math.hypot(q[1] - ends[0][0] / STEP, q[2] - ends[0][1] / STEP) > window / STEP:
+                continue
             if 0 <= q[1] < nx and 0 <= q[2] < ny and (not blocked[LAYERS[li]][q[2], q[1]] or q in T):
-                nbrs.append((q, cost + (0.4 if d and d != (dx, dy) else 0), (dx, dy)))
+                nbrs.append((q, cost * layer_cost[li] + (0.4 if d and d != (dx, dy) else 0), (dx, dy)))
         if not vb[j, i]:
             nbrs.append(((1 - li, i, j), VIA_COST, None))
         for q, cost, nd in nbrs:
@@ -156,7 +167,7 @@ def main():
                 best[q] = ng; came[q] = c
                 heapq.heappush(pq, (ng + h(q[1], q[2]), ng, q, nd))
     if goal is None:
-        raise SystemExit("no path for " + net)
+        raise RuntimeError("no path for " + net)
     path = [goal]
     while path[-1] in came:
         path.append(came[path[-1]])
@@ -177,21 +188,20 @@ def main():
                 continue
             t = pcbnew.PCB_TRACK(board)
             t.SetStart(pos(a)); t.SetEnd(pos(b)); t.SetWidth(mm(width))
-            t.SetLayer(LAYERS[a[0]]); t.SetNet(n); board.Add(t); segs += 1
+            t.SetLayer(LAYERS[a[0]]); t.SetNet(n); t.SetLocked(lock); board.Add(t); segs += 1
     for c in path[1:]:
         if c[0] != run[-1][0]:
             if len(run) > 1:
                 flush(run)
             v = pcbnew.PCB_VIA(board)
-            v.SetPosition(pos(c)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(n)
+            v.SetPosition(pos(c)); v.SetWidth(mm(via_w)); v.SetLocked(lock); v.SetDrill(mm(0.4 if via_w >= 0.8 else 0.3)); v.SetNet(n)
             v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v); vias += 1
             run = [c]
         else:
             run.append(c)
     if len(run) > 1:
         flush(run)
-    board.Save(PCB)
-    print("routed %s: %d segments, %d vias, length %.1f mm" % (net, segs, vias, len(path) * STEP))
+    return "routed %s: %d segments, %d vias, length %.1f mm" % (net, segs, vias, len(path) * STEP)
 
 if __name__ == "__main__":
     main()
