@@ -50,9 +50,9 @@ PLACE.update({
     "C31": (8.0, 11.7, 270), "C32": (6.1, 8.0, 90), "C33": (6.1, 11.7, 270),
     "C35": (13.6, 11.4, 270), "C36": (15.1, 7.4, 90), "C37": (17.1, 7.4, 90), "C38": (19.1, 7.4, 90),
     "C34": (10.85, 13.8, 270), "R33": (15.0, 13.7, 0), "R34": (15.0, 15.4, 0), "R35": (18.1, 13.7, 0),
-    "R30": (9.35, 13.9, 90), "R31": (8.0, 14.3, 90), "R32": (12.7, 13.9, 90),
+    "R30": (4.65, 14.9, 270), "R31": (8.0, 14.3, 90), "R32": (12.7, 13.9, 90),
     # EN / VSEL jumpers of J7 under the TPS63070 VIN caps
-    "JP5": (2.75, 16.7, 0), "JP6": (6.6, 16.5, 0),
+    "JP5": (2.75, 17.4, 0), "JP6": (6.6, 17.2, 0),
     # LEDs top right, visible next to the I2C header
     "D6": (21.25, 6.9, 90), "R16": (21.25, 9.6, 90), "D7": (21.25, 12.9, 90), "R17": (19.8, 11.7, 90),
     # ATtiny3226 (SOIC-20W) upright: pins 1-10 on the left (VDD, ADC, BMS), 11-20 on the right
@@ -64,7 +64,7 @@ PLACE.update({
     "R27": (1.6, 24.6 + DA, 90), "R28": (2.8, 24.6 + DA, 90), "C27": (4.0, 24.6 + DA, 90),
     "U5": (3.6, 30.6 + DA, 0), "C21": (2.2, 27.3 + DA, 0), "C22": (5.6, 27.3 + DA, 0),
     "R13": (20.4, 18.8 + DA, 0), "R14": (20.4, 19.8 + DA, 0), "TP15": (19.6, 32.2 + DA, 0),
-    "JP4": (20.9, 24.0 + DA, 90), "R29": (20.4, 27.0 + DA, 0), "R36": (20.4, 28.0 + DA, 0), "C30": (20.4, 29.0 + DA, 0),
+    "JP4": (20.9, 24.0 + DA, 90), "R29": (20.4, 27.0 + DA, 180), "R36": (20.4, 28.0 + DA, 0), "C30": (20.4, 29.0 + DA, 0),
     "TP11": (13.0, 32.2 + DA, 0), "TP12": (15.2, 32.2 + DA, 0), "TP13": (17.4, 32.2 + DA, 0),
     # BMS bottom right: Q3 in BATT-, shunt, its Kelvin taps, OD driver
     "Q3": (19.6, 56.2 + DB, 0), "RS1": (14.0, 57.6 + DB, 180), "R21": (16.95, 56.0 + DB, 90), "R22": (11.0, 56.0 + DB, 90),
@@ -110,7 +110,7 @@ TPS_ZONES = {
     "VREG": [(11.62, 11.12), (14.4, 11.12), (14.4, 9.3), (19.9, 9.3), (19.9, 7.8), (14.2, 7.8),
              (13.6, 9.15), (11.62, 9.55)],
 }
-TPS_GND = [((10.6, 11.45), (11.35, 12.2)), ((11.35, 12.2), (11.35, 12.7)), ((11.35, 12.7), (11.8, 13.15)),
+TPS_GND = [((10.6, 11.45), (11.35, 11.45)), ((11.35, 11.45), (11.35, 12.2)), ((11.35, 12.2), (11.35, 12.7)), ((11.35, 12.7), (11.8, 13.15)),
            ((11.8, 13.15), (11.8, 14.0)), ((10.85, 14.28), (11.8, 14.0))]
 TPS_GND_VIAS = [(11.8, 13.15), (11.8, 14.0)]
 
@@ -306,11 +306,20 @@ def write_project():
 
 # SYS from the charger's SYS copper up to the TPS63070 VIN copper: routed before the
 # autorouter (which leaves it open) as one locked wide run, board mm
-SYS_RUN = ((17.05, 38.15), (6.0, 10.0))
+SYS_RUN = ((17.05, 38.15), (5.8, 9.0))   # kept out from under the TPS63070 (its small signals)
 # the long ATtiny signals (across the charger or the BMS) go in first the same way, locked;
 # Freerouting closes them badly or not at all on this narrow board
-PRE_ROUTES = [("SDA_E", ("U4", "10"), ("J5", "2")), ("SCL_E", ("U4", "11"), ("J5", "1")),
-              ("LED", ("U4", "15"), ("D7", "1")), ("REG_CTL", ("U4", "19"), ("JP5", "3"))]
+PRE_ROUTES = [("SYS", ("Q5", "3"), (5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1")),
+              ("SDA_E", ("U4", "10"), ("J5", "2")), ("SCL_E", ("U4", "11"), ("J5", "1")),
+              ("LED", ("U4", "15"), ("D7", "1")), ("REG_CTL", ("U4", "19"), ("JP5", "3")),
+              # TPS63070 control pins: 0.5 mm pitch, fanned out before anything else gets there
+              ("REG_EN", ("U6", "14"), ("R31", "1")), ("VSEL", ("U6", "15"), ("JP6", "2")),
+              ("FB", ("U6", "5"), ("R34", "1")), ("FB2", ("U6", "6"), ("R35", "2")),
+              ("LOGIC_HI", ("U6", "1"), ("R30", "2")),
+              ("REG_EN", ("R31", "1"), ("JP5", "2")), ("VSEL", ("JP6", "2"), ("R32", "1")),
+              ("LOGIC_HI", ("R30", "2"), ("JP6", "1")), ("LOGIC_HI", ("JP6", "1"), ("JP5", "1")),
+              ("FB", ("R34", "1"), ("R33", "2")), ("FB", ("R33", "2"), ("R35", "1"))]
+FINE = {"REG_EN", "VSEL", "FB", "FB2", "LOGIC_HI"}
 
 if __name__ == "__main__":
     write_project()
@@ -318,13 +327,19 @@ if __name__ == "__main__":
     b.Save(PCB)
     import patch2
     b = pcbnew.LoadBoard(PCB)
-    print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0)))
+    print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0),
+                           keepout=[(6.8, 11.2, 14.0, 19.0)]))
     def pad_mm(ref, num):
+        if isinstance(ref, float):
+            return (ref, num)
         p = charger._pad(b, ref, num).GetPosition()
         return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
     for net_, a_, b_ in PRE_ROUTES:
         try:
-            print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True, layer_cost=(1.3, 1.0)))
+            fine = net_ in FINE or (net_ == "SYS" and a_[0] == "R30")
+            print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True,
+                                   layer_cost=(1.0, 1.5) if fine else (1.3, 1.0),
+                                   width=0.2 if fine else 0.25, clear=0.13 if fine else 0.2))
         except RuntimeError as e:
             print(e)
     b.Save(PCB)

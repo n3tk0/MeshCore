@@ -57,7 +57,8 @@ def main():
     print(route_net(board, net, ends, width))
     board.Save(PCB)
 
-def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None):
+def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None, clear=CLEAR, keepout=()):
+    """keepout: (x0, y0, x1, y1) boxes in board mm this route must stay out of, both layers."""
     """Routes one connection on `board` (see the module doc); returns a one-line summary."""
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     board.BuildConnectivity()
@@ -106,8 +107,10 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
     edge = 0.3 + width / 2
     border = (xs < edge) | (ys < edge) | (xs > W - edge) | (ys > H - edge)
     blocked = {}
+    for (kx0, ky0, kx1, ky1) in keepout:
+        border = border | ((xs > kx0) & (xs < kx1) & (ys > ky0) & (ys < ky1))
     for l in LAYERS:
-        u = unary_union(obst[l]).buffer(width / 2 + CLEAR)
+        u = unary_union(obst[l]).buffer(width / 2 + clear)
         blocked[l] = shapely.contains_xy(u, xs, ys) | border
     vb = np.zeros_like(border)
     for l in LAYERS:
@@ -130,8 +133,20 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
                     m = shapely.contains_xy(gi, xs, ys)
                     for j, i in zip(*np.nonzero(m)):
                         cells.add((li, int(i), int(j)))
+                    if not m.any():   # a pad narrower than the grid: its centre cell
+                        cells.add((li, int(round(pt[0] / STEP)), int(round(pt[1] / STEP))))
         return cells
-    S = island_cells(ends[0], start_layers); T = island_cells(ends[1]) - S
+    def pad_layers(pt, default):
+        """An SMD pad under the point: only its own layer belongs to that end."""
+        for fp in board.GetFootprints():
+            for p in fp.Pads():
+                if p.GetNetCode() == nc and p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD:
+                    q = p.GetPosition()
+                    if math.hypot(pcbnew.ToMM(q.x) - OX - pt[0], pcbnew.ToMM(q.y) - OY - pt[1]) < 0.05:
+                        return tuple(i for i, l in enumerate(LAYERS) if p.IsOnLayer(l))
+        return default
+    S = island_cells(ends[0], pad_layers(ends[0], start_layers))
+    T = island_cells(ends[1], pad_layers(ends[1], (0, 1))) - S
     if not S or not T:
         raise RuntimeError("ends not on copper: %d %d" % (len(S), len(T)))
     tx, ty = ends[1][0] / STEP, ends[1][1] / STEP
