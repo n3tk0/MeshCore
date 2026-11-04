@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "xiao_solar")(type "KiCad")(uri "${KIPRJMOD}/lib/xiao_solar.kicad_sym")(options "")(descr "Xiao solar board parts (JLC via easyeda2kicad + custom)"))
+)
