@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "xiao_solar")(type "KiCad")(uri "${KIPRJMOD}/../xiao-solar/lib/xiao_solar.pretty")(options "")(descr "Xiao solar board footprints"))
+)
