@@ -57,8 +57,9 @@ def main():
     print(route_net(board, net, ends, width))
     board.Save(PCB)
 
-def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None, clear=CLEAR, keepout=(), via_in_small_cy=False, target_layers=(0, 1), start_pad_only=False):
-    """keepout: (x0, y0, x1, y1) boxes in board mm this route must stay out of, both layers."""
+def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None, clear=CLEAR, keepout=(), via_in_small_cy=False, target_layers=(0, 1), start_pad_only=False, keepout_b=()):
+    """keepout: (x0, y0, x1, y1) boxes in board mm this route must stay out of, both layers;
+    keepout_b: the same for B.Cu only (no B.Cu track and no via in them)."""
     """Routes one connection on `board` (see the module doc); returns a one-line summary."""
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     board.BuildConnectivity()
@@ -110,9 +111,12 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
     blocked = {}
     for (kx0, ky0, kx1, ky1) in keepout:
         border = border | ((xs > kx0) & (xs < kx1) & (ys > ky0) & (ys < ky1))
+    kb = np.zeros_like(border)
+    for (kx0, ky0, kx1, ky1) in keepout_b:
+        kb = kb | ((xs > kx0) & (xs < kx1) & (ys > ky0) & (ys < ky1))
     for l in LAYERS:
         u = unary_union(obst[l]).buffer(width / 2 + clear)
-        blocked[l] = shapely.contains_xy(u, xs, ys) | border
+        blocked[l] = shapely.contains_xy(u, xs, ys) | border | (kb if l == pcbnew.B_Cu else False)
     vb = np.zeros_like(border)
     for l in LAYERS:
         u = unary_union(obst[l]).buffer((via_w / 2) + CLEAR)
@@ -123,7 +127,7 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
     if holes:   # no new via on or next to any via, own net too (hole to hole 0.25 mm)
         vb |= shapely.contains_xy(unary_union(holes).buffer(via_w + 0.25), xs, ys)
     vb |= shapely.contains_xy(unary_union(cys).buffer((via_w / 2)), xs, ys)
-    vb |= (xs < 0.8) | (ys < 0.8) | (xs > W - 0.8) | (ys > H - 0.8)
+    vb |= (xs < 0.8) | (ys < 0.8) | (xs > W - 0.8) | (ys > H - 0.8) | kb
     # start / goal sets: own copper of the island under each end, on each layer
     def island_cells(pt, layers=(0, 1), pad_only=False):
         cells = set()

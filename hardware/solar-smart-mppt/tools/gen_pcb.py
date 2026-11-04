@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Builds solar-smart-mppt.kicad_pcb (33 x 83 mm): placement, outline, net classes, GND pours.
-Top: outputs, TPS63070, LTC4412, LEDs. Then the charger part of xiao-solar-lite (charger
-cluster of ../xiao-solar/tools/charger.py, turned), then the ATtiny3226 band and at the
-bottom the BMS it drives (most ATtiny pins go to the BMS), input diodes and connectors.
+"""Builds solar-smart-mppt.kicad_pcb (30 x 83 mm): placement, outline, net classes, GND pours.
+Top: header row J6 SYS OUT | J5 I2C | J7 regulated out, LTC4412 under J6, TPS63070 and its
+jumpers under J7, LEDs. Solar input (J1, SS54, TVS) on the left edge next to the charger.
+Then the charger part of xiao-solar-lite (charger cluster of ../xiao-solar/tools/charger.py,
+turned), the ATtiny3226 band and at the bottom the BMS it drives, the fuse and J4.
 
 Run: python3 tools/gen_pcb.py, then python3 tools/run.py route (see README)
 """
@@ -27,7 +28,7 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "solar-smart-mppt"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 33.0, 83.0   # 33 mm: three boards across a 100 mm panel, room for the long ATtiny lines
+W, H = 30.0, 83.0   # 30 mm: three boards across a 100 mm panel, room for the long ATtiny lines
 DY = 0.0    # the xiao-solar-lite charger part sits where it is on lite, under the new top part
 DA = 32.0   # ATtiny band: right under the charger, next to the BMS it drives
 DB = 18.0   # BMS, input diodes and the bottom connectors: under the ATtiny band
@@ -37,43 +38,55 @@ CHARGER_FRAME = charger.Frame(11.0, 32.8 + DY, 270)
 PLACE = charger.place(CHARGER_FRAME, set(charger.PLACE))
 LITE = {
     "J3": (2.1, 39.2, 0), "JP3": (7.1, 43.2, 90),
-    "D3": (4.8, 50.5, 180), "D1": (4.5, 54.8, 180),
 }
-PLACE.update({k: (x, y + (DB if k in ("D3", "D1") else DY), r) for k, (x, y, r) in LITE.items()})
-PLACE.update({
-    # one header row on top: J6 OUT (+ -), J7 U (+ -), J5 host I2C (SCL SDA 3V3 GND)
-    "J6": (2.6, 3.0, 90), "J7": (7.68, 3.0, 90), "J5": (12.76, 3.0, 90),
-    # LTC4412 ideal diode under J6: Q5 source straight up to J6 pin 1
-    "Q5": (2.6, 6.7, 0), "U7": (2.4, 10.5, 0), "C20": (2.4, 13.6, 0),
-    # TPS63070 under J7: inductor above the IC (TI layout example), VIN caps left, VOUT caps right
+PLACE.update({k: (x, y + DY, r) for k, (x, y, r) in LITE.items()})
+# TPS63070 block (layout after the TI example) sits under J7: v0.1 coordinates + this shift
+TDX, TDY = 9.4, 3.9
+def tps(x, y):
+    return (x + TDX, y + TDY)
+_TPS = {
     "U6": (10.6, 11.4, 0), "L2": (10.6, 7.4, 0),
-    "C31": (8.0, 11.7, 270), "C32": (6.1, 8.0, 90), "C33": (6.1, 11.7, 270),
-    "C35": (13.6, 11.4, 270), "C36": (15.1, 7.4, 90), "C37": (17.1, 7.4, 90), "C38": (19.1, 7.4, 90),
-    "C34": (10.85, 13.8, 270), "R33": (15.0, 13.7, 0), "R34": (15.0, 15.4, 0), "R35": (18.1, 13.7, 0),
-    "R30": (4.65, 14.9, 270), "R31": (8.0, 14.3, 90), "R32": (12.7, 13.9, 90),
-    # EN / VSEL jumpers of J7 under the TPS63070 VIN caps
-    "JP5": (2.75, 17.4, 0), "JP6": (6.6, 17.2, 0),
-    # LEDs top right, visible next to the I2C header
-    "D6": (30.25, 6.9, 90), "R16": (30.25, 9.6, 90), "D7": (30.25, 12.9, 90), "R17": (28.80, 11.7, 90),
+    "C31": (8.0, 11.7, 270), "C32": (5.95, 8.0, 90), "C33": (5.95, 11.7, 270),
+    "C35": (13.75, 11.55, 270), "C36": (15.1, 7.4, 90), "C37": (17.1, 7.4, 90), "C38": (19.1, 7.4, 90),
+    "C34": (10.85, 13.8, 270), "R33": (15.0, 14.1, 0), "R34": (15.0, 15.7, 0), "R35": (18.1, 14.1, 0),
+    "R30": (4.65, 14.9, 270), "R32": (12.7, 14.3, 90),
+}
+PLACE.update({k: tps(x, y) + (r,) for k, (x, y, r) in _TPS.items()})
+PLACE.update({
+    # one header row on top: J6 SYS OUT (+ -), M2 hole, J5 host I2C (SCL SDA NC GND), J7 U (+ -):
+    # the regulated and the unregulated output on the two sides of the I2C header
+    "J6": (2.4, 3.0, 90), "H1": (9.3, 3.0, 0), "J5": (13.7, 3.0, 90), "J7": (25.3, 3.0, 90),
+    # LTC4412 ideal diode under J6: Q5 source straight up to J6 pin 1
+    # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
+    "R31": (26.9, 20.6, 0),
+    "Q5": (2.6, 6.7, 0), "U7": (2.4, 10.5, 0), "C20": (2.4, 13.6, 0),
+    # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
+    # (above it are the inductor and the VOUT caps); VREG test point next to J7
+    "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (22.8, 6.3, 0),
+    # LEDs under the hole, next to the I2C header
+    "D6": (6.3, 7.4, 90), "R16": (6.3, 10.1, 90), "D7": (8.3, 7.4, 90), "R17": (8.3, 10.1, 90),
+    # solar input on the left edge next to the charger's VBUS copper: J1, SS54 (D1), TVS (D3)
+    "D1": (4.3, 17.2, 180), "J1": (1.85, 21.3, 0), "D3": (5.4, 25.0, 270),
     # ATtiny3226 (SOIC-20W) upright: pins 1-10 on the left (VDD, ADC, BMS), 11-20 on the right
     "U4": (13.4, 24.0 + DA, 270),
     "C28": (6.0, 18.4 + DA, 0), "C29": (6.0, 19.4 + DA, 0),
     # shunt sense: SH_N (pin 4) pair above the SH_P (pin 5) pair, the SH pads all on the right
-    "R24": (6.0, 21.9 + DA, 0), "C25": (6.0, 22.9 + DA, 180), "R23": (6.0, 24.0 + DA, 0), "C24": (6.0, 25.0 + DA, 180),
+    "R24": (6.0, 21.9 + DA, 0), "C25": (6.0, 22.9 + DA, 180), "R23": (6.0, 24.0 + DA, 0), "C24": (7.1, 22.85 + DA, 90),
     "R25": (1.6, 20.6 + DA, 90), "R26": (2.8, 20.6 + DA, 90), "C26": (4.0, 20.6 + DA, 90),
     "R27": (1.6, 24.6 + DA, 90), "R28": (2.8, 24.6 + DA, 90), "C27": (4.0, 24.6 + DA, 90),
     "U5": (3.6, 30.6 + DA, 0), "C21": (2.2, 27.3 + DA, 0), "C22": (5.6, 27.3 + DA, 0),
-    "R13": (23.40, 18.8 + DA, 0), "R14": (23.40, 19.8 + DA, 0), "TP15": (19.6, 32.2 + DA, 0),
+    "R13": (23.40, 18.8 + DA, 0), "R14": (23.40, 19.8 + DA, 0), "TP15": (20.2, 32.2 + DA, 0),
     "JP4": (23.90, 24.0 + DA, 90), "R29": (23.40, 27.0 + DA, 180), "R36": (23.40, 28.0 + DA, 0), "C30": (23.40, 29.0 + DA, 0),
-    "TP11": (13.0, 32.2 + DA, 0), "TP12": (15.2, 32.2 + DA, 0), "TP13": (17.4, 32.2 + DA, 0),
+    # UPDI programming pads on a 2.54 mm pitch: a plain 3-pin header touches all three
+    "TP11": (12.46, 32.2 + DA, 0), "TP12": (15.0, 32.2 + DA, 0), "TP13": (17.54, 32.2 + DA, 0),
     # BMS bottom right: Q3 in BATT-, shunt, its Kelvin taps, OD driver
     "Q3": (23.60, 56.2 + DB, 0), "RS1": (15.00, 57.6 + DB, 180), "R21": (18.95, 56.0 + DB, 90), "R22": (11.0, 56.0 + DB, 90),
     "Q6": (18.50, 51.4 + DB, 0), "R18": (14.6, 48.8 + DB, 0), "R19": (22.30, 52.9 + DB, 90), "R20": (26.00, 55.4 + DB, 90),
     # 2S balancing in the free strip right of the SYS caps
     "R37": (24.20, 40.2 + DY, 90), "R41": (24.20, 45.0 + DY, 90), "Q7": (25.20, 49.4 + DB, 0),
     "R38": (24.30, 52.6 + DB, 90), "R39": (25.60, 52.6 + DB, 90), "Q8": (12.0, 50.6 + DB, 0), "R40": (9.6, 50.0 + DB, 90),
-    # connectors along the bottom edge (pin 1 left): J1 SOLAR, J4 BATT+ BM BATT-
-    "J1": (2.1, 62.0 + DB, 90), "J4": (23.40, 62.0 + DB, 90),
+    # J4 BATT+ BM BATT- along the bottom edge (pin 1 left), its fuse F1 next to BATT+, M2 hole
+    "J4": (22.4, 62.0 + DB, 90), "F1": (18.0, 62.0 + DB, 0), "H2": (4.0, 61.5 + DB, 0),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -81,20 +94,22 @@ TEST_POINTS = {
     "SYS": (13.0, 33.0 + DY, 17.6, 49.0 + DY, 15.0, 47.5 + DY), "BAT": (10.0, 35.0 + DY, 13.5, 47.0 + DY, 11.8, 45.5 + DY),
     "GND": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 7.0, 32.6 + DA), "3V3M": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 9.2, 32.6 + DA),
     "SCL_I": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 20.6, 16.6 + DA), "SDA_I": (0.8, 15.0 + DA, 22.2, 34.0 + DA, 18.4, 16.6 + DA),
-    "VREG": (11.0, 4.6, 22.2, 11.0, 20.8, 6.0),
+    "VREG": (21.8, 5.3, 23.8, 7.6, 22.8, 6.3),
 }
 FIDUCIALS = [
-    (0.8, 20.0 + DY, 12.0, 38.0 + DY, 3.5, 26.5 + DY),
-    (0.8, 4.5, 22.2, 19.5, 21.0, 18.5),
+    (0.8, 27.5 + DY, 6.3, 30.5 + DY, 2.5, 29.0 + DY),
+    (9.0, 12.0, 13.4, 20.0, 11.2, 17.5),
     (0.8, 47.0 + DB, 22.2, 60.0 + DB, 9.6, 53.7 + DB),
 ]
 # B.Cu stays plain GND (no autorouted B.Cu tracks) where long B.Cu runs would otherwise
 # cut a GND pocket loose: under the BQ25798 GND via, and left of the ATtiny
-B_CLEAR = [(6.9, 31.2, 9.6, 37.2), (0.5, 48.5, 6.4, 63.0)]
+# and the whole TPS63070 block: solid GND under the switcher, nothing else crosses it on B.Cu
+TPS_KEEP = (13.2, 8.6, 29.6, 16.8)   # down to just under the IC: its control pins may use B.Cu
+B_CLEAR = [(6.9, 31.2, 9.6, 37.2), TPS_KEEP]
 CHARGER_B_CLEAR = (-4.5, -10.4, 4.5, 1.0)
 
 NETCLASSES = {
-    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "BATT-", "BATT_S", "FS_D", "SOLAR_IN", "VOUT", "VBUS", "SYS",
+    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "BATT_J", "BATT-", "BATT_S", "FS_D", "SOLAR_IN", "VOUT", "VBUS", "SYS",
                                     "BAT", "PMID", "VREG"]),
     "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["SW1", "SW2", "SWA", "SWB"]),
     "Supply": (0.3, 0.13, 0.6, 0.3, ["3V3M", "GND"]),
@@ -118,6 +133,7 @@ TPS_GND_VIAS = [(11.8, 13.15), (11.8, 14.0)]
 
 def tps_copper(board, net):
     for name, poly in TPS_ZONES.items():
+        poly = [tps(x, y) for x, y in poly]
         z = pcbnew.ZONE(board)
         z.SetLayer(pcbnew.F_Cu); z.SetNet(net(name)); z.SetAssignedPriority(2)
         z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
@@ -129,11 +145,11 @@ def tps_copper(board, net):
         board.Add(z)
     g = net("GND")
     for a_, b_ in TPS_GND:
-        charger._track(board, pt(*a_), pt(*b_), g, 0.3)
+        charger._track(board, pt(*tps(*a_)), pt(*tps(*b_)), g, 0.3)
     for v in TPS_GND_VIAS:
-        charger._via(board, pt(*v), g)
+        charger._via(board, pt(*tps(*v)), g)
     # VAUX (3) straight down into its cap
-    charger._track(board, pt(10.85, 12.36), pt(10.85, 13.32), net("VAUX"), 0.25)
+    charger._track(board, pt(*tps(10.85, 12.36)), pt(*tps(10.85, 13.32)), net("VAUX"), 0.25)
     for fp in board.GetFootprints():
         if fp.GetReference() in ("U6", "L2", "C31", "C32", "C33", "C35", "C36", "C37", "C38", "C34"):
             fp.SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
@@ -199,20 +215,6 @@ def build():
     if missing:
         raise SystemExit("not placed: " + " ".join(missing))
     charger.preroute(board, CHARGER_FRAME)
-    # VBUS from the input diodes up into the VBUS copper: one wide B.Cu run, two vias at
-    # each end (the autorouter made three single-via layer changes of it)
-    vbus = net("VBUS")
-    top, bot = [pt(8.75, 30.0 + DY), pt(8.75, 30.8 + DY)], [pt(8.75, 49.2 + DB), pt(8.75, 50.1 + DB)]
-    run = top + [pt(6.7, 30.8 + DY), pt(6.7, 49.2 + DB)] + bot
-    for a_, b_ in zip(run, run[1:]):
-        charger._track(board, a_, b_, vbus, 0.8, pcbnew.B_Cu)
-    d3 = charger._pad(board, "D3", "1").GetPosition()
-    d1 = charger._pad(board, "D1", "1").GetPosition()
-    for v in top + bot:
-        charger._via(board, v, vbus)
-    for v in bot:
-        charger._track(board, v, d3, vbus, 0.8)
-    charger._track(board, d3, d1, vbus, 0.8)
     corners = [(0, 0), (W, 0), (W, H), (0, H)]
     for i in range(4):
         s = pcbnew.PCB_SHAPE(board)
@@ -272,8 +274,8 @@ def build():
         t.SetTextAngleDegrees(angle)
         board.Add(t)
     # one label per pin, next to the pin
-    for ref, names, y in (("J1", ("SOLAR",), H - 0.9), ("J4", ("BAT+", "BM", "BAT-"), H - 0.9),
-                          ("J6", ("OUT",), 0.9), ("J7", ("U",), 0.9), ("J5", ("SCL", "SDA", "3V3", "GND"), 0.9)):
+    for ref, names, y in (("J4", ("BAT+", "BM", "BAT-"), H - 0.9),
+                          ("J6", ("SYS",), 0.9), ("J7", ("3V3/5V",), 0.9), ("J5", ("SCL", "SDA", "NC", "GND"), 0.9)):
         p1 = charger._pad(board, ref, "1").GetPosition()
         x1 = pcbnew.ToMM(p1.x) - OX
         if len(names) == 1:
@@ -282,7 +284,16 @@ def build():
             for i, s_ in enumerate(names):
                 text(s_, x1 + 2.54 * i, y, 0.7)
     text("NTC", 2.1, 37.3 + DY)
-    text("solar-smart-mppt v0.1", 11.5, 22.2 + DY, 0.7)
+    text("SOLAR", 1.85, 26.6 + DY, 0.6)
+    # jumper settings next to the pads (bridge = solder blob)
+    jp = lambda ref, num: pcbnew.ToMM(charger._pad(board, ref, num).GetPosition().x) - OX
+    text("ON", (jp("JP5", "1") + jp("JP5", "2")) / 2, 24.2, 0.6)
+    text("MCU", (jp("JP5", "2") + jp("JP5", "3")) / 2, 24.2, 0.6)
+    text("J7 5V", jp("JP6", "1") + 0.65, 24.2, 0.6)
+    y4 = lambda num: pcbnew.ToMM(charger._pad(board, "JP4", num).GetPosition().y) - OY
+    text("LFP", 27.2, (y4("1") + y4("2")) / 2, 0.6)
+    text("LTO", 27.2, (y4("2") + y4("3")) / 2, 0.6)
+    text("solar-smart-mppt v0.2", 26.0, 28.0 + DY, 0.7, 90)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
     return board
@@ -308,21 +319,23 @@ def write_project():
 
 # SYS from the charger's SYS copper up to the TPS63070 VIN copper: routed before the
 # autorouter (which leaves it open) as one locked wide run, board mm
-SYS_RUN = ((17.05, 38.15), (5.8, 9.0))   # kept out from under the TPS63070 (its small signals)
+SYS_RUN = ((17.05, 38.15), tps(5.8, 9.0))   # kept out from under the TPS63070 (its small signals)
 # the long ATtiny signals (across the charger or the BMS) go in first the same way, locked;
 # Freerouting closes them badly or not at all on this narrow board
-PRE_ROUTES = [("SYS", ("Q5", "3"), (5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1")),
+PRE_ROUTES = [# BQ25798 pins the autorouter leaves open (0.4 mm pitch pocket between TS and BATP)
+              ("REGN", ("U1", "17"), ("R2", "1")), ("TS", ("U1", "16"), ("R2", "2")),
+              ("SYS", ("Q5", "3"), tps(5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1")),
               ("SDA_E", ("U4", "10"), ("J5", "2")), ("SCL_E", ("U4", "11"), ("J5", "1")),
               ("LED", ("U4", "15"), ("D7", "1")), ("REG_CTL", ("U4", "19"), ("JP5", "3")),
               # TPS63070 control pins: 0.5 mm pitch, fanned out before anything else gets there
-              ("REG_EN", ("U6", "14"), ("R31", "1")), ("VSEL", ("U6", "15"), ("JP6", "2")),
+              ("LOGIC_HI", ("U6", "1"), ("R30", "2")), ("VREG", ("R33", "1"), ("C35", "1")),
+              ("REG_EN", ("U6", "14"), ("JP5", "2")), ("VSEL", ("U6", "15"), ("JP6", "2")),
               ("FB", ("U6", "5"), ("R34", "1")), ("FB2", ("U6", "6"), ("R35", "2")),
-              ("LOGIC_HI", ("U6", "1"), ("R30", "2")),
               ("REG_EN", ("R31", "1"), ("JP5", "2")), ("VSEL", ("JP6", "2"), ("R32", "1")),
               ("LOGIC_HI", ("R30", "2"), ("JP6", "1")), ("LOGIC_HI", ("JP6", "1"), ("JP5", "1")),
               ("FB", ("R34", "1"), ("R33", "2")), ("FB", ("R33", "2"), ("R35", "1"))]
 GND_TIES = {"R32", "C31", "C35", "R3", "JP4"}
-FINE = {"REG_EN", "VSEL", "FB", "FB2", "LOGIC_HI"}
+FINE = {"REG_EN", "VSEL", "FB", "FB2", "LOGIC_HI", "REGN", "TS"}
 
 if __name__ == "__main__":
     write_project()
@@ -330,32 +343,40 @@ if __name__ == "__main__":
     b.Save(PCB)
     import patch2
     b = pcbnew.LoadBoard(PCB)
-    print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0),
-                           keepout=[(6.8, 11.2, 14.0, 19.0)]))
+    # the pre-routes keep B.Cu free where Freerouting has to (B_CLEAR + the charger core)
+    import route
+    KB = [(x0 - OX, y0 - OY, x1 - OX, y1 - OY) for x0, y0, x1, y1 in route.b_clear(b)]
     def pad_mm(ref, num):
         if isinstance(ref, float):
             return (ref, num)
         p = charger._pad(b, ref, num).GetPosition()
         return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
+    print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0),
+                           keepout=[tps(6.8, 11.2) + tps(14.0, 19.0)], keepout_b=KB))
+    # solar input: SS54 cathode -> TVS -> the charger's VBUS copper, short and on F.Cu
+    for a_, b_ in ((("D1", "1"), ("D3", "1")), (("D3", "1"), (9.8, 28.5))):
+        print(patch2.route_net(b, "VBUS", (pad_mm(*a_), pad_mm(*b_)), width=0.8, lock=True,
+                               via_w=0.8, layer_cost=(1.0, 8.0)))
+    print(patch2.route_net(b, "SOLAR_IN", (pad_mm("J1", "1"), pad_mm("D1", "2")), width=0.8, lock=True,
+                           via_w=0.8, layer_cost=(1.0, 8.0)))
     for net_, a_, b_ in PRE_ROUTES:
         try:
             fine = net_ in FINE or (net_ == "SYS" and a_[0] == "R30")
             print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True,
                                    layer_cost=(1.0, 1.5) if fine else (1.3, 1.0),
-                                   width=0.2 if fine else 0.25, clear=0.145 if fine else 0.2))
+                                   width=0.2 if fine else 0.25, clear=0.145 if fine else 0.2,
+                                   keepout_b=KB))
         except RuntimeError as e:
             print(e)
     # GND pads of the small parts get their own tie via now, while there is room: after
     # routing, the pour leaves them as islands between the tracks (tools/gndfix.py notes)
-    ref_pt = (W / 2, 20.0)
+    ref_pt = (27.0, 30.0)   # plain B.Cu GND (right strip next to the charger)
     for fp in list(b.GetFootprints()):
         ref = fp.GetReference()
         for p in fp.Pads():
             if p.GetNetname() != "GND" or p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
                 continue
             x, y = pad_mm(ref, p.GetNumber())
-            if not (y > 48.5 or ref in GND_TIES):
-                continue
             if ref[0] not in "RCUQ" and ref not in GND_TIES:
                 continue
             try:

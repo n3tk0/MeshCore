@@ -27,7 +27,7 @@ base._libcache.clear()
 base.PROJECT = "solar-smart-mppt"
 base.ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0003"
 base.TITLE = "solar-smart-mppt: MPPT charger + BMS 1S/2S + coulomb counter"
-base.REV = "0.1"
+base.REV = "0.2"
 base.POWER[:] = ["GND", "3V3M"]
 P, R, C, T, TP, RAIL, BLOCK = base.P, base.R, base.C, base.T, base.TP, base.RAIL, base.BLOCK
 parts, ROOT_UUID = base.parts, base.ROOT_UUID
@@ -209,8 +209,10 @@ RAIL("BATP", [(155.24, 125.16), (228.0, 125.16), (228.0, 226.0), (261.19, 226.0)
 RAIL("BATT+", [(268.81, 226.0), (275.0, 226.0), (275.0, 210.0)])
 RAIL("BATT+", [(270.08, 210.0), (300.0, 210.0)])
 P("J4", "Connector_Generic:Conn_01x03", "BATTERY", 310, 212.54,
-  {"1": "BATT+", "2": "BM", "3": "BATT-"}, CONN3)
-RAIL("BATT+", [(300.0, 210.0), (304.92, 210.0)])
+  {"1": "BATT_J", "2": "BM", "3": "BATT-"}, CONN3)
+# battery fuse next to J4: opens if Q3 fails short (3 A, 1206)
+P("F1", "Device:Fuse", "3A 1206 (0468003)", 300, 200, {"1": "BATT+", "2": "BATT_J"},
+  "Fuse:Fuse_1206_3216Metric", "C41342", rot=90)
 TP("TP7", "GND", 202, 210.0, rot=0)
 RAIL("GND", [(202.0, 210.0), (202.0, 215.08)])
 T(20, 252, "Q2 (AO3400A): S към BAT, D към батерията; в ship режим спира разреждането (UVLO, SDRV). JP3 затворен = без ship FET.", 1.27)
@@ -227,15 +229,18 @@ P("RS1", "Device:R", "20m 1W", 395, 236, {"1": "BATT_S", "2": "GND"}, R1206, "C1
 RS("R18", "1M", 340, 200, "BATT+", "OD_G", R1M)
 P("Q6", "Transistor_FET:BSS138", "2N7002", 340, 250, {"1": "OD_CTL", "2": "GND", "3": "OD_G"}, SOT23, "C8545")
 RS("R19", "100k", 326, 262, "OD_CTL", "GND", R100K)
-# OC (charge FET, source = shunt): off by default, ATtiny PB2 turns it on
-RS("R20", "1M", 380, 262, "OC_G", "GND", R1M)
+# OC (charge FET, source = shunt): on as soon as 3V3M is up (R20), so discharge never runs
+# through its body diode; the ATtiny PB2 pulls it low to stop charging. No ATtiny, no
+# charging anyway: ~CE of the BQ25798 has its pull-up to 3V3M (R4)
+RS("R20", "1M", 380, 262, "OC_G", "3V3M", R1M)
 # shunt sense: 10k + 1M bias to 3V3M keeps both inputs above 0 V at -3.2 A
 RS("R21", "10k", 420, 226, "BATT_S", "SH_P", R10K, rot=270)
 RS("R22", "10k", 420, 246, "GND", "SH_N", R10K, rot=270)
 RS("R23", "1M", 440, 212, "3V3M", "SH_P", R1M)
 RS("R24", "1M", 452, 212, "3V3M", "SH_N", R1M)
-CS("C24", "100n", 440, 236, "SH_P", "GND", C100N, C0603)
-CS("C25", "100n", 452, 256, "SH_N", "GND", C100N, C0603)
+# one differential filter cap across the PGA inputs: no CMRR loss from two caps to GND
+# that do not match (fast LoRa TX current steps)
+CS("C24", "100n", 440, 236, "SH_P", "SH_N", C100N, C0603)
 # balancing: cell 1 (BATT- .. BM) by Q7 FET1, cell 2 (BM .. BATT+) by P-FET Q8 driven by Q7 FET2
 P("Q7", "custom:2N7002DW_FUNC", "2N7002DW", 500, 236,
   {"5": "BAL1", "2": "BAL2", "3": "BAL1_D", "4": "BATT-", "6": "BAL2_G", "1": "GND"},
@@ -253,7 +258,7 @@ CS("C26", "100n", 482, 296, "ADC_VBAT", "GND", C100N, C0603)
 RS("R27", "1M", 500, 280, "BM", "ADC_VBM", R1M)
 RS("R28", "1M", 500, 296, "ADC_VBM", "GND", R1M)
 CS("C27", "100n", 512, 296, "ADC_VBM", "GND", C100N, C0603)
-T(330, 272, "Q3 е в минуса: S1 = BATT- (клетката), S2 = BATT_S -> RS1 -> GND. OD (G1) вкл. по подразбиране (R18), OC (G2) изкл. (R20).", 1.27)
+T(330, 272, "Q3 е в минуса: S1 = BATT- (клетката), S2 = BATT_S -> RS1 -> GND. OD (G1) вкл. по подразбиране (R18), OC (G2) вкл. щом има 3V3M (R20), ATtiny го изключва.", 1.27)
 T(330, 275.5, "Без DW01A: ток/късо пази ATtiny (ADC + компаратор AC0 на PA6/PA7) и BATFET OCP на BQ25798.", 1.27)
 T(330, 279, "Шунт: + заряд, - разряд; R21-R24 изместват входовете с ~33 mV. Балансиране ~60 mA (47 Ohm).", 1.27)
 
@@ -297,7 +302,7 @@ P("U6", "custom:TPS63070_FUNC", "TPS63070RNMR", 120, 350,
   "xiao_solar:VQFN-15_L3.0-W2.5-P0.50-BL", "C109322")
 P("L2", "xiao_solar:FNR4030S2R2MT", "1.5uH 5A molded (MWSA0402S)", 120, 320, {"1": "SWA", "2": "SWB"},
   "xiao_solar:IND-SMD_L4.4-W4.2_MWSA0402S", "C408334")
-CS("C31", "10u/10V", 60, 360, "SYS", "GND", C10U0603, C0603)
+CS("C31", "10u/25V", 60, 360, "SYS", "GND", C10U)
 CS("C32", "10u/25V", 70, 360, "SYS", "GND", C10U)
 CS("C33", "10u/25V", 80, 360, "SYS", "GND", C10U)
 CS("C34", "100n", 92, 380, "VAUX", "GND", C100N, C0603)
@@ -310,7 +315,7 @@ P("JP6", "Jumper:SolderJumper_2_Open", "VSEL: open 3.3V / closed 5V", 60, 400, {
 RS("R33", "470k 1%", 160, 340, "VREG", "FB", "C23178")
 RS("R34", "150k 1%", 160, 365, "FB", "GND", "C22807")
 RS("R35", "220k 1%", 175, 365, "FB", "FB2", "C22961")
-CS("C35", "10u/10V", 190, 360, "VREG", "GND", C10U0603, C0603)
+CS("C35", "10u/25V", 190, 360, "VREG", "GND", C10U)
 CS("C36", "22u/25V", 200, 360, "VREG", "GND", C22U)
 CS("C37", "22u/25V", 210, 360, "VREG", "GND", C22U)
 CS("C38", "22u/25V", 220, 360, "VREG", "GND", C22U)
@@ -324,6 +329,10 @@ for i, (net, fx, fy) in enumerate([
         ("VBUS", 55.0, 78.0), ("BATT+", 300.0, 210.0), ("BATT-", 345.0, 222.92), ("BM", 525.0, 226.0),
         ("GND", 202.0, 212.54), ("3V3E", 575.0, 65.08)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
+
+for i in range(2):
+    P("H%d" % (i + 1), "Mechanical:MountingHole", "M2", 575 + i * 15, 90, {},
+      "MountingHole:MountingHole_2.2mm_M2", blk=-1)
 
 write_bom = base.write_bom
 
