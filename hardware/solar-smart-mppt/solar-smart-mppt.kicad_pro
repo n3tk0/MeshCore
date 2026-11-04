@@ -96,6 +96,10 @@
       },
       {
         "netclass": "Power",
+        "pattern": "BATT_J"
+      },
+      {
+        "netclass": "Power",
         "pattern": "BATT-"
       },
       {

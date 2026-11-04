@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Generates solar-smart-mppt.kicad_sch: universal solar MPPT charger + 1S/2S BMS + coulomb
 counter. Based on xiao-solar-lite (same BQ25798 charger cluster); the XIAO stack is gone and
-an ATtiny3226 supervisor runs the charger (internal I2C), the BMS FETs, 2S balancing and the
+an MSPM0L1306 supervisor runs the charger (internal I2C), the BMS FETs, 2S balancing and the
 shunt current measurement, and shows itself to the host as an INA260 on 0x41 (J5).
 
-Outputs: J6 (SYS through an LTC4412 ideal diode) and J7 (TPS63070 buck-boost, 3.3 / 5.0 V).
+Outputs: J6 (SYS through a discrete ideal diode: Q5 + 2 x MMBT3906 mirror) and J7 (TPS63070 buck-boost, 3.3 / 5.0 V).
 Decisions: /mnt/project-files/notes/solar-smart-mppt-phase1-2026-11-03.md + thread answers.
 
 The writer and the part helpers come from ../xiao-solar/tools/gen_sch.py; this board keeps
@@ -27,7 +27,7 @@ base._libcache.clear()
 base.PROJECT = "solar-smart-mppt"
 base.ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0003"
 base.TITLE = "solar-smart-mppt: MPPT charger + BMS 1S/2S + coulomb counter"
-base.REV = "0.2"
+base.REV = "0.3"
 base.POWER[:] = ["GND", "3V3M"]
 P, R, C, T, TP, RAIL, BLOCK = base.P, base.R, base.C, base.T, base.TP, base.RAIL, base.BLOCK
 parts, ROOT_UUID = base.parts, base.ROOT_UUID
@@ -57,17 +57,19 @@ JP2P = "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm"
 
 # ---- new symbols (pins grouped by function; footprints from easyeda2kicad, lib/) ------
 box = base.custom_box
-box("ATTINY3226_FUNC", "U",
-    left=[("1", "VDD", "power_in"), ("16", "PA0/UPDI", "bidirectional"),
-          ("2", "PA4/AIN4", "input"), ("3", "PA5/AIN5", "input"), ("17", "PA1/AIN1", "input"),
-          ("5", "PA7/AINP0", "input"), ("4", "PA6/AINN0", "input"),
-          ("18", "PA2", "input"), ("19", "PA3", "output")],
-    right=[("10", "PB1/SDA", "bidirectional"), ("11", "PB0/SCL", "bidirectional"),
-           ("13", "PC1", "bidirectional"), ("14", "PC2", "bidirectional"), ("12", "PC0", "output"),
-           ("9", "PB2", "output"), ("8", "PB3", "output"), ("6", "PB5", "output"), ("7", "PB4", "output"),
-           ("15", "PC3", "bidirectional")],
-    bottom=[("20", "GND", "power_in", 0.0)],
-    width=20.32, fp="xiao_solar:SOIC-20_L12.8-W7.5-P1.27-LS10.3-BL", pad_bot=0.0)
+box("MSPM0L1306_FUNC", "U",
+    left=[("3", "VDD", "power_in"), ("23", "VCORE", "passive"), ("2", "NRST", "input"),
+          ("15", "PA19/SWDIO", "bidirectional"), ("16", "PA20/SWCLK", "input"),
+          ("21", "PA25/OPA0_IN0+", "input"), ("14", "PA18/OPA1_IN0+", "input"),
+          ("22", "PA26", "output"), ("17", "PA21/A5", "input"), ("8", "PA9", "input"),
+          ("18", "PA22/OPA0_OUT", "passive")],
+    right=[("9", "PA10/I2C0_SDA", "bidirectional"), ("10", "PA11/I2C0_SCL", "bidirectional"),
+           ("12", "PA16/I2C1_SDA", "bidirectional"), ("11", "PA15/I2C1_SCL", "bidirectional"),
+           ("1", "PA1/OD", "passive"), ("24", "PA0/OD", "output"), ("19", "PA23", "input"),
+           ("6", "PA3", "output"), ("7", "PA4", "output"), ("5", "PA2", "output"),
+           ("20", "PA24/A3", "input"), ("13", "PA17", "output")],
+    bottom=[("4", "VSS", "power_in", -1.27), ("25", "EP", "power_in", 1.27)],
+    width=22.86, fp="Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", pad_bot=0.0)
 box("TPS63070_FUNC", "U",
     left=[("12", "VIN", "power_in"), ("14", "EN", "input"), ("1", "PS/SYNC", "input"),
           ("15", "VSEL", "input"), ("3", "VAUX", "passive")],
@@ -76,11 +78,6 @@ box("TPS63070_FUNC", "U",
     top=[("11", "L1", "passive", -2.54), ("9", "L2", "passive", 2.54)],
     bottom=[("4", "GND", "power_in", -1.27), ("10", "PGND", "power_in", 1.27)],
     width=15.24, fp="xiao_solar:VQFN-15_L3.0-W2.5-P0.50-BL", pad_top=0.0, pad_bot=0.0)
-box("LTC4412_FUNC", "U",
-    left=[("1", "VIN", "power_in"), ("3", "CTL", "input")],
-    right=[("6", "SENSE", "input"), ("5", "GATE", "output"), ("4", "STAT", "open_collector")],
-    bottom=[("2", "GND", "power_in", 0.0)],
-    width=12.7, fp="xiao_solar:TSOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR")
 box("HT7533_FUNC", "U",
     left=[("2", "VIN", "power_in")], right=[("3", "VOUT", "power_out")],
     bottom=[("1", "GND", "power_in", 0.0)],
@@ -110,7 +107,7 @@ RAIL("PMID", [(60.0, 120.08), (124.76, 120.08)])
 C("C6", "10u/50V", 60, 128.5, "PMID", "GND", C10U50, C1206)
 C("C7", "10u/50V", 72, 128.5, "PMID", "GND", C10U50, C1206)
 C("C8", "10u/50V", 84, 128.5, "PMID", "GND", C10U50, C1206)
-C("C9", "100n/50V", 96, 128.5, "PMID", "GND", C100N0402HV, C0402)
+C("C9", "100n/50V", 96, 128.5, "PMID", "GND", "C14663", C0603)
 TP("TP4", "PMID", 104, 120.08, rot=0)
 
 bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": None, "7": None,
@@ -133,7 +130,7 @@ RAIL("SW2", [(155.0, 91.81), (155.0, 95.0), (145.08, 95.0)])
 
 TP("TP2", "QON", 112.0, 122.62, rot=90, value="QON (to GND = wake)")
 RAIL("QON", [(112.0, 122.62), (124.76, 122.62)])
-# ~CE: pulled up to 3V3M, ATtiny PC0 pulls it low = charge. No MCU = no charging.
+# ~CE: pulled up to 3V3M, MSPM0 PA11 pulls it low = charge. No MCU = no charging.
 R("R4", "100k", 118, 148, "3V3M", "CE", R100K, rot=180)
 RAIL("CE", [(118.0, 125.16), (124.76, 125.16)])
 RAIL("CE", [(118.0, 125.16), (118.0, 144.19)])
@@ -158,16 +155,16 @@ P("J3", "Connector_Generic:Conn_01x02", "NTC 10k (103AT)", 209.08, 160, {"1": "T
 RAIL("TS", [(204.0, 150.0), (204.0, 160.0)])
 R("R1", "4.7k 1%", 164, 152, "PROG", "GND", "C23162")
 RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
-# BQ I2C (internal bus, ATtiny is the master) + INT, pull-ups to 3V3M
+# BQ I2C (internal bus, MSPM0 is the master) + INT, pull-ups to 3V3M
 TP("TP9", "SCL_I", 168, 112.46, rot=0)
 TP("TP10", "SDA_I", 176, 115.00, rot=0)
 
 T(20, 174, "SS54: защита от обратна полярност и връщане към панела. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
-T(20, 177.5, "PROG = 1S винаги (R1 4.7k): с 2S PROG BQ тръгва с VSYSMIN ~7 V. За LTO 2S ATtiny записва VREG 5.6 V и чак тогава пуска CE.", 1.27)
-T(20, 181, "~CE: R4 към 3V3M = без заряд, докато ATtiny не го свали (PC0). TP2 (QON) към GND = излизане от ship режим.", 1.27)
+T(20, 177.5, "PROG = 1S винаги (R1 4.7k): с 2S PROG BQ тръгва с VSYSMIN ~7 V. За LTO 2S MSPM0 записва VREG 5.6 V и чак тогава пуска CE.", 1.27)
+T(20, 181, "~CE: R4 към 3V3M = без заряд, докато MSPM0 не го свали (PA11). TP2 (QON) към GND = излизане от ship режим.", 1.27)
 
 # ---- 2. SYS -> 3V3M (HT7533) + LTC4412 ideal diode -> J6 -------------------------------
-BLOCK(225, 22, "2. SYS -> 3V3M (HT7533, 2.5 uA) за ATtiny + J6 OUT (SYS през идеален диод LTC4412)")
+BLOCK(225, 22, "2. SYS -> 3V3M (HT7533, 2.5 uA) за MSPM0 + J6 OUT (SYS през идеален диод Q5 + Q9/Q11)")
 RAIL("SYS", [(155.24, 109.92), (168.0, 109.92), (168.0, 55.0), (262.0, 55.0)])
 for i, (ref, val, lcsc, fp) in enumerate([
         ("C16", "100n", C100N0402, C0402), ("C11", "10u/25V", C10U, C0805),
@@ -176,8 +173,12 @@ for i, (ref, val, lcsc, fp) in enumerate([
     C(ref, val, 180 + 12 * i, 64, "SYS", "GND", lcsc, fp)
 TP("TP5", "SYS", 252, 55.0, rot=0)
 
-P("U7", "custom:LTC4412_FUNC", "LTC4412ES6", 300, 72, {"1": "SYS", "2": "GND", "3": "GND", "4": None,
-  "5": "OR_G", "6": "VOUT"}, "xiao_solar:TSOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR", "C514442")
+# discrete ideal diode (instead of LTC4412): PNP mirror of two MMBT3906 side by side. Q9 (diode
+# connected, E at SYS) sets the base; Q11 (E at VOUT) pulls the Q5 gate up to VOUT as soon as VOUT > SYS
+P("Q9", "Transistor_BJT:MMBT3906", "MMBT3906", 290, 75, {"1": "OR_B", "2": "SYS", "3": "OR_B"}, SOT23, "C7420354")
+P("Q11", "Transistor_BJT:MMBT3906", "MMBT3906", 310, 75, {"1": "OR_B", "2": "VOUT", "3": "OR_G"}, SOT23, "C7420354")
+RS("R43", "1M", 285, 90, "OR_B", "GND", R1M, rot=90)
+RS("R44", "1M", 315, 90, "OR_G", "GND", R1M, rot=90)
 P("Q5", "Transistor_FET:BSS84", "AO3401A", 300, 52, {"1": "OR_G", "2": "VOUT", "3": "SYS"}, SOT23, "C15127", rot=90)
 CS("C20", "10u/25V", 330, 64, "VOUT", "GND", C10U)
 P("J6", "Connector_Generic:Conn_01x02", "OUT (SYS)", 350, 55, {"1": "VOUT", "2": "GND"}, CONN2)
@@ -187,8 +188,8 @@ P("U5", "custom:HT7533_FUNC", "HT7533-1", 300, 110, {"1": "GND", "2": "SYS", "3"
 CS("C21", "10u/25V", 280, 118, "SYS", "GND", C10U)
 CS("C22", "10u/25V", 320, 118, "3V3M", "GND", C10U)
 TP("TP8", "3V3M", 335, 107.46, rot=0)
-T(225, 140, "Q5 (AO3401A): D към SYS, S към J6, тялото му е диодът SYS -> OUT; LTC4412 го отваря (~20 mV пад, 11 uA, 2.5-28 V).", 1.27)
-T(225, 143.5, "Товар със свое зарядно не може да върне ток в батерията. HT7533 храни само ATtiny (SYS до 5.6 V при LTO).", 1.27)
+T(225, 140, "Q5 (AO3401A): D към SYS, S към J6, тялото му е диодът SYS -> OUT; Q9/Q11 го отварят, докато OUT < SYS (~30-50 mV пад, ~7 uA).", 1.27)
+T(225, 143.5, "Товар със свое зарядно не може да върне ток в батерията. HT7533 храни само MSPM0 (SYS до 5.6 V при LTO).", 1.27)
 
 # ---- 3. Battery path: BAT -> Ship FET Q2 -> BATT+ -> J4 (1S or 2S) ----------------------
 BLOCK(20, 186, "3. БАТЕРИЯ 1S Li-ion / LiFePO4 или 2S LTO: Ship FET (Q2 + JP3) -> J4 (BATT+, BM, BATT-)")
@@ -223,14 +224,14 @@ BLOCK(330, 186, "4. BMS: Q3 HJ8205 (OD разряд / OC заряд) + шунт 
 P("Q3", "custom:HJ8205_FUNC", "HJ8205", 360, 228.0,
   {"1": "BATT-", "2": "FS_D", "3": "BATT_S", "4": "OC_G", "5": "FS_D", "6": "OD_G"},
   "xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL", "C20069150")
-P("RS1", "Device:R", "20m 1W", 395, 236, {"1": "BATT_S", "2": "GND"}, R1206, "C154638")
-# OD (discharge FET, source = BATT-): on by default through R18 to BATT+, ATtiny turns it
+P("RS1", "Device:R", "20m 1W 1%", 395, 236, {"1": "BATT_S", "2": "GND"}, R1206, "C163047")
+# OD (discharge FET, source = BATT-): on by default through R18 to BATT+, MSPM0 turns it
 # off through Q6 (no MCU pin sees BATT+)
 RS("R18", "1M", 340, 200, "BATT+", "OD_G", R1M)
 P("Q6", "Transistor_FET:BSS138", "2N7002", 340, 250, {"1": "OD_CTL", "2": "GND", "3": "OD_G"}, SOT23, "C8545")
 RS("R19", "100k", 326, 262, "OD_CTL", "GND", R100K)
 # OC (charge FET, source = shunt): on as soon as 3V3M is up (R20), so discharge never runs
-# through its body diode; the ATtiny PB2 pulls it low to stop charging. No ATtiny, no
+# through its body diode; the MSPM0 PA10 pulls it low to stop charging. No MSPM0, no
 # charging anyway: ~CE of the BQ25798 has its pull-up to 3V3M (R4)
 RS("R20", "1M", 380, 262, "OC_G", "3V3M", R1M)
 # shunt sense: 10k + 1M bias to 3V3M keeps both inputs above 0 V at -3.2 A
@@ -241,46 +242,47 @@ RS("R24", "1M", 452, 212, "3V3M", "SH_N", R1M)
 # one differential filter cap across the PGA inputs: no CMRR loss from two caps to GND
 # that do not match (fast LoRa TX current steps)
 CS("C24", "100n", 440, 236, "SH_P", "SH_N", C100N, C0603)
-# balancing: cell 1 (BATT- .. BM) by Q7 FET1, cell 2 (BM .. BATT+) by P-FET Q8 driven by Q7 FET2
-P("Q7", "custom:2N7002DW_FUNC", "2N7002DW", 500, 236,
-  {"5": "BAL1", "2": "BAL2", "3": "BAL1_D", "4": "BATT-", "6": "BAL2_G", "1": "GND"},
-  "xiao_solar:SC-70-6_L2.2-W1.3-P0.65-LS2.1-BR", "C61840")
-P("R37", "Device:R", "47 1206", 530, 226, {"1": "BM", "2": "BAL1_D"}, R1206, "C17969")
+# balancing: cell 1 (BATT- .. BM) by Q7, cell 2 (BM .. BATT+) by P-FET Q8 driven by Q10
+P("Q7", "Transistor_FET:BSS138", "2N7002", 500, 236, {"1": "BAL1", "2": "BATT-", "3": "BAL1_D"}, SOT23, "C8545")
+P("Q10", "Transistor_FET:BSS138", "2N7002", 500, 256, {"1": "BAL2", "2": "GND", "3": "BAL2_G"}, SOT23, "C8545")
+P("R37", "Device:R", "100 1206", 530, 226, {"1": "BM", "2": "BAL1_D"}, R1206, "C17901")
 RS("R38", "100k", 478, 250, "BAL1", "GND", R100K)
 RS("R39", "100k", 488, 260, "BAL2", "GND", R100K)
 P("Q8", "Transistor_FET:BSS84", "AO3401A", 540, 205, {"1": "BAL2_G", "2": "BATT+", "3": "BAL2_D"}, SOT23, "C15127")
 RS("R40", "100k", 520, 200, "BATT+", "BAL2_G", R100K)
-P("R41", "Device:R", "47 1206", 555, 222, {"1": "BAL2_D", "2": "BM"}, R1206, "C17969")
-# voltage dividers to the ATtiny ADC
+P("R41", "Device:R", "100 1206", 555, 222, {"1": "BAL2_D", "2": "BM"}, R1206, "C17901")
+# voltage dividers to the MSPM0 ADC
 RS("R25", "1M", 470, 280, "BATT+", "ADC_VBAT", R1M)
 RS("R26", "470k", 470, 296, "ADC_VBAT", "GND", "C23178")
 CS("C26", "100n", 482, 296, "ADC_VBAT", "GND", C100N, C0603)
 RS("R27", "1M", 500, 280, "BM", "ADC_VBM", R1M)
 RS("R28", "1M", 500, 296, "ADC_VBM", "GND", R1M)
 CS("C27", "100n", 512, 296, "ADC_VBM", "GND", C100N, C0603)
-T(330, 272, "Q3 е в минуса: S1 = BATT- (клетката), S2 = BATT_S -> RS1 -> GND. OD (G1) вкл. по подразбиране (R18), OC (G2) вкл. щом има 3V3M (R20), ATtiny го изключва.", 1.27)
-T(330, 275.5, "Без DW01A: ток/късо пази ATtiny (ADC + компаратор AC0 на PA6/PA7) и BATFET OCP на BQ25798.", 1.27)
-T(330, 279, "Шунт: + заряд, - разряд; R21-R24 изместват входовете с ~33 mV. Балансиране ~60 mA (47 Ohm).", 1.27)
+T(330, 272, "Q3 е в минуса: S1 = BATT- (клетката), S2 = BATT_S -> RS1 -> GND. OD (G1) вкл. по подразбиране (R18), OC (G2) вкл. щом има 3V3M (R20), MSPM0 го изключва.", 1.27)
+T(330, 275.5, "Без DW01A: ток/късо пази MSPM0 (OPA0 PGA + COMP0 с DAC, 32 ns) и BATFET OCP на BQ25798.", 1.27)
+T(330, 279, "Шунт: + заряд, - разряд; R21-R24 изместват входовете с ~33 mV. Балансиране ~40 mA (100 Ohm, 0.18 W).", 1.27)
 
-# ---- 5. ATtiny3226 supervisor + INA260 emulator on J5 -----------------------------------
-BLOCK(370, 22, "5. ATtiny3226: BQ25798 master (PC1/PC2), INA260 емулатор 0x41 (TWI PB1/PB0 -> J5), BMS, LED")
-P("U4", "custom:ATTINY3226_FUNC", "ATtiny3226-SU", 470, 100,
-  {"1": "3V3M", "16": "UPDI", "2": "ADC_VBAT", "3": "ADC_VBM", "17": "ADC_CHEM", "5": "SH_P", "4": "SH_N",
-   "18": "PA2", "19": "REG_CTL", "10": "SDA_E", "11": "SCL_E", "13": "SDA_I", "14": "SCL_I",
-   "12": "CE", "9": "OC_G", "8": "OD_CTL", "6": "BAL1", "7": "BAL2", "15": "LED", "20": "GND"},
-  "xiao_solar:SOIC-20_L12.8-W7.5-P1.27-LS10.3-BL", "C3234898")
+# ---- 5. MSPM0L1306 supervisor + INA260 emulator on J5 ----------------------------------
+BLOCK(370, 22, "5. MSPM0L1306: BQ25798 master (I2C1), INA260 емулатор 0x41 (I2C0 -> J5), BMS, LED")
+P("U4", "custom:MSPM0L1306_FUNC", "MSPM0L1306SRGER", 470, 100,
+  {"3": "3V3M", "23": "VCORE", "2": "NRST", "15": "SWDIO", "16": "SWCLK",
+   "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": "ADC_VBM", "19": "ADC_CHEM", "18": None,
+   "9": "SDA_E", "10": "SCL_E", "12": "SDA_I", "11": "SCL_I", "1": None, "24": "OC_G",
+   "6": "BAL2", "5": "BAL1", "7": "REG_CTL", "22": "OD_CTL", "13": "CE", "8": "LED",
+   "4": "GND", "25": "GND"},
+  "Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", "C19189323")
+CS("C39", "470n", 440, 70, "VCORE", "GND", "C1623", C0603)
+P("R42", "Device:R", "47k", 410, 82, {"1": "3V3M", "2": "NRST"}, R0402, "C25792")
+CS("C40", "10n", 400, 88, "NRST", "GND", "C15195", C0402)
 CS("C28", "100n", 420, 70, "3V3M", "GND", C100N, C0603)
-CS("C29", "1u", 430, 70, "3V3M", "GND", "C15849", C0603)
+CS("C29", "10u/25V", 430, 70, "3V3M", "GND", C10U)
 RS("R13", "4.7k", 520, 60, "3V3M", "SDA_I", "C23162")
 RS("R14", "4.7k", 530, 60, "3V3M", "SCL_I", "C23162")
-TP("TP15", "PA2", 410, 130, rot=180, value="PA2 (spare)")
-# chemistry jumper: open = Li-ion (1/2 3V3M), 1-2 = LiFePO4 (0 V), 2-3 = LTO 2S (3V3M)
-RS("R29", "1M", 400, 150, "3V3M", "ADC_CHEM", R1M)
-RS("R36", "1M", 400, 166, "ADC_CHEM", "GND", R1M)
+# chemistry jumper read digitally (internal pull-up, then pull-down): open = Li-ion (follows
+# the pull), 1-2 = LiFePO4 (always 0), 2-3 = LTO 2S (always 1)
 P("JP4", "Jumper:SolderJumper_3_Open", "CHEM: - Li-ion / 1-2 LiFePO4 / 2-3 LTO", 420, 158,
   {"1": "GND", "2": "ADC_CHEM", "3": "3V3M"}, JP3P, rot=90)
-CS("C30", "100n", 432, 166, "ADC_CHEM", "GND", C100N, C0603)
-# two LEDs on one pin: PC3 high = red (error), low = yellow (BMS/balance), Hi-Z = both off
+# two LEDs on one pin: PA9 high = red (error), low = yellow (BMS/balance), Hi-Z = both off
 P("D6", "Device:LED", "red ERR", 540, 130, {"1": "LED_R", "2": "LED"}, "LED_SMD:LED_0805_2012Metric", "C84256", rot=90)
 RS("R16", "2.2k", 540, 150, "LED_R", "GND", R2K2)
 P("D7", "Device:LED", "yellow BMS", 555, 110, {"1": "LED", "2": "LED_Y"}, "LED_SMD:LED_0805_2012Metric", "C2296", rot=90)
@@ -288,14 +290,16 @@ RS("R17", "2.2k", 555, 90, "3V3M", "LED_Y", R2K2)
 # host I2C: the repeater is the master and brings 3V3 + pull-ups (none on this board)
 P("J5", "Connector_Generic:Conn_01x04", "I2C host (INA260 0x41)", 560, 60,
   {"1": "SCL_E", "2": "SDA_E", "3": "3V3E", "4": "GND"}, CONN4)
-TP("TP11", "UPDI", 400, 95, rot=180)
+TP("TP11", "SWDIO", 400, 95, rot=180)
 TP("TP12", "3V3M", 400, 100, rot=180)
 TP("TP13", "GND", 400, 105, rot=180)
+TP("TP16", "SWCLK", 400, 110, rot=180)
+TP("TP17", "NRST", 400, 115, rot=180)
 T(370, 176, "J5 pin 3 (3V3E) е захранването на репийтъра: тук не се ползва, pull-up резисторите са на репийтъра.", 1.27)
-T(370, 179.5, "TP11-TP13: UPDI програмиране (UPDI, 3V3M, GND). PA2 свободен (TP15; INT на BQ25798 е NC: пин 21 е между PROG и BAT), PA3 = управление на J7 (JP5 2-3).", 1.27)
+T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA10/PA11 (само 3.3 V шина), ~CE PA17, OC_G PA0 (open-drain), LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA1 и PA22 (изход на OPA0) не се свързват.", 1.27)
 
 # ---- 6. TPS63070 buck-boost -> J7 (3.3 / 5.0 V) -----------------------------------------
-BLOCK(20, 300, "6. J7 U: TPS63070 buck-boost 3.3 V / 5.0 V (JP6), вкл. с JP5: - изкл. / 1-2 винаги / 2-3 от ATtiny")
+BLOCK(20, 300, "6. J7 U: TPS63070 buck-boost 3.3 V / 5.0 V (JP6), вкл. с JP5: - изкл. / 1-2 винаги / 2-3 от MSPM0")
 P("U6", "custom:TPS63070_FUNC", "TPS63070RNMR", 120, 350,
   {"12": "SYS", "14": "REG_EN", "1": "LOGIC_HI", "15": "VSEL", "3": "VAUX", "7": "VREG", "5": "FB",
    "6": "FB2", "2": None, "11": "SWA", "9": "SWB", "4": "GND", "10": "GND"},

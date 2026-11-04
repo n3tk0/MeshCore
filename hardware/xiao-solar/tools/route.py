@@ -274,12 +274,20 @@ def main():
     tmp = os.environ.get("RT_TMP") or tempfile.mkdtemp()
     dsn, ses = os.path.join(tmp, "xs.dsn"), os.path.join(tmp, "xs.ses")
     board = pcbnew.LoadBoard(PCB)
+    # two vias on the same spot make Freerouting open a warning dialog and wait forever (headless)
+    seen = set()
+    for t in list(board.GetTracks()):
+        if t.GetClass() == "PCB_VIA":
+            k = (t.GetPosition().x, t.GetPosition().y, t.GetNetCode())
+            if k in seen:
+                board.Remove(t)
+            seen.add(k)
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.ExportSpecctraDSN(board, dsn)
     dsn_classes.fix(dsn)
     dsn_classes.add_zone_copper(board, dsn)
     dsn_classes.add_keepouts(board, dsn, b_clear(board))
-    cmd = (["xvfb-run", "-a"] if shutil.which("xvfb-run") else []) + ["java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", "200"]
+    cmd = (["xvfb-run", "-a"] if shutil.which("xvfb-run") else []) + ["java", "-jar", jar, "-de", dsn, "-do", ses, "-mp", os.environ.get("RT_MP", "200")]
     subprocess.run(cmd,
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("ses: %d segments, %d vias" % import_ses(board, ses))
