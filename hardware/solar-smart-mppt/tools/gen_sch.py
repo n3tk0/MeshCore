@@ -131,14 +131,14 @@ RAIL("SW2", [(155.0, 91.81), (155.0, 95.0), (145.08, 95.0)])
 TP("TP2", "QON", 112.0, 122.62, rot=90, value="QON (to GND = wake)")
 RAIL("QON", [(112.0, 122.62), (124.76, 122.62)])
 # ~CE: pulled up to 3V3M, MSPM0 PA11 pulls it low = charge. No MCU = no charging.
-R("R4", "100k", 118, 148, "3V3M", "CE", R100K, rot=180)
+RS("R4", "100k", 118, 148, "3V3M", "CE", R100K, rot=180)
 RAIL("CE", [(118.0, 125.16), (124.76, 125.16)])
 RAIL("CE", [(118.0, 125.16), (118.0, 144.19)])
 
 P("D4", "Device:LED", "green", 168, 127.70, {"1": "STAT", "2": "LED_STAT"},
   "LED_SMD:LED_0805_2012Metric", "C2297")
 RAIL("STAT", [(155.24, 127.70), (164.19, 127.70)])
-R("R6", "2.2k", 188, 127.70, "REGN", "LED_STAT", R2K2, rot=270)
+RS("R6", "2.2k", 188, 127.70, "REGN", "LED_STAT", R2K2, rot=270)
 RAIL("LED_STAT", [(171.81, 127.70), (184.19, 127.70)])
 RAIL("REGN", [(155.24, 130.24), (196.0, 130.24)])
 RAIL("REGN", [(155.24, 132.78), (160.0, 132.78), (160.0, 130.24)])
@@ -178,7 +178,7 @@ TP("TP5", "SYS", 252, 55.0, rot=0)
 P("Q9", "Transistor_BJT:MMBT3906", "MMBT3906", 290, 75, {"1": "OR_B", "2": "SYS", "3": "OR_B"}, SOT23, "C7420354")
 P("Q11", "Transistor_BJT:MMBT3906", "MMBT3906", 310, 75, {"1": "OR_B", "2": "VOUT", "3": "OR_G"}, SOT23, "C7420354")
 RS("R43", "1M", 285, 90, "OR_B", "GND", R1M, rot=90)
-RS("R44", "1M", 315, 90, "OR_G", "GND", R1M, rot=90)
+RS("R44", "470k", 315, 90, "OR_G", "GND", "C23178", rot=90)
 P("Q5", "Transistor_FET:BSS84", "AO3401A", 300, 52, {"1": "OR_G", "2": "VOUT", "3": "SYS"}, SOT23, "C15127", rot=90)
 CS("C20", "10u/25V", 330, 64, "VOUT", "GND", C10U)
 P("J6", "Connector_Generic:Conn_01x02", "OUT (SYS)", 350, 55, {"1": "VOUT", "2": "GND"}, CONN2)
@@ -307,8 +307,8 @@ P("U6", "custom:TPS63070_FUNC", "TPS63070RNMR", 120, 350,
   {"12": "SYS", "14": "REG_EN", "1": "LOGIC_HI", "15": "VSEL", "3": "VAUX", "7": "VREG", "5": "FB",
    "6": "FB2", "2": None, "11": "SWA", "9": "SWB", "4": "GND", "10": "GND"},
   "xiao_solar:VQFN-15_L3.0-W2.5-P0.50-BL", "C109322")
-P("L2", "xiao_solar:FNR4030S2R2MT", "1.5uH 5A molded (MWSA0402S)", 120, 320, {"1": "SWA", "2": "SWB"},
-  "xiao_solar:IND-SMD_L4.4-W4.2_MWSA0402S", "C408334")
+P("L2", "xiao_solar:FNR4030S2R2MT", "2.2uH 4A molded (MWSA0402S)", 120, 320, {"1": "SWA", "2": "SWB"},
+  "xiao_solar:IND-SMD_L4.4-W4.2_MWSA0402S", "C408335")
 CS("C31", "10u/25V", 60, 360, "SYS", "GND", C10U)
 CS("C32", "10u/25V", 70, 360, "SYS", "GND", C10U)
 CS("C33", "10u/25V", 80, 360, "SYS", "GND", C10U)
@@ -329,7 +329,7 @@ CS("C38", "22u/25V", 220, 360, "VREG", "GND", C22U)
 P("J7", "Connector_Generic:Conn_01x02", "U (3.3/5 V)", 245, 345, {"1": "VREG", "2": "GND"}, CONN2)
 TP("TP14", "VREG", 232, 342.46, rot=0)
 T(20, 402, "FB: R33/R34 = 3.3 V; VSEL високо свързва R35 паралелно на R34 = 5.0 V. EN, VSEL, PS/SYNC към VIN само през R30 10k (TI 11.1).", 1.27)
-T(20, 405.5, "L2 1.5 uH + 3x22 uF (TI табл. 3). PS/SYNC високо = PFM при малък товар (~50 uA).", 1.27)
+T(20, 405.5, "L2 2.2 uH (като L1) + 10 uF + 3x22 uF (TI табл. 3, Cout,eff >= 10 x L,eff). PS/SYNC високо = PFM при малък товар (~50 uA).", 1.27)
 
 # ERC power flags on the source nets
 for i, (net, fx, fy) in enumerate([

@@ -66,7 +66,7 @@ PLACE.update({
     # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
     "R31": (26.9, 20.6, 0),
     "Q5": (2.6, 6.7, 0), "Q9": (2.6, 10.3, 0), "Q11": (6.6, 10.3, 0),
-    "R43": (5.6, 13.0, 0), "R44": (5.6, 14.3, 0), "C20": (2.8, 13.6, 0),
+    "R43": (5.6, 13.0, 0), "R44": (6.0, 14.3, 0), "C20": (2.8, 13.6, 0),
     # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
     # (above it are the inductor and the VOUT caps); VREG test point next to J7
     "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (22.8, 6.3, 0),

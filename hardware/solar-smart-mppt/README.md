@@ -58,7 +58,7 @@ answers in the project thread (phase 2).
 - **Ideal diode (J6):** Q5 (P-FET, D at SYS, S at J6) conducts SYS → OUT through its body diode
   and is switched fully on by the PNP mirror: Q9 (diode connected, E at SYS) sets the base, Q11
   (E at OUT) pulls the Q5 gate to OUT as soon as OUT rises above SYS, so a load with its own supply
-  (USB on a XIAO) cannot feed back into the battery. R43/R44 1 MΩ: ~7 µA, 30–50 mV drop.
+  (USB on a XIAO) cannot feed back into the battery. R43 1 MΩ / R44 470 kΩ: ~4 µA; Q5 is fully on already at 0 V drop (gate ~1.5 V at 3.7 V), and turns off when OUT is ~25 mV above SYS (up to ~0.4 A reverse for that moment).
 - **BMS (Q3 HJ8205 in BATT−):** S1 = cell minus, S2 → shunt RS1 → GND.
   OD (discharge, G1) is **on by default** through R18 to BATT+, so SYS starts from the battery alone;
   the MCU turns it off through Q6 (PA26, no MCU pin sees BATT+). OC (charge, G2) is on as soon as
@@ -80,7 +80,7 @@ answers in the project thread (phase 2).
   + R41 100 Ω, its gate pulled down by Q10 (PA3). Both need push-pull pins. ~40 mA at 4.2 V, 0.18 W per 1206. Only for 2S.
 - **LEDs (PA9):** high = red D6 (error), low = yellow D7 (BMS / balancing), Hi-Z = both off
   (1.8 + 1.9 V > 3.3 V, no current).
-- **J7:** TPS63070 (2–16 V in), L2 1.5 µH + 3 × 22 µF (TI table 3). FB R33/R34 = 3.3 V, VSEL high adds
+- **J7:** TPS63070 (2–16 V in), L2 2.2 µH (same part as L1) + 10 µF + 3 × 22 µF (TI table 3: Cout,eff ≥ 10 × L,eff). FB R33/R34 = 3.3 V, VSEL high adds
   R35 in parallel to R34 = 5.0 V. EN, VSEL and PS/SYNC go to VIN only through R30 10k (TI 11.1).
   PS/SYNC high = power save at light load.
 
@@ -153,3 +153,7 @@ Known layout compromises / DRC leftovers:
 - v0.2 (2026-11-04, not finished, not ordered): top row J6 | J5 | J7, 30 mm wide, fuse, 2 holes.
 - v0.3 (2026-11-04): cost version (~150 € for 15 boards): MSPM0L1306, discrete ideal diode,
   basic parts where possible, 30 × 77.5 mm, MCU pins regrouped by direction.
+  Review fixes: SWD + NRST row on B.Cu, Kelvin GND for the shunt (NT1), SH_P / SH_N as a pair,
+  EP vias tented, MLCCs away from the V-cut. Argon review: R44 470 kΩ (Q5 fully on at 0 V drop),
+  L2 2.2 µH = same part as L1 (one extended type less, L2 had only 944 in stock), R4 / R6 in 0402
+  (BOM 43 → 40 lines).
