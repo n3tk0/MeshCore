@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds solar-smart-mppt.kicad_pcb (27 x 83 mm): placement, outline, net classes, GND pours.
+"""Builds solar-smart-mppt.kicad_pcb (33 x 83 mm): placement, outline, net classes, GND pours.
 Top: outputs, TPS63070, LTC4412, LEDs. Then the charger part of xiao-solar-lite (charger
 cluster of ../xiao-solar/tools/charger.py, turned), then the ATtiny3226 band and at the
 bottom the BMS it drives (most ATtiny pins go to the BMS), input diodes and connectors.
@@ -27,7 +27,7 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "solar-smart-mppt"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 27.0, 83.0   # 4 mm right strip: routing channel for the long ATtiny lines
+W, H = 33.0, 83.0   # 33 mm: three boards across a 100 mm panel, room for the long ATtiny lines
 DY = 0.0    # the xiao-solar-lite charger part sits where it is on lite, under the new top part
 DA = 32.0   # ATtiny band: right under the charger, next to the BMS it drives
 DB = 18.0   # BMS, input diodes and the bottom connectors: under the ATtiny band
@@ -54,7 +54,7 @@ PLACE.update({
     # EN / VSEL jumpers of J7 under the TPS63070 VIN caps
     "JP5": (2.75, 17.4, 0), "JP6": (6.6, 17.2, 0),
     # LEDs top right, visible next to the I2C header
-    "D6": (21.25, 6.9, 90), "R16": (21.25, 9.6, 90), "D7": (21.25, 12.9, 90), "R17": (19.8, 11.7, 90),
+    "D6": (30.25, 6.9, 90), "R16": (30.25, 9.6, 90), "D7": (30.25, 12.9, 90), "R17": (28.80, 11.7, 90),
     # ATtiny3226 (SOIC-20W) upright: pins 1-10 on the left (VDD, ADC, BMS), 11-20 on the right
     "U4": (13.4, 24.0 + DA, 270),
     "C28": (6.0, 18.4 + DA, 0), "C29": (6.0, 19.4 + DA, 0),
@@ -63,17 +63,17 @@ PLACE.update({
     "R25": (1.6, 20.6 + DA, 90), "R26": (2.8, 20.6 + DA, 90), "C26": (4.0, 20.6 + DA, 90),
     "R27": (1.6, 24.6 + DA, 90), "R28": (2.8, 24.6 + DA, 90), "C27": (4.0, 24.6 + DA, 90),
     "U5": (3.6, 30.6 + DA, 0), "C21": (2.2, 27.3 + DA, 0), "C22": (5.6, 27.3 + DA, 0),
-    "R13": (20.4, 18.8 + DA, 0), "R14": (20.4, 19.8 + DA, 0), "TP15": (19.6, 32.2 + DA, 0),
-    "JP4": (20.9, 24.0 + DA, 90), "R29": (20.4, 27.0 + DA, 180), "R36": (20.4, 28.0 + DA, 0), "C30": (20.4, 29.0 + DA, 0),
+    "R13": (23.40, 18.8 + DA, 0), "R14": (23.40, 19.8 + DA, 0), "TP15": (19.6, 32.2 + DA, 0),
+    "JP4": (23.90, 24.0 + DA, 90), "R29": (23.40, 27.0 + DA, 180), "R36": (23.40, 28.0 + DA, 0), "C30": (23.40, 29.0 + DA, 0),
     "TP11": (13.0, 32.2 + DA, 0), "TP12": (15.2, 32.2 + DA, 0), "TP13": (17.4, 32.2 + DA, 0),
     # BMS bottom right: Q3 in BATT-, shunt, its Kelvin taps, OD driver
-    "Q3": (19.6, 56.2 + DB, 0), "RS1": (14.0, 57.6 + DB, 180), "R21": (16.95, 56.0 + DB, 90), "R22": (11.0, 56.0 + DB, 90),
-    "Q6": (16.5, 51.4 + DB, 0), "R18": (14.6, 48.8 + DB, 0), "R19": (19.3, 52.9 + DB, 90), "R20": (22.0, 55.4 + DB, 90),
+    "Q3": (23.60, 56.2 + DB, 0), "RS1": (15.00, 57.6 + DB, 180), "R21": (18.95, 56.0 + DB, 90), "R22": (11.0, 56.0 + DB, 90),
+    "Q6": (18.50, 51.4 + DB, 0), "R18": (14.6, 48.8 + DB, 0), "R19": (22.30, 52.9 + DB, 90), "R20": (26.00, 55.4 + DB, 90),
     # 2S balancing in the free strip right of the SYS caps
-    "R37": (21.2, 40.2 + DY, 90), "R41": (21.2, 45.0 + DY, 90), "Q7": (21.2, 49.4 + DB, 0),
-    "R38": (20.3, 52.6 + DB, 90), "R39": (21.6, 52.6 + DB, 90), "Q8": (12.0, 50.6 + DB, 0), "R40": (9.6, 50.0 + DB, 90),
+    "R37": (24.20, 40.2 + DY, 90), "R41": (24.20, 45.0 + DY, 90), "Q7": (25.20, 49.4 + DB, 0),
+    "R38": (24.30, 52.6 + DB, 90), "R39": (25.60, 52.6 + DB, 90), "Q8": (12.0, 50.6 + DB, 0), "R40": (9.6, 50.0 + DB, 90),
     # connectors along the bottom edge (pin 1 left): J1 SOLAR, J4 BATT+ BM BATT-
-    "J1": (2.1, 62.0 + DB, 90), "J4": (15.4, 62.0 + DB, 90),
+    "J1": (2.1, 62.0 + DB, 90), "J4": (23.40, 62.0 + DB, 90),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -88,7 +88,9 @@ FIDUCIALS = [
     (0.8, 4.5, 22.2, 19.5, 21.0, 18.5),
     (0.8, 47.0 + DB, 22.2, 60.0 + DB, 9.6, 53.7 + DB),
 ]
-B_CLEAR = []
+# B.Cu stays plain GND (no autorouted B.Cu tracks) where long B.Cu runs would otherwise
+# cut a GND pocket loose: under the BQ25798 GND via, and left of the ATtiny
+B_CLEAR = [(6.9, 31.2, 9.6, 37.2), (0.5, 48.5, 6.4, 63.0)]
 CHARGER_B_CLEAR = (-4.5, -10.4, 4.5, 1.0)
 
 NETCLASSES = {
@@ -319,6 +321,7 @@ PRE_ROUTES = [("SYS", ("Q5", "3"), (5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1
               ("REG_EN", ("R31", "1"), ("JP5", "2")), ("VSEL", ("JP6", "2"), ("R32", "1")),
               ("LOGIC_HI", ("R30", "2"), ("JP6", "1")), ("LOGIC_HI", ("JP6", "1"), ("JP5", "1")),
               ("FB", ("R34", "1"), ("R33", "2")), ("FB", ("R33", "2"), ("R35", "1"))]
+GND_TIES = {"R32", "C31", "C35", "R3", "JP4"}
 FINE = {"REG_EN", "VSEL", "FB", "FB2", "LOGIC_HI"}
 
 if __name__ == "__main__":
@@ -339,9 +342,27 @@ if __name__ == "__main__":
             fine = net_ in FINE or (net_ == "SYS" and a_[0] == "R30")
             print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True,
                                    layer_cost=(1.0, 1.5) if fine else (1.3, 1.0),
-                                   width=0.2 if fine else 0.25, clear=0.13 if fine else 0.2))
+                                   width=0.2 if fine else 0.25, clear=0.145 if fine else 0.2))
         except RuntimeError as e:
             print(e)
+    # GND pads of the small parts get their own tie via now, while there is room: after
+    # routing, the pour leaves them as islands between the tracks (tools/gndfix.py notes)
+    ref_pt = (W / 2, 20.0)
+    for fp in list(b.GetFootprints()):
+        ref = fp.GetReference()
+        for p in fp.Pads():
+            if p.GetNetname() != "GND" or p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+                continue
+            x, y = pad_mm(ref, p.GetNumber())
+            if not (y > 48.5 or ref in GND_TIES):
+                continue
+            if ref[0] not in "RCUQ" and ref not in GND_TIES:
+                continue
+            try:
+                patch2.route_net(b, "GND", ((x, y), ref_pt), width=0.3, lock=True, heur=False,
+                                 start_layers=(0,), window=2.0, via_in_small_cy=True, target_layers=(1,), start_pad_only=True)
+            except RuntimeError as e:
+                print("GND tie %s.%s: %s" % (ref, p.GetNumber(), e))
     b.Save(PCB)
     write_project()
     print("wrote", PCB)

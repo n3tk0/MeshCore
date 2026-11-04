@@ -57,7 +57,7 @@ def main():
     print(route_net(board, net, ends, width))
     board.Save(PCB)
 
-def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None, clear=CLEAR, keepout=()):
+def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1.0, 1.0), heur=True, start_layers=(0, 1), window=None, clear=CLEAR, keepout=(), via_in_small_cy=False, target_layers=(0, 1), start_pad_only=False):
     """keepout: (x0, y0, x1, y1) boxes in board mm this route must stay out of, both layers."""
     """Routes one connection on `board` (see the module doc); returns a one-line summary."""
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
@@ -98,7 +98,8 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
             obst[l] += polys(z.GetFilledPolysList(l))
     cys = []
     for fp in board.GetFootprints():
-        if fp.GetAttributes() & pcbnew.FP_SMD and fp.GetReference() != "U4":
+        small = "0402" in fp.GetFPIDAsString() or "0603" in fp.GetFPIDAsString()
+        if fp.GetAttributes() & pcbnew.FP_SMD and fp.GetReference() != "U4" and not (small and via_in_small_cy):
             cys += polys(fp.GetCourtyard(pcbnew.F_CrtYd))
     conn = board.GetConnectivity()
     W, H = gen_pcb.W, gen_pcb.H
@@ -116,16 +117,22 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
     for l in LAYERS:
         u = unary_union(obst[l]).buffer((via_w / 2) + CLEAR)
         vb |= shapely.contains_xy(u, xs, ys)
-    vb |= shapely.contains_xy(unary_union(pads_all).buffer((via_w / 2) + 0.05), xs, ys)
+    vb |= shapely.contains_xy(unary_union(pads_all).buffer((via_w / 2) + 0.15), xs, ys)
+    holes = [Point(pcbnew.ToMM(t.GetPosition().x) - OX, pcbnew.ToMM(t.GetPosition().y) - OY)
+             for t in board.GetTracks() if t.GetClass() == "PCB_VIA"]
+    if holes:   # no new via on or next to any via, own net too (hole to hole 0.25 mm)
+        vb |= shapely.contains_xy(unary_union(holes).buffer(via_w + 0.25), xs, ys)
     vb |= shapely.contains_xy(unary_union(cys).buffer((via_w / 2)), xs, ys)
     vb |= (xs < 0.8) | (ys < 0.8) | (xs > W - 0.8) | (ys > H - 0.8)
     # start / goal sets: own copper of the island under each end, on each layer
-    def island_cells(pt, layers=(0, 1)):
+    def island_cells(pt, layers=(0, 1), pad_only=False):
         cells = set()
         for li, l in enumerate(LAYERS):
             if li not in layers:
                 continue
             for g, it in own[l]:
+                if pad_only and not isinstance(it, pcbnew.PAD):
+                    continue
                 if g.distance(Point(pt)) < 0.05:
                     gi = g.buffer(-width / 2 + 0.02) if g.area > 0.05 else g
                     if gi.is_empty:
@@ -145,8 +152,8 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
                     if math.hypot(pcbnew.ToMM(q.x) - OX - pt[0], pcbnew.ToMM(q.y) - OY - pt[1]) < 0.05:
                         return tuple(i for i, l in enumerate(LAYERS) if p.IsOnLayer(l))
         return default
-    S = island_cells(ends[0], pad_layers(ends[0], start_layers))
-    T = island_cells(ends[1], pad_layers(ends[1], (0, 1))) - S
+    S = island_cells(ends[0], pad_layers(ends[0], start_layers), start_pad_only)
+    T = island_cells(ends[1], pad_layers(ends[1], target_layers)) - S
     if not S or not T:
         raise RuntimeError("ends not on copper: %d %d" % (len(S), len(T)))
     tx, ty = ends[1][0] / STEP, ends[1][1] / STEP

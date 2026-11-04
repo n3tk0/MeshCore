@@ -20,6 +20,8 @@ def _free_point(board, p, mm=pcbnew.FromMM):
     for z in board.Zones():
         if not z.GetIsRuleArea() and z.GetNetname() != "GND" and z.Outline().Collide(p, mm(0.6)):
             return False
+        if z.GetIsRuleArea() and z.GetDoNotAllowVias() and z.Outline().Collide(p, mm(0.35)):
+            return False
     for fp in board.GetFootprints():
         ref = fp.GetReference()
         if ref.startswith(("J", "U5", "U6", "U7")):

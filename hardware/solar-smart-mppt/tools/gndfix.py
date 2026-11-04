@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Ties every F.Cu GND fragment without a via to the B.Cu ground plane.
+These tie vias may sit in the courtyard margin of 0402/0603 passives (never closer than
+0.15 mm to a pad, tented), the only free spots between the ATtiny passives.
 
 The autorouter leaves small F.Cu GND islands between the 0402 parts that no stitching via
 fits into (courtyards). For each such island (and each GND pad the pour does not reach),
@@ -72,7 +74,8 @@ def main():
             try:
                 msg = patch2.route_net(board, "GND", (board_mm(p.GetPosition()), board_mm(ref_pt)),
                                        width=0.3, lock=True, heur=False,
-                                       start_layers=(0,), window=3.0)
+                                       start_layers=(0,), window=3.0,
+                                       via_in_small_cy=True, target_layers=(1,), start_pad_only=True)
                 print("%s.%s: %s" % (r, p.GetNumber(), msg)); n += 1
             except RuntimeError as e:
                 print("%s.%s: %s" % (r, p.GetNumber(), e))

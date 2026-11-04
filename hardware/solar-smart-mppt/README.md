@@ -12,9 +12,10 @@ XIAO stack is gone and an **ATtiny3226** supervisor runs everything:
 - balances a 2S LTO pack (~60 mA per cell),
 - shows errors and BMS state on two LEDs on one pin.
 
-23 × 79 mm, 2 layers, all SMD parts on the top side (JLC assembly), headers by hand.
+33 × 83 mm (three across a 100 mm JLC panel), 2 layers, all SMD parts on the top side (JLC assembly), headers by hand.
 
-Status v0.1 (2026-11-03): schematic, placement, routing, Gerber, JLC BOM/CPL. **Not built or tested.**
+Status v0.1 (2026-11-04): schematic, placement, routing, Gerber, JLC BOM/CPL, 3-up panel. ERC: no errors.
+DRC: 0 unconnected, no clearance errors (only cosmetic items, see below). **Not built or tested.**
 Firmware for the ATtiny is a separate task.
 
 Decisions: `/mnt/project-files/notes/solar-smart-mppt-phase1-2026-11-03.md` (phase 1) and the
@@ -76,12 +77,32 @@ answers in the project thread (phase 2).
 - `tools/gen_sch.py`: schematic + BOM, writer from `../xiao-solar/tools/gen_sch.py`.
   This board has its own copy of the symbol/footprint library in `lib/` (new: TPS63070, LTC4412,
   ATtiny3226, HT7533, 2N7002DW from easyeda2kicad).
-- `tools/gen_pcb.py`: placement, TPS63070 copper, outline, pours.
+- `tools/gen_pcb.py`: placement, TPS63070 copper, outline, pours, and the locked pre-routes:
+  SYS (0.8 mm), the long ATtiny lines (`PRE_ROUTES`) and a GND tie (short track + via into the
+  B.Cu fill) for every small GND pad that the F.Cu pour cannot reach. `B_CLEAR` boxes keep
+  Freerouting off B.Cu where long B lines used to cut the ground fill into islands.
+- `tools/patch2.py`: own two-layer grid A* (0.1 mm grid). Used for the pre-routes and for the few
+  connections Freerouting leaves open: `python3 tools/patch2.py NET X1 Y1 X2 Y2 [WIDTH]`.
+- `tools/gndfix.py`, `tools/bfrag.py`: check for GND copper without a connection and tie it with a via.
 - `tools/run.py <tool>` runs a shared tool from `../xiao-solar/tools` on this board:
   `FREEROUTING_JAR=… python3 tools/run.py route`, `… finish`, `python3 tools/run.py export`.
+- `panel/`: 3-up panel (`tools/run.py panel`, KiKit 1.6), 99.2 × 93.2 mm, V-cuts, 5 mm rails.
 - `production/`: Gerber zip, `bom-jlc.csv`, `cpl-jlc.csv`, `bom-hand.csv`, schematic PDF, board image, DRC report.
 
 KiCad 10 (kicad-cli + pcbnew Python).
 
+Routing order: `python3 tools/gen_pcb.py` (placement + pre-routes), `tools/run.py route`,
+`tools/run.py finish`, `tools/patch2.py` for what is still open, `tools/run.py refill`.
+Freerouting is not deterministic, so the committed `.kicad_pcb` is the reference; the last six
+patches (SYS, BATT+ sense, REGN, SDA_I, 3V3M to R23, ADC_VBAT) were made with `patch2.py` on it.
+
+Known layout compromises (v0.1):
+- 3V3M to R23 (shunt bias, 1 MΩ) and ADC_VBAT (divider to PA4, 100 nF at the divider) take
+  long detours (~27 mm, 4 vias each). Both are DC and high impedance, so it does not matter for
+  the readings, but a v0.2 should move R23–R26 next to the ATtiny pins.
+- Some tented GND vias sit in the courtyard margin of 0402 parts (never closer than 0.15 mm to a pad).
+- DRC leftovers are cosmetic: teardrop zone overlaps, silk text height, library footprint
+  differences (easyeda2kicad parts), header courtyards.
+
 ## Version history
-- v0.1 (2026-11-03): first version.
+- v0.1 (2026-11-04): first version, 33 × 83 mm.
