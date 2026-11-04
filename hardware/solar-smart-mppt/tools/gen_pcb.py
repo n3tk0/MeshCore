@@ -53,7 +53,7 @@ def tps(x, y):
 _TPS = {
     "U6": (10.6, 11.4, 0), "L2": (10.6, 7.4, 0),
     "C31": (8.0, 11.7, 270), "C32": (5.95, 8.0, 90), "C33": (5.95, 11.7, 270),
-    "C35": (13.75, 11.55, 270), "C36": (15.1, 7.4, 90), "C37": (17.1, 7.4, 90), "C38": (19.1, 7.4, 90),
+    "C35": (13.75, 11.55, 270), "C36": (14.6, 7.4, 90), "C37": (16.6, 7.4, 90), "C38": (18.6, 7.4, 90),
     "C34": (10.85, 13.8, 270), "R33": (15.0, 14.1, 0), "R34": (15.0, 15.7, 0), "R35": (18.1, 14.1, 0),
     "R30": (4.65, 14.9, 270), "R32": (12.7, 14.3, 90),
 }
@@ -66,7 +66,7 @@ PLACE.update({
     # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
     "R31": (26.9, 20.6, 0),
     "Q5": (2.6, 6.7, 0), "Q9": (2.6, 10.3, 0), "Q11": (6.6, 10.3, 0),
-    "R43": (5.6, 13.0, 0), "R44": (5.6, 14.3, 0), "C20": (2.4, 13.6, 0),
+    "R43": (5.6, 13.0, 0), "R44": (5.6, 14.3, 0), "C20": (2.8, 13.6, 0),
     # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
     # (above it are the inductor and the VOUT caps); VREG test point next to J7
     "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (22.8, 6.3, 0),
@@ -83,14 +83,14 @@ PLACE.update({
     "R13": (10.2, 49.4, 0), "R14": (10.2, 50.4, 0),
     # shunt filter next to the shunt RS1: C24 across SH_P / SH_N, Kelvin R21 / R22, bias R23 / R24;
     # VBAT and VBM dividers and JP4 under the MCU, HT7533 left
-    "C24": (13.25, 67.2, 270), "R24": (10.85, 68.2, 90), "R23": (14.6, 65.4, 270), "R22": (11.9, 68.2, 90), "R21": (14.6, 67.6, 90),
-    "R25": (9.2, 65.8, 90), "R26": (10.4, 65.8, 270), "C26": (11.6, 65.8, 270),
-    "R27": (7.2, 60.6, 90), "R28": (8.4, 60.6, 270), "C27": (9.6, 60.6, 270), "JP4": (9.6, 63.0, 0),
-    "U5": (3.6, 62.2, 0), "C21": (2.0, 56.3, 0), "C22": (5.4, 56.3, 0),
-    # SWD pads on a 2.54 mm pitch left of the MCU: 3V3M, GND, SWDIO, SWCLK (a 4-pin header);
-    # NRST on its own pad next to R42
-    "TP12": (1.88, 58.6, 0), "TP13": (4.42, 58.6, 0), "TP11": (6.96, 58.6, 0),
-    "TP16": (9.5, 58.6, 0), "TP17": (20.0, 57.8, 0),
+    "C24": (13.25, 67.2, 270), "R24": (10.85, 68.2, 90), "R23": (14.6, 65.4, 270), "R22": (11.9, 68.2, 90), "R21": (14.6, 67.6, 90), "NT1": (12.6, 69.9, 0),
+    "R25": (9.2, 65.7, 90), "R26": (10.4, 65.7, 270), "C26": (11.6, 65.7, 270),
+    "R27": (7.2, 60.6, 90), "R28": (8.4, 60.6, 270), "C27": (9.6, 60.6, 270), "JP4": (9.6, 62.9, 0),
+    "U5": (3.6, 62.2, 0), "C21": (2.1, 56.3, 90), "C22": (5.4, 56.3, 0),
+    # SWD pads on the bottom side (B.Cu, B_SIDE), one row at 2.54 mm under the MCU band:
+    # 3V3M, GND, SWDIO, SWCLK, NRST (a 5-pin header or pogo pins from below)
+    "TP12": (2.2, 59.2, 0), "TP13": (4.74, 59.2, 0), "TP11": (7.28, 59.2, 0),
+    "TP16": (9.82, 59.2, 0), "TP17": (12.36, 59.2, 0),
     # BMS bottom right: Q3 in BATT-, shunt, its Kelvin taps, OD driver
     "Q3": (23.60, 56.2 + DB, 0), "RS1": (15.00, 57.6 + DB, 180), 
     "Q6": (18.50, 51.4 + DB, 0), "R18": (14.6, 48.8 + DB, 0), "R19": (22.30, 52.9 + DB, 90), "R20": (26.00, 55.4 + DB, 90),
@@ -100,6 +100,8 @@ PLACE.update({
     # J4 BATT+ BM BATT- along the bottom edge (pin 1 left), its fuse F1 next to BATT+, M2 hole
     "J4": (22.4, 62.0 + DB, 90), "F1": (18.0, 62.0 + DB, 0), "H2": (4.0, 61.5 + DB, 0),
 })
+# test points on the bottom side (flipped footprints): the SWD row
+B_SIDE = {"TP11", "TP12", "TP13", "TP16", "TP17"}
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
     "VBUS": (8.0, 25.0 + DY, 13.0, 32.0 + DY, 9.5, 27.0 + DY), "PMID": (13.0, 21.0 + DY, 17.6, 33.0 + DY, 15.0, 23.0 + DY),
@@ -235,7 +237,9 @@ def build():
         for f in fp.GetFields():
             if f.GetName() != "Reference":
                 f.SetVisible(False)
-        if ref.startswith("TP") and (ref not in PLACE or ref in ("TP11", "TP12", "TP13", "TP16", "TP17")):
+        if ref in B_SIDE:
+            fp.Reference().SetVisible(False)   # the B.Cu silk labels name them
+        if ref.startswith("TP") and ref not in PLACE:
             fp.Reference().SetVisible(False)
             tps[ref] = (fp, p["nets"]["1"])
             continue
@@ -282,6 +286,9 @@ def build():
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(z)
     base.place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
+    for ref in sorted(B_SIDE):
+        fp = board.FindFootprintByReference(ref)
+        fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
     dfm.add_fiducials(board, FIDUCIALS, base.load_fp)
     # the fiducials want 0.65 mm clearance (pad local rule) that Freerouting does not see:
     # a small no-track/no-via area on F.Cu around each one
@@ -301,9 +308,11 @@ def build():
     base.plus_marks(board, ["J1", "J4"], dx=0.0, dy=-1.6)
     base.plus_marks(board, ["J6", "J7"], dx=0.0, dy=1.9)
     charger.pin1_dot(board, CHARGER_FRAME)
-    def text(s, x, y, size=0.8, angle=0):
+    def text(s, x, y, size=0.8, angle=0, layer=pcbnew.F_SilkS):
         t = pcbnew.PCB_TEXT(board)
-        t.SetText(s); t.SetPosition(pt(x, y)); t.SetLayer(pcbnew.F_SilkS)
+        t.SetText(s); t.SetPosition(pt(x, y)); t.SetLayer(layer)
+        if layer == pcbnew.B_SilkS:
+            t.SetMirrored(True)
         t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.12))
         t.SetTextAngleDegrees(angle)
         board.Add(t)
@@ -329,7 +338,8 @@ def build():
     text("LTO", 27.2, (y4("2") + y4("3")) / 2, 0.6)
     # SWD pads: a 5-pin header (SWDIO, 3V3M, GND, SWCLK, NRST)
     for ref, s_ in (("TP11", "IO"), ("TP16", "CLK"), ("TP12", "3V3"), ("TP13", "GND"), ("TP17", "RST")):
-        text(s_, jp(ref, "1"), PLACE[ref][1] + 1.4, 0.6)
+        text(s_, jp(ref, "1"), PLACE[ref][1] + 1.3, 0.6, layer=pcbnew.B_SilkS)
+    text("SWD", 7.28, PLACE["TP11"][1] - 1.3, 0.6, layer=pcbnew.B_SilkS)
     text("solar-smart-mppt v0.3", 26.0, 28.0 + DY, 0.7, 90)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
@@ -361,8 +371,10 @@ SYS_RUN = ((17.05, 38.15), tps(5.8, 9.0))   # kept out from under the TPS63070 (
 # Freerouting closes them badly or not at all on this narrow board
 PRE_ROUTES = [("SYS", ("Q5", "3"), tps(5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1")),
               # MSPM0: the fan-out itself is MCU_STUBS (below); these finish the far ends
-              ("SH_N", (8.2, 52.85), ("C24", "2")), ("OC_G", (16.1, 56.25), ("Q3", "4")),
-              ("OD_CTL", (16.6, 58.2), ("Q6", "1")), ("BAL1", (21.6, 52.85), ("Q7", "1")),
+              ("OC_G", (16.1, 56.25), ("Q3", "4")),
+              ("OD_CTL", (16.6, 58.2), ("Q6", "1")), ("BAL1", (21.8, 52.85), ("Q7", "1")),
+              ("CE", (9.0, 51.3), ("U1", "13")), ("REGN", ("C10", "1"), (10.55, 31.6)),
+              ("VREG", ("TP14", "1"), ("C36", "1")),
               ("BAL2", ("R39", "1"), ("Q10", "1")),
               ("SYS", ("C21", "1"), ("U5", "2")),
               ("SDA_I", ("U4", "12"), ("R13", "2")), ("SCL_I", ("U4", "11"), ("R14", "2")),
@@ -377,35 +389,48 @@ PRE_ROUTES = [("SYS", ("Q5", "3"), tps(5.8, 9.0)), ("SYS", ("R30", "1"), ("C33",
 MCU_STUBS = [
     ("CE", [(11.51, 52.35), (9.0, 52.35), (9.0, 51.3)]),
     ("SH_N", [(11.51, 52.85), (8.2, 52.85)]),
-    ("SWDIO", [(11.51, 53.35), (9.0, 53.35), (9.0, 57.4), (7.46, 57.4), (6.96, 57.9), (6.96, 58.6)]),
-    ("SWCLK", [(11.51, 53.85), (9.5, 53.85), (9.5, 58.6)]),
+    ("SWDIO", [(11.51, 53.35), (9.0, 53.35), (9.0, 57.4), (8.0, 57.4)]),
+    ("SWDIO", [(8.0, 57.4), (7.28, 58.12), (7.28, 59.2)], "B"),
+    ("SWCLK", [(11.51, 53.85), (9.5, 53.85), (9.5, 58.3)]),
+    ("SWCLK", [(9.5, 58.3), (9.82, 58.62), (9.82, 59.2)], "B"),
     ("ADC_VBM", [(11.51, 54.35), (10.3, 54.35), (10.3, 59.7), (9.88, 60.12), (7.2, 60.12)]),
-    ("ADC_CHEM", [(12.25, 55.59), (12.25, 61.7), (9.6, 61.7), (9.6, 63.0)]),
-    ("ADC_VBAT", [(12.75, 55.59), (12.75, 65.32), (9.2, 65.32)]),
+    ("ADC_CHEM", [(12.25, 55.59), (12.25, 61.7), (9.6, 61.7), (9.6, 62.9)]),
+    ("ADC_VBAT", [(12.75, 55.59), (12.75, 65.22), (9.2, 65.22)]),
     ("SH_P", [(13.25, 55.59), (13.25, 66.72), (14.6, 66.72)]),
     ("SH_P", [(14.6, 65.88), (14.6, 67.12)]),
-    ("SH_N", [(13.25, 67.68), (10.85, 67.68)]),
+    ("SH_N", [(13.25, 68.5), (13.25, 67.68), (10.85, 67.68)]),
+    # SH_N on B.Cu from its via at the left side of U4 down under SH_P (a pair from y 62)
+    ("SH_N", [(8.2, 52.85), (11.1, 55.75), (11.1, 60.2), (13.25, 62.35), (13.25, 68.5)], "B"),
+    ("SH_K", [(11.9, 68.68), (11.9, 69.7), (12.1, 69.9)]),
+    ("GND", [(10.4, 66.18), (11.6, 66.18)]),
+    ("GND", [(18.08, 53.85), (20.0, 53.85)]),
     ("OD_CTL", [(13.75, 55.59), (13.75, 58.2), (16.6, 58.2)]),
     ("VCORE", [(14.25, 55.59), (14.25, 56.7), (14.82, 57.27), (14.82, 57.3)]),
     ("OC_G", [(14.75, 55.59), (14.75, 55.95), (15.05, 56.25), (16.1, 56.25)]),
     ("GND", [(15.49, 53.35), (14.6, 53.35)]),
     ("3V3M", [(15.49, 53.85), (17.12, 53.85)]),
     ("NRST", [(15.49, 54.35), (16.3, 54.35), (16.9, 54.95), (18.51, 54.95), (18.51, 55.9)]),
-    ("BAL1", [(15.49, 52.85), (21.6, 52.85)]),
+    ("BAL1", [(15.49, 52.85), (21.8, 52.85)]),
     ("BAL2", [(15.49, 52.35), (22.72, 52.35), (22.72, 51.4)]),
 ]
 # + 4 GND vias in the exposed pad of U4 (its only way to the B.Cu ground plane)
-MCU_VIAS = [("SH_N", (8.2, 52.85)), ("OC_G", (16.1, 56.25)),
+MCU_VIAS = [("SH_N", (8.2, 52.85)), ("SH_N", (13.25, 68.5)), ("OC_G", (16.1, 56.25)),
+            ("SWDIO", (8.0, 57.4)), ("SWCLK", (9.5, 58.3)),
             ("GND", (12.8, 53.1)), ("GND", (13.7, 53.1)), ("GND", (12.8, 54.1)), ("GND", (13.7, 54.1))]
 def add_mcu_stubs(board):
-    for name, pts in MCU_STUBS:
+    for st in MCU_STUBS:
+        name, pts = st[0], st[1]
+        layer = pcbnew.B_Cu if len(st) > 2 and st[2] == "B" else pcbnew.F_Cu
         n = board.FindNet(name)
         for p0, p1 in zip(pts, pts[1:]):
             t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(0.2))
-            t.SetLayer(pcbnew.F_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+            t.SetLayer(layer); t.SetNet(n); t.SetLocked(True); board.Add(t)
     for name, at in MCU_VIAS:
         v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
-        v.SetNet(board.FindNet(name)); v.SetLocked(True); board.Add(v)
+        v.SetNet(board.FindNet(name)); v.SetLocked(True)
+        if name == "GND":   # in the EP of U4: tented from below so no solder runs out
+            v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
+        board.Add(v)
 # hand routes kept from v0.2 (TPS63070 control pins with the R31 move, VSEL / FB2 B.Cu hops,
 # the C31 / C35 GND vias, REGN / TS at the BQ25798): fixed wiring, board mm
 HAND_ROUTES = os.path.join(HERE, "hand_routes.json")

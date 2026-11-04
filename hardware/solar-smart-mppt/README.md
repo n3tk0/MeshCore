@@ -38,8 +38,7 @@ answers in the project thread (phase 2).
 | J6 OUT | + / − | SYS through a discrete ideal diode (Q5 AO3401A + Q9/Q11 MMBT3906): battery or charger voltage, up to 5.6 V with LTO |
 | J7 U | + / − | TPS63070 buck-boost, 3.3 V or 5.0 V (JP6), on/off by JP5 |
 | J5 I2C host | SCL SDA 3V3 GND | to the repeater; **no pull-ups on this board** (the repeater has them); 3V3 is not used here; the bus must be 3.3 V (PA10/PA11 are not 5 V tolerant) |
-| TP12, TP13, TP11, TP16 | 3V3M, GND, SWDIO, SWCLK | SWD, one row at 2.54 mm left of the MCU, left to right (a 4-pin header or pogo pins) |
-| TP17 | NRST | reset pad right of the MCU (SWD works without it) |
+| TP12, TP13, TP11, TP16, TP17 | 3V3M, GND, SWDIO, SWCLK, NRST | SWD on the **bottom side**, one row at 2.54 mm under the MCU band, left to right seen from the top (a 5-pin header or pogo pins from below) |
 
 ## Jumpers
 | Jumper | Open | 1-2 | 2-3 |
@@ -69,6 +68,9 @@ answers in the project thread (phase 2).
   (OPA + COMP0 with the DAC threshold) and by the BQ25798 BATFET OCP.
 - **Shunt:** 20 mΩ 1 % (±3.2 A). R21/R22 (10k) take Kelvin taps from both shunt ends, R23/R24 (1M to 3V3M)
   lift both inputs by ~33 mV so they stay above 0 V while discharging, C24 100 nF across them.
+  The GND-end tap is a real Kelvin connection: R22 sits on its own net SH_K, joined to the RS1 GND
+  pad by the net tie NT1, so load current in the GND pour does not shift the reading.
+  SH_P runs straight down from the MCU on F.Cu with SH_N under it on B.Cu (a pair).
   SH_P → PA25 (OPA0 IN+), SH_N → PA18 (OPA1 IN+). Positive = charging.
   The offset is calibrated at zero current. Firmware: keep the OPA1 output pin off (PA16 is I2C1 SDA)
   and the OPA0 output pin PA22 unused; PA18 is also the BSL pin and sits at ~33 mV at reset (no BSL).
@@ -99,7 +101,7 @@ answers in the project thread (phase 2).
 | 1 | PA1 | – | not connected (open-drain only) |
 | 18 | PA22 | – | OPA0 output pin, not connected (keep the OPA0 output off the pin) |
 | 15 / 16 / 2 | PA19 / PA20 / NRST | SWD | TP11 / TP16 / TP17 |
-| 3 / 23 / 4, EP | VDD / VCORE / VSS | | 3V3M, 470 nF, GND (4 vias in the EP) |
+| 3 / 23 / 4, EP | VDD / VCORE / VSS | | 3V3M, 470 nF, GND (4 vias in the EP, tented from below) |
 
 The pins are grouped by direction so every pin leaves the package without crossing: up (I2C, CE,
 LED, J7 EN), left (SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, OC_G), right (balancing, NRST).
@@ -112,7 +114,8 @@ LED, J7 EN), left (SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, OC_G), ri
 - MCU band under the charger: MSPM0 turned 180°, its fan-out drawn by hand (`MCU_STUBS` in
   `tools/gen_pcb.py`): SWD row and HT7533 on the left, BM / VBAT dividers and JP4 under the MCU,
   balancing FETs Q8/Q10 on the right next to R37/R41.
-- Shunt filter (C24, R21–R24) at the shunt RS1; SH_P runs straight down from the MCU, SH_N on B.Cu.
+- Shunt filter (C24, R21–R24) and net tie NT1 at the shunt RS1; SH_P on F.Cu, SH_N under it on B.Cu.
+- MLCCs keep ≥ 0.9 mm from the V-cut edges (C21 turned parallel to the cut).
 - BMS, shunt, fuse at the bottom next to J4.
 
 ## Files and tools
@@ -137,8 +140,8 @@ KiCad 10 (kicad-cli + pcbnew Python).
 Routing order: `python3 tools/gen_pcb.py` (placement + pre-routes), `tools/run.py route`,
 `tools/run.py finish`, `tools/patch2.py` for what is still open, `tools/run.py refill`.
 Freerouting is not deterministic, so the committed `.kicad_pcb` is the reference. After the v0.3
-route, CE, 3V3M to R24, SCL_I, REGN to C10, VREG to TP14 and the C28 GND were closed with
-`patch2.py` on it; orphan teardrop pieces were removed.
+route and the finish pass, TS, SYS / VOUT at the ideal diode, SDA_I and SCL_I were closed with
+`patch2.py` on it (CE, REGN to C10 and VREG to TP14 are pre-routes in `gen_pcb.py`).
 
 Known layout compromises / DRC leftovers:
 - Some tented GND vias sit in the courtyard margin of 0402 parts (never closer than 0.15 mm to a pad).

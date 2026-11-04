@@ -236,7 +236,10 @@ RS("R19", "100k", 326, 262, "OD_CTL", "GND", R100K)
 RS("R20", "1M", 380, 262, "OC_G", "3V3M", R1M)
 # shunt sense: 10k + 1M bias to 3V3M keeps both inputs above 0 V at -3.2 A
 RS("R21", "10k", 420, 226, "BATT_S", "SH_P", R10K, rot=270)
-RS("R22", "10k", 420, 246, "GND", "SH_N", R10K, rot=270)
+RS("R22", "10k", 420, 246, "SH_K", "SH_N", R10K, rot=270)
+# Kelvin tap of the shunt's GND end: its own net up to the RS1 GND pad, joined there by a net tie
+# (load current in the GND pour does not reach the SH_N reading)
+P("NT1", "Device:NetTie_2", "NetTie", 420, 262, {"1": "SH_K", "2": "GND"}, "NetTie:NetTie-2_SMD_Pad0.5mm", rot=90)
 RS("R23", "1M", 440, 212, "3V3M", "SH_P", R1M)
 RS("R24", "1M", 452, 212, "3V3M", "SH_N", R1M)
 # one differential filter cap across the PGA inputs: no CMRR loss from two caps to GND
@@ -338,7 +341,15 @@ for i in range(2):
     P("H%d" % (i + 1), "Mechanical:MountingHole", "M2", 575 + i * 15, 90, {},
       "MountingHole:MountingHole_2.2mm_M2", blk=-1)
 
-write_bom = base.write_bom
+def write_bom():
+    """base.write_bom without the net ties (copper only, neither JLC nor hand parts)."""
+    ties = [p for p in parts if p["ref"].startswith("NT")]
+    for p in ties:
+        parts.remove(p)
+    try:
+        return base.write_bom()
+    finally:
+        parts.extend(ties)
 
 def emit():
     return base.emit().replace('(paper "A3")', '(paper "A2")', 1)
