@@ -33,7 +33,7 @@ bool BQ25798::valid(const BQ25798Settings& s) {
   if (s.ichg_ma < BQ_ICHG_MIN || s.ichg_ma > BQ_ICHG_MAX) return false;
   if (s.vindpm_mv != 0 && (s.vindpm_mv < BQ_VINDPM_MIN || s.vindpm_mv > BQ_VINDPM_MAX)) return false;
   if (s.ntc > 1 || s.shipfet > 1) return false;
-  if (s.cutoff_mv != 0 && (s.cutoff_mv < 2900 || s.cutoff_mv > 3800)) return false;
+  if (s.cutoff_mv != 0 && (s.cutoff_mv < BQ_CUTOFF_MIN || s.cutoff_mv > cutoffMax(s.chem))) return false;
   return true;
 }
 
@@ -66,6 +66,9 @@ bool BQ25798::begin(uint32_t now) {
   _found = false;
   if (!read(BQ_REG_PART, &part, 1) || ((part >> 3) & 0x07) != 3) return false;   // PN 011b = BQ25798
   _found = true;
+  // a new start (also when it comes back after I2C errors): nothing carried over from before
+  _low_timing = _adc_pending = _shutdown_sent = false;
+  _r.valid = false;
   // the watchdog off at once: its 40 s would otherwise run out while the node boots
   uint8_t c1;
   if (read(BQ_REG_CTRL1, &c1, 1) && (c1 & 0x3F) != 0) write8(BQ_REG_CTRL1, c1 & 0xC0);   // VAC_OVP 26 V
@@ -73,7 +76,7 @@ bool BQ25798::begin(uint32_t now) {
   return true;
 }
 
-void BQ25798::apply(const BQ25798Settings& s, uint32_t now) {
+void BQ25798::apply(const BQ25798Settings& s) {
   if (!valid(s)) return;
   bool vreg_changes = !_applied || s.chem != _s.chem;
   _s = s;
@@ -82,11 +85,10 @@ void BQ25798::apply(const BQ25798Settings& s, uint32_t now) {
   if (vreg_changes) setCE(false);   // nothing charges until the new VREG reads back
   uint8_t st[7];
   if (read(BQ_REG_STAT0, st, sizeof(st))) memcpy(_status, st, sizeof(st));
-  enforce(now);
+  enforce();
 }
 
-void BQ25798::enforce(uint32_t now) {
-  (void)now;
+void BQ25798::enforce() {
   uint8_t c[BQ_CONFIG_LEN];
   if (!read(BQ_REG_VSYSMIN, c, sizeof(c))) return;
 
@@ -107,6 +109,10 @@ void BQ25798::enforce(uint32_t now) {
     }
   }
   if (vreg == want_vreg && !_ce_on) setCE(true);
+
+  // VSYSMIN under a LiFePO4 cell's plateau: MPPT does not run while VBAT < VSYSMIN (power-on: 3.5 V)
+  uint8_t want_sys = (uint8_t)((vsysminFor(_s.chem) - 2500) / 250);
+  if ((c[BQ_REG_VSYSMIN] & 0x3F) != want_sys) write8(BQ_REG_VSYSMIN, want_sys);
 
   uint16_t want_ichg = _s.ichg_ma / 10;
   if ((((c[BQ_REG_ICHG] << 8) | c[BQ_REG_ICHG + 1]) & 0x1FF) != want_ichg) write16(BQ_REG_ICHG, want_ichg);
@@ -132,7 +138,7 @@ void BQ25798::enforce(uint32_t now) {
     if ((m & 0xFE) != BQ_MPPT_BASE || (can && !(m & 1))) {
       uint8_t v = BQ_MPPT_BASE | (can ? 1 : (m & 1));
       if (write8(BQ_REG_MPPT, v)) m = v;
-      if (can && read(BQ_REG_MPPT, &m, 1) && !(m & 1)) { /* not taken now: tried again in 10 s */ }
+      if (can) read(BQ_REG_MPPT, &m, 1);   // what the chip took (not taken: tried again in 10 s)
     }
   } else {
     if (m != BQ_MPPT_BASE && write8(BQ_REG_MPPT, BQ_MPPT_BASE)) m = BQ_MPPT_BASE;
@@ -206,7 +212,7 @@ void BQ25798::loop(uint32_t now) {
   uint8_t st[7];
   if (!read(BQ_REG_STAT0, st, sizeof(st))) return;
   memcpy(_status, st, sizeof(st));
-  if (_applied) enforce(now);
+  if (_applied) enforce();
   adc(now);
   uint8_t state = chargeState();
   if (state == 7 && _prev_state != 7) _full = true;   // charge done: the cell is full

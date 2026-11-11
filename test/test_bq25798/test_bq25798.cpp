@@ -80,6 +80,10 @@ static BQ25798Settings settings(uint8_t chem = BQ_CHEM_LIION) {
   return s;
 }
 
+static void runFor(BQ25798& bq, uint32_t& t, uint32_t ms) {
+  for (uint32_t end = t + ms; t < end; ) { t += 10000; bq.loop(t); }
+}
+
 TEST(BQ25798, FindsThePartAndStopsTheWatchdog) {
   FakeBQ f;
   BQ25798 bq(f);
@@ -103,7 +107,7 @@ TEST(BQ25798, LiIonDefaults) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   EXPECT_EQ(f.get16(0x01), 420);
   EXPECT_EQ(f.get16(0x03), 100);
   EXPECT_EQ(f.get16(0x06), 300);
@@ -119,7 +123,7 @@ TEST(BQ25798, LiFePO4NeverChargesTowards42V) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(BQ_CHEM_LIFEPO4), 0);
+  bq.apply(settings(BQ_CHEM_LIFEPO4));
   ASSERT_FALSE(f.ce_log.empty());
   EXPECT_FALSE(f.ce_log.front());       // CE held off first
   EXPECT_EQ(f.get16(0x01), 360);
@@ -138,9 +142,6 @@ TEST(BQ25798, LiFePO4NeverChargesTowards42V) {
 }
 
 TEST(BQ25798, VregThatWillNotTakeKeepsChargingOff) {
-  FakeBQ f;
-  BQ25798 bq(f);
-  bq.begin(0);
   // a chip that ignores the VREG write
   struct Stuck : public FakeBQ {
     bool writeRegs(uint8_t reg, const uint8_t* buf, uint8_t n) override {
@@ -150,15 +151,43 @@ TEST(BQ25798, VregThatWillNotTakeKeepsChargingOff) {
   } s;
   BQ25798 bq2(s);
   bq2.begin(0);
-  bq2.apply(settings(BQ_CHEM_LIFEPO4), 0);
+  bq2.apply(settings(BQ_CHEM_LIFEPO4));
   EXPECT_FALSE(s.ce_on);
+}
+
+TEST(BQ25798, LiFePO4LowersVsysminSoMpptCanRun) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings(BQ_CHEM_LIFEPO4));
+  EXPECT_EQ(f.r[0x00] & 0x3F, 2);       // 3.0 V
+  bq.apply(settings(BQ_CHEM_LIION));
+  EXPECT_EQ(f.r[0x00] & 0x3F, 4);       // 3.5 V
+  EXPECT_EQ(f.get16(0x01), 420);
+}
+
+TEST(BQ25798, RestartAfterAnOutageStartsTheLowTimerAgain) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  f.adcValues(3250, -40, 0, 0);
+  runFor(bq, t, 3 * 60000);
+  bq.begin(t + 3600000);                // off for I2C errors for an hour, then back
+  bq.apply(settings());
+  t += 3600000;
+  runFor(bq, t, 60000);
+  EXPECT_EQ((f.r[0x11] >> 1) & 3, 0);   // not at once: 5 more minutes first
+  runFor(bq, t, 6 * 60000);
+  EXPECT_EQ((f.r[0x11] >> 1) & 3, 1);
 }
 
 TEST(BQ25798, MpptComesBackEachMorning) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   EXPECT_EQ(f.r[0x15] & 1, 0);          // night: the chip will not take it
   uint32_t t = 0;
   f.sun(true);
@@ -190,7 +219,7 @@ TEST(BQ25798, FixedInputVoltage) {
   s.vindpm_mv = 15000;
   f.sun(true);
   f.r[0x15] |= 1;
-  bq.apply(s, 0);
+  bq.apply(s);
   EXPECT_EQ(f.r[0x15] & 1, 0);
   EXPECT_EQ(f.r[0x05], 150);
 }
@@ -199,7 +228,7 @@ TEST(BQ25798, ReadsTheAdc) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   f.adcValues(3950, -120, 0, 0);
   bq.loop(0);                           // starts a conversion
   EXPECT_FALSE(bq.reading().valid);
@@ -213,15 +242,11 @@ TEST(BQ25798, ReadsTheAdc) {
   EXPECT_EQ(bq.adcCount(), 1u);
 }
 
-static void runFor(BQ25798& bq, uint32_t& t, uint32_t ms) {
-  for (uint32_t end = t + ms; t < end; ) { t += 10000; bq.loop(t); }
-}
-
 TEST(BQ25798, EmptyBatteryWithNoSunShutsDown) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   uint32_t t = 0;
   f.adcValues(3250, -40, 0, 0);
   runFor(bq, t, 4 * 60000);
@@ -236,7 +261,7 @@ TEST(BQ25798, NoShutdownWithSunOrWithoutShipFet) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   uint32_t t = 0;
   f.adcValues(3250, 200, 5000, 300);
   f.sun(true);
@@ -248,7 +273,7 @@ TEST(BQ25798, NoShutdownWithSunOrWithoutShipFet) {
   bq2.begin(0);
   BQ25798Settings s = settings();
   s.shipfet = 0;
-  bq2.apply(s, 0);
+  bq2.apply(s);
   g.adcValues(3250, -40, 0, 0);
   t = 0;
   runFor(bq2, t, 10 * 60000);
@@ -260,7 +285,7 @@ TEST(BQ25798, AdcThatStopsMeansUnder29V) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   uint32_t t = 0;
   f.adcValues(3400, -40, 0, 0);
   runFor(bq, t, 30000);
@@ -274,7 +299,7 @@ TEST(BQ25798, ShipModeCommand) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   f.sun(true);
   EXPECT_EQ(bq.shipMode(), -1);
   f.sun(false);
@@ -282,7 +307,7 @@ TEST(BQ25798, ShipModeCommand) {
   EXPECT_EQ((f.r[0x11] >> 1) & 3, 2);
   BQ25798Settings s = settings();
   s.shipfet = 0;
-  bq.apply(s, 0);
+  bq.apply(s);
   EXPECT_EQ(bq.shipMode(), -2);
 }
 
@@ -290,7 +315,7 @@ TEST(BQ25798, ChargeDoneIsReportedOnce) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(), 0);
+  bq.apply(settings());
   f.r[0x1C] = 3 << 5;
   bq.loop(0);
   EXPECT_FALSE(bq.takeFull());
@@ -316,13 +341,18 @@ TEST(BQ25798, SettingsValidation) {
   s = settings();
   s.cutoff_mv = 0;
   EXPECT_TRUE(BQ25798::valid(s));
+  s = settings(BQ_CHEM_LIFEPO4);
+  s.cutoff_mv = 3500;                   // over a LiFePO4 cell's resting voltage: off every evening
+  EXPECT_FALSE(BQ25798::valid(s));
+  s.cutoff_mv = 3000;
+  EXPECT_TRUE(BQ25798::valid(s));
 }
 
 TEST(BQ25798, StatusLineFits) {
   FakeBQ f;
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(BQ_CHEM_LIFEPO4), 0);
+  bq.apply(settings(BQ_CHEM_LIFEPO4));
   f.adcValues(3300, 1500, 17950, 450);
   f.sun(true);
   f.r[0x20] = 0x40;
