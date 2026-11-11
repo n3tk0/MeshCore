@@ -167,6 +167,10 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void handlePowerSaveCommand(char* args, char* reply);
   void handleBatteryCommand(char* args, char* reply);
   void loadBatteryCapacity();
+#if ENV_INCLUDE_BQ25798
+  void loadCharger();
+  void handleChargerCommand(char* args, char* reply);
+#endif
   void formatSelfTest(char* reply);
 #ifdef WITH_TELEMETRY_HISTORY
   TelemetryHistory history;

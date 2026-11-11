@@ -120,6 +120,42 @@ static Adafruit_INA219 INA219(TELEM_INA219_ADDRESS);
 static BatteryGauge ina_gauge;   // in the battery line: its current is counted every 10 s
 #endif
 
+#if ENV_INCLUDE_BQ25798
+#include <helpers/sensors/BQ25798.h>
+// the charger on its I2C bus; ~CE on a pin when the board has one (xiao-solar-lite: D0)
+class WireBQ25798Bus : public BQ25798Bus {
+public:
+  TwoWire* wire = NULL;
+  bool readRegs(uint8_t reg, uint8_t* buf, uint8_t n) override {
+    if (wire == NULL) return false;
+    wire->beginTransmission(BQ25798_ADDR);
+    wire->write(reg);
+    if (wire->endTransmission(false) != 0) return false;
+    if (wire->requestFrom((uint8_t)BQ25798_ADDR, (uint8_t)n) != n) return false;
+    for (uint8_t i = 0; i < n; i++) buf[i] = wire->read();
+    return true;
+  }
+  bool writeRegs(uint8_t reg, const uint8_t* buf, uint8_t n) override {
+    if (wire == NULL) return false;
+    wire->beginTransmission(BQ25798_ADDR);
+    wire->write(reg);
+    for (uint8_t i = 0; i < n; i++) wire->write(buf[i]);
+    return wire->endTransmission() == 0;
+  }
+  void setChargeEnable(bool on) override {
+  #ifdef BQ25798_PIN_CE
+    pinMode(BQ25798_PIN_CE, OUTPUT);
+    digitalWrite(BQ25798_PIN_CE, on ? LOW : HIGH);   // ~CE: low = charge
+  #else
+    (void)on;
+  #endif
+  }
+};
+static WireBQ25798Bus bq_bus;
+static BQ25798 bq_charger(bq_bus);
+static BatteryGauge bq_gauge;   // fed from the charger's ADC every 10 s
+#endif
+
 #if ENV_INCLUDE_INA260
 #ifndef TELEM_INA260_ADDRESS
 #define TELEM_INA260_ADDRESS    0x41      // INA260 single channel current sensor I2C address
@@ -398,6 +434,33 @@ static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 }
 #endif
 
+#if ENV_INCLUDE_BQ25798
+static uint8_t init_bq25798(TwoWire* wire, uint8_t) {
+  bq_bus.wire = wire;
+  if (!bq_charger.begin(millis())) return 0;
+  if (bq_charger.applied()) bq_charger.apply(bq_charger.settings(), millis());   // back after an outage: set up again
+  return 2;   // channel 1: battery, channel 2: panel
+}
+static void query_bq25798(uint8_t ch, uint8_t sub, CayenneLPP& lpp) {
+  const BQ25798Reading& r = bq_charger.reading();
+  if (!r.valid) return;
+  if (sub == 0) {
+    float amps = -r.ibat_ma / 1000.0f;   // as an INA219 in the battery line: + = out of the battery
+    lpp.addVoltage(ch, r.vbat_mv / 1000.0f);
+    lpp.addCurrent(ch, amps < 0 ? -amps : amps);
+    lpp.addAnalogInput(ch, amps);
+    int pct = bq_gauge.percent();
+    if (pct >= 0) lpp.addPercentage(ch, pct);
+  } else {
+    float v = bq_charger.vbusPresent() ? r.vbus_mv / 1000.0f : 0;
+    float a = bq_charger.vbusPresent() && r.ibus_ma > 0 ? r.ibus_ma / 1000.0f : 0;
+    lpp.addVoltage(ch, v);
+    lpp.addCurrent(ch, a);
+    lpp.addPower(ch, v * a);
+  }
+}
+#endif
+
 #if ENV_INCLUDE_INA260
 static uint8_t init_ina260(TwoWire* wire, uint8_t addr) {
   return INA260.begin(addr, wire) ? 1 : 0;
@@ -599,6 +662,9 @@ static const SensorDef SENSOR_TABLE[] = {
 #if ENV_INCLUDE_INA3221
   { TELEM_INA3221_ADDRESS, "INA3221",      init_ina3221,  query_ina3221  },
 #endif
+#if ENV_INCLUDE_BQ25798
+  { BQ25798_ADDR,          "BQ25798",      init_bq25798,  query_bq25798  },
+#endif
 #if ENV_INCLUDE_INA219
   { TELEM_INA219_ADDRESS,  "INA219",       init_ina219,   query_ina219   },
 #endif
@@ -697,6 +763,9 @@ bool EnvironmentSensorManager::begin() {
     #if ENV_INCLUDE_INA219
     if (def.init == init_ina219) _ina219_found = true;
     #endif
+    #if ENV_INCLUDE_BQ25798
+    if (def.init == init_bq25798) _bq_found = true;
+    #endif
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
       _active_sensors[_active_sensor_count++] = { def.query, def.init, sub, def.address, def.name, 0, false, 0, 0 };
     }
@@ -723,6 +792,9 @@ bool EnvironmentSensorManager::begin() {
 // An INA219 sits in the battery line (battery on Vin+, the load and charger on Vin-): the battery is the
 // bus voltage plus the drop over the shunt. 0 without one: the board's own reading counts.
 uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
+  #if ENV_INCLUDE_BQ25798
+  if (bqActive() && bq_charger.reading().valid) return bq_charger.reading().vbat_mv;   // the last ADC, no I2C here
+  #endif
   #if ENV_INCLUDE_INA219
   if (_ina219_found) {
     for (int i = 0; i < _active_sensor_count; i++) {
@@ -809,7 +881,45 @@ void EnvironmentSensorManager::retryOffSensors() {
   }
 }
 
+#if ENV_INCLUDE_BQ25798
+bool EnvironmentSensorManager::bqActive() const {
+  if (!_bq_found) return false;
+  for (int i = 0; i < _active_sensor_count; i++) {
+    if (_active_sensors[i].query == query_bq25798 && _active_sensors[i].off) return false;
+  }
+  return true;
+}
+
+void EnvironmentSensorManager::bqLoop() {
+  if (!bqActive()) return;
+  uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+  uint32_t polls = bq_charger.polls();
+  uint32_t adcs = bq_charger.adcCount();
+  bq_charger.loop(millis());
+  if (bq_charger.polls() == polls) return;   // not its turn (every 10 s)
+  noteRead(query_bq25798, errors);           // 3 polls in a row with I2C errors: off, tried again later
+  if (bq_charger.takeFull()) bq_gauge.markFull();
+  if (bq_charger.adcCount() == adcs) return;
+  const BQ25798Reading& r = bq_charger.reading();
+  uint32_t t = day_clock ? day_clock() : 0;
+  uint32_t day = t >= 1735689600UL ? t / 86400 : 100000 + millis() / 86400000UL;   // as for the INA219
+  bq_gauge.update(millis(), r.vbat_mv, -r.ibat_ma, day);   // the gauge counts + = out of the battery
+}
+
+BQ25798* EnvironmentSensorManager::getCharger() {
+  return _bq_found ? &bq_charger : NULL;
+}
+
+int EnvironmentSensorManager::externalPower() {
+  if (!bqActive()) return -1;
+  return bq_charger.vbusPresent() ? 1 : 0;
+}
+#endif
+
 BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
+  #if ENV_INCLUDE_BQ25798
+  if (_bq_found) return &bq_gauge;
+  #endif
   #if ENV_INCLUDE_INA219
   if (_ina219_found) return &ina_gauge;
   #endif
@@ -1093,6 +1203,9 @@ void EnvironmentSensorManager::stop_gps() {
 void EnvironmentSensorManager::loop() {
   retryOffSensors();
   sampleBatteryGauge();
+  #if ENV_INCLUDE_BQ25798
+  bqLoop();
+  #endif
 
   #if ENV_INCLUDE_GPS
   static unsigned long next_gps_update = 0;
