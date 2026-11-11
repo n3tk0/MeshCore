@@ -19,7 +19,7 @@ bool bq_refresh(bq_t *b) {
   // two blocks keep each transfer short
   bool ok = b->bus->read(0x00, tmp, 0x30) && b->bus->read(0x30, tmp + 0x30, BQ_NREGS - 0x30);
   if (ok) { memcpy(b->r, tmp, sizeof(tmp)); b->errors = 0; }
-  else { if (b->errors < 255) b->errors++; b->configured = false; }
+  else if (b->errors < 255) b->errors++;
   b->ok = ok;
   return ok;
 }
@@ -92,7 +92,6 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
     if (img[reg] != b->r[reg]) ok = wr8(b, reg, img[reg]);
   }
   if (ok && img[BQ_REG_CTRL0] != b->r[BQ_REG_CTRL0]) ok = wr8(b, BQ_REG_CTRL0, img[BQ_REG_CTRL0]);
-  b->configured = ok;
   return ok;
 }
 

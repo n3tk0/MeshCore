@@ -89,7 +89,6 @@ void bms_step(bms_t *b, const settings_t *s, uint8_t chem, const bms_in_t *in, b
   if (b->bal1 || b->bal2) st |= ST_BALANCING;
   if (b->j7_on) st |= ST_J7_ON;
   if (in->sun) st |= ST_SUN;
-  if (in->ntc_missing) st |= ST_NTC_MISSING;
   if (in->bq_fault) st |= ST_BQ_FAULT;
   if (in->bq_i2c_err) st |= ST_BQ_I2C_ERR;
   o->status = st;

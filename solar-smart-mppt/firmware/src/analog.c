@@ -105,6 +105,8 @@ void GROUP1_IRQHandler(void) {
   }
 }
 
+bool analog_short_pending(void) { return short_flag; }
+
 bool analog_short_tripped(void) {
   bool f = short_flag;
   short_flag = false;

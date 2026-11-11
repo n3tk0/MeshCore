@@ -96,8 +96,8 @@ typedef struct {
   uint16_t ina_config, ina_mask, ina_alert;
   volatile uint8_t pending_cmd;
   volatile uint16_t result;
-  volatile bool settings_changed;
-  uint32_t unlock_until_ms;
+  bool unlocked;             // UNLOCK_KEY written at unlock_at_ms, not used yet
+  uint32_t unlock_at_ms;
   uint32_t now_ms;           // set by the main loop
 } regs_t;
 

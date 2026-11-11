@@ -73,7 +73,7 @@ A settings write is checked at once (limits from the chemistry and the board: 3 
 range, 5.5 V parts on SYS) and works at once; RESULT says why it was refused. It stays only after SAVE.
 Changing `chem` loads that chemistry's voltage defaults (currents, capacity and calibration stay).
 
-Expert writes (BQ25798 registers 0x03..0x18 except 0x11) are applied after our own; the bits we manage
+Expert writes (BQ25798 registers 0x03..0x18 except 0x0A cell count and 0x11) are applied after our own; the bits we manage
 (VSYSMIN, VREG, ICHG, IINDPM, VINDPM, VOC_PCT/EN_MPPT, TS_IGNORE, WATCHDOG, ship, ADC_EN, EN_CHG) always win.
 
 Commands (write to 0x61; `*` = write 0xA55A to 0x60 first, valid 2 s, one command):

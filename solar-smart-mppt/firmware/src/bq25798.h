@@ -41,7 +41,6 @@ typedef struct {
   const bq_bus_t *bus;
   uint8_t r[BQ_NREGS];        // last read of every register
   bool ok;                    // last refresh worked
-  bool configured;            // our settings are in the chip
   bool ntc_present;
   uint8_t errors;             // bus errors in a row
 } bq_t;

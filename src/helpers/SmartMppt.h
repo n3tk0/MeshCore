@@ -11,6 +11,4 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-#define SMPPT_ADDR 0x42
-
 void smpptCommand(TwoWire& wire, const char* args, char* reply, size_t max);
