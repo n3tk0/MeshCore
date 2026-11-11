@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates xiao-solar.kicad_sch (KiCad 7+) from the part list below.
 
-Parts are arranged in a continuous left-to-right functional flow (Solar/VIN2 input ->
+Parts are arranged in a continuous left-to-right functional flow (Solar input ->
 BQ25798 MPPT buck-boost charger with L1/bootstrap above and NTC/PROG below ->
 SYS ideal-diode feed to XIAO+Wio & I2C on top-right, BAT Ship-FET + DW01A/HJ8205 BMS +
 20 mOhm shunt + Battery on bottom-right, MSPM0L1306 supervisor + heater on the far right)
@@ -278,15 +278,12 @@ C100N0402HV = "C131394"  # 100nF 50V X7R 0402 (PMID: up to 25 V)
 # ==============================================================================
 
 # ---- 1. Solar & Aux Inputs -> VBUS & PMID rails (Left of U1) -----------------
-BLOCK(20, 22, "1. ВХОДОВЕ (5-22 V соларен панел + втори вход) -> MPPT ЗАРЯДНО BQ25798 (1S, 750 kHz, 2.2 uH)")
+BLOCK(20, 22, "1. ВХОД (5-22 V соларен панел, SS54 срещу обърнат поляритет) -> MPPT ЗАРЯДНО BQ25798 (1S, 750 kHz, 2.2 uH)")
 P("J1", "Connector_Generic:Conn_01x02", "SOLAR", 28, 78.0, {"1": "SOLAR_IN", "2": "GND"}, CONN2, mirror=True)
 P("D1", "Device:D_Schottky", "SS54", 46, 78.0, {"2": "SOLAR_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C22452", mirror=True)
-P("J2", "Connector_Generic:Conn_01x02", "VIN2 5-20V", 28, 95.0, {"1": "VIN2_IN", "2": "GND"}, CONN2, mirror=True)
-P("D2", "Device:D_Schottky", "SS54", 46, 95.0, {"2": "VIN2_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C22452", mirror=True)
 
 # VBUS rail at y = 78.0 from D1 (x=49.81) across D3, C1..C3, TP3 and down into U1.VBUS/VAC1/VAC2
 RAIL("VBUS", [(49.81, 78.0), (116.0, 78.0), (116.0, 109.92), (124.76, 109.92)])
-RAIL("VBUS", [(49.81, 95.0), (55.0, 95.0), (55.0, 78.0)])
 RAIL("VBUS", [(116.0, 109.92), (116.0, 117.54), (124.76, 117.54)])
 RAIL("VBUS", [(116.0, 112.46), (124.76, 112.46)])
 RAIL("VBUS", [(116.0, 115.00), (124.76, 115.00)])
