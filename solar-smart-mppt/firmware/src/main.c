@@ -145,8 +145,8 @@ int main(void) {
       __disable_irq(); s = R.set; __enable_irq();
       chem_active = active_chem(&s);
 
-      analog_t a;
-      analog_read(&a);
+      static analog_t a;           // the last good reading stays if the ADC did not finish
+      bool adc_ok = analog_read(&a);
       last_shunt_uv = a.shunt_uv;
       last_sh_n_mv = a.sh_n_mv;
       int32_t ib = (a.shunt_uv - s.zero_uv) * 1000 / (int32_t)s.shunt_uohm;   // mA, + = charging
@@ -183,7 +183,7 @@ int main(void) {
       bool done = bq.ok && chg_stat == BQ_CHG_DONE;
       if (done && !was_done) gauge_full(&gauge, &s);   // once, on the way into "charge done"
       if (bq.ok) was_done = done;
-      gauge_step(&gauge, &s, (int16_t)ib, dt);
+      if (adc_ok) gauge_step(&gauge, &s, (int16_t)ib, dt);
       if ((uint32_t)(now - last_save) >= 3600000u) { last_save = now; save_gauge(); }
 
       bool from_v;

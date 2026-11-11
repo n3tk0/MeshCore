@@ -31,7 +31,7 @@ typedef struct {
 } analog_t;
 
 void analog_init(void);
-void analog_read(analog_t *a);
+bool analog_read(analog_t *a);   // false: ADC did not finish, *a unchanged
 // short circuit: discharge above isc_ma trips COMP0 (the ISR turns OD off at once)
 void analog_set_short(uint16_t isc_ma, uint16_t shunt_uohm, uint16_t sh_n_mv);
 bool analog_short_tripped(void);  // and clears the flag

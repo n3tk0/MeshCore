@@ -56,6 +56,8 @@ static void begin(bool read) {
 void I2C0_IRQHandler(void) {
   switch (DL_I2C_getPendingInterrupt(I2C0)) {
     case DL_I2C_IIDX_TARGET_START:
+      // write <reg>, repeated START, read: the register byte may still sit in the RX FIFO
+      while (!DL_I2C_isTargetRXFIFOEmpty(I2C0)) { begin(false); i2cproto_rx(DL_I2C_receiveTargetData(I2C0)); }
       finish();                     // a repeated START ends the previous part
       active = true;
       dir_known = false;
