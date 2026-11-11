@@ -157,3 +157,5 @@ Known layout compromises / DRC leftovers:
   EP vias tented, MLCCs away from the V-cut. Argon review: R44 470 kΩ (Q5 fully on at 0 V drop),
   L2 2.2 µH = same part as L1 (one extended type less, L2 had only 944 in stock), R4 / R6 in 0402
   (BOM 43 → 40 lines).
+  CPL 2026-11-11: LEDs D4 / D6 / D7 turned 180° (JLC preview showed them reversed; no LED
+  offset for this board in tools/run.py).
