@@ -43,6 +43,8 @@ static void test_settings(void) {
   settings_defaults(&s, CHEM_LIION);
   s.expert_n = 1; s.expert[0] = 0x0100 | 0xFF;         // VREG high byte: refused
   CHECK(settings_check(&s, CHEM_LIION) == ERR_RANGE);
+  s.expert[0] = 0x0AC3;                                // cell count: refused
+  CHECK(settings_check(&s, CHEM_LIION) == ERR_RANGE);
   s.expert[0] = 0x1500 | 0x09;                         // MPPT timing bits: allowed
   CHECK(settings_check(&s, CHEM_LIION) == ERR_OK);
 
@@ -136,7 +138,7 @@ static void test_regs(void) {
 
   // settings
   wr(ADDR_SMPPT, R_ICHG, 800);
-  CHECK(R.result == ERR_OK && R.set.ichg_ma == 800 && R.settings_changed);
+  CHECK(R.result == ERR_OK && R.set.ichg_ma == 800);
   wr(ADDR_SMPPT, R_VCHG, 4400);
   CHECK(R.result == ERR_RANGE && R.set.vchg_mv == 4200);
   wr(ADDR_SMPPT, R_ID, 1);
@@ -146,6 +148,11 @@ static void test_regs(void) {
   CHECK(R.result == ERR_OK && R.set.chem == CHEM_LFP && R.set.vchg_mv == 3600 && R.set.ichg_ma == 800);
   wr(ADDR_SMPPT, R_CHEM_SET, 7);
   CHECK(R.result == ERR_RANGE);
+  // the next write is checked against the new chemistry at once (R.live is a second late)
+  wr(ADDR_SMPPT, R_ICHG, 600);
+  CHECK(R.result == ERR_OK && R.set.ichg_ma == 600);
+  wr(ADDR_SMPPT, R_CHEM_SET, CHEM_BY_JUMPER);             // back to the jumper (Li-ion): its voltages
+  CHECK(R.result == ERR_OK && R.set.vchg_mv == 4200);
 
   // protected command: locked, then unlocked once
   wr(ADDR_SMPPT, R_CMD, CMD_SAVE);
@@ -168,6 +175,16 @@ static void test_regs(void) {
   R.pending_cmd = CMD_NONE;
   wr(ADDR_SMPPT, R_CMD, 77);
   CHECK(R.result == ERR_UNKNOWN_CMD);
+  // no unlock after the 32-bit millisecond counter passes 2^31 (24.8 days)
+  R.now_ms = 0x80000010u;
+  wr(ADDR_SMPPT, R_CMD, CMD_SHIP);
+  CHECK(R.result == ERR_LOCKED && rd(ADDR_SMPPT, R_UNLOCK) == 0);
+  R.now_ms = 0xFFFFFFF0u;                                // unlock across the wrap
+  wr(ADDR_SMPPT, R_UNLOCK, UNLOCK_KEY);
+  R.now_ms = 0x00000100u;
+  wr(ADDR_SMPPT, R_CMD, CMD_REBOOT);
+  CHECK(R.pending_cmd == CMD_REBOOT);
+  R.pending_cmd = CMD_NONE;
 
   // INA260 config reset bit, and the pointer does not move on 0x41
   wr(ADDR_INA260, INA_CONFIG, 0x8000);

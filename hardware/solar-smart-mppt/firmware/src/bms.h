@@ -14,7 +14,7 @@ typedef struct {
   int16_t  ibat_ma;          // + = charging
   bool     sun;              // VBUS present
   bool     short_tripped;    // COMP0 fired since the last call
-  bool     bq_fault, bq_i2c_err, ntc_missing;
+  bool     bq_fault, bq_i2c_err;
 } bms_in_t;
 
 typedef struct {

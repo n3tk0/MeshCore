@@ -35,6 +35,7 @@ void analog_read(analog_t *a);
 // short circuit: discharge above isc_ma trips COMP0 (the ISR turns OD off at once)
 void analog_set_short(uint16_t isc_ma, uint16_t shunt_uohm, uint16_t sh_n_mv);
 bool analog_short_tripped(void);  // and clears the flag
+bool analog_short_pending(void);  // without clearing it
 
 // I2C target (i2c_target.c)
 void i2c_target_init(void);

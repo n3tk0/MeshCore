@@ -3,26 +3,24 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// register numbers: keep in step with hardware/solar-smart-mppt/firmware/src/regs.h
+// the board's own register map (C header, shared with its firmware so the two cannot drift apart)
+extern "C" {
+#include "../../hardware/solar-smart-mppt/firmware/src/regs.h"
+}
+
 namespace {
-enum : uint8_t {
-  R_ID = 0x00, R_VERSION = 0x01, R_STATUS = 0x02, R_SOC = 0x03, R_REMAIN = 0x04, R_VPACK = 0x05,
-  R_VCELL1 = 0x06, R_VCELL2 = 0x07, R_IBAT = 0x08, R_VBUS = 0x09, R_IBUS = 0x0A, R_TEMP = 0x0B,
-  R_CHEM = 0x0C, R_BQ_STAT = 0x0D, R_BQ_FAULT = 0x0E, R_CAP_LEARNT = 0x0F, R_CYCLES = 0x10,
-  R_UNLOCK = 0x60, R_CMD = 0x61, R_RESULT = 0x62, R_BQ_FIRST = 0x80,
-};
-const uint16_t UNLOCK_KEY = 0xA55A;
 
 struct Name { const char* name; uint8_t reg; bool is_signed; };
 const Name NAMES[] = {
-  {"chem", 0x20, false}, {"capacity", 0x21, false}, {"vchg", 0x22, false}, {"ichg", 0x23, false},
-  {"iin", 0x24, false}, {"mppt", 0x25, false}, {"vindpm", 0x26, false}, {"ntc", 0x27, false},
-  {"od_off", 0x28, false}, {"od_on", 0x29, false}, {"ship", 0x2A, false}, {"j7_off", 0x2B, false},
-  {"j7_on", 0x2C, false}, {"idsg_max", 0x2D, false}, {"isc", 0x2E, false}, {"bal_delta", 0x2F, false},
-  {"bal_start", 0x30, false}, {"zero_uv", 0x31, true}, {"shunt_uohm", 0x32, false}, {"ina_sign", 0x33, false},
-  {"expert_n", 0x34, false}, {"expert0", 0x35, false}, {"expert1", 0x36, false}, {"expert2", 0x37, false},
-  {"expert3", 0x38, false}, {"expert4", 0x39, false}, {"expert5", 0x3A, false}, {"expert6", 0x3B, false},
-  {"expert7", 0x3C, false},
+  {"chem", R_CHEM_SET, false}, {"capacity", R_CAPACITY, false}, {"vchg", R_VCHG, false},
+  {"ichg", R_ICHG, false}, {"iin", R_IIN, false}, {"mppt", R_MPPT, false}, {"vindpm", R_VINDPM, false},
+  {"ntc", R_NTC, false}, {"od_off", R_OD_OFF, false}, {"od_on", R_OD_ON, false}, {"ship", R_SHIP, false},
+  {"j7_off", R_J7_OFF, false}, {"j7_on", R_J7_ON, false}, {"idsg_max", R_IDSG_MAX, false}, {"isc", R_ISC, false},
+  {"bal_delta", R_BAL_DELTA, false}, {"bal_start", R_BAL_START, false}, {"zero_uv", R_ZERO_UV, true},
+  {"shunt_uohm", R_SHUNT_UOHM, false}, {"ina_sign", R_INA_SIGN, false}, {"expert_n", R_EXPERT_N, false},
+  {"expert0", R_EXPERT0, false}, {"expert1", R_EXPERT0 + 1, false}, {"expert2", R_EXPERT0 + 2, false},
+  {"expert3", R_EXPERT0 + 3, false}, {"expert4", R_EXPERT0 + 4, false}, {"expert5", R_EXPERT0 + 5, false},
+  {"expert6", R_EXPERT0 + 6, false}, {"expert7", R_EXPERT0 + 7, false},
   // read only
   {"status", R_STATUS, false}, {"soc", R_SOC, false}, {"remain", R_REMAIN, false}, {"vpack", R_VPACK, false},
   {"vcell1", R_VCELL1, false}, {"vcell2", R_VCELL2, false}, {"ibat", R_IBAT, true}, {"vbus", R_VBUS, false},
@@ -32,25 +30,26 @@ const Name NAMES[] = {
 
 struct Cmd { const char* name; uint8_t code; bool locked; };
 const Cmd CMDS[] = {
-  {"save", 1, true}, {"load", 2, false}, {"defaults", 3, true}, {"reset", 4, false}, {"full", 5, false},
-  {"zero", 6, true}, {"ship", 7, true}, {"bsl", 8, true}, {"reboot", 9, true},
+  {"save", CMD_SAVE, true}, {"load", CMD_LOAD, false}, {"defaults", CMD_DEFAULTS, true},
+  {"reset", CMD_COUNTER_RESET, false}, {"full", CMD_SET_FULL, false}, {"zero", CMD_ZERO, true},
+  {"ship", CMD_SHIP, true}, {"bsl", CMD_BSL, true}, {"reboot", CMD_REBOOT, true},
 };
 
 const char* const ERRS[] = { "OK", "locked", "out of range", "flash error", "bad register", "busy",
                              "unknown command", "not now" };
 
 bool readReg(TwoWire& w, uint8_t reg, uint16_t& v) {
-  w.beginTransmission(SMPPT_ADDR);
+  w.beginTransmission(ADDR_SMPPT);
   w.write(reg);
   if (w.endTransmission(false) != 0) return false;
-  if (w.requestFrom((uint8_t)SMPPT_ADDR, (uint8_t)2) != 2) return false;
+  if (w.requestFrom((uint8_t)ADDR_SMPPT, (uint8_t)2) != 2) return false;
   v = (uint16_t)(w.read() << 8);
   v |= (uint16_t)w.read();
   return true;
 }
 
 bool writeReg(TwoWire& w, uint8_t reg, uint16_t v) {
-  w.beginTransmission(SMPPT_ADDR);
+  w.beginTransmission(ADDR_SMPPT);
   w.write(reg);
   w.write((uint8_t)(v >> 8));
   w.write((uint8_t)v);
@@ -92,7 +91,7 @@ bool runCmd(TwoWire& w, const Cmd& c, char* reply, size_t max) {
     delay(20);
     if (!readReg(w, R_RESULT, r)) {
       // ship / bsl / reboot: the board is gone, as asked
-      if (c.code >= 7) { snprintf(reply, max, "OK - %s", c.name); return true; }
+      if (c.code >= CMD_SHIP) { snprintf(reply, max, "OK - %s", c.name); return true; }
       snprintf(reply, max, "Err - no answer");
       return false;
     }
@@ -102,16 +101,14 @@ bool runCmd(TwoWire& w, const Cmd& c, char* reply, size_t max) {
 }
 
 void status(TwoWire& w, char* reply, size_t max) {
-  uint16_t id, ver, st, soc, vpack, ibat, vbus, rem, chem;
+  uint16_t id = 0, ver, st, soc, vpack, ibat, vbus, rem, chem;
   if (!readReg(w, R_ID, id) || id != 0x534D) { snprintf(reply, max, "Err - no solar-smart-mppt on 0x42"); return; }
-  readReg(w, R_VERSION, ver);
-  readReg(w, R_STATUS, st);
-  readReg(w, R_SOC, soc);
-  readReg(w, R_VPACK, vpack);
-  readReg(w, R_IBAT, ibat);
-  readReg(w, R_VBUS, vbus);
-  readReg(w, R_REMAIN, rem);
-  readReg(w, R_CHEM, chem);
+  if (!readReg(w, R_VERSION, ver) || !readReg(w, R_STATUS, st) || !readReg(w, R_SOC, soc) ||
+      !readReg(w, R_VPACK, vpack) || !readReg(w, R_IBAT, ibat) || !readReg(w, R_VBUS, vbus) ||
+      !readReg(w, R_REMAIN, rem) || !readReg(w, R_CHEM, chem)) {
+    snprintf(reply, max, "Err - read failed, try again");
+    return;
+  }
   static const char* const CHEMS[] = { "Li-ion", "LiFePO4", "LTO2S" };
   int n = snprintf(reply, max, "v%u.%u %s %umV %dmA %u.%u%%%s %umAh sun:%umV",
                    ver >> 8, ver & 0xFF, (chem >> 8) < 3 ? CHEMS[chem >> 8] : "?", vpack, (int16_t)ibat,

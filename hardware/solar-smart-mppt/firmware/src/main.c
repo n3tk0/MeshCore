@@ -37,16 +37,32 @@ static void load_settings(void) {
   __enable_irq();
 }
 
+static gauge_state_t gauge_saved;
+
+// writes only when something moved (1 % of the charge, the learnt capacity or the cycles): a board
+// that restarts over and over (weak pack, no sun) must not wear the flash out
 static void save_gauge(void) {
-  store_save(REC_GAUGE, &gauge.st, sizeof(gauge.st));
+  const gauge_state_t *g = &gauge.st, *o = &gauge_saved;
+  int32_t step = (int32_t)gauge_capacity(&gauge, &R.set) * 36;   // 1 % in mA*s
+  int32_t d = g->charge_mas - o->charge_mas;
+  if (d < 0) d = -d;
+  bool moved = g->capacity_learnt_mah != o->capacity_learnt_mah || g->cycles_x10 != o->cycles_x10 ||
+               (g->charge_mas < 0) != (o->charge_mas < 0) || d > step;
+  if (moved && store_save(REC_GAUGE, g, sizeof(*g))) gauge_saved = *g;
 }
 
-static void go_ship(void) {
+static uint32_t ship_tried_ms;
+static bool ship_tried;
+
+// BQ25798 ship mode: everything goes dark until the panel gives power again. If the chip does not
+// take it (no I2C, or VBUS just present), carry on and try again in 10 minutes, no reboot.
+static void go_ship(uint32_t now) {
+  if (ship_tried && (uint32_t)(now - ship_tried_ms) < 600000u) return;
+  ship_tried = true;
+  ship_tried_ms = now;
   save_gauge();
   hal_charge(false);
-  bq_ship(&bq);                    // everything goes dark until the panel gives power again
-  hal_delay_ms(100);
-  hal_reboot();                    // still here: the BQ did not take it; start over
+  if (bq_ship(&bq)) hal_delay_ms(100);
 }
 
 static uint16_t run_cmd(uint8_t cmd, const settings_t *s) {
@@ -76,10 +92,10 @@ static uint16_t run_cmd(uint8_t cmd, const settings_t *s) {
       // current is 0 A now: what the shunt shows is offset (needs SAVE to keep it)
       int32_t z = last_shunt_uv;
       if (z > 5000 || z < -5000) return ERR_NOT_NOW;   // more than 5 mV = 250 mA: not at rest
-      __disable_irq(); R.set.zero_uv = (int16_t)z; R.settings_changed = true; __enable_irq();
+      __disable_irq(); R.set.zero_uv = (int16_t)z; __enable_irq();
       return ERR_OK;
     }
-    case CMD_SHIP: go_ship(); return ERR_FLASH;
+    case CMD_SHIP: ship_tried = false; go_ship(hal_ms()); return ERR_NOT_NOW;   // still here: not taken
     case CMD_BSL: save_gauge(); hal_delay_ms(20); hal_enter_bsl(); return ERR_OK;
     case CMD_REBOOT: save_gauge(); hal_delay_ms(20); hal_reboot(); return ERR_OK;
     default: return ERR_UNKNOWN_CMD;
@@ -93,6 +109,7 @@ int main(void) {
   load_settings();
   gauge_state_t gs;
   gauge_init(&gauge, store_load(REC_GAUGE, &gs, sizeof(gs)) ? &gs : 0);
+  gauge_saved = gauge.st;
   bms_init(&bms);
   bq_init(&bq, &hal_bq_bus);
   R.ina_config = INA_CONFIG_DEFAULT;
@@ -113,7 +130,8 @@ int main(void) {
 
     uint8_t cmd = R.pending_cmd;
     if (cmd != CMD_NONE) {
-      settings_t s = R.set;
+      settings_t s;
+      __disable_irq(); s = R.set; __enable_irq();
       uint16_t res = run_cmd(cmd, &s);
       __disable_irq(); R.result = res; R.pending_cmd = CMD_NONE; __enable_irq();
     }
@@ -124,7 +142,7 @@ int main(void) {
       first = false;
 
       settings_t s;
-      __disable_irq(); s = R.set; R.settings_changed = false; __enable_irq();
+      __disable_irq(); s = R.set; __enable_irq();
       chem_active = active_chem(&s);
 
       analog_t a;
@@ -147,19 +165,18 @@ int main(void) {
         .short_tripped = sc,
         .bq_fault = bq.ok && (bq.r[BQ_REG_FAULT0] | bq.r[BQ_REG_FAULT1]) != 0,
         .bq_i2c_err = bq.errors >= 3,
-        .ntc_missing = bq.ok && !bq.ntc_present,
       };
       bms_out_t o;
       bms_step(&bms, &s, chem_active, &in, &o);
       if (o.empty) gauge_empty(&gauge);
-      if (o.ship) go_ship();
+      if (o.ship) go_ship(now);
 
-      hal_od_off(o.od_off);
+      hal_od_off(o.od_off || analog_short_pending());   // a trip since 'sc' was read stays off
       hal_oc_off(o.oc_off);
       hal_j7(o.j7_on);
       hal_bal(o.bal1, o.bal2);
-      bool charge = o.charge_ok && bq_apply(&bq, &s, chem_active, o.charge_ok);
-      hal_charge(charge);          // ~CE low only with our settings in the chip
+      bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok);   // always: ADC, NTC, limits
+      hal_charge(o.charge_ok && applied);   // ~CE low only with our settings in the chip
       if ((uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
 
       uint8_t chg_stat = (uint8_t)(bq.r[BQ_REG_STAT1] >> 5);
@@ -175,6 +192,7 @@ int main(void) {
       if (bq.ok && (chg_stat >= 1 && chg_stat <= 6)) st |= ST_CHARGING;
       if (bq.ok && chg_stat == BQ_CHG_DONE) st |= ST_FULL;
       if (from_v) st |= ST_SOC_FROM_V;
+      if (bq.ok && !bq.ntc_present) st |= ST_NTC_MISSING;
       if (memcmp(&s, &saved, sizeof(s)) != 0) st |= ST_SETTINGS_DIRTY;
 
       live_t L = {0};

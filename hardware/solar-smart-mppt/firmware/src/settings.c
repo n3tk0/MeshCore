@@ -1,4 +1,5 @@
 #include "settings.h"
+#include <stddef.h>
 #include <string.h>
 
 int chem_cells(uint8_t chem) { return chem == CHEM_LTO2S ? 2 : 1; }
@@ -70,8 +71,8 @@ int settings_check(const settings_t *s, uint8_t chem) {
   if (s->expert_n > EXPERT_MAX) return ERR_RANGE;
   for (int i = 0; i < s->expert_n; i++) {
     uint8_t reg = s->expert[i] >> 8;
-    // the charge voltage, cell count / VSYSMIN and ship mode stay ours: a wrong byte there is unsafe
-    if (reg > 0x18 || reg == 0x00 || reg == 0x01 || reg == 0x02 || reg == 0x11) return ERR_RANGE;
+    // VSYSMIN, the charge voltage, the cell count (REG0A 7:6) and ship mode stay ours: a wrong byte there is unsafe
+    if (reg > 0x18 || reg == 0x00 || reg == 0x01 || reg == 0x02 || reg == 0x0A || reg == 0x11) return ERR_RANGE;
   }
   return ERR_OK;
 }
@@ -136,7 +137,7 @@ static bool rec_valid(const uint8_t *p, uint32_t room, rec_hdr_t *out) {
   if (sizeof(h) + h.len > room) return false;
   uint8_t buf[sizeof(rec_hdr_t) + REC_MAX_PAYLOAD];
   memcpy(buf, p, sizeof(h) + h.len);
-  ((rec_hdr_t *)buf)->crc = 0;
+  memset(buf + offsetof(rec_hdr_t, crc), 0, sizeof(h.crc));   // no cast: buf may be unaligned
   if (crc16_ccitt(buf, sizeof(h) + h.len) != h.crc) return false;
   *out = h;
   return true;

@@ -30,6 +30,12 @@ static uint16_t *set_field(settings_t *s, uint8_t reg) {
 
 static int32_t clamp16(int32_t v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : v; }
 
+// unlocked for 2 s after the key (a plain flag + start time: no wrap-around after 24.8 days)
+static bool unlock_valid(void) { return R.unlocked && (uint32_t)(R.now_ms - R.unlock_at_ms) < 2000u; }
+
+// chemistry in force for a settings record: the setting, or the jumper
+static uint8_t chem_of(const settings_t *s) { return s->chem == CHEM_BY_JUMPER ? R.live.chem_jumper : s->chem; }
+
 uint16_t regs_read(uint8_t addr7, uint8_t reg) {
   const live_t *L = &R.live;
   if (addr7 == ADDR_INA260) {
@@ -74,7 +80,7 @@ uint16_t regs_read(uint8_t addr7, uint8_t reg) {
     case R_NTC:       return R.set.ntc_mode;
     case R_INA_SIGN:  return R.set.ina_sign;
     case R_EXPERT_N:  return R.set.expert_n;
-    case R_UNLOCK:    return (int32_t)(R.unlock_until_ms - R.now_ms) > 0 ? 1 : 0;
+    case R_UNLOCK:    return unlock_valid() ? 1 : 0;
     case R_CMD:       return R.pending_cmd;
     case R_RESULT:    return R.result;
     default: {
@@ -100,15 +106,16 @@ void regs_write(uint8_t addr7, uint8_t reg, uint16_t v) {
     return;
   }
   if (reg == R_UNLOCK) {
-    R.unlock_until_ms = v == UNLOCK_KEY ? R.now_ms + 2000 : R.now_ms;
+    R.unlocked = v == UNLOCK_KEY;
+    R.unlock_at_ms = R.now_ms;
     return;
   }
   if (reg == R_CMD) {
     if (R.pending_cmd != CMD_NONE) { R.result = ERR_BUSY; return; }
     if (v == CMD_NONE || v > CMD_REBOOT) { R.result = ERR_UNKNOWN_CMD; return; }
     if (protected_cmd((uint8_t)v)) {
-      if ((int32_t)(R.unlock_until_ms - R.now_ms) <= 0) { R.result = ERR_LOCKED; return; }
-      R.unlock_until_ms = R.now_ms;   // one command per unlock
+      if (!unlock_valid()) { R.result = ERR_LOCKED; return; }
+      R.unlocked = false;   // one command per unlock
     }
     R.result = 0xFFFF;
     R.pending_cmd = (uint8_t)v;
@@ -118,11 +125,12 @@ void regs_write(uint8_t addr7, uint8_t reg, uint16_t v) {
 
   // a settings field: change a copy, check it, take it
   settings_t tmp = R.set;
-  uint8_t chem = R.live.chem;
+  uint8_t chem = chem_of(&R.set);
   switch (reg) {
     case R_CHEM_SET: {
       if (v != CHEM_BY_JUMPER && v >= CHEM_COUNT) { R.result = ERR_RANGE; return; }
       uint8_t newc = v == CHEM_BY_JUMPER ? R.live.chem_jumper : (uint8_t)v;
+      if (newc >= CHEM_COUNT) newc = CHEM_LIION;
       if (newc != chem) {
         // other chemistry: its own voltage limits (keeps currents, capacity, calibration)
         settings_t d;
@@ -151,7 +159,6 @@ void regs_write(uint8_t addr7, uint8_t reg, uint16_t v) {
   int err = settings_check(&tmp, chem);
   if (err) { R.result = (uint16_t)err; return; }
   R.set = tmp;
-  R.settings_changed = true;
   R.result = ERR_OK;
 }
 
