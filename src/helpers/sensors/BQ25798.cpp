@@ -8,7 +8,7 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   defaults(_s);
   memset(&_r, 0, sizeof(_r));
   memset(_status, 0, sizeof(_status));
-  _found = _applied = _ce_on = _adc_pending = _full = _shutdown_sent = _low_timing = _configured = false;
+  _found = _applied = _ce_on = _adc_pending = _full = _shutdown_sent = _low_timing = _configured = _adc_continuous = false;
   _mppt_reg = 0;
   _prev_state = 0;
   _next_poll = _adc_at = _low_since = 0;
@@ -67,7 +67,7 @@ bool BQ25798::begin(uint32_t now) {
   if (!read(BQ_REG_PART, &part, 1) || ((part >> 3) & 0x07) != 3) return false;   // PN 011b = BQ25798
   _found = true;
   // a new start (also when it comes back after I2C errors): nothing carried over from before
-  _low_timing = _adc_pending = _shutdown_sent = false;
+  _low_timing = _adc_pending = _shutdown_sent = _adc_continuous = false;
   _r.valid = false;
   // the watchdog off at once: its 40 s would otherwise run out while the node boots
   uint8_t c1;
@@ -112,7 +112,9 @@ void BQ25798::enforce() {
 
   // VSYSMIN under a LiFePO4 cell's plateau: MPPT does not run while VBAT < VSYSMIN (power-on: 3.5 V)
   uint8_t want_sys = (uint8_t)((vsysminFor(_s.chem) - 2500) / 250);
-  if ((c[BQ_REG_VSYSMIN] & 0x3F) != want_sys) write8(BQ_REG_VSYSMIN, want_sys);
+  if ((c[BQ_REG_VSYSMIN] & 0x3F) != want_sys && write8(BQ_REG_VSYSMIN, want_sys)) {
+    read(BQ_REG_STAT3, &_status[BQ_REG_STAT3 - BQ_REG_STAT0], 1);   // VSYS_STAT follows at once (MPPT below)
+  }
 
   uint16_t want_ichg = _s.ichg_ma / 10;
   if ((((c[BQ_REG_ICHG] << 8) | c[BQ_REG_ICHG + 1]) & 0x1FF) != want_ichg) write16(BQ_REG_ICHG, want_ichg);
@@ -153,27 +155,44 @@ void BQ25798::enforce() {
   _configured = true;
 }
 
+// the results: false when they read as zeros (SYS feeds this MCU, so it is never 0 V while we run)
+bool BQ25798::readAdc(uint32_t now) {
+  uint8_t d[18];
+  if (!read(BQ_REG_IBUS_ADC, d, sizeof(d))) return true;   // an I2C error, not zeros
+  uint16_t vsys = (uint16_t)((d[12] << 8) | d[13]);
+  if (vsys == 0) return false;
+  _r.ibus_ma = (int16_t)((d[0] << 8) | d[1]);
+  _r.ibat_ma = (int16_t)((d[2] << 8) | d[3]);
+  _r.vbus_mv = (uint16_t)((d[4] << 8) | d[5]);
+  _r.vbat_mv = (uint16_t)((d[10] << 8) | d[11]);
+  _r.vsys_mv = vsys;
+  _r.tdie_dc = (int16_t)((d[16] << 8) | d[17]) * 5;   // 0.5 °C a step
+  _r.valid = true;
+  _adc_count++;
+  _adc_at = now;
+  return true;
+}
+
+// One shot every 10 s: the chip clears ADC_EN when it is done (datasheet 7.3.10) and the results stay.
+// Should a chip read zeros once ADC_EN drops, it goes to continuous conversion (about 1 mA more).
 void BQ25798::adc(uint32_t now) {
   uint8_t a[3];
   if (!read(BQ_REG_ADC_CTRL, a, sizeof(a))) return;
-  if (a[0] & 0x80) return;   // still converting (or postponed: battery under 2.9 V, no sun)
-  if (_adc_pending) {
-    uint8_t d[18];
-    if (read(BQ_REG_IBUS_ADC, d, sizeof(d))) {
-      _r.ibus_ma = (int16_t)((d[0] << 8) | d[1]);
-      _r.ibat_ma = (int16_t)((d[2] << 8) | d[3]);
-      _r.vbus_mv = (uint16_t)((d[4] << 8) | d[5]);
-      _r.vbat_mv = (uint16_t)((d[10] << 8) | d[11]);
-      _r.vsys_mv = (uint16_t)((d[12] << 8) | d[13]);
-      _r.tdie_dc = (int16_t)((d[16] << 8) | d[17]) * 5;   // 0.5 °C a step
-      _r.valid = true;
-      _adc_count++;
-      _adc_at = now;
-    }
-    _adc_pending = false;
-  }
   if (a[1] != BQ_ADC_DIS0_VAL) write8(BQ_REG_ADC_DIS0, BQ_ADC_DIS0_VAL);
   if (a[2] != BQ_ADC_DIS1_VAL) write8(BQ_REG_ADC_DIS1, BQ_ADC_DIS1_VAL);
+  if (_adc_continuous) {
+    if ((a[0] & 0xC0) == 0x80) readAdc(now);           // running: the latest values
+    else write8(BQ_REG_ADC_CTRL, BQ_ADC_CONTINUOUS);   // off again (a reset): back on
+    _adc_pending = true;                                // stale counts from the last good result
+    return;
+  }
+  if (a[0] & 0x80) return;   // still converting (or postponed: battery under 2.9 V, no sun)
+  if (_adc_pending && !readAdc(now)) {
+    _adc_continuous = true;
+    if (write8(BQ_REG_ADC_CTRL, BQ_ADC_CONTINUOUS) && !_r.valid) _adc_at = now;
+    return;
+  }
+  _adc_pending = false;
   if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) {
     _adc_pending = true;
     if (!_r.valid) _adc_at = now;   // stale is counted from the first start

@@ -903,7 +903,7 @@ void EnvironmentSensorManager::bqLoop() {
 }
 
 BQ25798* EnvironmentSensorManager::getCharger() {
-  return _bq_found ? &bq_charger : NULL;
+  return &bq_charger;   // apply() before begin() keeps the settings; status says "no BQ25798"
 }
 
 int EnvironmentSensorManager::externalPower() {
