@@ -37,12 +37,14 @@ def gerbers():
 
 # JLC's part models are drawn in EasyEDA's orientation. These KiCad library footprints are
 # rotated against it (checked pad by pad against the EasyEDA footprint of the LCSC part):
-# SOT-23 pin 1 sits top left in KiCad and bottom right in EasyEDA; the 0805 LED has pad 1
-# (cathode) on the other side. Footprints imported with easyeda2kicad need no correction.
+# SOT-23 pin 1 sits top left in KiCad and bottom right in EasyEDA. Footprints imported with
+# easyeda2kicad need no correction.
 # SOT-23-8 (INA219) checked the same way: EasyEDA has pin 1 bottom right, KiCad top left.
 # SC-70-6 (LM66100) has pin 1 top left in both KiCad and EasyEDA (checked in JLC preview): 0.
 # (checked in JLC's placement preview: no rotation offset needed).
-ROT_FIX = {"SOT-23": 180, "LED_0805_2012Metric": 180, "SOT-23-8": 180,
+# 0805 LEDs (C2297 green, C84256 red, C2296 yellow): JLC's model has pad 1 where KiCad has it, so no
+# offset (2026-11-11: with +180 JLC's preview showed D4 reversed and their engineer turned it back).
+ROT_FIX = {"SOT-23": 180, "SOT-23-8": 180,
            "TSSOP-16_4.4x5mm_P0.65mm": 270}
 
 def cpl():
