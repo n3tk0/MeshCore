@@ -438,7 +438,7 @@ static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 static uint8_t init_bq25798(TwoWire* wire, uint8_t) {
   bq_bus.wire = wire;
   if (!bq_charger.begin(millis())) return 0;
-  if (bq_charger.applied()) bq_charger.apply(bq_charger.settings(), millis());   // back after an outage: set up again
+  if (bq_charger.applied()) bq_charger.apply(bq_charger.settings());   // back after an outage: set up again
   return 2;   // channel 1: battery, channel 2: panel
 }
 static void query_bq25798(uint8_t ch, uint8_t sub, CayenneLPP& lpp) {
@@ -891,19 +891,15 @@ bool EnvironmentSensorManager::bqActive() const {
 }
 
 void EnvironmentSensorManager::bqLoop() {
-  if (!bqActive()) return;
+  if (!bq_charger.due(millis()) || !bqActive()) return;   // it talks to the chip every 10 s
   uint32_t errors = i2cErrorCount(*TELEM_WIRE);
-  uint32_t polls = bq_charger.polls();
   uint32_t adcs = bq_charger.adcCount();
   bq_charger.loop(millis());
-  if (bq_charger.polls() == polls) return;   // not its turn (every 10 s)
-  noteRead(query_bq25798, errors);           // 3 polls in a row with I2C errors: off, tried again later
+  noteRead(query_bq25798, errors);   // 3 polls in a row with I2C errors: off, tried again later
   if (bq_charger.takeFull()) bq_gauge.markFull();
   if (bq_charger.adcCount() == adcs) return;
   const BQ25798Reading& r = bq_charger.reading();
-  uint32_t t = day_clock ? day_clock() : 0;
-  uint32_t day = t >= 1735689600UL ? t / 86400 : 100000 + millis() / 86400000UL;   // as for the INA219
-  bq_gauge.update(millis(), r.vbat_mv, -r.ibat_ma, day);   // the gauge counts + = out of the battery
+  bq_gauge.update(millis(), r.vbat_mv, -r.ibat_ma, gaugeDay());   // the gauge counts + = out of the battery
 }
 
 BQ25798* EnvironmentSensorManager::getCharger() {
@@ -911,10 +907,17 @@ BQ25798* EnvironmentSensorManager::getCharger() {
 }
 
 int EnvironmentSensorManager::externalPower() {
-  if (!bqActive()) return -1;
+  if (!_bq_found) return -1;
+  if (!bqActive()) return 0;   // turned off for I2C errors: not the board's USB detection (always on with SYS on 5V)
   return bq_charger.vbusPresent() ? 1 : 0;
 }
 #endif
+
+// the day the gauges' 'today' counts in; no clock (it boots in May 2024): days since boot, their own range
+uint32_t EnvironmentSensorManager::gaugeDay() const {
+  uint32_t t = day_clock ? day_clock() : 0;
+  return t >= 1735689600UL ? t / 86400 : 100000 + millis() / 86400000UL;
+}
 
 BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
   #if ENV_INCLUDE_BQ25798
@@ -939,9 +942,7 @@ void EnvironmentSensorManager::sampleBatteryGauge() {
   float ma = INA219.getCurrent_mA();
   noteRead(query_ina219, errors);
   if (i2cErrorCount(*TELEM_WIRE) != errors || mv <= 0 || mv >= 65535) return;
-  uint32_t t = day_clock ? day_clock() : 0;
-  uint32_t day = t >= 1735689600UL ? t / 86400 : 100000 + millis() / 86400000UL;   // no clock (it boots in May 2024): days since boot, their own range
-  ina_gauge.update(millis(), (uint16_t)mv, ma, day);
+  ina_gauge.update(millis(), (uint16_t)mv, ma, gaugeDay());
   #endif
 }
 

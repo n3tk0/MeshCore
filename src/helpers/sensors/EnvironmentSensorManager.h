@@ -36,6 +36,7 @@ protected:
   void noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before);
   void retryOffSensors();
   void sampleBatteryGauge();
+  uint32_t gaugeDay() const;
 
   bool     gps_detected = false;
   bool     gps_active = false;

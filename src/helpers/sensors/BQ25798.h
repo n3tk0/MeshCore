@@ -33,6 +33,7 @@
 #define BQ_ICHG_MAX            2000
 #define BQ_VINDPM_MIN          3600
 #define BQ_VINDPM_MAX          22000
+#define BQ_CUTOFF_MIN          2900
 
 // registers
 #define BQ_REG_VSYSMIN         0x00
@@ -110,7 +111,7 @@ class BQ25798 {
   bool write8(uint8_t reg, uint8_t v);
   bool write16(uint8_t reg, uint16_t v);
   void setCE(bool on);
-  void enforce(uint32_t now);
+  void enforce();
   void adc(uint32_t now);
   void lowBattery(uint32_t now);
 
@@ -122,11 +123,15 @@ public:
   static uint16_t vregFor(uint8_t chem) { return chem == BQ_CHEM_LIFEPO4 ? 3600 : 4200; }
   // LiFePO4: 3.0 V, not lower: on battery alone the ADC needs 2.9 V
   static uint16_t defaultCutoff(uint8_t chem) { return chem == BQ_CHEM_LIFEPO4 ? 3000 : 3300; }
+  static uint16_t cutoffMax(uint8_t chem) { return chem == BQ_CHEM_LIFEPO4 ? 3300 : 3800; }   // well under VREG
+  // LiFePO4 3.0 V (its plateau is 3.2-3.3 V); Li-ion keeps the 1S power-on value
+  static uint16_t vsysminFor(uint8_t chem) { return chem == BQ_CHEM_LIFEPO4 ? 3000 : 3500; }
 
   // probe (part number) and stop the watchdog; charging stays as the CE jumper has it until apply()
   bool begin(uint32_t now);
   // the settings (loaded from flash or changed by CLI): written at once, then kept
-  void apply(const BQ25798Settings& s, uint32_t now);
+  void apply(const BQ25798Settings& s);
+  bool due(uint32_t now) const { return _found && (int32_t)(now - _next_poll) >= 0; }
   void loop(uint32_t now);
 
   bool found() const { return _found; }

@@ -34,6 +34,9 @@
   #ifndef OTA_MIN_BATT_MV
     #define OTA_MIN_BATT_MV      3700                 // below this (on battery) the copy at the end waits
   #endif
+  #ifndef OTA_MIN_BATT_MV_LFP
+    #define OTA_MIN_BATT_MV_LFP  3250                 // ... for a LiFePO4 cell (`charger chem lifepo4`)
+  #endif
 #endif
 
 /* ------------------------------ Config -------------------------------- */
@@ -1186,7 +1189,8 @@ void MyMesh::begin(FILESYSTEM *fs) {
   lora_ota.setPowerCheck([](void*) {
     uint16_t mv = battMilliVolts();   // 0 or very low: the board cannot measure it
     if (the_instance->psave.stage() >= PSAVE_CRITICAL) return false;
-    return extPowered() || mv < 1000 || mv >= OTA_MIN_BATT_MV;
+    uint16_t min_mv = gaugeChemistry() == 1 ? OTA_MIN_BATT_MV_LFP : OTA_MIN_BATT_MV;   // LiFePO4 never rests at 3.7 V
+    return extPowered() || mv < 1000 || mv >= min_mv;
   }, NULL);
 #endif
   // TODO: key_store.begin();
@@ -2212,6 +2216,7 @@ void MyMesh::powerOffLoop() {
   esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);   // 30 min, then a boot
   esp_deep_sleep_start();
 #else
+  sensors.loop();   // a charger chip (BQ25798) keeps measuring and sees the sun come back
   if (millisHasNowPassed(psave_next_wake_check)) {
     psave_next_wake_check = futureMillis(PSAVE_OFF_CHECK_EVERY);
     uint16_t mv = battMilliVolts();
@@ -2307,8 +2312,15 @@ void MyMesh::handleBatteryCommand(char* args, char* reply) {
 #include <helpers/sensors/BQ25798.h>
 
 // the steps of `battsave` for each chemistry (a LiFePO4 cell sits at 3.2-3.3 V for most of its charge)
-static const PowerSaverConfig PSAVE_LIION = { 1, 3600, 3450, 0 };
-static const PowerSaverConfig PSAVE_LFP   = { 1, 3200, 3100, 0 };
+static const PowerSaverConfig PSAVE_LFP = { 1, 3200, 3100, 0 };   // Li-ion: PowerSaver's defaults
+
+// a whole number of mV / mA, nothing else ("3.1V", "", "x" -> -1: not 0, which means 'off' / 'mppt')
+static int parseMilli(const char* s) {
+  if (*s < '0' || *s > '9') return -1;
+  long v = 0;
+  for (; *s >= '0' && *s <= '9'; s++) if ((v = v * 10 + (*s - '0')) > 100000) return -1;
+  return *s == 0 ? (int)v : -1;
+}
 
 static bool samePsave(const PowerSaverConfig& a, const PowerSaverConfig& b) {
   return a.enabled == b.enabled && a.low_mv == b.low_mv && a.crit_mv == b.crit_mv && a.off_mv == b.off_mv;
@@ -2322,7 +2334,7 @@ void MyMesh::loadCharger() {
   BQ25798Settings s;
   if (!readSmallFile(_fs, CHARGER_FILE, &s, sizeof(s)) || !BQ25798::valid(s)) BQ25798::defaults(s);
   gaugeChemistry() = s.chem;
-  c->apply(s, millis());
+  c->apply(s);
 }
 
 // charger                       the charger's state and settings
@@ -2341,13 +2353,15 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     return;
   }
   if (*args == 0) {
-    c->formatStatus(reply, 160);
+    c->formatStatus(reply, 155);   // the reply may already hold a 3-byte "xx|" tag (see SELFTEST_MAX)
     return;
   }
   BQ25798Settings s = c->settings();
   char* val = strchr(args, ' ');
   if (val) { *val++ = 0; while (*val == ' ') val++; } else val = (char*)"";
   const char* note = "";
+  bool to_psave = false;
+  PowerSaverConfig new_psave;
   if (strcmp(args, "ship") == 0) {
     int r = c->shipMode();
     strcpy(reply, r == 0 ? "OK - battery off in 10 s; sun or TP2 to GND wakes it"
@@ -2362,22 +2376,18 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     if (chem != s.chem) {
       s.chem = chem;
       s.cutoff_mv = BQ25798::defaultCutoff(chem);
-      // battsave still at the other cell's defaults: this cell's
-      const PowerSaverConfig& from = chem == BQ_CHEM_LIFEPO4 ? PSAVE_LIION : PSAVE_LFP;
-      const PowerSaverConfig& to = chem == BQ_CHEM_LIFEPO4 ? PSAVE_LFP : PSAVE_LIION;
-      if (samePsave(psave.config(), from)) {
-        psave.config() = to;
-        savePowerSave();
-        psave_next_check = 0;
-        note = ", battsave too";
-      }
+      // battsave still at the other cell's defaults: this cell's (saved after the charger settings)
+      PowerSaver liion;
+      const PowerSaverConfig& from = chem == BQ_CHEM_LIFEPO4 ? liion.config() : PSAVE_LFP;
+      new_psave = chem == BQ_CHEM_LIFEPO4 ? PSAVE_LFP : liion.config();
+      to_psave = samePsave(psave.config(), from);
     }
   } else if (strcmp(args, "ichg") == 0) {
-    int ma = atoi(val);
+    int ma = parseMilli(val);
     if (ma < BQ_ICHG_MIN || ma > BQ_ICHG_MAX) { strcpy(reply, "Err - charger ichg 100..2000 (mA)"); return; }
     s.ichg_ma = (uint16_t)(ma / 10 * 10);
   } else if (strcmp(args, "vin") == 0) {
-    int mv = strcmp(val, "mppt") == 0 ? 0 : atoi(val);
+    int mv = strcmp(val, "mppt") == 0 ? 0 : parseMilli(val);
     if (mv != 0 && (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX)) { strcpy(reply, "Err - charger vin mppt|3600..22000 (mV)"); return; }
     s.vindpm_mv = (uint16_t)(mv / 100 * 100);
   } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
@@ -2385,8 +2395,11 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     uint8_t on = strcmp(val, "on") == 0;
     if (args[0] == 'n') s.ntc = on; else s.shipfet = on;
   } else if (strcmp(args, "cutoff") == 0) {
-    int mv = strcmp(val, "off") == 0 ? 0 : atoi(val);
-    if (mv != 0 && (mv < 2900 || mv > 3800)) { strcpy(reply, "Err - charger cutoff off|2900..3800 (mV)"); return; }
+    int mv = strcmp(val, "off") == 0 ? 0 : parseMilli(val);
+    if (mv != 0 && (mv < BQ_CUTOFF_MIN || mv > BQ25798::cutoffMax(s.chem))) {
+      sprintf(reply, "Err - charger cutoff off|%u..%u (mV)", BQ_CUTOFF_MIN, BQ25798::cutoffMax(s.chem));
+      return;
+    }
     s.cutoff_mv = (uint16_t)mv;
   } else {
     strcpy(reply, "Err - charger [chem|ichg|vin|ntc|shipfet|cutoff|ship]");
@@ -2397,7 +2410,12 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     return;
   }
   gaugeChemistry() = s.chem;
-  c->apply(s, millis());
+  c->apply(s);
+  if (to_psave) {
+    psave.config() = new_psave;
+    psave_next_check = 0;
+    note = savePowerSave() ? ", battsave too" : ", battsave not saved";
+  }
   sprintf(reply, "OK%s", note);
 }
 #endif
