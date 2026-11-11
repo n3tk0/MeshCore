@@ -82,12 +82,14 @@ PLACE.update({
     "R14": _m(29.62, 48.95) + (180,), "R15": _m(29.62, 50.9) + (180,), "R4": _m(31.3, 48.75) + (90,),
     # HT7533 above the MSPM0, C25 (SYS) left of it, C26 (3V3M) right
     "U8": (30.5, 28.0, 0), "C25": (27.0, 25.4, 90), "C26": (34.4, 28.0, 90),
-    # CHEM jumper and the SWD column on the bottom side (B_SIDE), right of the MSPM0
-    "JP2": (42.6, 37.6, 270),
+    # CHEM jumper on top above the MSPM0 (label LFP), the SWD column on the bottom side (B_SIDE)
+    "JP2": (39.5, 31.0, 90),
+    # heater LED (D6 + R29 across J6): under Q4, left of the bottom-right hole
+    "D6": (42.6, 66.9, 180), "R29": (42.6, 68.6, 180),
     "TP12": (44.5, 22.5, 0), "TP15": (44.5, 25.04, 0), "TP11": (44.5, 27.58, 0),
     "TP14": (44.5, 30.12, 0), "TP13": (44.5, 32.66, 0),
 })
-B_SIDE = {"TP11", "TP12", "TP13", "TP14", "TP15", "JP2"}
+B_SIDE = {"TP11", "TP12", "TP13", "TP14", "TP15"}
 PLACE.update({"H1": (3.5, 3.5, 0), "H2": (W - 3.5, 3.5, 0), "H3": (3.5, H - 3.5, 0), "H4": (W - 3.5, H - 3.5, 0)})
 
 # SHT40 tongue: x0, y0, x1, y1 (mm). 1 mm slots on the left, right and below it,
@@ -483,7 +485,7 @@ def build():
             label(txt, pcbnew.VECTOR2I((p1.x + p2.x) // 2, p1.y - mm(2.0)), 0)
     t = pcbnew.PCB_TEXT(board)
     t.SetText("xiao-solar v0.5\nn3tk0/MeshCore")
-    t.SetPosition(pt(40.0, 68.2)); t.SetLayer(pcbnew.F_SilkS)
+    t.SetPosition(pt(39.5, 21.0)); t.SetLayer(pcbnew.F_SilkS)
     t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
     board.Add(t)
     # SWD column on the bottom (top to bottom 3V3M NRST SWDIO SWCLK GND): a mirrored label
@@ -496,13 +498,14 @@ def build():
         t.SetPosition(pt(x + 1.7, y) if ref else pt(x, y)); t.SetLayer(pcbnew.B_SilkS); t.SetMirrored(True)
         t.SetTextSize(pcbnew.VECTOR2I(mm(0.7), mm(0.7))); t.SetTextThickness(mm(0.12))
         board.Add(t)
-    # JP2 (CHEM: closed = LiFePO4) has no room for its reference: name it by function
+    # JP2 (CHEM: closed = LiFePO4) is named by function instead of its reference
     x, y, _ = PLACE["JP2"]
-    t = pcbnew.PCB_TEXT(board)
-    t.SetText("LFP")
-    t.SetPosition(pt(x, y - 2.2)); t.SetLayer(pcbnew.B_SilkS); t.SetMirrored(True)
-    t.SetTextSize(pcbnew.VECTOR2I(mm(0.7), mm(0.7))); t.SetTextThickness(mm(0.12))
-    board.Add(t)
+    board.FindFootprintByReference("JP2").Reference().SetVisible(False)
+    label("LFP", pt(x + 2.1, y), 0)
+    # heater LED references left of the parts (the hole and J6 are right of them)
+    for ref in ("D6", "R29"):
+        r = board.FindFootprintByReference(ref).Reference()
+        r.SetPosition(pt(39.4, PLACE[ref][1])); r.SetTextAngleDegrees(0)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
     return board
@@ -545,6 +548,9 @@ PRE_ROUTES = [
     ("3V3M", ("C26", "1"), _m(23.07, 42.4)), ("3V3M", ("C26", "1"), ("TP12", "1")),
     # NTC from J3 to the TS node at R2 / R3
     ("TS", ("J3", "1"), (21.58, 64.8)),
+    # heater LED: D6 anode to R29, cathode to the J6 return, R29 to SYS at J6 pin 1
+    ("LED_HEAT", ("D6", "2"), ("R29", "2")), ("HEAT_D", ("D6", "1"), ("J6", "2")),
+    ("SYS", ("R29", "1"), ("J6", "1")),
 ]
 
 def pre_route(b):
