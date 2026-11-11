@@ -11,6 +11,8 @@ public:
   uint8_t r[256];
   bool fail = false;           // every transfer fails (chip gone)
   bool adc_works = true;       // a started conversion is done at the next read of ADC_CTRL
+  bool zeros_after_shot = false; // a chip that clears the results when a one-shot ends
+  uint16_t vbat_now = 0;       // for VSYS_STAT when VSYSMIN is written (0 = not modelled)
   bool ce_on = false;          // the ~CE pin as the MCU drives it
   std::vector<bool> ce_log;
   std::vector<uint8_t> writes; // register numbers written
@@ -54,7 +56,10 @@ public:
 
   bool readRegs(uint8_t reg, uint8_t* buf, uint8_t n) override {
     if (fail) return false;
-    if (reg == 0x2E && adc_works) r[0x2E] &= ~0x80;
+    if (reg == 0x2E && adc_works && (r[0x2E] & 0xC0) == 0xC0) {   // one-shot done (continuous keeps going)
+      r[0x2E] &= ~0x80;
+      if (zeros_after_shot) memset(&r[0x31], 0, 0x42 - 0x31 + 1);
+    }
     memcpy(buf, &r[reg], n);
     return true;
   }
@@ -67,6 +72,9 @@ public:
       if (a == 0x11 && ((v >> 1) & 3) && (r[0x1B] & 0x01)) v &= ~0x06;    // no ship/shutdown with VBUS
       if (a == 0x11 && !(r[0x14] & 0x80)) v &= ~0x06;                      // SDRV_CTRL locked without SFET_PRESENT
       r[a] = v;
+      if (a == 0x00 && vbat_now) {                                         // VSYS_STAT follows VSYSMIN
+        if (vbat_now < 2500 + (v & 0x3F) * 250) r[0x1E] |= 0x10; else r[0x1E] &= ~0x10;
+      }
     }
     return true;
   }
@@ -222,6 +230,43 @@ TEST(BQ25798, FixedInputVoltage) {
   bq.apply(s);
   EXPECT_EQ(f.r[0x15] & 1, 0);
   EXPECT_EQ(f.r[0x05], 150);
+}
+
+TEST(BQ25798, LiFePO4MpptStartsAtOnceAfterVsysminDrops) {
+  FakeBQ f;
+  f.vbat_now = 3250;                    // a LiFePO4 cell on its plateau, under the 3.5 V power-on VSYSMIN
+  f.r[0x1E] |= 0x10;                    // VSYS_STAT: in VSYSMIN regulation
+  f.sun(true);
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings(BQ_CHEM_LIFEPO4));  // VSYSMIN 3.0 V, then MPPT in the same pass
+  EXPECT_EQ(f.r[0x00] & 0x3F, 2);
+  EXPECT_TRUE(f.r[0x15] & 0x01);
+  EXPECT_TRUE(bq.mpptOn());
+}
+
+TEST(BQ25798, AdcGoesContinuousIfOneShotResultsReadAsZeros) {
+  FakeBQ f;
+  f.zeros_after_shot = true;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  f.adcValues(3950, -120, 0, 0);
+  bq.loop(0);                           // one shot
+  bq.loop(10000);                       // zeros: continuous instead
+  EXPECT_FALSE(bq.reading().valid);
+  EXPECT_TRUE(bq.adcContinuous());
+  EXPECT_EQ(f.r[0x2E], BQ_ADC_CONTINUOUS);
+  f.adcValues(3950, -120, 0, 0);        // the chip converts all the time now
+  bq.loop(20000);
+  ASSERT_TRUE(bq.reading().valid);
+  EXPECT_EQ(bq.reading().vbat_mv, 3950);
+  uint32_t t = 20000;
+  runFor(bq, t, 600000);                // no shutdown from a "stale" ADC while it keeps reading
+  EXPECT_FALSE(bq.shutdownSent());
+  f.r[0x2E] = 0x30;                     // a power-on reset turns it off: back on
+  bq.loop(t + 10000);
+  EXPECT_EQ(f.r[0x2E], BQ_ADC_CONTINUOUS);
 }
 
 TEST(BQ25798, ReadsTheAdc) {

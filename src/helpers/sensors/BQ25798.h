@@ -14,7 +14,8 @@
 //     will not take it while the battery is under VSYSMIN;
 //   - ~CE (charge enable, active low) stays high until VREG reads back right, so a LiFePO4 cell is
 //     never charged towards 4.2 V (JP2 at 2-3 holds CE high until then on the board);
-//   - one-shot ADC every 10 s: battery and panel voltage / current, SYS, die temperature;
+//   - one-shot ADC every 10 s: battery and panel voltage / current, SYS, die temperature (continuous
+//     instead, should the results ever read as zeros after a one-shot);
 //   - an empty battery with no sun for 5 min: shutdown mode (the ship FET cuts the battery; only
 //     panel voltage wakes it), when a ship FET is fitted.
 //
@@ -64,6 +65,7 @@
 #define BQ_IINDPM_MA           3000   // the panel limits itself through VINDPM / MPPT
 #define BQ_MPPT_BASE           0x8A   // VOC_PCT 0.8125, VOC_DLY 300 ms, VOC_RATE 2 min (EN_MPPT apart)
 #define BQ_ADC_START           0xD0   // ADC_EN, one shot, 14 bit (12 ms a channel)
+#define BQ_ADC_CONTINUOUS      0x90   // ADC_EN, continuous, 14 bit (fallback, see adc())
 #define BQ_ADC_DIS0_VAL        0x04   // TS off: with it on, the ADC stops under 3.2 V on battery alone
 #define BQ_ADC_DIS1_VAL        0xF0   // D+, D-, VAC2, VAC1 off
 
@@ -98,7 +100,7 @@ class BQ25798 {
   BQ25798Bus& _bus;
   BQ25798Settings _s;
   BQ25798Reading _r;
-  bool     _found, _applied, _ce_on, _adc_pending, _full, _shutdown_sent, _low_timing, _configured;
+  bool     _found, _applied, _ce_on, _adc_pending, _adc_continuous, _full, _shutdown_sent, _low_timing, _configured;
   uint8_t  _status[7];   // 0x1B..0x21
   uint8_t  _mppt_reg;    // REG15 as last read
   uint8_t  _prev_state;  // charge state at the last poll
@@ -113,6 +115,7 @@ class BQ25798 {
   void setCE(bool on);
   void enforce();
   void adc(uint32_t now);
+  bool readAdc(uint32_t now);
   void lowBattery(uint32_t now);
 
 public:
@@ -143,6 +146,7 @@ public:
   bool inVindpm() const { return _status[0] & 0x40; }
   uint8_t chargeState() const { return _status[1] >> 5; }
   bool chargingEnabled() const { return _ce_on; }
+  bool adcContinuous() const { return _adc_continuous; }
   bool mpptOn() const;
   uint8_t faults0() const { return _status[5]; }
   uint8_t faults1() const { return _status[6]; }
