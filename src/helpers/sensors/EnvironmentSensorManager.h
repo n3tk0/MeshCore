@@ -27,10 +27,16 @@ protected:
   int          _active_sensor_count = 0;
   uint8_t      next_available_channel = TELEM_CHANNEL_SELF + 1;
   bool         _ina219_found = false;   // its bus is taken as the battery
+  bool         _bq_found = false;       // a BQ25798 charger: it measures the battery (before an INA219)
+  #if ENV_INCLUDE_BQ25798
+  bool bqActive() const;
+  void bqLoop();
+  #endif
 
   void noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before);
   void retryOffSensors();
   void sampleBatteryGauge();
+  uint32_t gaugeDay() const;
 
   bool     gps_detected = false;
   bool     gps_active = false;
@@ -60,6 +66,10 @@ public:
   uint16_t getBatteryMilliVolts() override;
   void loop() override;
   BatteryGauge* getBatteryGauge() override;
+  #if ENV_INCLUDE_BQ25798
+  BQ25798* getCharger() override;
+  int externalPower() override;
+  #endif
   int getNumSettings() const override;
   const char* getSettingName(int i) const override;
   const char* getSettingValue(int i) const override;

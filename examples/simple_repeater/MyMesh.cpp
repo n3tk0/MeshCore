@@ -34,6 +34,9 @@
   #ifndef OTA_MIN_BATT_MV
     #define OTA_MIN_BATT_MV      3700                 // below this (on battery) the copy at the end waits
   #endif
+  #ifndef OTA_MIN_BATT_MV_LFP
+    #define OTA_MIN_BATT_MV_LFP  3250                 // ... for a LiFePO4 cell (`charger chem lifepo4`)
+  #endif
 #endif
 
 /* ------------------------------ Config -------------------------------- */
@@ -107,6 +110,7 @@
 #define PSAVE_OFF_CHECK_EVERY   600000   // in the 'off' step: is the battery back?
 #define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
 #define BATT_CAP_FILE            "/batt_cap"
+#define CHARGER_FILE             "/charger"
 #ifdef WITH_TELEMETRY_HISTORY
   #define HISTORY_FILE           "/tele_hist"
   #define HISTORY_TMP            "/tele_hist.tmp"
@@ -320,6 +324,13 @@ uint8_t MyMesh::handleAnonClockReq(const mesh::Identity& sender, uint32_t sender
 static uint16_t battMilliVolts() {
   uint16_t mv = sensors.getBatteryMilliVolts();
   return mv ? mv : board.getBattMilliVolts();
+}
+
+// external power: a charger chip that sees its panel (BQ25798) knows; else the board (USB). On
+// xiao-solar-lite the XIAO's 5V pin is fed from SYS, so its own USB detection is always on.
+static bool extPowered() {
+  int e = sensors.externalPower();
+  return e >= 0 ? e != 0 : board.isExternalPowered();
 }
 
 int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t *payload, size_t payload_len) {
@@ -1159,6 +1170,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #endif
   loadPowerSave();
   loadBatteryCapacity();
+#if ENV_INCLUDE_BQ25798
+  loadCharger();
+#endif
   sensors.setDayClock([]() -> uint32_t { return the_instance->getRTCClock()->getCurrentTime(); });
 #ifdef WITH_TELEMETRY_HISTORY
   loadHistory();
@@ -1175,7 +1189,8 @@ void MyMesh::begin(FILESYSTEM *fs) {
   lora_ota.setPowerCheck([](void*) {
     uint16_t mv = battMilliVolts();   // 0 or very low: the board cannot measure it
     if (the_instance->psave.stage() >= PSAVE_CRITICAL) return false;
-    return board.isExternalPowered() || mv < 1000 || mv >= OTA_MIN_BATT_MV;
+    uint16_t min_mv = gaugeChemistry() == 1 ? OTA_MIN_BATT_MV_LFP : OTA_MIN_BATT_MV;   // LiFePO4 never rests at 3.7 V
+    return extPowered() || mv < 1000 || mv >= min_mv;
   }, NULL);
 #endif
   // TODO: key_store.begin();
@@ -1511,6 +1526,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     handlePowerSaveCommand(&command[8], reply);
   } else if (memcmp(command, "battery", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleBatteryCommand(&command[7], reply);
+#if ENV_INCLUDE_BQ25798
+  } else if (memcmp(command, "charger", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
+    handleChargerCommand(&command[7], reply);
+#endif
 #ifdef WITH_MAILBOX
   } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleMailboxCommand(&command[7], reply);
@@ -2122,7 +2141,7 @@ void MyMesh::powerSaveLoop() {
   if (psave_next_check && !millisHasNowPassed(psave_next_check)) return;
   psave_next_check = futureMillis(PSAVE_CHECK_EVERY);
   uint8_t old_stage = psave.stage();
-  psave.update(battMilliVolts(), board.isExternalPowered());
+  psave.update(battMilliVolts(), extPowered());
   if (psave.stage() != old_stage) applyPowerStage(old_stage);
 }
 
@@ -2197,10 +2216,11 @@ void MyMesh::powerOffLoop() {
   esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);   // 30 min, then a boot
   esp_deep_sleep_start();
 #else
+  sensors.loop();   // a charger chip (BQ25798) keeps measuring and sees the sun come back
   if (millisHasNowPassed(psave_next_wake_check)) {
     psave_next_wake_check = futureMillis(PSAVE_OFF_CHECK_EVERY);
     uint16_t mv = battMilliVolts();
-    if (board.isExternalPowered() || !psave.config().enabled
+    if (extPowered() || !psave.config().enabled
         || (mv > 2500 && mv >= psave.config().off_mv + PSAVE_OFF_WAKE_MV)) {
       MESH_DEBUG_PRINTLN("Power step: battery back (%u mV), restarting", mv);
       board.reboot();
@@ -2219,7 +2239,7 @@ void MyMesh::handlePowerSaveCommand(char* args, char* reply) {
   if (*args == 0) {
     uint16_t mv = battMilliVolts();
     sprintf(reply, "%s, step %s, %u mV%s; low %u crit %u off %u", c.enabled ? "on" : "off",
-            PowerSaver::name(psave.stage()), mv, board.isExternalPowered() ? " ext" : "",
+            PowerSaver::name(psave.stage()), mv, extPowered() ? " ext" : "",
             c.low_mv, c.crit_mv, c.off_mv);
     return;
   }
@@ -2272,7 +2292,7 @@ void MyMesh::handleBatteryCommand(char* args, char* reply) {
     return;
   }
   uint16_t mv = battMilliVolts();
-  int n = sprintf(reply, "%u mV%s", mv, board.isExternalPowered() ? " ext" : "");
+  int n = sprintf(reply, "%u mV%s", mv, extPowered() ? " ext" : "");
   if (g && g->hasReading()) {
     int h = g->hoursLeft();
     n += sprintf(reply + n, ", %d%%%s", g->percent(), g->fromCount() ? "" : " (by voltage)");
@@ -2285,6 +2305,120 @@ void MyMesh::handleBatteryCommand(char* args, char* reply) {
     sprintf(reply + n, ", ~%d%% (by voltage)", gaugeVoltagePercent(mv));
   }
 }
+
+/* ------------------------- Charger (BQ25798, xiao-solar-lite) ------------------------- */
+
+#if ENV_INCLUDE_BQ25798
+#include <helpers/sensors/BQ25798.h>
+
+// the steps of `battsave` for each chemistry (a LiFePO4 cell sits at 3.2-3.3 V for most of its charge)
+static const PowerSaverConfig PSAVE_LFP = { 1, 3200, 3100, 0 };   // Li-ion: PowerSaver's defaults
+
+// a whole number of mV / mA, nothing else ("3.1V", "", "x" -> -1: not 0, which means 'off' / 'mppt')
+static int parseMilli(const char* s) {
+  if (*s < '0' || *s > '9') return -1;
+  long v = 0;
+  for (; *s >= '0' && *s <= '9'; s++) if ((v = v * 10 + (*s - '0')) > 100000) return -1;
+  return *s == 0 ? (int)v : -1;
+}
+
+static bool samePsave(const PowerSaverConfig& a, const PowerSaverConfig& b) {
+  return a.enabled == b.enabled && a.low_mv == b.low_mv && a.crit_mv == b.crit_mv && a.off_mv == b.off_mv;
+}
+
+// The settings from flash (or the defaults: Li-ion 4.2 V, 1 A, MPPT, no NTC, ship FET fitted).
+// Charging stays as the CE jumper has it until they are written (a LiFePO4 board holds CE high).
+void MyMesh::loadCharger() {
+  BQ25798* c = sensors.getCharger();
+  if (c == NULL) return;
+  BQ25798Settings s;
+  if (!readSmallFile(_fs, CHARGER_FILE, &s, sizeof(s)) || !BQ25798::valid(s)) BQ25798::defaults(s);
+  gaugeChemistry() = s.chem;
+  c->apply(s);
+}
+
+// charger                       the charger's state and settings
+// charger chem liion|lifepo4    the cell (VREG 4.20 V / 3.60 V; the cut-off and battsave follow)
+// charger ichg <mA>             charge current, 100..2000
+// charger vin mppt|<mV>         MPPT (default) or a fixed input voltage limit for the panel
+// charger ntc on|off            an NTC on J3 (TS used) or not (TS_IGNORE)
+// charger shipfet on|off        Q2 fitted, or JP3 closed (no ship / shutdown mode then)
+// charger cutoff <mV>|off       no sun and the battery under this for 5 min: shutdown until the sun is back
+// charger ship                  disconnect the battery for transport/storage (sun or TP2 to GND wakes it)
+void MyMesh::handleChargerCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+  BQ25798* c = sensors.getCharger();
+  if (c == NULL) {
+    strcpy(reply, "Err - no BQ25798 charger found");
+    return;
+  }
+  if (*args == 0) {
+    c->formatStatus(reply, 155);   // the reply may already hold a 3-byte "xx|" tag (see SELFTEST_MAX)
+    return;
+  }
+  BQ25798Settings s = c->settings();
+  char* val = strchr(args, ' ');
+  if (val) { *val++ = 0; while (*val == ' ') val++; } else val = (char*)"";
+  const char* note = "";
+  bool to_psave = false;
+  PowerSaverConfig new_psave;
+  if (strcmp(args, "ship") == 0) {
+    int r = c->shipMode();
+    strcpy(reply, r == 0 ? "OK - battery off in 10 s; sun or TP2 to GND wakes it"
+                : r == -1 ? "Err - sun on the panel: the charger will not go to ship mode"
+                : r == -2 ? "Err - no ship FET (charger shipfet off)" : "Err - I2C");
+    return;
+  } else if (strcmp(args, "chem") == 0) {
+    uint8_t chem;
+    if (strcmp(val, "liion") == 0) chem = BQ_CHEM_LIION;
+    else if (strcmp(val, "lifepo4") == 0) chem = BQ_CHEM_LIFEPO4;
+    else { strcpy(reply, "Err - charger chem liion|lifepo4"); return; }
+    if (chem != s.chem) {
+      s.chem = chem;
+      s.cutoff_mv = BQ25798::defaultCutoff(chem);
+      // battsave still at the other cell's defaults: this cell's (saved after the charger settings)
+      PowerSaver liion;
+      const PowerSaverConfig& from = chem == BQ_CHEM_LIFEPO4 ? liion.config() : PSAVE_LFP;
+      new_psave = chem == BQ_CHEM_LIFEPO4 ? PSAVE_LFP : liion.config();
+      to_psave = samePsave(psave.config(), from);
+    }
+  } else if (strcmp(args, "ichg") == 0) {
+    int ma = parseMilli(val);
+    if (ma < BQ_ICHG_MIN || ma > BQ_ICHG_MAX) { strcpy(reply, "Err - charger ichg 100..2000 (mA)"); return; }
+    s.ichg_ma = (uint16_t)(ma / 10 * 10);
+  } else if (strcmp(args, "vin") == 0) {
+    int mv = strcmp(val, "mppt") == 0 ? 0 : parseMilli(val);
+    if (mv != 0 && (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX)) { strcpy(reply, "Err - charger vin mppt|3600..22000 (mV)"); return; }
+    s.vindpm_mv = (uint16_t)(mv / 100 * 100);
+  } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
+    if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0) { sprintf(reply, "Err - charger %s on|off", args); return; }
+    uint8_t on = strcmp(val, "on") == 0;
+    if (args[0] == 'n') s.ntc = on; else s.shipfet = on;
+  } else if (strcmp(args, "cutoff") == 0) {
+    int mv = strcmp(val, "off") == 0 ? 0 : parseMilli(val);
+    if (mv != 0 && (mv < BQ_CUTOFF_MIN || mv > BQ25798::cutoffMax(s.chem))) {
+      sprintf(reply, "Err - charger cutoff off|%u..%u (mV)", BQ_CUTOFF_MIN, BQ25798::cutoffMax(s.chem));
+      return;
+    }
+    s.cutoff_mv = (uint16_t)mv;
+  } else {
+    strcpy(reply, "Err - charger [chem|ichg|vin|ntc|shipfet|cutoff|ship]");
+    return;
+  }
+  if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {
+    strcpy(reply, "Err - could not save");
+    return;
+  }
+  gaugeChemistry() = s.chem;
+  c->apply(s);
+  if (to_psave) {
+    psave.config() = new_psave;
+    psave_next_check = 0;
+    note = savePowerSave() ? ", battsave too" : ", battsave not saved";
+  }
+  sprintf(reply, "OK%s", note);
+}
+#endif
 
 // One line for the app's Health page and for a person: what does not work comes first. At most
 // SELFTEST_MAX bytes: the reply buffer (160 on serial, 161 over the air) may already hold a 3-byte "xx|" tag.

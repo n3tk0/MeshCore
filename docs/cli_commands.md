@@ -184,6 +184,29 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
+### Charger - BQ25798 on xiao-solar-lite (Repeater Only, `Xiao_nrf52_solar_lite_repeater`)
+**Usage:**
+- `charger` (state and settings)
+- `charger chem liion|lifepo4` (VREG 4.20 V / 3.60 V)
+- `charger ichg <mA>` (charge current, 100..2000; default 1000)
+- `charger vin mppt|<mV>` (MPPT, the default, or a fixed input voltage limit 3600..22000)
+- `charger ntc on|off` (an NTC on J3; off = `TS_IGNORE`, the default)
+- `charger shipfet on|off` (Q2 fitted, the default; `off` when JP3 is closed)
+- `charger cutoff <mV>|off` (Li-ion 2900..3800, default 3300; LiFePO4 2900..3300, default 3000)
+- `charger ship` (cut the battery off for transport or storage)
+
+**Example reply:** `sun 17.95V 450mA, batt 3.952V +1050mA fast, mppt on, die 41C, liion 4.20V 1000mA, ntc off, shipfet on, cut 3300mV`
+
+**Notes:**
+- `batt` current: `+` charges the battery, `-` the battery feeds the node. States: `idle trickle pre fast taper topoff done`; `CE-off` while the firmware still holds charging off (VREG not confirmed yet). `FAULT xx/yy`: REG20/REG21. `reset xN`: the charger lost its setup N times (a power-on reset) and got it back.
+- The firmware turns the charger's I2C watchdog off, so the setup stays when the XIAO hangs or restarts, reads it back every 10 s and writes again what is back at its reset value. MPPT is switched on again each morning (the chip clears it when the panel voltage goes).
+- `cutoff`: with no sun and the battery under it for 5 min the charger goes into shutdown mode: the ship FET cuts the battery off and only panel voltage brings it back (needs the ship FET). An ADC that stops (it does under 2.9 V on battery alone) counts as under the cut-off.
+- `ship`: refused while the panel gives voltage. Wakes with sun, or TP2 (QON) to GND for 1 s.
+- `chem lifepo4`: put JP2 at 2-3 first, so the charger stays off until the firmware has set 3.6 V. LiFePO4 also sets VSYSMIN to 3.0 V (the chip runs no MPPT while the battery is under VSYSMIN, 3.5 V at power-on). The LoRa OTA install waits on battery under 3.25 V instead of 3.7 V. The cut-off and, when they are still at the other cell's defaults, the `battsave` steps (Li-ion 3600/3450, LiFePO4 3200/3100) follow. Kept in `/charger`.
+- The battery for status, telemetry, `battery`, `battsave` and the OTA check comes from the charger's ADC (the XIAO's own battery pad is not connected on this board). External power = the charger sees the panel (also in the 'off' step of `battsave`, which keeps reading the charger and restarts the node when the sun is back). Telemetry: one channel for the battery (V, A, signed A, %), one for the panel (V, A, W).
+
+---
+
 ### Self test
 **Usage:** `selftest`
 
