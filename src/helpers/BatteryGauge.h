@@ -18,9 +18,19 @@
 #define GAUGE_MAX_GAP_MS     600000    // a reading this long after the last one is not integrated
 #define GAUGE_AVG_SECS        21600    // the discharge average behind 'hours left' (6 h)
 
-// LiPo resting voltage -> percent (rough: under load the cell reads lower)
+// The cell chemistry the gauge and the voltage curve go by: 0 = Li-ion / LiPo (default), 1 = LiFePO4
+// (a charger that knows it sets it, see BQ25798). One value shared by every file.
+inline uint8_t& gaugeChemistry() { static uint8_t chem = 0; return chem; }
+#define GAUGE_LFP_FULL_MV      3500
+#define GAUGE_LFP_EMPTY_MV     3000
+inline uint16_t gaugeFullMv() { return gaugeChemistry() == 1 ? GAUGE_LFP_FULL_MV : GAUGE_FULL_MV; }
+inline uint16_t gaugeEmptyMv() { return gaugeChemistry() == 1 ? GAUGE_LFP_EMPTY_MV : GAUGE_EMPTY_MV; }
+
+// resting voltage -> percent (rough: under load the cell reads lower; LiFePO4 is flat in the middle)
 static inline int gaugeVoltagePercent(uint16_t mv) {
-  static const uint16_t curve[11] = { 3300, 3600, 3690, 3740, 3770, 3790, 3820, 3870, 3920, 4000, 4150 };
+  static const uint16_t liion[11] = { 3300, 3600, 3690, 3740, 3770, 3790, 3820, 3870, 3920, 4000, 4150 };
+  static const uint16_t lfp[11]   = { 3000, 3150, 3200, 3220, 3250, 3260, 3270, 3280, 3300, 3330, 3400 };
+  const uint16_t* curve = gaugeChemistry() == 1 ? lfp : liion;
   if (mv <= curve[0]) return 0;
   if (mv >= curve[10]) return 100;
   for (int i = 1; i < 11; i++) {
@@ -102,7 +112,7 @@ public:
 
         // full: top voltage and only a trickle going in, for a while
         float trickle = _capacity > 0 && _capacity / 20 > GAUGE_FULL_TRICKLE_MA ? _capacity / 20 : GAUGE_FULL_TRICKLE_MA;
-        if (mv >= GAUGE_FULL_MV && discharge_ma <= 0 && -discharge_ma < trickle) {
+        if (mv >= gaugeFullMv() && discharge_ma <= 0 && -discharge_ma < trickle) {
           _full_for_ms += dt;
           if (_full_for_ms >= GAUGE_FULL_SECS * 1000UL) {
             if (_capacity > 0) _charge = _capacity;
@@ -114,7 +124,7 @@ public:
         }
 
         // empty after a full charge: what came out is the capacity
-        if (mv <= GAUGE_EMPTY_MV && discharge_ma > 0 && _since_full_valid) {
+        if (mv <= gaugeEmptyMv() && discharge_ma > 0 && _since_full_valid) {
           if (_since_full > 100 && _since_full < 60000) {
             uint16_t cap = (uint16_t)(_since_full + 0.5f);
             if (cap != _capacity || !_learnt) _capacity_changed = true;
@@ -128,6 +138,13 @@ public:
     }
     _last_ms = now_ms;
     _have_last = true;
+  }
+
+  // a charger that saw the charge end ("done"): the cell is full now
+  void markFull() {
+    if (_capacity > 0) _charge = _capacity;
+    _since_full_valid = true;
+    _since_full = 0;
   }
 
   // 0..100; from the counted charge when the capacity is known, else from the voltage; -1 before any reading
