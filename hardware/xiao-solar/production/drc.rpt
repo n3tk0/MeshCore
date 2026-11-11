@@ -1,98 +1,154 @@
-** Drc report for xiao-solar.kicad_pcb (KiCad 10.0.8) **
-** Created on 2026-11-03T22:03:17 **
-** Report includes: Errors, Warnings **
+** Drc report for xiao-solar.kicad_pcb **
+** Created on 2026-11-11T21:01:42 **
+** Report includes: Errors, Warnings, Exclusions **
 
-** Found 99 DRC violations **
+** Found 149 DRC violations **
+[starved_thermal]: Thermal relief connection to zone incomplete (layer F.Cu; zone min spoke count 2; actual 1)
+    Local override; error
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(140.3300 mm, 151.0600 mm): Pad 2 [GND] of NT1 on F.Cu
+[starved_thermal]: Thermal relief connection to zone incomplete (layer F.Cu; zone min spoke count 2; actual 1)
+    Local override; error
+    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
+    @(104.6625 mm, 128.8500 mm): Pad 4 [GND] of D5 on F.Cu
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(131.5592 mm, 149.4046 mm): Zone 'teardrop' [SCL] on B.Cu, priority 3
-    @(131.8986 mm, 149.2349 mm): Zone 'teardrop' [SCL] on B.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(132.4958 mm, 110.2113 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
-    @(131.8558 mm, 108.5913 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(112.6400 mm, 157.0300 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
-    @(112.0200 mm, 156.3050 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(121.4150 mm, 164.4200 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+    @(121.2550 mm, 164.9900 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
     @(121.8950 mm, 166.2100 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(131.1086 mm, 149.2558 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(129.9140 mm, 149.0780 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(124.9351 mm, 162.9072 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
+    @(124.5649 mm, 164.2428 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(139.2300 mm, 150.8600 mm): Zone 'teardrop' [SH_K] on F.Cu, priority 3
+    @(138.4180 mm, 151.3160 mm): Zone 'teardrop' [SH_K] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(135.2405 mm, 147.2699 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+    @(134.9080 mm, 147.1520 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(122.8300 mm, 142.5200 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(123.2601 mm, 143.1793 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(138.5850 mm, 155.7300 mm): Zone 'teardrop' [HEAT_G] on F.Cu, priority 3
+    @(140.3675 mm, 155.1100 mm): Zone 'teardrop' [HEAT_G] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(118.4983 mm, 133.8834 mm): Zone 'teardrop' [SDA] on F.Cu, priority 3
+    @(118.4800 mm, 133.8600 mm): Zone 'teardrop' [SDA] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(124.3305 mm, 146.1627 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(123.8157 mm, 145.4905 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(124.1420 mm, 145.5980 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(123.8157 mm, 145.4905 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(124.1420 mm, 145.5980 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(124.3305 mm, 146.1627 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(136.9757 mm, 109.8586 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+    @(137.2586 mm, 110.4243 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(105.3800 mm, 162.4150 mm): Zone 'teardrop' [LED_STAT] on F.Cu, priority 3
+    @(104.4400 mm, 161.3325 mm): Zone 'teardrop' [LED_STAT] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(116.1450 mm, 129.1200 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+    @(115.0500 mm, 130.0800 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(128.8940 mm, 149.0780 mm): Zone 'teardrop' [SDA_I] on F.Cu, priority 3
+    @(129.3500 mm, 149.7800 mm): Zone 'teardrop' [SDA_I] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(129.1083 mm, 162.8340 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
     @(128.6022 mm, 162.1029 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(121.2550 mm, 164.9900 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-    @(121.8950 mm, 166.2100 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+    @(112.0200 mm, 156.3050 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
+    @(112.6400 mm, 157.0300 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(121.2550 mm, 164.9900 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
-    @(121.4150 mm, 164.4200 mm): Zone 'teardrop' [TS] on F.Cu, priority 3
+    @(134.7776 mm, 146.4339 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+    @(134.9080 mm, 147.1520 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(132.0150 mm, 108.0200 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
-    @(131.8558 mm, 108.5913 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+    @(134.7776 mm, 146.4339 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+    @(135.2405 mm, 147.2699 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
+    @(135.5000 mm, 135.6600 mm): Zone 'teardrop' [VBUS] on F.Cu, priority 3
     @(136.0000 mm, 134.5800 mm): Zone 'teardrop' [VBUS] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(141.7237 mm, 147.6214 mm): Zone 'teardrop' [BATT_S] on F.Cu, priority 3
+    @(140.9875 mm, 147.6085 mm): Zone 'teardrop' [BATT_S] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(128.8940 mm, 151.0280 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
+    @(129.3500 mm, 151.5800 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(123.8403 mm, 143.4215 mm): Zone 'teardrop' [NRST] on F.Cu, priority 3
+    @(124.2540 mm, 144.1760 mm): Zone 'teardrop' [NRST] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(135.2060 mm, 149.5720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(134.7740 mm, 148.6280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
     @(137.5000 mm, 134.9400 mm): Zone 'teardrop' [VBUS] on F.Cu, priority 3
+    @(136.0000 mm, 134.5800 mm): Zone 'teardrop' [VBUS] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(130.3460 mm, 150.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(131.1086 mm, 149.2558 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(130.3460 mm, 150.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(129.9140 mm, 149.0780 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(119.8400 mm, 157.0300 mm): Zone 'teardrop' [BTST2] on F.Cu, priority 3
     @(119.2200 mm, 156.3050 mm): Zone 'teardrop' [BTST2] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(115.0500 mm, 130.0800 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
-    @(116.1450 mm, 129.1200 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(105.3800 mm, 162.4150 mm): Zone 'teardrop' [LED_STAT] on F.Cu, priority 3
-    @(104.4400 mm, 161.3325 mm): Zone 'teardrop' [LED_STAT] on F.Cu, priority 3
+    @(131.8550 mm, 108.5900 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+    @(132.4950 mm, 110.2100 mm): Zone 'teardrop' [3V3] on F.Cu, priority 3
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; warning
+    @(122.0000 mm, 132.1000 mm): Segment of U3 on F.Silkscreen
+    @(123.6400 mm, 138.0000 mm): Pad 2 [SYS] of U8 on F.Cu
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
-    @(103.8800 mm, 113.0000 mm): Footprint text of U4 (5V)
+    @(121.3000 mm, 137.4000 mm): PCB text 'SWD' on B.Silkscreen
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
-    @(103.8800 mm, 123.1000 mm): Footprint text of U4 (D0)
+    @(123.0000 mm, 138.8000 mm): PCB text '3V3' on B.Silkscreen
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
-    @(106.4200 mm, 113.0000 mm): Footprint text of U4 (GND)
+    @(123.0000 mm, 141.3400 mm): PCB text 'RST' on B.Silkscreen
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
-    @(106.4200 mm, 123.1000 mm): Footprint text of U4 (D1)
+    @(123.0000 mm, 143.8800 mm): PCB text 'DIO' on B.Silkscreen
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
-    @(108.9600 mm, 113.0000 mm): Footprint text of U4 (3V3)
+    @(123.0000 mm, 146.4200 mm): PCB text 'CLK' on B.Silkscreen
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
-    @(108.9600 mm, 123.1000 mm): Footprint text of U4 (D2)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(111.5000 mm, 113.0000 mm): Footprint text of U4 (D10)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(111.5000 mm, 123.1000 mm): Footprint text of U4 (D3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(114.0400 mm, 113.0000 mm): Footprint text of U4 (D9)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(114.0400 mm, 123.1000 mm): Footprint text of U4 (D4)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5800 mm, 113.0000 mm): Footprint text of U4 (D8)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5800 mm, 123.1000 mm): Footprint text of U4 (D5)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(119.1200 mm, 113.0000 mm): Footprint text of U4 (D7)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(119.1200 mm, 123.1000 mm): Footprint text of U4 (D6)
+    @(123.0000 mm, 148.9600 mm): PCB text 'GND' on B.Silkscreen
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
     @(103.8800 mm, 136.0000 mm): Footprint text of U3 (5V)
@@ -135,183 +191,297 @@
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
     Rule: board setup constraints silk text height; warning
     @(119.1200 mm, 146.1000 mm): Footprint text of U3 (D6)
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
-    Local override; warning
-    @(145.5000 mm, 127.5000 mm): Footprint J1
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Diode_SMD'
-    Local override; warning
-    @(138.5000 mm, 128.8000 mm): Footprint D1
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
-    Local override; warning
-    @(136.0000 mm, 150.0000 mm): Footprint RS1
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
-    Local override; warning
-    @(145.5000 mm, 134.0000 mm): Footprint J2
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
-    Local override; warning
-    @(122.4000 mm, 166.4000 mm): Footprint R3
-[lib_footprint_issues]: The current configuration does not include the footprint library 'LED_SMD'
-    Local override; warning
-    @(105.0000 mm, 160.2000 mm): Footprint D4
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(116.4800 mm, 157.2500 mm): Footprint C16
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
-    Local override; warning
-    @(119.8000 mm, 161.9000 mm): Footprint TP6
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Package_TO_SOT_SMD'
-    Local override; warning
-    @(129.6000 mm, 160.0000 mm): Footprint Q2
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
-    Local override; warning
-    @(135.5000 mm, 138.5000 mm): Footprint R9
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
-    Local override; warning
-    @(115.5000 mm, 168.8000 mm): Footprint R4
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
-    Local override; warning
-    @(134.0000 mm, 152.2000 mm): Footprint TP11
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(103.8800 mm, 113.0000 mm): Footprint text of U4 (5V)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(103.8800 mm, 123.1000 mm): Footprint text of U4 (D0)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(106.4200 mm, 113.0000 mm): Footprint text of U4 (GND)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(106.4200 mm, 123.1000 mm): Footprint text of U4 (D1)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(108.9600 mm, 113.0000 mm): Footprint text of U4 (3V3)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(108.9600 mm, 123.1000 mm): Footprint text of U4 (D2)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(111.5000 mm, 113.0000 mm): Footprint text of U4 (D10)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(111.5000 mm, 123.1000 mm): Footprint text of U4 (D3)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(114.0400 mm, 113.0000 mm): Footprint text of U4 (D9)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(114.0400 mm, 123.1000 mm): Footprint text of U4 (D4)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(116.5800 mm, 113.0000 mm): Footprint text of U4 (D8)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(116.5800 mm, 123.1000 mm): Footprint text of U4 (D5)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(119.1200 mm, 113.0000 mm): Footprint text of U4 (D7)
+[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
+    Rule: board setup constraints silk text height; warning
+    @(119.1200 mm, 123.1000 mm): Footprint text of U4 (D6)
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
     Local override; warning
     @(145.5000 mm, 121.0000 mm): Footprint J3
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Diode_SMD'
+[lib_footprint_mismatch]: Footprint 'QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR' does not match copy in library 'xiao_solar'
     Local override; warning
-    @(138.5000 mm, 135.3000 mm): Footprint D2
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(141.5000 mm, 157.0000 mm): Footprint C24
+    @(116.0000 mm, 161.0000 mm): Footprint U1
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(133.0000 mm, 110.4000 mm): Footprint R12
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(119.6000 mm, 155.3500 mm): Footprint C5
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(128.5500 mm, 154.0000 mm): Footprint C14
+    @(133.0000 mm, 108.4000 mm): Footprint R11
 [lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
     Local override; warning
     @(139.5000 mm, 110.0000 mm): Footprint TP7
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Jumper'
     Local override; warning
-    @(112.6000 mm, 164.6000 mm): Footprint C10
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(117.1000 mm, 129.5000 mm): Footprint C22
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(121.3500 mm, 154.0000 mm): Footprint C11
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(125.1000 mm, 159.8000 mm): Footprint C18
+    @(132.8000 mm, 164.0000 mm): Footprint JP3
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(122.4000 mm, 164.8000 mm): Footprint R2
+    @(141.2000 mm, 149.6000 mm): Footprint RS1
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(129.6000 mm, 163.0000 mm): Footprint R8
+    @(135.5000 mm, 144.5000 mm): Footprint R10
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(137.6000 mm, 157.1000 mm): Footprint R28
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Diode_SMD'
+    Local override; warning
+    @(138.5000 mm, 128.8000 mm): Footprint D1
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Diode_SMD'
+    Local override; warning
+    @(138.5000 mm, 135.3000 mm): Footprint D2
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
     Local override; warning
     @(145.5000 mm, 109.5000 mm): Footprint J5
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(109.8000 mm, 129.5000 mm): Footprint C20
+    @(123.5500 mm, 145.3500 mm): Footprint C27
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(116.4800 mm, 157.2500 mm): Footprint C16
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(112.4000 mm, 155.3500 mm): Footprint C4
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(113.9000 mm, 129.5000 mm): Footprint C21
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Package_DFN_QFN'
     Local override; warning
-    @(122.4000 mm, 161.6000 mm): Footprint R1
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
-    Local override; warning
-    @(106.2000 mm, 157.5000 mm): Footprint TP4
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(121.5000 mm, 159.8000 mm): Footprint C17
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(130.9500 mm, 154.0000 mm): Footprint C15
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(115.5200 mm, 158.2500 mm): Footprint C9
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
-    Local override; warning
-    @(130.5000 mm, 156.8000 mm): Footprint TP5
+    @(127.2000 mm, 145.6000 mm): Footprint U6
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(112.2500 mm, 160.2000 mm): Footprint C3
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(135.5000 mm, 138.5000 mm): Footprint R9
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(124.9000 mm, 141.9000 mm): Footprint C28
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(123.5500 mm, 144.3000 mm): Footprint C29
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(109.8000 mm, 129.5000 mm): Footprint C20
+[lib_footprint_issues]: The current configuration does not include the footprint library 'NetTie'
+    Local override; warning
+    @(139.8300 mm, 151.0600 mm): Footprint NT1
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(123.7500 mm, 154.0000 mm): Footprint C12
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Package_TO_SOT_SMD'
-    Local override; warning
-    @(139.5000 mm, 154.0000 mm): Footprint U7
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Jumper'
-    Local override; warning
-    @(132.8000 mm, 164.0000 mm): Footprint JP3
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
-    Local override; warning
-    @(114.7000 mm, 166.6000 mm): Footprint TP2
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
-    Local override; warning
-    @(110.5000 mm, 154.0000 mm): Footprint C6
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(105.0000 mm, 163.4000 mm): Footprint R6
+    @(135.5000 mm, 148.5000 mm): Footprint R23
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(129.6200 mm, 150.9000 mm): Footprint R15
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(126.1500 mm, 154.0000 mm): Footprint C13
 [lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
     Local override; warning
     @(139.6000 mm, 107.5000 mm): Footprint TP10
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(135.5000 mm, 141.0000 mm): Footprint C19
+    @(117.1000 mm, 129.5000 mm): Footprint C22
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(133.0000 mm, 108.4000 mm): Footprint R11
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Jumper'
+    @(138.8000 mm, 148.0000 mm): Footprint R21
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(112.4000 mm, 168.6500 mm): Footprint JP2
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    @(135.5000 mm, 146.3000 mm): Footprint R25
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(137.4000 mm, 110.0000 mm): Footprint TP8
-[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    @(122.4000 mm, 164.8000 mm): Footprint R2
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
     Local override; warning
-    @(108.1000 mm, 154.0000 mm): Footprint C7
+    @(145.5000 mm, 134.0000 mm): Footprint J2
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(108.4000 mm, 160.4000 mm): Footprint C1
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(137.8000 mm, 149.3000 mm): Footprint C24
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
     Local override; warning
     @(145.5000 mm, 143.0000 mm): Footprint J4
-[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(137.5000 mm, 107.5000 mm): Footprint TP9
+    @(119.6000 mm, 155.3500 mm): Footprint C5
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(130.9500 mm, 154.0000 mm): Footprint C15
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Package_TO_SOT_SMD'
+    Local override; warning
+    @(129.6000 mm, 160.0000 mm): Footprint Q2
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(122.4000 mm, 161.6000 mm): Footprint R1
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(105.0000 mm, 163.4000 mm): Footprint R6
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(123.5500 mm, 143.3000 mm): Footprint R13
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(125.0000 mm, 134.6000 mm): Footprint C25
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(115.5200 mm, 158.2500 mm): Footprint C9
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(135.5000 mm, 141.0000 mm): Footprint C19
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(108.4000 mm, 162.7500 mm): Footprint C2
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(135.5000 mm, 144.5000 mm): Footprint R10
+    @(133.0000 mm, 110.4000 mm): Footprint R12
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(112.4000 mm, 155.3500 mm): Footprint C4
-[lib_footprint_mismatch]: Footprint 'QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR' does not match copy in library 'xiao_solar'
-    Local override; warning
-    @(116.0000 mm, 161.0000 mm): Footprint U1
+    @(121.5000 mm, 159.8000 mm): Footprint C17
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(126.1500 mm, 154.0000 mm): Footprint C13
+    @(128.3000 mm, 138.6000 mm): Footprint C26
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
+    Local override; warning
+    @(145.5000 mm, 153.0000 mm): Footprint J6
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(129.5000 mm, 165.7000 mm): Footprint TP6
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(130.5000 mm, 156.8000 mm): Footprint TP5
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(105.7000 mm, 154.0000 mm): Footprint C8
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(137.6000 mm, 155.3500 mm): Footprint R27
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(128.6000 mm, 102.6000 mm): Footprint C23
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(137.4000 mm, 110.0000 mm): Footprint TP8
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(137.8000 mm, 151.0600 mm): Footprint R22
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(111.8000 mm, 162.3000 mm): Footprint TP3
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(135.3000 mm, 151.2500 mm): Footprint R26
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(135.5000 mm, 147.4000 mm): Footprint C30
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(121.3500 mm, 154.0000 mm): Footprint C11
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(110.5000 mm, 154.0000 mm): Footprint C6
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(125.1000 mm, 159.8000 mm): Footprint C18
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(137.5000 mm, 107.5000 mm): Footprint TP9
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(108.1000 mm, 154.0000 mm): Footprint C7
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
+    Local override; warning
+    @(128.5500 mm, 154.0000 mm): Footprint C14
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(135.5000 mm, 149.7000 mm): Footprint R24
+[lib_footprint_issues]: The current configuration does not include the footprint library 'LED_SMD'
+    Local override; warning
+    @(105.0000 mm, 160.2000 mm): Footprint D4
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(129.6000 mm, 163.0000 mm): Footprint R8
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(129.6200 mm, 148.9500 mm): Footprint R14
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Package_TO_SOT_SMD'
+    Local override; warning
+    @(141.6000 mm, 156.3000 mm): Footprint Q4
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Package_TO_SOT_SMD'
     Local override; warning
     @(105.5000 mm, 129.5000 mm): Footprint D5
 [lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
     Local override; warning
-    @(111.8000 mm, 162.3000 mm): Footprint TP3
+    @(114.7000 mm, 166.6000 mm): Footprint TP2
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(122.4000 mm, 166.4000 mm): Footprint R3
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(131.3000 mm, 148.7500 mm): Footprint R4
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(105.7000 mm, 154.0000 mm): Footprint C8
+    @(112.6000 mm, 164.6000 mm): Footprint C10
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Connector_PinHeader_2.54mm'
+    Local override; warning
+    @(145.5000 mm, 127.5000 mm): Footprint J1
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(106.2000 mm, 157.5000 mm): Footprint TP4
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(121.3000 mm, 143.8800 mm): Footprint TP11
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(121.3000 mm, 138.8000 mm): Footprint TP12
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Jumper'
+    Local override; warning
+    @(134.6000 mm, 141.0000 mm): Footprint JP2
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(121.3000 mm, 148.9600 mm): Footprint TP13
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(121.3000 mm, 146.4200 mm): Footprint TP14
+[lib_footprint_issues]: The current configuration does not include the footprint library 'TestPoint'
+    Local override; warning
+    @(121.3000 mm, 141.3400 mm): Footprint TP15
 
 ** Found 0 unconnected pads **
 

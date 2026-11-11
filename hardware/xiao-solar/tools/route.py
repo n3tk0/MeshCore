@@ -77,7 +77,8 @@ def import_ses(board, path):
     return nseg, nvia
 
 def drc(board, path):
-    if hasattr(pcbnew, "WriteDRCReport") and sys.platform != "win32":
+    # WriteDRCReport works in KiCad 7's Python only; KiCad 10's crashes outside the GUI (Pgm())
+    if hasattr(pcbnew, "WriteDRCReport") and sys.platform != "win32" and pcbnew.Version().startswith("7."):
         pcbnew.WriteDRCReport(board, path, pcbnew.EDA_UNITS_MILLIMETRES, True)
         return open(path, encoding="utf-8").read()
     tmp_pcb = path + ".kicad_pcb"
