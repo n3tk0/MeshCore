@@ -1,4 +1,5 @@
 #include "MyMesh.h"
+#include <helpers/SmartMppt.h>
 #include <algorithm>
 
 #define RADIO_SWITCH_WAIT_MAX    10000   // a radio settings switch waits this long at most for sending to finish
@@ -1511,6 +1512,15 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     handlePowerSaveCommand(&command[8], reply);
   } else if (memcmp(command, "battery", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleBatteryCommand(&command[7], reply);
+#if ENV_INCLUDE_INA260
+  } else if (memcmp(command, "smppt", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
+    // solar-smart-mppt board (an INA260 on 0x41 to the sensors, its own registers on 0x42)
+#if ENV_PIN_SDA && ENV_PIN_SCL
+    smpptCommand(Wire1, &command[5], reply, 155);
+#else
+    smpptCommand(Wire, &command[5], reply, 155);
+#endif
+#endif
 #ifdef WITH_MAILBOX
   } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleMailboxCommand(&command[7], reply);
