@@ -77,7 +77,7 @@ typedef struct {
   int16_t  ibat_ma;               // + = charging
   uint16_t vbus_mv;
   int16_t  ibus_ma;
-  int16_t  temp_x10;              // NTC (if present) else BQ25798 die, 0.1 degC
+  int16_t  temp_x10;              // BQ25798 die temperature, 0.1 degC
   uint16_t soc_x100;              // 0..10000
   uint16_t remaining_mah;
   uint16_t status;                // ST_*

@@ -78,7 +78,9 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_CTRL1, 0x07, 5);             // watchdog 40 s
   set_bits(img, BQ_REG_CTRL2, 0x06, 0);             // never ship/shutdown from here
   set_bits(img, BQ_REG_ADC_CTRL, 0x80, 0x80);       // ADC on, continuous
-  set_bits(img, BQ_REG_CTRL0, 0x20, charge_enable ? 0x20 : 0x00);
+  // EN_CHG ours; EN_HIZ always 0: a read that caught HIZ set (input fault, VOC check) must never be
+  // written back and leave the charger in HIZ
+  set_bits(img, BQ_REG_CTRL0, 0x24, charge_enable ? 0x20 : 0x00);
 
   bool ok = true;
   for (uint8_t reg = 0; ok && reg < BQ_NREGS; reg++) {

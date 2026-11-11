@@ -115,12 +115,16 @@ bool analog_short_tripped(void) {
 
 static uint16_t to_mv(uint16_t raw) { return (uint16_t)((uint32_t)raw * VREF_MV / 4096u); }
 
-void analog_read(analog_t *a) {
+// false when the sequence did not finish (then *a is left as it was). First thing to check at bring-up:
+// hardware averaging (16x) with one software trigger in AUTO sampling mode.
+bool analog_read(analog_t *a) {
   DL_ADC12_clearInterruptStatus(ADC0, DL_ADC12_INTERRUPT_MEM3_RESULT_LOADED);
   DL_ADC12_enableConversions(ADC0);
   DL_ADC12_startConversion(ADC0);
-  for (uint32_t t = 0; t < 20000u; t++)
-    if (DL_ADC12_getRawInterruptStatus(ADC0, DL_ADC12_INTERRUPT_MEM3_RESULT_LOADED)) break;
+  bool done = false;
+  for (uint32_t t = 0; t < 20000u && !done; t++)
+    done = DL_ADC12_getRawInterruptStatus(ADC0, DL_ADC12_INTERRUPT_MEM3_RESULT_LOADED) != 0;
+  if (!done) return false;
   uint16_t p = to_mv(DL_ADC12_getMemResult(ADC0, DL_ADC12_MEM_IDX_0));
   uint16_t n = to_mv(DL_ADC12_getMemResult(ADC0, DL_ADC12_MEM_IDX_1));
   uint16_t vb = to_mv(DL_ADC12_getMemResult(ADC0, DL_ADC12_MEM_IDX_2));
@@ -129,6 +133,7 @@ void analog_read(analog_t *a) {
   a->sh_n_mv = (uint16_t)(n / OPA_GAIN);
   a->vbat_mv = (uint16_t)((uint32_t)vb * VBAT_DIV_NUM / VBAT_DIV_DEN);
   a->vbm_mv = (uint16_t)(vm * VBM_DIV);
+  return true;
 }
 
 void analog_set_short(uint16_t isc_ma, uint16_t shunt_uohm, uint16_t sh_n_mv) {

@@ -182,11 +182,18 @@ const bq_bus_t hal_bq_bus = { bq_read, bq_write };
 
 // ---------------- flash ----------------
 
+// One flash bank: while it erases or programs, nothing may be fetched from it, and the vector table
+// and the ISRs live there. So interrupts stay off for each command (the command loop runs from RAM).
+// An erase holds them off for a few ms: the I2C target stretches the clock meanwhile.
 static bool fl_erase(uint32_t addr) {
+  uint32_t pm = __get_PRIMASK();
+  __disable_irq();
   DL_FlashCTL_executeClearStatus(FLASHCTL);
   DL_FlashCTL_unprotectSector(FLASHCTL, addr, DL_FLASHCTL_REGION_SELECT_MAIN);
-  return DL_FlashCTL_eraseMemoryFromRAM(FLASHCTL, addr, DL_FLASHCTL_COMMAND_SIZE_SECTOR) ==
-         DL_FLASHCTL_COMMAND_STATUS_PASSED;
+  bool ok = DL_FlashCTL_eraseMemoryFromRAM(FLASHCTL, addr, DL_FLASHCTL_COMMAND_SIZE_SECTOR) ==
+            DL_FLASHCTL_COMMAND_STATUS_PASSED;
+  __set_PRIMASK(pm);
+  return ok;
 }
 
 static bool fl_program(uint32_t addr, const void *data, uint32_t len) {
@@ -194,10 +201,13 @@ static bool fl_program(uint32_t addr, const void *data, uint32_t len) {
   for (uint32_t off = 0; off < len; off += 8) {
     uint32_t w[2];
     __builtin_memcpy(w, p + off, 8);
+    uint32_t pm = __get_PRIMASK();
+    __disable_irq();
     DL_FlashCTL_executeClearStatus(FLASHCTL);
     DL_FlashCTL_unprotectSector(FLASHCTL, addr + off, DL_FLASHCTL_REGION_SELECT_MAIN);
-    if (DL_FlashCTL_programMemoryFromRAM64(FLASHCTL, addr + off, w) != DL_FLASHCTL_COMMAND_STATUS_PASSED)
-      return false;
+    bool ok = DL_FlashCTL_programMemoryFromRAM64(FLASHCTL, addr + off, w) == DL_FLASHCTL_COMMAND_STATUS_PASSED;
+    __set_PRIMASK(pm);
+    if (!ok) return false;
   }
   return true;
 }

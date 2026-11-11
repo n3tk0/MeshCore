@@ -351,6 +351,9 @@ static void test_bq(void) {
   // chip reset (watchdog): everything is written again
   memset(chip, 0, 0x30);
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && bq_u16(&b, BQ_REG_VREG) == 420);
+  // EN_HIZ read back as 1 (caught during a VOC check or a fault) is never written back
+  chip[BQ_REG_CTRL0] |= 0x04;
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && chip[BQ_REG_CTRL0] == 0x22);
   // NTC present
   chip[BQ_REG_TS] = 0x02; chip[BQ_REG_TS + 1] = 0x60;             // 59 %
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && (chip[BQ_REG_NTC1] & 1) == 0 && b.ntc_present);
