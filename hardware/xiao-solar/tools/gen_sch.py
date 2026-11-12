@@ -553,7 +553,7 @@ BLOCK(430, 260, "5. НАГРЕВАТЕЛ J6: SYS -> Q4 AO3400A, PWM от MSPM0 (
 P("J6", "Connector_Generic:Conn_01x02", "HEATER", 560, 275, {"1": "SYS", "2": "HEAT_D"}, CONN2)
 P("Q4", "Transistor_FET:BSS138", "AO3400A (heater)", 530, 285, {"1": "HEAT_G", "2": "GND", "3": "HEAT_D"}, SOT23, "C20917")
 R("R27", "100", 505, 285, "HEAT", "HEAT_G", "C22775", rot=90)
-R4x("R28", "100k", 520, 300, "HEAT_G", "GND", "C25741")
+R("R28", "100k", 520, 300, "HEAT_G", "GND", "C25803")
 # red LED across the heater: lights while Q4 conducts (dimmer at low PWM), ~2 mA from SYS
 R("R29", "1k", 575, 285, "SYS", "LED_HEAT", "C21190", rot=90)
 P("D6", "Device:LED", "red (heater on)", 575, 300, {"1": "HEAT_D", "2": "LED_HEAT"},

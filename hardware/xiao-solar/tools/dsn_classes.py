@@ -136,6 +136,14 @@ def add_keepouts(board, path, b_clear=(), b_cost=3.0):
         for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
             ps.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
         lines += ['    (keepout "" %s)' % p for p in _poly_str("B.Cu", ps)]
+    # board rectangles with no autorouted copper on either layer (gen_pcb.FB_CLEAR, design mm)
+    g = gen_pcb
+    for x0, y0, x1, y1 in getattr(g, "FB_CLEAR", []):
+        ps = pcbnew.SHAPE_POLY_SET(); ps.NewOutline()
+        for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+            ps.Append(pcbnew.FromMM(g.OX + x), pcbnew.FromMM(g.OY + y))
+        for lname in ("F.Cu", "B.Cu"):
+            lines += ['    (keepout "" %s)' % q for q in _poly_str(lname, ps)]
     # copper >= 0.4 mm from the board edge (V-cut panels): Freerouting's own edge clearance
     # is the 0.13 mm default, so a 0.45 mm strip along each edge is a keepout on both layers
     g = gen_pcb

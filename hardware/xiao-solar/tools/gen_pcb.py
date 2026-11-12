@@ -22,19 +22,34 @@ if not os.path.isdir(FPLIB_SYS):
     FPLIB_SYS = "C:/Program Files/KiCad/10.0/share/kicad/footprints"
 FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
 # Design coordinates run from y = 0 to H; the board itself starts at y = TOP (v0.5: the top
-# 5 mm were cut off, 50 x 60 mm), and its top-left corner sits at (100, 100) on the sheet.
-W, H = 50.0, 65.0          # design area, mm
+# 5 mm were cut off, 50 x 65 mm), and its top-left corner sits at (100, 100) on the sheet.
+W, H = 50.0, 70.0          # design area, mm
 TOP = 5.0                  # first design y on the board
 OX, OY = 100.0, 100.0 - TOP
 
 def mm(v):
     return pcbnew.FromMM(v)
 
+# 50 x 65 (Petko, 2026-11-12, after the JLC DFM report): the coordinates written in this file are
+# those of the 50 x 60 layout (bottom edge H0) and ys() stretches them: +1 mm under the top row
+# (J5, pull-ups), +3.1 mm from the band under the modules down (every SMD pad >= 3 mm from the
+# module pins), +5 mm for the bottom row (D1 / D3 >= 3 mm from the connector pins).
+H0 = 65.0
+
+def ys(y):
+    if y < 10.5:
+        return y
+    if y < 30.0:
+        return y + 1.0
+    if y < 60.0:
+        return y + 3.1
+    return y + 5.0
+
 def pt(x, y):
-    return pcbnew.VECTOR2I(mm(OX + x), mm(OY + y))
+    return pcbnew.VECTOR2I(mm(OX + x), mm(OY + ys(y)))
 
 # ref: (x, y, rotation_deg) in design coordinates (board y + TOP).
-# v0.5 50 x 60 (Petko, 2026-11-12): Xiao (U3, left) and Wio (U4, right, turned 180) side by side
+# v0.5 50 x 65 (Petko, 2026-11-12; laid out as 50 x 60, see ys()): Xiao (U3, left) and Wio (U4, right, turned 180) side by side
 # under the top edge, the ideal diode in the channel between them; HT7533, MSPM0 and BMS in a
 # band under the modules; the charger below, connectors along the bottom edge.
 PLACE = {
@@ -47,7 +62,7 @@ PLACE.update(charger.place(charger.Frame(16.0, 55.0), set(charger.PLACE)))
 # lifts the charger by 10 mm into the band left free by the side-by-side modules
 DY = 6.0
 LO = -10.0
-CHARGER_FRAME = charger.Frame(16.0, 55.0 + DY + LO, ox=OX, oy=OY)
+CHARGER_FRAME = charger.Frame(16.0, ys(55.0 + DY + LO), ox=OX, oy=OY)
 PLACE = {r: (x, y + DY + LO, a) for r, (x, y, a) in PLACE.items()}
 # C9 (PMID HF cap) is 0603 now (basic 50 V part, as on solar-smart-mppt): it stands upright
 # right above pin 29 (PMID pad down), its GND pad ties into the pin 27 GND line;
@@ -62,7 +77,7 @@ PLACE.update({
     # diagonally (two nested groups, one per layer)
     "U3": (11.2, 20.8, 90), "U4": (38.8, 20.8, 270),
     # I2C (J5) along the top edge above the Xiao (pin 1 = SCL on the left), pull-ups right of it
-    "J5": (9.5, TOP + 1.6, 90), "R11": (21.0, 7.2, 0), "R12": (21.0, 9.2, 0),
+    "J5": (9.5, TOP + 1.6, 90), "R11": (22.8, 7.2, 0), "R12": (22.8, 9.2, 0),
     # channel between the modules: ideal-diode mirror (R30, Q6 on SYS, Q7 on XIAO_5V, R31) and
     # the FET Q5 at the bottom (D down to the SYS run, S / G up)
     "R30": (25.0, 12.8, 0), "Q6": (25.0, 15.7, 0), "Q7": (25.0, 19.3, 0), "R31": (25.0, 22.2, 0),
@@ -92,30 +107,42 @@ PLACE.update({
     "J1": (9.0, 63.3, 90), "J4": (27.0, 63.3, -90), "J3": (35.0, 63.3, 90), "J6": (47.5, 52.0, 0),
     # SOLAR -> D1 (reverse polarity) -> VBUS, TVS D3 beside it, both above the bottom row
     "D1": (11.8, 59.5, 180), "D3": (21.0, 59.5, 0),
-    # heater: Q4 left of J6, gate parts left of it, LED (D6 + R29 across J6) under Q4
-    "Q4": (43.4, 54.0, 0), "R27": (39.8, 53.3, 0), "R28": (39.8, 55.0, 0),
-    "D6": (42.6, 56.9, 180), "R29": (42.6, 58.6, 180),
+    # heater: Q4 left of J6 (>= 3 mm from its pins), gate parts left of it, LED (D6 + R29 across
+    # J6) under Q4
+    "Q4": (41.9, 54.0, 0), "R27": (38.4, 53.3, 0), "R28": (38.4, 55.0, 0),
+    "D6": (41.2, 56.9, 180), "R29": (41.2, 58.6, 180),
 })
 B_SIDE = {"TP11", "TP12", "TP13", "TP14", "TP15"}
 # four holes 2.8 mm (M2/M2.5), 6 mm clear for the head, 3.5 mm from the edges
-PLACE.update({"H1": (3.5, TOP + 3.5, 0), "H2": (W - 3.5, TOP + 3.5, 0), "H3": (3.5, H - 3.5, 0),
-              "H4": (W - 3.5, H - 3.5, 0)})
+PLACE.update({"H1": (3.5, TOP + 3.5, 0), "H2": (W - 3.5, TOP + 3.5, 0), "H3": (3.5, H0 - 3.5, 0),
+              "H4": (W - 3.5, H0 - 3.5, 0)})
 
-OUTLINE = [(0, TOP), (W, TOP), (W, H), (0, H)]
+OUTLINE = [(0, TOP), (W, TOP), (W, H0), (0, H0)]
 
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y). Charger nets sit
 # inside their copper zone when there is room; the others are wired by the router.
 TEST_POINTS = {
     "VBUS": (9.0, 48.0, 15.0, 54.0, 10.0, 51.5), "PMID": (4.5, 44.0, 12.0, 49.0, 6.0, 48.0),
     "SYS": (20.0, 44.0, 32.0, 49.0, 30.5, 45.5), "BAT": (22.0, 48.5, 34.0, 56.0, 29.5, 55.6),
-    "SCL": (23.5, 5.6, 35.0, 10.6, 25.0, 8.0), "SDA": (23.5, 5.6, 35.0, 10.6, 27.5, 8.0),
-    "3V3": (23.5, 5.6, 35.0, 10.6, 30.0, 8.0), "GND": (23.5, 5.6, 35.0, 10.6, 32.5, 8.0),
+    "SCL": (24.3, 5.6, 36.0, 10.3, 25.5, 8.0), "SDA": (24.3, 5.6, 36.0, 10.3, 28.0, 8.0),
+    "3V3": (24.3, 5.6, 36.0, 10.3, 30.5, 8.0), "GND": (24.3, 5.6, 36.0, 10.3, 33.0, 8.0),
 }
 # three fiducials: region x0, y0, x1, y1 and the preferred point
-FIDUCIALS = [(34.5, 5.6, 40.0, 11.0, 37.5, 8.0), (0.8, 38.2, 4.2, 41.0, 2.5, 39.6),
+FIDUCIALS = [(35.0, 5.6, 40.0, 10.3, 37.5, 8.0), (0.8, 38.2, 4.2, 41.0, 2.5, 39.6),
              (28.0, 56.0, 33.0, 62.0, 30.5, 60.5)]
-# no whole-GND B.Cu under the modules any more: the Xiao-Wio links cross under them
-B_CLEAR = []
+FIDUCIALS = [(x0, ys(y0), x1, ys(y1), px, ys(py)) for x0, y0, x1, y1, px, py in FIDUCIALS]
+TEST_POINTS = {n: (x0, ys(y0), x1, ys(y1), px, ys(py)) for n, (x0, y0, x1, y1, px, py) in TEST_POINTS.items()}
+# B.Cu under the Wio (between its pin rows) stays whole GND (Petko: no link under the Wio on the
+# bottom; the Xiao-Wio links cross under the Xiao)
+WIO_IN = (28.0, ys(13.18) + 1.05, 49.6, ys(28.42) - 1.05)
+B_CLEAR = [WIO_IN]
+# and no autorouted copper on F.Cu there either: whole GND on both layers under the radio
+FB_CLEAR = [WIO_IN]
+# pre-routes stay out from between the Xiao pin rows too (but the LoRa control links): the Xiao
+# top row (SPI, 3V3) goes down the channel to the Wio bottom row from below, the Xiao bottom row
+# (LoRa control) under the Xiao, up through the channel and over the Wio to its top row
+XIAO_IN = (0.0, ys(13.18) + 1.05, 19.9, ys(28.42) - 1.05)
+SPI_B = ("SPI_SCK", "SPI_MISO", "SPI_MOSI", "3V3")
 # the charger's whole-GND B.Cu area starts 1.4 mm lower than charger.B_CLEAR (still above the
 # bulk caps): the strip above it carries the BQ25798 bus from the right to the MSPM0
 CHARGER_B_CLEAR = (-11.5, -9.0, 15.8, 1.0)
@@ -134,7 +161,7 @@ def place_test_points(board, tps, frame, spec, ox=OX, oy=OY):
             at = dfm.free_spot(board, (x0, y0, x1, y1), (px, py), (1.05, 0.75), ox, oy, net=net)
         if at is None:
             raise SystemExit("no room for test point %s (%s)" % (ref, net))
-        fp.SetPosition(pt(*at))
+        fp.SetPosition(pcbnew.VECTOR2I(mm(OX + at[0]), mm(OY + at[1])))   # spec is stretched already
         board.Add(fp)
         placed[ref] = at
     return placed
@@ -300,7 +327,7 @@ def preroute(board):
     # the VBAT divider, west above the cluster's top vias and up to the drain of Q5
     sys_ = board.FindNet("SYS")
     vin = _pad(board, "Q5", "3").GetPosition()
-    pts = [pt(32.6, 46.3), pt(32.6, 41.3), pt(28.0, 41.3), pt(28.0, 29.0), pcbnew.VECTOR2I(vin.x, mm(OY + 29.0)), vin]
+    pts = [pt(32.6, 46.3), pt(32.6, 41.3), pt(28.0, 41.3), pt(28.0, 29.0), pcbnew.VECTOR2I(vin.x, pt(0, 29.0).y), vin]
     for a_, b_ in zip(pts, pts[1:]):
         _track(board, a_, b_, sys_, 0.8)
     # XIAO_5V from the Q5 source west under the Xiao (between its pin rows) and up to its 5V
@@ -362,8 +389,8 @@ def preroute(board):
     bm = board.FindNet("BATT-")
     j42 = _pad(board, "J4", "2").GetPosition()
     q1 = _pad(board, "Q3", "1").GetPosition()
-    up = (pcbnew.ToMM(q1.x) - OX - 1.2, 45.0)
-    pts = [j42, pcbnew.VECTOR2I(j42.x, mm(OY + 61.3)), pt(up[0], 61.3), pt(*up)]
+    up = (pcbnew.ToMM(q1.x) - OX - 1.2, 45.0)   # 50 x 60 coordinates (pt stretches them)
+    pts = [j42, pcbnew.VECTOR2I(j42.x, pt(0, 60.8).y), pt(up[0], 60.8), pt(*up)]   # 2.5 mm above the pins: B.Cu GND passes under J3
     for a_, b_ in zip(pts, pts[1:]):
         charger._track(board, a_, b_, bm, 1.0, pcbnew.B_Cu)
     for v in (up, (up[0], up[1] - 0.9)):
@@ -532,7 +559,7 @@ def build():
     # heater LED references left of the parts (the hole and J6 are right of them)
     for ref in ("D6", "R29"):
         r = board.FindFootprintByReference(ref).Reference()
-        r.SetPosition(pt(39.4, PLACE[ref][1])); r.SetTextAngleDegrees(0)
+        r.SetPosition(pt(38.0, PLACE[ref][1])); r.SetTextAngleDegrees(0)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
     return board
@@ -562,6 +589,21 @@ def write_project():
 # two-layer grid A*), as on solar-smart-mppt: the autorouter leaves them open or long.
 # (net, from, to): a (ref, pad) or a point in board mm (a stub end or via of MCU_STUBS)
 PRE_ROUTES = [
+    # Xiao bus from the MSPM0 stubs to the Xiao pins (first: SDA climbs the channel to the top row)
+    ("SDA", _m(26.1, 49.05), ("U3", "8")), ("SCL", _m(26.95, 50.0), ("U3", "7")),
+    # SPI and 3V3, Xiao top row -> Wio bottom row, on B.Cu: over the Xiao pins, down the channel
+    # and in under the Wio pins from below (the F.Cu of the channel stays for the ideal diode)
+    ("SPI_SCK", ("U3", "9"), ("U4", "9")), ("SPI_MISO", ("U3", "10"), ("U4", "10")),
+    ("SPI_MOSI", ("U3", "11"), ("U4", "11")), ("3V3", ("U3", "12"), ("U4", "12")),
+    # ideal-diode mirror (inside the channel, F.Cu): thin sense lines, the power path is Q5
+    ("SYS", ("Q6", "2"), (26.5, 29.0)), ("XIAO_5V", ("Q7", "2"), ("Q5", "2")),
+    ("OR_G", ("Q7", "3"), ("Q5", "1")),
+    # LoRa control links Xiao bottom row -> Wio top row, innermost first so the runs nest: under the
+    # Xiao, out over the top and down to the Wio pins (Petko: no link under the Wio; B.Cu there is
+    # a keepout for Freerouting too, which routes SPI / 3V3 through the channel)
+    ("LORA_RXEN", ("U3", "6"), ("U4", "6")), ("LORA_NSS", ("U3", "5"), ("U4", "5")),
+    ("LORA_BUSY", ("U3", "4"), ("U4", "4")), ("LORA_RST", ("U3", "3"), ("U4", "3")),
+    ("LORA_DIO1", ("U3", "2"), ("U4", "2")),
     # SWD on B.Cu to the pads of the row (the farthest pad first, so the runs nest)
     ("SWCLK", _m(30.4, 44.85), ("TP14", "1")), ("SWDIO", _m(31.2, 45.85), ("TP11", "1")),
     ("NRST", _m(24.85, 42.95), ("TP15", "1")), ("3V3M", _m(30.13, 49.9), ("TP12", "1")),
@@ -569,8 +611,6 @@ PRE_ROUTES = [
     ("ADC_VBAT", _m(30.2, 42.6), ("R25", "2")), ("ADC_CHEM", _m(31.0, 43.2), ("JP2", "1")),
     ("SH_P", _m(31.0, 41.9), ("R23", "2")), ("SH_N", _m(31.6, 46.85), ("R24", "2")),
     ("HEAT", _m(30.2, 41.2), ("R27", "1")),
-    # Xiao bus from the MSPM0 stubs to the Xiao pins
-    ("SCL", _m(26.95, 50.0), ("U3", "7")), ("SDA", _m(26.1, 49.05), ("U3", "8")),
     # 3V3M from the HT7533 output to the R13 via and the SWD pad
     ("3V3M", ("C26", "1"), _m(23.07, 42.4)),
     # NTC from J3 to the TS node at R2 / R3
@@ -578,9 +618,6 @@ PRE_ROUTES = [
     # heater LED: D6 anode to R29, cathode to the J6 return, R29 to SYS at J6 pin 1
     ("LED_HEAT", ("D6", "2"), ("R29", "2")), ("HEAT_D", ("D6", "1"), ("J6", "2")),
     ("SYS", ("R29", "1"), ("J6", "1")),
-    # ideal-diode mirror: thin sense lines (the power path is Q5 alone)
-    ("SYS", ("Q6", "2"), (26.5, 29.0)), ("XIAO_5V", ("Q7", "2"), ("Q5", "2")),
-    ("OR_G", ("Q7", "3"), ("Q5", "1")),
 ]
 
 def pre_route(b):
@@ -588,13 +625,18 @@ def pre_route(b):
     KB = [(x0 - OX, y0 - OY, x1 - OX, y1 - OY) for x0, y0, x1, y1 in route.b_clear(b)]
     def end(e):
         if isinstance(e[0], float):
-            return e
+            return (e[0], ys(e[1]))
         p = _pad(b, *e).GetPosition()
         return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
     for net_, a_, b_ in PRE_ROUTES:
         try:
-            print(patch2.route_net(b, net_, (end(a_), end(b_)), lock=True, width=0.2, clear=0.2,
-                                   layer_cost=(1.0, 1.0), keepout_b=KB))
+            # nothing under the Wio; the LoRa control links may cross under the Xiao (vias above the
+            # XIAO_5V run, over to F.Cu and out through the channel), nothing else goes there
+            ko = [WIO_IN] if net_.startswith("LORA_") else [WIO_IN, XIAO_IN]
+            print(patch2.route_net(b, net_, (end(a_), end(b_)), lock=True, clear=0.2,
+                                   width=0.4 if net_ == "3V3" else 0.2,   # 3V3: the Wio's supply
+                                   layer_cost=(6.0, 1.0) if net_ in SPI_B else (1.0, 1.0),
+                                   keepout_b=KB, keepout=ko))
         except RuntimeError as e:
             print(net_, "pre-route failed:", e)
 
