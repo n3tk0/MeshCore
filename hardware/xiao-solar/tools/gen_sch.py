@@ -527,15 +527,15 @@ R4x("R15", "4.7k", 550, 60, "3V3M", "SCL_I", "C25900")
 # chemistry jumper: open = Li-ion (PA23 follows the internal pull), closed = LiFePO4
 P("JP2", "Jumper:SolderJumper_2_Open", "CHEM: open Li-ion / closed LiFePO4", 560, 140,
   {"1": "ADC_CHEM", "2": "GND"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm", rot=90)
-# shunt in BATT- (+ = charging): Kelvin taps, 1M bias to 3V3M keeps both OPA inputs above 0 V
+# shunt in BATT- (+ = charging): Kelvin taps, 330k bias to 3V3M (~97 mV) keeps both OPA inputs above 0 V down to ~2 A discharge at 50 mOhm
 # two basic 100 mOhm 1206 in parallel = 50 mOhm / 0.5 W (no extended fee); Kelvin taps on RS1
 P("RS1", "Device:R", "100m 1%", 440, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
 P("RS2", "Device:R", "100m 1%", 425, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
 R4x("R21", "10k", 470, 205, "BATT_S", "SH_P", "C25744", rot=270)
 R4x("R22", "10k", 470, 235, "SH_K", "SH_N", "C25744", rot=270)
 P("NT1", "Device:NetTie_2", "NetTie", 455, 245, {"1": "SH_K", "2": "GND"}, "NetTie:NetTie-2_SMD_Pad0.5mm", rot=90)
-R4x("R23", "1M", 490, 195, "3V3M", "SH_P", "C26083")
-R4x("R24", "1M", 505, 195, "3V3M", "SH_N", "C26083")
+R4x("R23", "330k", 490, 195, "3V3M", "SH_P", "C25778")
+R4x("R24", "330k", 505, 195, "3V3M", "SH_N", "C25778")
 C("C24", "100n", 490, 220, "SH_P", "SH_N", "C1525", C0402)
 # battery voltage for the MSPM0 ADC
 R4x("R25", "1M", 530, 195, "BATT+", "ADC_VBAT", "C26083")

@@ -1554,7 +1554,7 @@
 				)
 			)
 		)
-		(property "Value" "1M"
+		(property "Value" "330k"
 			(at 0 1.17 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -1600,7 +1600,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C26083"
+		(property "LCSC" "C25778"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -17853,7 +17853,7 @@
 				)
 			)
 		)
-		(property "Value" "1M"
+		(property "Value" "330k"
 			(at 0 1.17 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -17899,7 +17899,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C26083"
+		(property "LCSC" "C25778"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
