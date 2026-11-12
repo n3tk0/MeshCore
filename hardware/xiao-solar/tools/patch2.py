@@ -106,7 +106,7 @@ def route_net(board, net, ends, width=0.25, lock=False, via_w=0.6, layer_cost=(1
     W, H = gen_pcb.W, gen_pcb.H
     nx, ny = int(W / STEP) + 1, int(H / STEP) + 1
     xs, ys = np.meshgrid(np.arange(nx) * STEP, np.arange(ny) * STEP)
-    edge = 0.3 + width / 2
+    edge = 0.4 + width / 2   # copper >= 0.4 mm from the edge (V-cut panels)
     T0 = getattr(gen_pcb, "TOP", 0.0)
     border = (xs < edge) | (ys < T0 + edge) | (xs > W - edge) | (ys > H - edge)
     blocked = {}

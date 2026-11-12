@@ -22,8 +22,8 @@ if not os.path.isdir(FPLIB_SYS):
     FPLIB_SYS = "C:/Program Files/KiCad/10.0/share/kicad/footprints"
 FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
 # Design coordinates run from y = 0 to H; the board itself starts at y = TOP (v0.5: the top
-# 5 mm were cut off, 50 x 70 mm), and its top-left corner sits at (100, 100) on the sheet.
-W, H = 50.0, 75.0          # design area, mm
+# 5 mm were cut off, 50 x 60 mm), and its top-left corner sits at (100, 100) on the sheet.
+W, H = 50.0, 65.0          # design area, mm
 TOP = 5.0                  # first design y on the board
 OX, OY = 100.0, 100.0 - TOP
 
@@ -33,95 +33,91 @@ def mm(v):
 def pt(x, y):
     return pcbnew.VECTOR2I(mm(OX + x), mm(OY + y))
 
-# ref: (x, y, rotation_deg). Coordinates are mm from the board's top-left corner.
-# Columns: XIAO/Wio on the left (USB to the left edge), MSPM0 between U3 and the right column,
-# inputs, BMS, shunt and heater FET on the right, charger below the modules, all connectors
-# in one column at the right edge.
+# ref: (x, y, rotation_deg) in design coordinates (board y + TOP).
+# v0.5 50 x 60 (Petko, 2026-11-12): Xiao (U3, left) and Wio (U4, right, turned 180) side by side
+# under the top edge, the ideal diode in the channel between them; HT7533, MSPM0 and BMS in a
+# band under the modules; the charger below, connectors along the bottom edge.
 PLACE = {
-    # modules, rotated so the USB / pin-1 end faces the left edge
-    "U4": (11.5, 12.0, 90), "U3": (11.5, 35.0, 90),
-    # between the modules: Xiao 5V bulk, 3V3 decoupling and the ideal-diode FET Q5 (D down to SYS)
-    "Q5": (20.5, 23.5, 270), "C20": (9.8, 23.5, 0), "C21": (13.5, 23.5, 180), "C22": (16.7, 23.5, 0),
-    # right column connectors (pin 1 at the given point, pins go down)
-    # Xiao I2C pull-ups, top right (no SHT40 since v0.5: the MSPM0 reports the temperatures)
-    "R11": (33.0, 4.4, 0), "R12": (33.0, 5.9, 0),
     # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
     "JP3": (32.8, 58.0, 90),
 }
-# charger cluster (tools/charger.py), U1 at its position before the DY shift below
+# charger cluster (tools/charger.py), U1 at its position before the DY / LO shifts below
 PLACE.update(charger.place(charger.Frame(16.0, 55.0), set(charger.PLACE)))
-# Everything moves down by DY to leave the top corners free for the mounting holes: 2.8 mm
-# (M2/M2.5) with 6 mm clear for the head, 3.5 mm from the edges.
+# DY: the 50 x 75 layout moved everything down by 6 mm for the top holes; LO: the 50 x 60 layout
+# lifts the charger by 10 mm into the band left free by the side-by-side modules
 DY = 6.0
-CHARGER_FRAME = charger.Frame(16.0, 55.0 + DY, ox=OX, oy=OY)
-PLACE = {r: (x, y + DY, a) for r, (x, y, a) in PLACE.items()}
-# C9 (PMID HF cap) is 0603 now (basic 50 V part, as on solar-smart-mppt): its GND pad stays on
-# stands upright right above pin 29 (PMID pad down), its GND pad ties into the pin 27 GND line;
+LO = -10.0
+CHARGER_FRAME = charger.Frame(16.0, 55.0 + DY + LO, ox=OX, oy=OY)
+PLACE = {r: (x, y + DY + LO, a) for r, (x, y, a) in PLACE.items()}
+# C9 (PMID HF cap) is 0603 now (basic 50 V part, as on solar-smart-mppt): it stands upright
+# right above pin 29 (PMID pad down), its GND pad ties into the pin 27 GND line;
 # C16 steps 0.35 mm right, clear of the C9 courtyard (fix_charger_routes)
 PLACE["C9"] = (PLACE["C9"][0] - 0.42, PLACE["C9"][1] - 0.87, 90)
 PLACE["C16"] = (PLACE["C16"][0] + 0.35, PLACE["C16"][1], PLACE["C16"][2])
-# v0.5 (final board coordinates, after DY). Connectors: SOLAR | BAT | NTC along the bottom
-# edge (pins along it, pin 1 = + square), I2C (J5) and HEAT (J6) in one column at the right edge.
-MCU_D = (8.5, -8.0)   # the MSPM0 cluster moved by this from its first v0.5 place (U6 27.2, 45.6)
+MCU_D = (-5.2, -10.85)   # the MSPM0 cluster moved by this from its first v0.5 place (U6 27.2, 45.6)
 def _m(x, y):
     return (round(x + MCU_D[0], 3), round(y + MCU_D[1], 3))
 PLACE.update({
-    # I2C (J5) lies along the top edge between the two top holes (pin 1 = SCL on the left)
-    "J5": (33.2, TOP + 1.6, 90), "J6": (47.5, 62.0, 0),
-    "J1": (9.0, 73.3, 90), "J4": (27.0, 73.3, -90), "J3": (35.0, 73.3, 90),
-    # SOLAR -> D1 (reverse polarity) -> VBUS, TVS D3 beside it, both above the bottom row
-    "D1": (11.8, 69.5, 180), "D3": (21.0, 69.5, 0),
-    # BMS (DW01A + HJ8205) and the 20 mOhm low-side shunt on the right: Q3 S2 (BATT_S) -> RS1
-    # -> GND, Kelvin taps R21 (BATT_S) and R22 (SH_K, net tie NT1 on the RS1 GND pad), C24
-    # across them, bias R23 / R24 to 3V3M
-    "R9": (45.0, 41.5, 0), "U2": (45.0, 44.7, 0), "C19": (48.2, 44.7, 90), "R10": (45.0, 47.9, 0),
-    "Q3": (41.0, 51.8, 0), "RS1": (46.8, 52.2, 270),
-    "R21": (44.2, 50.74, 180), "C24": (44.2, 52.2, 0), "R22": (44.2, 53.66, 180), "NT1": (45.66, 53.66, 0),
-    "R23": (40.6, 47.6, 0), "R24": (40.6, 48.8, 0),
-    # battery voltage divider for the MSPM0 ADC
-    "R25": (37.4, 45.3, 180), "C30": (37.4, 46.5, 0), "R26": (37.4, 47.9, 0),
-    # heater: J6 above the bottom-right hole, Q4 beside it, gate parts to its left
-    "Q4": (43.4, 64.0, 0), "R27": (39.8, 63.3, 0), "R28": (39.8, 65.0, 0),
-    # MSPM0 right of the SYS trunk, away from the Xiao pins: I2C pins face down (pull-ups below),
-    # VDD / NRST left (caps beside it), analog pins and HEAT up, SWD / shunt right (MCU_STUBS)
+    # modules: Xiao USB to the left edge, Wio turned 180 so its pins 2-6 face the Xiao pins 9-12
+    # diagonally (two nested groups, one per layer)
+    "U3": (11.2, 20.8, 90), "U4": (38.8, 20.8, 270),
+    # I2C (J5) along the top edge above the Xiao (pin 1 = SCL on the left), pull-ups right of it
+    "J5": (9.5, TOP + 1.6, 90), "R11": (21.0, 7.2, 0), "R12": (21.0, 9.2, 0),
+    # channel between the modules: ideal-diode mirror (R30, Q6 on SYS, Q7 on XIAO_5V, R31) and
+    # the FET Q5 at the bottom (D down to the SYS run, S / G up)
+    "R30": (25.0, 12.8, 0), "Q6": (25.0, 15.7, 0), "Q7": (25.0, 19.3, 0), "R31": (25.0, 22.2, 0),
+    "Q5": (25.0, 25.6, 270),
+    # band under the modules, left to right: Xiao 5V bulk, HT7533 with C25 (SYS) / C26 (3V3M),
+    # Xiao 3V3 cap, MSPM0 cluster, VBAT divider, CHEM jumper, SWD (bottom), BMS
+    "C20": (2.0, 35.5, 270), "C25": (4.6, 35.5, 90), "U8": (8.8, 35.5, 0), "C26": (12.4, 35.5, 90),
+    "C21": (15.0, 35.5, 90), "C22": (41.3, 31.3, 0),
     "U6": (_m(27.2, 45.6)[0], _m(27.2, 45.6)[1], 0),
     "C27": _m(23.55, 45.35) + (180,), "C29": _m(23.55, 44.3) + (180,), "R13": _m(23.55, 43.3) + (0,),
     "C28": _m(24.9, 41.9) + (180,),
     "R14": _m(29.62, 48.95) + (180,), "R15": _m(29.62, 50.9) + (180,), "R4": _m(31.3, 48.75) + (90,),
-    # HT7533 above the MSPM0, C25 (SYS) left of it, C26 (3V3M) right
-    "U8": (30.5, 28.0, 0), "C25": (27.0, 25.4, 90), "C26": (34.4, 28.0, 90),
-    # CHEM jumper on top above the MSPM0 (label LFP), the SWD column on the bottom side (B_SIDE)
-    "JP2": (39.5, 31.0, 90),
-    # heater LED (D6 + R29 across J6): under Q4, left of the bottom-right hole
-    "D6": (42.6, 66.9, 180), "R29": (42.6, 68.6, 180),
-    # ideal-diode mirror (Q6 on SYS, Q7 on XIAO_5V, R30 / R31 1M) right of the Wio, above C25
-    "Q6": (24.6, 18.0, 0), "Q7": (24.6, 21.75, 0), "R30": (24.0, 15.5, 0), "R31": (24.0, 14.0, 0),
-    "TP12": (44.5, 22.5, 0), "TP15": (44.5, 25.04, 0), "TP11": (44.5, 27.58, 0),
-    "TP14": (44.5, 30.12, 0), "TP13": (44.5, 32.66, 0),
+    "R25": (30.5, 32.7, 180), "C30": (30.5, 33.9, 0), "R26": (30.5, 35.4, 0),
+    "JP2": (35.5, 34.0, 90),
+    # SWD: a row of five pads on the bottom under the Wio pin row, above the BQ bus lanes
+    "TP12": (31.5, 31.6, 0), "TP15": (34.04, 31.6, 0), "TP11": (36.58, 31.6, 0),
+    "TP14": (39.12, 31.6, 0), "TP13": (41.66, 31.6, 0),
+    # BMS (DW01A + HJ8205) and the 20 mOhm low-side shunt on the right: Q3 S2 (BATT_S) -> RS1
+    # (BATT_S end at the bottom, next to Q3 pin 3) -> GND (top, vias to the right edge), Kelvin
+    # taps R21 (BATT_S, bottom row) and R22 (SH_K, net tie NT1 on the RS1 GND pad, top row), C24
+    # across them, bias R23 / R24 to 3V3M
+    "R9": (45.0, 31.5, 0), "U2": (45.0, 34.7, 0), "C19": (48.2, 34.7, 90), "R10": (45.0, 37.9, 0),
+    "R23": (40.6, 37.6, 0), "R24": (40.6, 38.8, 0),
+    "Q3": (41.0, 41.8, 0), "RS1": (46.8, 42.2, 90),
+    "R22": (44.2, 40.74, 180), "C24": (44.2, 42.2, 0), "R21": (44.2, 43.66, 180), "NT1": (45.66, 40.74, 0),
+    # connectors: SOLAR | BAT | NTC along the bottom edge (pin 1 = + square), HEAT (J6) on the right
+    "J1": (9.0, 63.3, 90), "J4": (27.0, 63.3, -90), "J3": (35.0, 63.3, 90), "J6": (47.5, 52.0, 0),
+    # SOLAR -> D1 (reverse polarity) -> VBUS, TVS D3 beside it, both above the bottom row
+    "D1": (11.8, 59.5, 180), "D3": (21.0, 59.5, 0),
+    # heater: Q4 left of J6, gate parts left of it, LED (D6 + R29 across J6) under Q4
+    "Q4": (43.4, 54.0, 0), "R27": (39.8, 53.3, 0), "R28": (39.8, 55.0, 0),
+    "D6": (42.6, 56.9, 180), "R29": (42.6, 58.6, 180),
 })
 B_SIDE = {"TP11", "TP12", "TP13", "TP14", "TP15"}
-# three holes (Petko, 2026-11-12): the Wio fills the top-left corner, so only top right and the
-# two bottom corners
-PLACE.update({"H2": (W - 3.5, TOP + 3.5, 0), "H3": (3.5, H - 3.5, 0), "H4": (W - 3.5, H - 3.5, 0)})
+# four holes 2.8 mm (M2/M2.5), 6 mm clear for the head, 3.5 mm from the edges
+PLACE.update({"H1": (3.5, TOP + 3.5, 0), "H2": (W - 3.5, TOP + 3.5, 0), "H3": (3.5, H - 3.5, 0),
+              "H4": (W - 3.5, H - 3.5, 0)})
 
 OUTLINE = [(0, TOP), (W, TOP), (W, H), (0, H)]
 
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y). Charger nets sit
 # inside their copper zone when there is room; the others are wired by the router.
 TEST_POINTS = {
-    "VBUS": (9.0, 58.0, 15.0, 64.0, 10.0, 61.5), "PMID": (4.5, 54.0, 12.0, 59.0, 6.0, 58.0),
-    "SYS": (20.0, 54.0, 32.0, 59.0, 30.5, 55.5), "BAT": (22.0, 58.5, 34.0, 66.0, 29.5, 65.6),
-    "SCL": (29.0, 10.5, 43.0, 16.0, 31.0, 11.5), "SDA": (29.0, 10.5, 43.0, 16.0, 33.5, 11.5),
-    "3V3": (29.0, 10.5, 43.0, 16.0, 36.0, 11.5), "GND": (29.0, 10.5, 43.0, 16.0, 38.5, 11.5),
+    "VBUS": (9.0, 48.0, 15.0, 54.0, 10.0, 51.5), "PMID": (4.5, 44.0, 12.0, 49.0, 6.0, 48.0),
+    "SYS": (20.0, 44.0, 32.0, 49.0, 30.5, 45.5), "BAT": (22.0, 48.5, 34.0, 56.0, 29.5, 55.6),
+    "SCL": (23.5, 5.6, 35.0, 10.6, 25.0, 8.0), "SDA": (23.5, 5.6, 35.0, 10.6, 27.5, 8.0),
+    "3V3": (23.5, 5.6, 35.0, 10.6, 30.0, 8.0), "GND": (23.5, 5.6, 35.0, 10.6, 32.5, 8.0),
 }
 # three fiducials: region x0, y0, x1, y1 and the preferred point
-FIDUCIALS = [(26.5, 11.5, 29.5, 15.5, 28.0, 12.5), (40.5, 9.5, 44.5, 14.0, 42.5, 11.5),
-             (28.0, 66.0, 33.0, 72.0, 30.5, 70.5)]
-# B.Cu stays whole GND under the Wio (U4) as well as under the charger (charger.B_CLEAR)
-# (between its two pin rows only: the Xiao-Wio links need B.Cu at the rows)
-B_CLEAR = [(0.7, 11.8, 22.3, 23.8)]
+FIDUCIALS = [(34.5, 5.6, 40.0, 11.0, 37.5, 8.0), (0.8, 38.2, 4.2, 41.0, 2.5, 39.6),
+             (28.0, 56.0, 33.0, 62.0, 30.5, 60.5)]
+# no whole-GND B.Cu under the modules any more: the Xiao-Wio links cross under them
+B_CLEAR = []
 # the charger's whole-GND B.Cu area starts 1.4 mm lower than charger.B_CLEAR (still above the
-# bulk caps): the strip above it carries the BQ25798 bus from the right edge to the MSPM0
+# bulk caps): the strip above it carries the BQ25798 bus from the right to the MSPM0
 CHARGER_B_CLEAR = (-11.5, -9.0, 15.8, 1.0)
 
 def place_test_points(board, tps, frame, spec, ox=OX, oy=OY):
@@ -227,31 +223,29 @@ MCU_LOCAL_VIAS = [("3V3M", (24.1, 46.3)), ("3V3M", (23.07, 42.4)), ("HEAT", (30.
 _cl, _cv = _m(29.11, 51.7), _m(30.4, 48.1)          # SCL_I and CE vias of the cluster
 _sv = _m(29.11, 49.9)                               # SDA_I via
 MCU_STUBS = [(st[0], [_m(*q) for q in st[1]]) + tuple(st[2:]) for st in MCU_LOCAL] + [
-    # BQ25798 bus on B.Cu: down beside the cluster (SCL_I, SDA_I, CE from the left), west in
-    # nested steps to the lane x 32.0 / 32.5 / 33.0 and down it, then back left under the charger
-    # (below its whole-GND area and the BATP run). SCL_I hops over SDA_I on F.Cu at x 25 so the
-    # order matches the U1 stubs (SDA_I, SCL_I, CE from the top).
-    ("SCL_I", [_cl, (_cl[0], 48.0), (32.0, 48.0), (32.0, 62.95), (25.2, 62.95)], 0.2, "B"),
-    ("SCL_I", [(25.2, 62.95), (24.3, 64.2)]),
-    ("SCL_I", [(24.3, 64.2), (20.4, 64.2), (18.95, 65.65), (18.95, 65.75)], 0.2, "B"),
-    ("SCL_I", [(18.95, 65.75), (18.2, 65.6)]),
-    ("SDA_I", [_sv, (_sv[0] + 0.7, _sv[1] + 0.7), (_sv[0] + 0.7, 48.7), (32.5, 48.7), (32.5, 63.6), (19.75, 63.6),
-               (18.95, 64.4), (18.95, 64.8)], 0.2, "B"),
-    ("SDA_I", [(18.95, 64.8), (18.2, 64.8)]),
-    ("CE", [_cv, (_cv[0] + 0.6, _cv[1] + 0.6), (_cv[0] + 0.6, 49.4), (33.0, 49.4), (33.0, 64.8), (21.2, 64.8),
-            (18.0, 68.0), (16.2, 67.98)], 0.2, "B"),
+    # BQ25798 bus on B.Cu: east from the cluster vias in nested steps (CE top / outermost) to the
+    # lanes x 32.0 / 32.5 / 33.0 and down them, then back west under the charger (below its
+    # whole-GND area and the BATP run) to the U1 stubs (SDA_I, SCL_I, CE from the top).
+    ("CE", [_cv, (33.0, _cv[1]), (33.0, 54.8), (21.2, 54.8), (18.0, 58.0), (16.2, 57.98)], 0.2, "B"),
+    ("SDA_I", [_sv, (_sv[0] + 0.7, _sv[1] + 0.7), (32.5, _sv[1] + 0.7), (32.5, 53.6), (19.75, 53.6),
+               (18.95, 54.4), (18.95, 54.8)], 0.2, "B"),
+    ("SDA_I", [(18.95, 54.8), (18.2, 54.8)]),
+    ("SCL_I", [_cl, (32.0, _cl[1]), (32.0, 52.95), (25.2, 52.95)], 0.2, "B"),
+    ("SCL_I", [(25.2, 52.95), (24.3, 54.2)]),
+    ("SCL_I", [(24.3, 54.2), (20.4, 54.2), (18.95, 55.65), (18.95, 55.75)], 0.2, "B"),
+    ("SCL_I", [(18.95, 55.75), (18.2, 55.6)]),
     # the charger's right corner: REGN over TS to R2, BATP on B.Cu above the bus to R8 (as v0.4)
-    ("REGN", [(17.9, 62.18), (18.7, 62.18), (19.0, 62.48), (22.6, 62.48), (23.22, 63.1), (23.22, 64.8)], 0.2),
-    ("TS", [(17.8, 62.58), (18.3, 63.08), (20.1, 63.08), (21.58, 64.56), (21.58, 64.8)], 0.2),
-    ("BATP", [(17.92, 61.78), (18.62, 61.78), (18.9, 61.56)]),
-    ("BATP", [(18.9, 61.56), (19.65, 62.25), (28.6, 62.25), (28.85, 62.0)], 0.2, "B"),
-    ("BATP", [(28.85, 62.0), (28.78, 63.0)]),
+    ("REGN", [(17.9, 52.18), (18.7, 52.18), (19.0, 52.48), (22.6, 52.48), (23.22, 53.1), (23.22, 54.8)], 0.2),
+    ("TS", [(17.8, 52.58), (18.3, 53.08), (20.1, 53.08), (21.58, 54.56), (21.58, 54.8)], 0.2),
+    ("BATP", [(17.92, 51.78), (18.62, 51.78), (18.9, 51.56)]),
+    ("BATP", [(18.9, 51.56), (19.65, 52.25), (28.6, 52.25), (28.85, 52.0)], 0.2, "B"),
+    ("BATP", [(28.85, 52.0), (28.78, 53.0)]),
     # BAT from the charger's BAT copper down to JP3 (bypass of the ship FET), as v0.4
-    ("BAT", [(26.25, 60.64), (25.6, 61.3), (25.6, 61.78), (28.47, 64.65), (32.8, 64.65)], 0.6),
+    ("BAT", [(26.25, 50.64), (25.6, 51.3), (25.6, 51.78), (28.47, 54.65), (32.8, 54.65)], 0.6),
 ]
 MCU_VIAS = [(n, _m(*q)) for n, q in MCU_LOCAL_VIAS] + [
-    ("SCL_I", (25.2, 62.95)), ("SCL_I", (24.3, 64.2)), ("SCL_I", (18.95, 65.75)),
-    ("SDA_I", (18.95, 64.8)), ("CE", (16.2, 67.98)), ("BATP", (18.9, 61.56)), ("BATP", (28.85, 62.0))]
+    ("SCL_I", (25.2, 52.95)), ("SCL_I", (24.3, 54.2)), ("SCL_I", (18.95, 55.75)),
+    ("SDA_I", (18.95, 54.8)), ("CE", (16.2, 57.98)), ("BATP", (18.9, 51.56)), ("BATP", (28.85, 52.0))]
 
 def add_mcu_stubs(board):
     for st in MCU_STUBS:
@@ -290,11 +284,11 @@ def preroute(board):
     charger._track(board, vv[0], vv[1], vbus, 0.8, pcbnew.B_Cu)
     for v in vv:
         charger._via(board, v, vbus)
-    # C20 and C22 GND between the module rows get cut off by the traces there: own vias
+    # C20 and C22 GND (small islands between tracks): own vias
     for ref in ("C20", "C22"):
         cg = _pad(board, ref, "2")
-        # C20: below its pad (C21 sits right of it since v0.5), C22: right of its pad
-        off = (0.9, 0) if ref == "C20" else (1.1, 0)
+        # below the GND pad (C20 stands upright, C22 has R9 right of it)
+        off = (0, 1.1)
         at = pcbnew.VECTOR2I(cg.GetPosition().x + mm(off[0]), cg.GetPosition().y + mm(off[1]))
         _track(board, cg.GetPosition(), at, cg.GetNet(), 0.4)
         v = pcbnew.PCB_VIA(board)
@@ -302,25 +296,28 @@ def preroute(board):
         v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); v.SetLocked(True)
         board.Add(v)
     # SYS to the Xiao: one 0.8 mm run from the right end of the SYS copper (the bulk caps close
-    # its top side), diagonally up-left past the charger caps, up between the Xiao and the
-    # MSPM0 and into the channel between the modules to the drain of the ideal-diode FET Q5
+    # its top side) up past C15, west above the charger caps, up between the MSPM0 cluster and
+    # the VBAT divider, west above the cluster's top vias and up to the drain of Q5
     sys_ = board.FindNet("SYS")
     vin = _pad(board, "Q5", "3").GetPosition()
-    pts = [pt(32.6, 56.3), pt(32.6, 53.0), pt(32.6, 51.5), pt(28.0, 46.9), pt(26.5, 46.9), pt(26.5, 33.5), pt(24.0, 31.0), pcbnew.VECTOR2I(vin.x, mm(OY + 31.0)), vin]
+    pts = [pt(32.6, 46.3), pt(32.6, 41.3), pt(28.0, 41.3), pt(28.0, 29.0), pcbnew.VECTOR2I(vin.x, mm(OY + 29.0)), vin]
     for a_, b_ in zip(pts, pts[1:]):
         _track(board, a_, b_, sys_, 0.8)
-    # XIAO_5V from the Q5 source along the top of the channel (under the Wio pin row) and down
-    # to the Xiao 5V pin; C20 joins it on the way
+    # XIAO_5V from the Q5 source west under the Xiao (between its pin rows) and up to its 5V
+    # pin (top-left); C20 at the left edge joins it from below, past the D0 pin
     v5 = board.FindNet("XIAO_5V")
     src, p5 = _pad(board, "Q5", "2").GetPosition(), _pad(board, "U3", "14").GetPosition()
-    pts = [src, pcbnew.VECTOR2I(src.x, mm(OY + 27.7)), pcbnew.VECTOR2I(p5.x, mm(OY + 27.7)), p5]
+    yv = src.y
+    pts = [src, pcbnew.VECTOR2I(p5.x, yv), p5]
     for a_, b_ in zip(pts, pts[1:]):
         _track(board, a_, b_, v5, 0.6)
     c20 = _pad(board, "C20", "1").GetPosition()
-    _track(board, c20, pcbnew.VECTOR2I(c20.x, mm(OY + 27.7)), v5, 0.6)
+    knee = pcbnew.VECTOR2I(c20.x, yv + (p5.x - c20.x))
+    _track(board, c20, knee, v5, 0.6)
+    _track(board, knee, pcbnew.VECTOR2I(p5.x, yv), v5, 0.6)
     # heater feed (up to ~2.5 A), all on F.Cu: 1.2 mm from the SYS copper along y 56.3 and down
     # the right edge to J6 pin 1; the return from the Q4 drain to J6 pin 2
-    run = [pt(31.3, 57.6), pt(32.6, 56.3), pt(46.2, 56.3), pt(47.5, 57.6), _pad(board, "J6", "1").GetPosition()]
+    run = [pt(31.3, 47.6), pt(32.6, 46.3), pt(46.2, 46.3), pt(47.5, 47.6), _pad(board, "J6", "1").GetPosition()]
     for a_, b_ in zip(run, run[1:]):
         _track(board, a_, b_, sys_, 1.2)
     d, j62 = _pad(board, "Q4", "3").GetPosition(), _pad(board, "J6", "2").GetPosition()
@@ -331,23 +328,42 @@ def preroute(board):
     # BATT+ (charge current up to 3 A): Q2 drain and JP3 joined on F.Cu, then 1.0 mm down to
     # J4 pin 1 (BAT +) on the bottom edge
     bat = board.FindNet("BATT+")
-    v1, v2 = pt(34.0, 60.3), pt(34.0, 61.5)
+    v1, v2 = pt(34.0, 50.3), pt(34.0, 51.5)
     _track(board, _pad(board, "Q2", "3").GetPosition(), v1, bat, 1.0)
     _track(board, v1, v2, bat, 1.0)
     jp = _pad(board, "JP3", "2").GetPosition()
     _track(board, jp, pcbnew.VECTOR2I(jp.x, v2.y), bat, 1.0)
     _track(board, pcbnew.VECTOR2I(jp.x, v2.y), v2, bat, 1.0)
     j41 = _pad(board, "J4", "1").GetPosition()
-    pts = [v2, pt(34.4, 61.9), pt(34.4, 67.0), pcbnew.VECTOR2I(j41.x + mm(1.6), j41.y - mm(1.6)), j41]
+    pts = [v2, pt(34.4, 51.9), pt(34.4, 57.0), pcbnew.VECTOR2I(j41.x + mm(1.6), j41.y - mm(1.6)), j41]
     for i, (a_, b_) in enumerate(zip(pts, pts[1:])):
         # 1.0 mm, but 0.8 on the diagonal past the TS via
         _track(board, a_, b_, bat, 0.8 if i == 2 else 1.0)
+    # BATT_S (battery current): Q3 pin 3 (S2) straight down and right under the Kelvin column to
+    # the RS1 BATT_S pad; R21 taps that pad. RS1 GND: 0.8 mm right to two vias at the edge.
+    bs = board.FindNet("BATT_S")
+    q3, r1 = _pad(board, "Q3", "3").GetPosition(), _pad(board, "RS1", "1").GetPosition()
+    yb = q3.y + mm(1.7)
+    _track(board, q3, pcbnew.VECTOR2I(q3.x, yb - mm(0.75)), bs, 0.5)
+    pts = [pcbnew.VECTOR2I(q3.x, yb - mm(0.75)), pcbnew.VECTOR2I(q3.x + mm(0.75), yb), pcbnew.VECTOR2I(r1.x, yb), r1]
+    for a_, b_ in zip(pts, pts[1:]):
+        _track(board, a_, b_, bs, 0.8)
+    _track(board, _pad(board, "R21", "1").GetPosition(), r1, bs, 0.25)
+    gn = board.FindNet("GND")
+    r2 = _pad(board, "RS1", "2").GetPosition()
+    ex = mm(OX + W - 1.25)
+    _track(board, r2, pcbnew.VECTOR2I(ex, r2.y), gn, 0.8)
+    for dy in (-0.45, 0.45):
+        at = pcbnew.VECTOR2I(ex, r2.y + mm(dy))
+        _track(board, pcbnew.VECTOR2I(ex, r2.y), at, gn, 0.6)
+        v = pcbnew.PCB_VIA(board); v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(gn); v.SetLocked(True)
+        board.Add(v)
     # BATT- from J4 pin 2 on B.Cu along the bottom (under J4 / J3) and up to the HJ8205
     bm = board.FindNet("BATT-")
     j42 = _pad(board, "J4", "2").GetPosition()
     q1 = _pad(board, "Q3", "1").GetPosition()
-    up = (pcbnew.ToMM(q1.x) - OX - 1.2, 55.0)
-    pts = [j42, pcbnew.VECTOR2I(j42.x, mm(OY + 71.3)), pt(up[0], 71.3), pt(*up)]
+    up = (pcbnew.ToMM(q1.x) - OX - 1.2, 45.0)
+    pts = [j42, pcbnew.VECTOR2I(j42.x, mm(OY + 61.3)), pt(up[0], 61.3), pt(*up)]
     for a_, b_ in zip(pts, pts[1:]):
         charger._track(board, a_, b_, bm, 1.0, pcbnew.B_Cu)
     for v in (up, (up[0], up[1] - 0.9)):
@@ -365,7 +381,7 @@ def preroute(board):
     vb = board.FindNet("VBUS")
     k1, t1 = _pad(board, "D1", "1").GetPosition(), _pad(board, "D3", "1").GetPosition()
     _track(board, k1, t1, vb, 0.8)
-    kv = [pt(12.4, 66.9), pt(13.2, 66.9)]
+    kv = [pt(12.4, 56.9), pt(13.2, 56.9)]
     _track(board, k1, kv[1], vb, 0.8)
     _track(board, kv[1], kv[0], vb, 0.8)
     for v in kv:
@@ -432,6 +448,10 @@ def build():
             fp.Reference().SetVisible(False)
         if ref in B_SIDE:
             fp.Reference().SetVisible(False)   # the B.Cu silk label names them
+        if ref == "RS1":   # shunt GND end carries the battery current: solid to the pour
+            for pad in fp.Pads():
+                if pad.GetNumber() == "2":
+                    pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
         if ref.startswith("TP") and ref not in PLACE:
             fp.Reference().SetVisible(False)
             tps[ref] = (fp, p["nets"]["1"])
@@ -492,17 +512,17 @@ def build():
             label(txt, pcbnew.VECTOR2I((p1.x + p2.x) // 2, p1.y - mm(2.0)), 0)
     t = pcbnew.PCB_TEXT(board)
     t.SetText("xiao-solar v0.5\nn3tk0/MeshCore")
-    t.SetPosition(pt(39.5, 21.0)); t.SetLayer(pcbnew.F_SilkS)
+    t.SetPosition(pt(40.0, 48.8)); t.SetLayer(pcbnew.F_SilkS)
     t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
     board.Add(t)
-    # SWD column on the bottom (top to bottom 3V3M NRST SWDIO SWCLK GND): a mirrored label
-    # beside each pad on B.SilkS
+    # SWD row on the bottom (seen from below, right to left: 3V3M NRST SWDIO SWCLK GND): a
+    # mirrored label under each pad on B.SilkS, "SWD" left of the row
     for txt, ref in (("SWD", None), ("3V3", "TP12"), ("RST", "TP15"), ("DIO", "TP11"), ("CLK", "TP14"),
                      ("GND", "TP13")):
-        x, y, _ = PLACE[ref] if ref else (PLACE["TP12"][0], PLACE["TP12"][1] - 1.4, 0)
+        x, y, _ = PLACE[ref] if ref else (PLACE["TP12"][0] - 2.6, PLACE["TP12"][1], 0)
         t = pcbnew.PCB_TEXT(board)
         t.SetText(txt)
-        t.SetPosition(pt(x + 2.0, y) if ref else pt(x, y)); t.SetLayer(pcbnew.B_SilkS); t.SetMirrored(True)
+        t.SetPosition(pt(x, y + 1.75) if ref else pt(x, y)); t.SetLayer(pcbnew.B_SilkS); t.SetMirrored(True)
         t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
         board.Add(t)
     # JP2 (CHEM: closed = LiFePO4) is named by function instead of its reference
@@ -542,24 +562,24 @@ def write_project():
 # two-layer grid A*), as on solar-smart-mppt: the autorouter leaves them open or long.
 # (net, from, to): a (ref, pad) or a point in board mm (a stub end or via of MCU_STUBS)
 PRE_ROUTES = [
+    # SWD on B.Cu to the pads of the row (the farthest pad first, so the runs nest)
+    ("SWCLK", _m(30.4, 44.85), ("TP14", "1")), ("SWDIO", _m(31.2, 45.85), ("TP11", "1")),
+    ("NRST", _m(24.85, 42.95), ("TP15", "1")), ("3V3M", _m(30.13, 49.9), ("TP12", "1")),
     # analog from the cluster vias to the shunt, divider, CHEM jumper and heater gate
-    ("HEAT", _m(30.2, 41.2), ("R27", "1")), ("SH_P", _m(31.0, 41.9), ("R23", "2")),
     ("ADC_VBAT", _m(30.2, 42.6), ("R25", "2")), ("ADC_CHEM", _m(31.0, 43.2), ("JP2", "1")),
-    ("SH_N", _m(31.6, 46.85), ("R24", "2")),
-    # SWD on B.Cu to the pads of the column
-    ("NRST", _m(24.85, 42.95), ("TP15", "1")), ("SWDIO", _m(31.2, 45.85), ("TP11", "1")),
-    ("SWCLK", _m(30.4, 44.85), ("TP14", "1")),
+    ("SH_P", _m(31.0, 41.9), ("R23", "2")), ("SH_N", _m(31.6, 46.85), ("R24", "2")),
+    ("HEAT", _m(30.2, 41.2), ("R27", "1")),
     # Xiao bus from the MSPM0 stubs to the Xiao pins
     ("SCL", _m(26.95, 50.0), ("U3", "7")), ("SDA", _m(26.1, 49.05), ("U3", "8")),
     # 3V3M from the HT7533 output to the R13 via and the SWD pad
-    ("3V3M", ("C26", "1"), _m(23.07, 42.4)), ("3V3M", ("C26", "1"), ("TP12", "1")),
+    ("3V3M", ("C26", "1"), _m(23.07, 42.4)),
     # NTC from J3 to the TS node at R2 / R3
-    ("TS", ("J3", "1"), (21.58, 64.8)),
+    ("TS", ("J3", "1"), (21.58, 54.8)),
     # heater LED: D6 anode to R29, cathode to the J6 return, R29 to SYS at J6 pin 1
     ("LED_HEAT", ("D6", "2"), ("R29", "2")), ("HEAT_D", ("D6", "1"), ("J6", "2")),
     ("SYS", ("R29", "1"), ("J6", "1")),
     # ideal-diode mirror: thin sense lines (the power path is Q5 alone)
-    ("SYS", ("Q6", "2"), (24.0, 31.0)), ("XIAO_5V", ("Q7", "2"), ("Q5", "2")),
+    ("SYS", ("Q6", "2"), (26.5, 29.0)), ("XIAO_5V", ("Q7", "2"), ("Q5", "2")),
     ("OR_G", ("Q7", "3"), ("Q5", "1")),
 ]
 

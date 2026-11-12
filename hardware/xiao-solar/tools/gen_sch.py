@@ -568,7 +568,7 @@ for i, (net, fx, fy) in enumerate([
         ("VBUS", 55.0, 78.0), ("BATT+", 318.0, 210.0), ("XIAO_5V", 300.0, 55.0),
         ("BATT-", 355.0, 212.54), ("DW_VCC", 326.0, 228.0), ("GND", 202.0, 212.54)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
-for i in range(1, 4):  # H1 (top left) removed in v0.5, 3 holes
+for i in range(4):
     P("H%d" % (i + 1), "Mechanical:MountingHole", "M2/M2.5", 370 + (i % 2) * 18, 252 + (i // 2) * 10, {},
       "xiao_solar:MountingHole_2.8mm_Keepout6mm", blk=-1)
 
