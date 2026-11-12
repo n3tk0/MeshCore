@@ -21,8 +21,11 @@ FPLIB_SYS = "/usr/share/kicad/footprints"
 if not os.path.isdir(FPLIB_SYS):
     FPLIB_SYS = "C:/Program Files/KiCad/10.0/share/kicad/footprints"
 FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
-W, H = 50.0, 75.0          # board size, mm
-OX, OY = 100.0, 100.0      # board origin on the sheet
+# Design coordinates run from y = 0 to H; the board itself starts at y = TOP (v0.5: the top
+# 5 mm were cut off, 50 x 70 mm), and its top-left corner sits at (100, 100) on the sheet.
+W, H = 50.0, 75.0          # design area, mm
+TOP = 5.0                  # first design y on the board
+OX, OY = 100.0, 100.0 - TOP
 
 def mm(v):
     return pcbnew.FromMM(v)
@@ -37,29 +40,34 @@ def pt(x, y):
 PLACE = {
     # modules, rotated so the USB / pin-1 end faces the left edge
     "U4": (11.5, 12.0, 90), "U3": (11.5, 35.0, 90),
-    # between the modules: Xiao 5V feed and 3V3 decoupling
-    "D5": (5.5, 23.5, 180), "C20": (9.8, 23.5, 0), "C21": (13.9, 23.5, 180), "C22": (17.1, 23.5, 0),
+    # between the modules: Xiao 5V bulk, 3V3 decoupling and the ideal-diode FET Q5 (D down to SYS)
+    "Q5": (20.5, 23.5, 270), "C20": (9.8, 23.5, 0), "C21": (13.5, 23.5, 180), "C22": (16.7, 23.5, 0),
     # right column connectors (pin 1 at the given point, pins go down)
-    # I2C / sensor, top right (away from the charger heat)
-    # SHT40 sits on a tongue cut free by slots (SENSOR_TONGUE)
-    "U5": (26.0, 2.6, 0), "C23": (28.6, 2.6, 90), "R11": (33.0, 2.4, 0), "R12": (33.0, 4.4, 0),
+    # Xiao I2C pull-ups, top right (no SHT40 since v0.5: the MSPM0 reports the temperatures)
+    "R11": (33.0, 4.4, 0), "R12": (33.0, 5.9, 0),
     # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
     "JP3": (32.8, 58.0, 90),
 }
 # charger cluster (tools/charger.py), U1 at its position before the DY shift below
 PLACE.update(charger.place(charger.Frame(16.0, 55.0), set(charger.PLACE)))
-# Everything except the SHT40 tongue moves down by DY to leave the top corners free for
-# the mounting holes: 2.8 mm (M2/M2.5) with 6 mm clear for the head, 3.5 mm from the edges.
+# Everything moves down by DY to leave the top corners free for the mounting holes: 2.8 mm
+# (M2/M2.5) with 6 mm clear for the head, 3.5 mm from the edges.
 DY = 6.0
-CHARGER_FRAME = charger.Frame(16.0, 55.0 + DY)
-PLACE = {r: (x, y if r in ("U5", "C23") else y + DY, a) for r, (x, y, a) in PLACE.items()}
+CHARGER_FRAME = charger.Frame(16.0, 55.0 + DY, ox=OX, oy=OY)
+PLACE = {r: (x, y + DY, a) for r, (x, y, a) in PLACE.items()}
+# C9 (PMID HF cap) is 0603 now (basic 50 V part, as on solar-smart-mppt): its GND pad stays on
+# stands upright right above pin 29 (PMID pad down), its GND pad ties into the pin 27 GND line;
+# C16 steps 0.35 mm right, clear of the C9 courtyard (fix_charger_routes)
+PLACE["C9"] = (PLACE["C9"][0] - 0.42, PLACE["C9"][1] - 0.87, 90)
+PLACE["C16"] = (PLACE["C16"][0] + 0.35, PLACE["C16"][1], PLACE["C16"][2])
 # v0.5 (final board coordinates, after DY). Connectors: SOLAR | BAT | NTC along the bottom
 # edge (pins along it, pin 1 = + square), I2C (J5) and HEAT (J6) in one column at the right edge.
 MCU_D = (8.5, -8.0)   # the MSPM0 cluster moved by this from its first v0.5 place (U6 27.2, 45.6)
 def _m(x, y):
     return (round(x + MCU_D[0], 3), round(y + MCU_D[1], 3))
 PLACE.update({
-    "J5": (47.5, 9.5, 0), "J6": (47.5, 62.0, 0),
+    # I2C (J5) lies along the top edge between the two top holes (pin 1 = SCL on the left)
+    "J5": (33.2, TOP + 1.6, 90), "J6": (47.5, 62.0, 0),
     "J1": (9.0, 73.3, 90), "J4": (27.0, 73.3, -90), "J3": (35.0, 73.3, 90),
     # SOLAR -> D1 (reverse polarity) -> VBUS, TVS D3 beside it, both above the bottom row
     "D1": (11.8, 69.5, 180), "D3": (21.0, 69.5, 0),
@@ -86,31 +94,29 @@ PLACE.update({
     "JP2": (39.5, 31.0, 90),
     # heater LED (D6 + R29 across J6): under Q4, left of the bottom-right hole
     "D6": (42.6, 66.9, 180), "R29": (42.6, 68.6, 180),
+    # ideal-diode mirror (Q6 on SYS, Q7 on XIAO_5V, R30 / R31 1M) right of the Wio, above C25
+    "Q6": (24.6, 18.0, 0), "Q7": (24.6, 21.75, 0), "R30": (24.0, 15.5, 0), "R31": (24.0, 14.0, 0),
     "TP12": (44.5, 22.5, 0), "TP15": (44.5, 25.04, 0), "TP11": (44.5, 27.58, 0),
     "TP14": (44.5, 30.12, 0), "TP13": (44.5, 32.66, 0),
 })
 B_SIDE = {"TP11", "TP12", "TP13", "TP14", "TP15"}
-PLACE.update({"H1": (3.5, 3.5, 0), "H2": (W - 3.5, 3.5, 0), "H3": (3.5, H - 3.5, 0), "H4": (W - 3.5, H - 3.5, 0)})
+# three holes (Petko, 2026-11-12): the Wio fills the top-left corner, so only top right and the
+# two bottom corners
+PLACE.update({"H2": (W - 3.5, TOP + 3.5, 0), "H3": (3.5, H - 3.5, 0), "H4": (W - 3.5, H - 3.5, 0)})
 
-# SHT40 tongue: x0, y0, x1, y1 (mm). 1 mm slots on the left, right and below it,
-# with a 3.4 mm neck in the middle of the bottom slot for SDA/SCL/3V3/GND.
-SENSOR_TONGUE = (23.0, 0.0, 30.0, 6.0)
-NECK = (24.8, 28.2)
-_tx0, _, _tx1, _ty1 = SENSOR_TONGUE
-OUTLINE = [(0, 0), (_tx0 - 1, 0), (_tx0 - 1, _ty1 + 1), (NECK[0], _ty1 + 1), (NECK[0], _ty1),
-           (_tx0, _ty1), (_tx0, 0), (_tx1, 0), (_tx1, _ty1), (NECK[1], _ty1), (NECK[1], _ty1 + 1),
-           (_tx1 + 1, _ty1 + 1), (_tx1 + 1, 0), (W, 0), (W, H), (0, H)]
+OUTLINE = [(0, TOP), (W, TOP), (W, H), (0, H)]
 
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y). Charger nets sit
 # inside their copper zone when there is room; the others are wired by the router.
 TEST_POINTS = {
     "VBUS": (9.0, 58.0, 15.0, 64.0, 10.0, 61.5), "PMID": (4.5, 54.0, 12.0, 59.0, 6.0, 58.0),
     "SYS": (20.0, 54.0, 32.0, 59.0, 30.5, 55.5), "BAT": (22.0, 58.5, 34.0, 66.0, 29.5, 65.6),
-    "SCL": (35.0, 6.0, 43.0, 14.0, 37.5, 7.5), "SDA": (35.0, 6.0, 43.0, 14.0, 39.5, 7.5),
-    "3V3": (35.0, 6.0, 43.0, 14.0, 37.5, 10.0), "GND": (35.0, 6.0, 43.0, 14.0, 39.5, 10.0),
+    "SCL": (29.0, 10.5, 43.0, 16.0, 31.0, 11.5), "SDA": (29.0, 10.5, 43.0, 16.0, 33.5, 11.5),
+    "3V3": (29.0, 10.5, 43.0, 16.0, 36.0, 11.5), "GND": (29.0, 10.5, 43.0, 16.0, 38.5, 11.5),
 }
 # three fiducials: region x0, y0, x1, y1 and the preferred point
-FIDUCIALS = [(6.5, 1.0, 21.0, 6.0, 8.0, 2.5), (32.0, 1.0, 41.0, 6.0, 40.0, 2.5), (28.0, 66.0, 33.0, 72.0, 30.5, 70.5)]
+FIDUCIALS = [(26.5, 11.5, 29.5, 15.5, 28.0, 12.5), (40.5, 9.5, 44.5, 14.0, 42.5, 11.5),
+             (28.0, 66.0, 33.0, 72.0, 30.5, 70.5)]
 # B.Cu stays whole GND under the Wio (U4) as well as under the charger (charger.B_CLEAR)
 # (between its two pin rows only: the Xiao-Wio links need B.Cu at the rows)
 B_CLEAR = [(0.7, 11.8, 22.3, 23.8)]
@@ -261,30 +267,35 @@ def add_mcu_stubs(board):
             v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
         board.Add(v)
 
+def fix_charger_routes(board):
+    """The shared charger pre-routes assume the 0402 C9: PMID now goes straight up from pin 29
+    into the upright 0603, whose GND pad ties into the pin 27 GND line."""
+    U = lambda n: charger._pad(board, "U1", n)
+    p29 = U("29").GetPosition()
+    c9 = charger._pad(board, "C9", "1").GetPosition()
+    for t in [t for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"]:
+        if t.GetNetname() == "PMID" and p29 in (t.GetStart(), t.GetEnd()):
+            board.Remove(t)
+    charger._path(board, [p29, pcbnew.VECTOR2I(p29.x, c9.y)], U("29").GetNet(), 0.22)
+    g9 = charger._pad(board, "C9", "2")
+    charger._path(board, [g9.GetPosition(), pcbnew.VECTOR2I(U("27").GetPosition().x, g9.GetPosition().y)],
+                  g9.GetNet(), 0.3)
+
 def preroute(board):
     charger.preroute(board, CHARGER_FRAME)
+    fix_charger_routes(board)
     # the input bus comes up on B.Cu: two vias into the VBUS copper for it to land on
     vbus = board.FindNet("VBUS")
     vv = [CHARGER_FRAME.pt(-5.0, 1.9), CHARGER_FRAME.pt(-4.2, 1.9)]
     charger._track(board, vv[0], vv[1], vbus, 0.8, pcbnew.B_Cu)
     for v in vv:
         charger._via(board, v, vbus)
-    # SHT40 tongue: the rule area keeps pour and vias off it, so its four nets are
-    # drawn here and run out through the neck (SDA, SCL, 3V3, GND from left to right).
-    def path(net, pts):
-        n = board.FindNet(net)
-        for a, b in zip(pts, pts[1:]):
-            _track(board, pt(*a), pt(*b), n, 0.25)
-    path("SDA", [(25.32, 2.2), (24.4, 2.2), (24.4, 4.8), (25.4, 5.8), (25.4, 7.8)])
-    path("SCL", [(25.32, 3.0), (25.0, 3.0), (25.0, 4.6), (26.0, 5.6), (26.0, 7.8)])
-    path("3V3", [(26.68, 3.0), (26.7, 4.2), (26.7, 7.8)])
-    path("3V3", [(28.6, 3.375), (28.6, 4.2), (26.7, 4.2)])
-    path("GND", [(26.0, 2.2), (26.68, 2.2), (27.3, 1.825), (28.6, 1.825), (29.4, 1.825),
-                 (29.4, 5.0), (27.5, 5.0), (27.5, 7.8)])
     # C20 and C22 GND between the module rows get cut off by the traces there: own vias
     for ref in ("C20", "C22"):
         cg = _pad(board, ref, "2")
-        at = pcbnew.VECTOR2I(cg.GetPosition().x + mm(1.1), cg.GetPosition().y)
+        # C20: below its pad (C21 sits right of it since v0.5), C22: right of its pad
+        off = (0.9, 0) if ref == "C20" else (1.1, 0)
+        at = pcbnew.VECTOR2I(cg.GetPosition().x + mm(off[0]), cg.GetPosition().y + mm(off[1]))
         _track(board, cg.GetPosition(), at, cg.GetNet(), 0.4)
         v = pcbnew.PCB_VIA(board)
         v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(cg.GetNet())
@@ -292,13 +303,21 @@ def preroute(board):
         board.Add(v)
     # SYS to the Xiao: one 0.8 mm run from the right end of the SYS copper (the bulk caps close
     # its top side), diagonally up-left past the charger caps, up between the Xiao and the
-    # MSPM0 and along the channel between the modules to the LM66100 input
+    # MSPM0 and into the channel between the modules to the drain of the ideal-diode FET Q5
     sys_ = board.FindNet("SYS")
-    vin = _pad(board, "D5", "1").GetPosition()
-    pts = [pt(32.6, 56.3), pt(32.6, 53.0), pt(32.6, 51.5), pt(28.0, 46.9), pt(26.5, 46.9), pt(26.5, 33.5), pt(24.0, 31.0), pcbnew.VECTOR2I(vin.x, mm(OY + 31.0))]
+    vin = _pad(board, "Q5", "3").GetPosition()
+    pts = [pt(32.6, 56.3), pt(32.6, 53.0), pt(32.6, 51.5), pt(28.0, 46.9), pt(26.5, 46.9), pt(26.5, 33.5), pt(24.0, 31.0), pcbnew.VECTOR2I(vin.x, mm(OY + 31.0)), vin]
     for a_, b_ in zip(pts, pts[1:]):
         _track(board, a_, b_, sys_, 0.8)
-    _track(board, pts[-1], vin, sys_, 0.3)  # the SC-70 pins are 0.65 mm apart
+    # XIAO_5V from the Q5 source along the top of the channel (under the Wio pin row) and down
+    # to the Xiao 5V pin; C20 joins it on the way
+    v5 = board.FindNet("XIAO_5V")
+    src, p5 = _pad(board, "Q5", "2").GetPosition(), _pad(board, "U3", "14").GetPosition()
+    pts = [src, pcbnew.VECTOR2I(src.x, mm(OY + 27.7)), pcbnew.VECTOR2I(p5.x, mm(OY + 27.7)), p5]
+    for a_, b_ in zip(pts, pts[1:]):
+        _track(board, a_, b_, v5, 0.6)
+    c20 = _pad(board, "C20", "1").GetPosition()
+    _track(board, c20, pcbnew.VECTOR2I(c20.x, mm(OY + 27.7)), v5, 0.6)
     # heater feed (up to ~2.5 A), all on F.Cu: 1.2 mm from the SYS copper along y 56.3 and down
     # the right edge to J6 pin 1; the return from the Q4 drain to J6 pin 2
     run = [pt(31.3, 57.6), pt(32.6, 56.3), pt(46.2, 56.3), pt(47.5, 57.6), _pad(board, "J6", "1").GetPosition()]
@@ -423,7 +442,6 @@ def build():
     preroute(board)
     charger.add_zones(board, CHARGER_FRAME)
     charger.pin1_dot(board, CHARGER_FRAME)
-    # outline; the 1 mm slots around the SHT40 tongue are part of it
     corners = OUTLINE
     for i in range(len(corners)):
         s = pcbnew.PCB_SHAPE(board)
@@ -431,17 +449,6 @@ def build():
         s.SetStart(pt(*corners[i])); s.SetEnd(pt(*corners[(i + 1) % len(corners)]))
         s.SetLayer(pcbnew.Edge_Cuts); s.SetWidth(mm(0.1))
         board.Add(s)
-    # no copper pour on the tongue: the pour would carry heat from the rest of the board
-    tx0, ty0, tx1, ty1 = SENSOR_TONGUE
-    ka = pcbnew.ZONE(board)
-    ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(True)
-    ka.SetDoNotAllowTracks(False); ka.SetDoNotAllowVias(True); ka.SetDoNotAllowPads(False)
-    ka.SetDoNotAllowFootprints(False)
-    ka.SetLayerSet(pcbnew.LSET.AllCuMask())
-    ol = ka.Outline(); ol.NewOutline()
-    for (x, y) in [(tx0 - 0.5, ty0), (tx1 + 0.5, ty0), (tx1 + 0.5, ty1 + 1.5), (tx0 - 0.5, ty1 + 1.5)]:
-        ol.Append(mm(OX + x), mm(OY + y))
-    board.Add(ka)
     # GND pour on both layers
     for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
         z = pcbnew.ZONE(board)
@@ -454,14 +461,14 @@ def build():
         z.SetThermalReliefGap(mm(0.3)); z.SetThermalReliefSpokeWidth(mm(0.4))
         ol = z.Outline()
         ol.NewOutline()
-        for (x, y) in [(0.3, 0.3), (W - 0.3, 0.3), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
+        for (x, y) in [(0.3, TOP + 0.3), (W - 0.3, TOP + 0.3), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(z)
     place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
     for ref in sorted(B_SIDE):
         fp = board.FindFootprintByReference(ref)
         fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
-    dfm.add_fiducials(board, FIDUCIALS, load_fp)
+    dfm.add_fiducials(board, FIDUCIALS, load_fp, OX, OY)
     # "+" at pin 1 of the power connectors: left of it on the bottom row, above it for J6
     plus_marks(board, ["J1", "J4"], dx=0.0, dy=-1.6)
     plus_marks(board, ["J6"], dx=-2.2, dy=0.0)
@@ -474,7 +481,7 @@ def build():
         t.SetTextAngleDegrees(angle)
         board.Add(t)
     x, y, _ = PLACE["J5"]
-    label("GND 3V3 SDA SCL", pt(x - 2.2, y + 1.27 * 3), 90)
+    label("SCL SDA 3V3 GND", pt(x + 1.27 * 3, y + 2.2), 0)
     x, y, _ = PLACE["J6"]
     label("HEAT", pt(x - 0.3, y + 4.6), 0)
     for ref, txt in (("J1", "SOLAR"), ("J4", "BAT"), ("J3", "NTC")):
@@ -495,8 +502,8 @@ def build():
         x, y, _ = PLACE[ref] if ref else (PLACE["TP12"][0], PLACE["TP12"][1] - 1.4, 0)
         t = pcbnew.PCB_TEXT(board)
         t.SetText(txt)
-        t.SetPosition(pt(x + 1.7, y) if ref else pt(x, y)); t.SetLayer(pcbnew.B_SilkS); t.SetMirrored(True)
-        t.SetTextSize(pcbnew.VECTOR2I(mm(0.7), mm(0.7))); t.SetTextThickness(mm(0.12))
+        t.SetPosition(pt(x + 2.0, y) if ref else pt(x, y)); t.SetLayer(pcbnew.B_SilkS); t.SetMirrored(True)
+        t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
         board.Add(t)
     # JP2 (CHEM: closed = LiFePO4) is named by function instead of its reference
     x, y, _ = PLACE["JP2"]
@@ -551,6 +558,9 @@ PRE_ROUTES = [
     # heater LED: D6 anode to R29, cathode to the J6 return, R29 to SYS at J6 pin 1
     ("LED_HEAT", ("D6", "2"), ("R29", "2")), ("HEAT_D", ("D6", "1"), ("J6", "2")),
     ("SYS", ("R29", "1"), ("J6", "1")),
+    # ideal-diode mirror: thin sense lines (the power path is Q5 alone)
+    ("SYS", ("Q6", "2"), (24.0, 31.0)), ("XIAO_5V", ("Q7", "2"), ("Q5", "2")),
+    ("OR_G", ("Q7", "3"), ("Q5", "1")),
 ]
 
 def pre_route(b):

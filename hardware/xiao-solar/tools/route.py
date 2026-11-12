@@ -140,7 +140,7 @@ def stitch(board, tmp, pitch=3.0):
     added = []
     x = 1.5
     while x < gen_pcb.W - 1.0:
-        y = 1.5
+        y = getattr(gen_pcb, "TOP", 0.0) + 1.5
         while y < gen_pcb.H - 1.0:
             v = pcbnew.PCB_VIA(board)
             v.SetPosition(pcbnew.VECTOR2I(mm(gen_pcb.OX + x), mm(gen_pcb.OY + y)))

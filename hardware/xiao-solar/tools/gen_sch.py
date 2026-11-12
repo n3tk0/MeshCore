@@ -299,7 +299,7 @@ RAIL("PMID", [(60.0, 120.08), (124.76, 120.08)])
 C("C6", "10u/50V", 60, 128.5, "PMID", "GND", C10U50, C1206)
 C("C7", "10u/50V", 72, 128.5, "PMID", "GND", C10U50, C1206)
 C("C8", "10u/50V", 84, 128.5, "PMID", "GND", C10U50, C1206)
-C("C9", "100n/50V", 96, 128.5, "PMID", "GND", C100N0402HV, C0402)
+C("C9", "100n/50V", 96, 128.5, "PMID", "GND", "C14663", C0603)
 TP("TP4", "PMID", 104, 120.08, rot=0)
 
 # ---- 2. Charger U1 (BQ25798) + Switching Stage (Top) + NTC/PROG (Bottom) -----
@@ -361,9 +361,9 @@ RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
 T(20, 174, "SS54 = OR на двата входа + защита от обратна полярност. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
 T(20, 177.5, "~CE: R4 към 3V3M = без заряд, докато MSPM0 не го свали (PA17). BQ25798 е на собствена I2C шина (SCL_I/SDA_I) към MSPM0. TP2 (QON) към GND = wake.", 1.27)
 
-# ---- 3. SYS Rail -> Ideal Diode D5 (LM66100) -> XIAO nRF52840 + Wio-SX1262 ---
-BLOCK(225, 22, "2. СИСТЕМНО ЗАХРАНВАНЕ (SYS -> LM66100 -> XIAO 5V) + XIAO nRF52840 & Wio-SX1262 + I2C")
-# Continuous SYS wire from U1.SYS (155.24, 109.92) up to y = 55 and right into D5.VIN (266.11, 55)
+# ---- 3. SYS Rail -> discrete ideal diode Q5/Q6/Q7 -> XIAO nRF52840 + Wio-SX1262 ---
+BLOCK(225, 22, "2. СИСТЕМНО ЗАХРАНВАНЕ (SYS -> идеален диод Q5 AO3401A + Q6/Q7 -> XIAO 5V) + XIAO nRF52840 & Wio-SX1262 + I2C")
+# Continuous SYS wire from U1.SYS (155.24, 109.92) up to y = 55 and right towards Q5
 RAIL("SYS", [(155.24, 109.92), (168.0, 109.92), (168.0, 55.0), (266.11, 55.0)])
 for i, (ref, val, lcsc, fp) in enumerate([
         ("C16", "100n", C100N0402, C0402), ("C11", "10u/25V", C10U, C0805),
@@ -372,11 +372,17 @@ for i, (ref, val, lcsc, fp) in enumerate([
     C(ref, val, 180 + 12 * i, 64, "SYS", "GND", lcsc, fp)
 TP("TP5", "SYS", 252, 55.0, rot=0)
 
-P("D5", "custom:LM66100", "LM66100", 275, 57.54,
-  {"1": "SYS", "2": "GND", "3": "XIAO_5V", "4": "GND", "5": "GND", "6": "XIAO_5V"},
-  "Package_TO_SOT_SMD:SOT-363_SC-70-6", "C2869734")
+# discrete ideal diode SYS -> XIAO_5V (as on solar-smart-mppt, no extended fee): Q5 AO3401A
+# (D at SYS, S at XIAO_5V, its body diode points to the Xiao), PNP mirror Q6/Q7 (MMBT3906).
+# Q6 (diode connected, E at SYS) sets the base; Q7 (E at XIAO_5V) pulls the gate up to
+# XIAO_5V as soon as XIAO_5V > SYS (USB on the Xiao), so no current flows back into SYS.
+P("Q5", "Transistor_FET:BSS84", "AO3401A (ideal diode)", 275, 50, {"1": "OR_G", "2": "XIAO_5V", "3": "SYS"},
+  SOT23, "C15127", rot=90)
+P("Q6", "Transistor_BJT:MMBT3906", "MMBT3906", 266, 72, {"1": "OR_B", "2": "SYS", "3": "OR_B"}, SOT23, "C7420354")
+P("Q7", "Transistor_BJT:MMBT3906", "MMBT3906", 284, 72, {"1": "OR_B", "2": "XIAO_5V", "3": "OR_G"}, SOT23, "C7420354")
+R("R30", "1M", 262, 86, "OR_B", "GND", "C22935", rot=90)
+R("R31", "470k", 288, 86, "OR_G", "GND", "C23178", rot=90)
 RAIL("XIAO_5V", [(283.89, 55.0), (305.0, 55.0)])
-RAIL("XIAO_5V", [(283.89, 57.54), (288.0, 57.54), (288.0, 55.0)])
 C("C20", "10u/25V", 296, 64, "XIAO_5V", "GND", C10U)
 
 # Both U3 (XIAO nRF52840) and U4 (Wio-SX1262) have the EXACT SAME Top-View orientation (D0..D6 left, 5V..D7 right)!
@@ -384,7 +390,7 @@ P("U3", "custom:XIAO_nRF52840", "XIAO nRF52840", 342, 62.62,
   {"1": None, "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
    "6": "LORA_RXEN", "7": "SCL", "14": "XIAO_5V", "13": "GND", "12": "3V3",
    "11": "SPI_MOSI", "10": "SPI_MISO", "9": "SPI_SCK", "8": "SDA"}, "xiao_solar:XIAO_14P_2.54_21x17.8mm")
-# Connect XIAO_5V directly from D5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
+# Connect XIAO_5V directly from Q5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
 RAIL("XIAO_5V", [(305.0, 55.0), (305.0, 42.0), (358.0, 42.0), (358.0, 55.0), (353.43, 55.0)])
 
 P("U4", "custom:Wio-SX1262_for_XIAO", "Wio-SX1262 for XIAO", 342, 108.34,
@@ -413,26 +419,23 @@ C("C21", "10u/25V", 386, 69, "3V3", "GND", C10U)
 C("C22", "100n", 398, 69, "3V3", "GND", C100N, C0603)
 TP("TP8", "3V3", 386, 60.08, rot=0)
 
-# I2C bus (SCL, SDA, 3V3) + Pull-ups R11/R12 + J5 + SHT40 (U5) — wired directly to U1 and U3!
+# I2C bus (SCL, SDA, 3V3) + Pull-ups R11/R12 + J5 — wired directly to U1 and U3!
 P("J5", "Connector_Generic:Conn_01x04", "I2C rail", 252, 146.0,
   {"1": "SCL", "2": "SDA", "3": "3V3", "4": "GND"}, CONN4, mirror=True)
 R("R11", "4.7k", 272, 134, "3V3", "SCL", "C23162")
 R("R12", "4.7k", 282, 134, "3V3", "SDA", "C23162")
 TP("TP9", "SCL", 292, 143.46, rot=0)
 TP("TP10", "SDA", 300, 146.00, rot=0)
-P("U5", "custom:SHT40_FUNC", "SHT40-AD1B", 332, 146.0,
-  {"1": "SDA", "2": "SCL", "3": "3V3", "4": "GND", "5": "GND"},
-  "xiao_solar:DFN-4_L1.5-W1.5-P0.8-TL-EP", "C2848306")
-C("C23", "100n", 316, 156, "3V3", "GND", C100N, C0603)
+# v0.5: no SHT40. The MSPM0 answers on 0x5A as an MLX90614 (object = battery NTC, ambient =
+# its own die sensor), a sensor stock MeshCore already reads.
 
-# Xiao I2C bus: J5, R11, R12, TP9, TP10, U5 (SHT40), U3 and the MSPM0 target (I2C0)
-RAIL("SCL", [(257.08, 143.46), (323.11, 143.46)])
+# Xiao I2C bus: J5, R11, R12, TP9, TP10, U3 and the MSPM0 target (I2C0)
+RAIL("SCL", [(257.08, 143.46), (310.0, 143.46)])
 RAIL("SDA", [(257.08, 146.00), (323.11, 146.00)])
 RAIL("SCL", [(272.0, 137.81), (272.0, 143.46)])
 RAIL("SDA", [(282.0, 137.81), (282.0, 146.00)])
 RAIL("3V3", [(257.08, 148.54), (323.11, 148.54)])
 RAIL("3V3", [(272.0, 130.19), (282.0, 130.19), (282.0, 126.0), (264.0, 126.0), (264.0, 148.54)])
-RAIL("3V3", [(316.0, 148.54), (316.0, 152.19)])
 RAIL("3V3", [(370.0, 105.80), (370.0, 148.54), (323.11, 148.54)])
 RAIL("SCL", [(330.57, 70.24), (310.0, 70.24), (310.0, 143.46)])
 RAIL("SDA", [(353.43, 70.24), (364.0, 70.24), (364.0, 146.00), (323.11, 146.00)])
@@ -562,10 +565,10 @@ T(430, 322.5, "D6 (червен) + R29 1k успоредно на нагрева
 
 # ERC power flags placed directly on their rail wires (so no detached PWR_FLAG box is needed!)
 for i, (net, fx, fy) in enumerate([
-        ("VBUS", 55.0, 78.0), ("BATT+", 318.0, 210.0),
+        ("VBUS", 55.0, 78.0), ("BATT+", 318.0, 210.0), ("XIAO_5V", 300.0, 55.0),
         ("BATT-", 355.0, 212.54), ("DW_VCC", 326.0, 228.0), ("GND", 202.0, 212.54)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
-for i in range(4):
+for i in range(1, 4):  # H1 (top left) removed in v0.5, 3 holes
     P("H%d" % (i + 1), "Mechanical:MountingHole", "M2/M2.5", 370 + (i % 2) * 18, 252 + (i // 2) * 10, {},
       "xiao_solar:MountingHole_2.8mm_Keepout6mm", blk=-1)
 
