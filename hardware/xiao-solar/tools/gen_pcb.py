@@ -95,14 +95,14 @@ PLACE.update({
     # SWD: a row of five pads on the bottom under the Wio pin row, above the BQ bus lanes
     "TP12": (31.5, 31.6, 0), "TP15": (34.04, 31.6, 0), "TP11": (36.58, 31.6, 0),
     "TP14": (39.12, 31.6, 0), "TP13": (41.66, 31.6, 0),
-    # BMS (DW01A + HJ8205) and the 20 mOhm low-side shunt on the right: Q3 S2 (BATT_S) -> RS1
-    # (BATT_S end at the bottom, next to Q3 pin 3) -> GND (top, vias to the right edge), Kelvin
-    # taps R21 (BATT_S, bottom row) and R22 (SH_K, net tie NT1 on the RS1 GND pad, top row), C24
-    # across them, bias R23 / R24 to 3V3M
+    # BMS (DW01A + HJ8205) and the low-side shunt on the right: two basic 100 mOhm 1206 in
+    # parallel (RS1 bottom, RS2 above it, both horizontal): BATT_S on the left pads (fed from Q3 S2
+    # below), GND on the right pads (edge side). Kelvin on RS1: R21 taps its BATT_S pad, R22 gets
+    # SH_K from net tie NT1 under the RS1 GND pad. C24 across them, bias R23 / R24 to 3V3M
     "R9": (45.0, 31.5, 0), "U2": (45.0, 34.7, 0), "C19": (48.2, 34.7, 90), "R10": (45.0, 37.9, 0),
     "R23": (40.6, 37.6, 0), "R24": (40.6, 38.8, 0),
-    "Q3": (41.0, 41.8, 0), "RS1": (46.8, 42.2, 90),
-    "R22": (44.2, 40.74, 180), "C24": (44.2, 42.2, 0), "R21": (44.2, 43.66, 180), "NT1": (45.66, 40.74, 0),
+    "Q3": (41.0, 41.8, 0), "RS1": (47.5, 43.35, 0), "RS2": (47.5, 41.0, 0),
+    "R22": (44.2, 40.74, 180), "C24": (44.2, 42.2, 0), "R21": (44.2, 43.66, 180), "NT1": (48.96, 44.7, 90),
     # connectors: SOLAR | BAT | NTC along the bottom edge (pin 1 = + square), HEAT (J6) on the right
     "J1": (9.0, 63.3, 90), "J4": (27.0, 63.3, -90), "J3": (35.0, 63.3, 90), "J6": (47.5, 52.0, 0),
     # SOLAR -> D1 (reverse polarity) -> VBUS, TVS D3 beside it, both above the bottom row
@@ -366,8 +366,9 @@ def preroute(board):
     for i, (a_, b_) in enumerate(zip(pts, pts[1:])):
         # 1.0 mm, but 0.8 on the diagonal past the TS via
         _track(board, a_, b_, bat, 0.8 if i == 2 else 1.0)
-    # BATT_S (battery current): Q3 pin 3 (S2) straight down and right under the Kelvin column to
-    # the RS1 BATT_S pad; R21 taps that pad. RS1 GND: 0.8 mm right to two vias at the edge.
+    # BATT_S (battery current): Q3 pin 3 (S2) straight down and right under the Kelvin column,
+    # up into the RS1 BATT_S pad and on to RS2 (1.0 mm); R21 taps the RS1 pad. GND pads joined
+    # 1.0 mm, solid to the pour, vias above RS2 and below RS1 (NT1 sits under the RS1 GND pad).
     bs = board.FindNet("BATT_S")
     q3, r1 = _pad(board, "Q3", "3").GetPosition(), _pad(board, "RS1", "1").GetPosition()
     yb = q3.y + mm(1.7)
@@ -375,14 +376,16 @@ def preroute(board):
     pts = [pcbnew.VECTOR2I(q3.x, yb - mm(0.75)), pcbnew.VECTOR2I(q3.x + mm(0.75), yb), pcbnew.VECTOR2I(r1.x, yb), r1]
     for a_, b_ in zip(pts, pts[1:]):
         _track(board, a_, b_, bs, 0.8)
-    _track(board, _pad(board, "R21", "1").GetPosition(), r1, bs, 0.25)
+    _track(board, r1, _pad(board, "RS2", "1").GetPosition(), bs, 1.0)
+    r21 = _pad(board, "R21", "1").GetPosition()
+    _track(board, r21, pcbnew.VECTOR2I(r1.x - mm(0.44), r21.y), bs, 0.25)
     gn = board.FindNet("GND")
-    r2 = _pad(board, "RS1", "2").GetPosition()
-    ex = mm(OX + W - 1.25)
-    _track(board, r2, pcbnew.VECTOR2I(ex, r2.y), gn, 0.8)
-    for dy in (-0.45, 0.45):
-        at = pcbnew.VECTOR2I(ex, r2.y + mm(dy))
-        _track(board, pcbnew.VECTOR2I(ex, r2.y), at, gn, 0.6)
+    g1, g2 = _pad(board, "RS1", "2").GetPosition(), _pad(board, "RS2", "2").GetPosition()
+    _track(board, g1, g2, gn, 1.0)
+    for x_, y_, stub in ((48.9, 39.25, True), (47.7, 39.25, False), (46.9, 45.3, False)):
+        at = pt(x_, y_)
+        if stub:
+            _track(board, at, pcbnew.VECTOR2I(g2.x, g2.y - mm(0.6)), gn, 0.6)
         v = pcbnew.PCB_VIA(board); v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(gn); v.SetLocked(True)
         board.Add(v)
     # BATT- from J4 pin 2 on B.Cu along the bottom (under J4 / J3) and up to the HJ8205
@@ -475,7 +478,7 @@ def build():
             fp.Reference().SetVisible(False)
         if ref in B_SIDE:
             fp.Reference().SetVisible(False)   # the B.Cu silk label names them
-        if ref == "RS1":   # shunt GND end carries the battery current: solid to the pour
+        if ref in ("RS1", "RS2"):   # shunt GND end carries the battery current: solid to the pour
             for pad in fp.Pads():
                 if pad.GetNumber() == "2":
                     pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)

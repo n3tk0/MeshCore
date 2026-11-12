@@ -4,7 +4,7 @@
 Parts are arranged in a continuous left-to-right functional flow (Solar input ->
 BQ25798 MPPT buck-boost charger with L1/bootstrap above and NTC/PROG below ->
 SYS ideal-diode feed to XIAO+Wio & I2C on top-right, BAT Ship-FET + DW01A/HJ8205 BMS +
-20 mOhm shunt + Battery on bottom-right, MSPM0L1306 supervisor + heater on the far right)
+50 mOhm shunt (2x 100 mOhm) + Battery on bottom-right, MSPM0L1306 supervisor + heater on the far right)
 and wired with direct orthogonal nets.
 Run: python3 tools/gen_sch.py  (from hardware/xiao-solar)
 """
@@ -441,7 +441,7 @@ RAIL("SCL", [(330.57, 70.24), (310.0, 70.24), (310.0, 143.46)])
 RAIL("SDA", [(353.43, 70.24), (364.0, 70.24), (364.0, 146.00), (323.11, 146.00)])
 
 # ---- 4. Battery Path: BAT -> Ship FET Q2 (+JP3) -> Shunt RS1 (INA219) -> J4 + BMS ----
-BLOCK(20, 188, "3. БАТЕРИЯ 1S (Li-ion / LiFePO4): Ship FET (Q2 + JP3) -> J4 -> BMS (DW01A + HJ8205) -> шунт RS1 20 mOhm -> GND")
+BLOCK(20, 188, "3. БАТЕРИЯ 1S (Li-ion / LiFePO4): Ship FET (Q2 + JP3) -> J4 -> BMS (DW01A + HJ8205) -> шунт RS1||RS2 50 mOhm -> GND")
 # Continuous BAT wire from U1.BAT (155.24, 120.08 & 122.62) down to y = 210 and right into Q2.2 (Source at 214.92, 210.0)
 RAIL("BAT", [(155.24, 120.08), (158.0, 120.08), (158.0, 122.62), (155.24, 122.62)])
 RAIL("BAT", [(158.0, 121.35), (232.0, 121.35), (232.0, 210.0), (259.92, 210.0)])
@@ -528,7 +528,9 @@ R4x("R15", "4.7k", 550, 60, "3V3M", "SCL_I", "C25900")
 P("JP2", "Jumper:SolderJumper_2_Open", "CHEM: open Li-ion / closed LiFePO4", 560, 140,
   {"1": "ADC_CHEM", "2": "GND"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm", rot=90)
 # shunt in BATT- (+ = charging): Kelvin taps, 1M bias to 3V3M keeps both OPA inputs above 0 V
-P("RS1", "Device:R", "20m 1W 1%", 440, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C163047")
+# two basic 100 mOhm 1206 in parallel = 50 mOhm / 0.5 W (no extended fee); Kelvin taps on RS1
+P("RS1", "Device:R", "100m 1%", 440, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
+P("RS2", "Device:R", "100m 1%", 425, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
 R4x("R21", "10k", 470, 205, "BATT_S", "SH_P", "C25744", rot=270)
 R4x("R22", "10k", 470, 235, "SH_K", "SH_N", "C25744", rot=270)
 P("NT1", "Device:NetTie_2", "NetTie", 455, 245, {"1": "SH_K", "2": "GND"}, "NetTie:NetTie-2_SMD_Pad0.5mm", rot=90)

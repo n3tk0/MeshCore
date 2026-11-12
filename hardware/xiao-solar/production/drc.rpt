@@ -1,24 +1,16 @@
 ** Drc report for xiao-solar.kicad_pcb **
-** Created on 2026-11-12T08:44:06 **
+** Created on 2026-11-12T09:37:59 **
 ** Report includes: Errors, Warnings **
 
-** Found 155 DRC violations **
+** Found 156 DRC violations **
 [starved_thermal]: Thermal relief connection to zone incomplete (layer F.Cu; 1 spokes connected to isolated island)
     Local override; error
     @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
     @(117.1200 mm, 101.6000 mm): PTH pad 4 [GND] of J5
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(139.8740 mm, 135.8280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(140.3060 mm, 136.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(111.4830 mm, 152.1097 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
-    @(111.2500 mm, 152.9900 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(130.0283 mm, 133.3832 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
-    @(129.7944 mm, 132.1211 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+    @(127.7454 mm, 115.4151 mm): Zone 'teardrop' [SPI_MISO] on F.Cu, priority 3
+    @(127.3546 mm, 116.4849 mm): Zone 'teardrop' [SPI_MISO] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(113.6151 mm, 133.7546 mm): Zone 'teardrop' [3V3M] on B.Cu, priority 3
@@ -101,8 +93,8 @@
     @(125.1460 mm, 138.0220 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(127.7454 mm, 115.4151 mm): Zone 'teardrop' [SPI_MISO] on F.Cu, priority 3
-    @(127.3546 mm, 116.4849 mm): Zone 'teardrop' [SPI_MISO] on F.Cu, priority 3
+    @(130.0283 mm, 133.3832 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
+    @(129.7944 mm, 132.1211 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(143.5476 mm, 140.0894 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
@@ -119,6 +111,10 @@
     Local override; error
     @(144.8177 mm, 142.0161 mm): Zone 'teardrop' [BATT_S] on F.Cu, priority 3
     @(146.4505 mm, 141.3121 mm): Zone 'teardrop' [BATT_S] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(111.4830 mm, 152.1097 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
+    @(111.2500 mm, 152.9900 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(118.6157 mm, 132.7405 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
@@ -155,6 +151,10 @@
     Local override; error
     @(143.9060 mm, 141.6320 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
     @(143.5476 mm, 140.0894 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(139.8740 mm, 135.8280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(140.3060 mm, 136.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(142.9480 mm, 140.7790 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
@@ -323,6 +323,9 @@
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
     @(144.2000 mm, 138.8400 mm): Footprint R22
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
+    Local override; warning
+    @(147.5000 mm, 139.1000 mm): Footprint RS2
 [lib_footprint_issues]: The current configuration does not include the footprint library 'LED_SMD'
     Local override; warning
     @(105.0000 mm, 148.3000 mm): Footprint D4
@@ -385,7 +388,7 @@
     @(124.4200 mm, 136.2000 mm): Footprint R14
 [lib_footprint_issues]: The current configuration does not include the footprint library 'NetTie'
     Local override; warning
-    @(145.6600 mm, 138.8400 mm): Footprint NT1
+    @(148.9600 mm, 142.8000 mm): Footprint NT1
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(115.0000 mm, 133.6000 mm): Footprint C21
@@ -394,7 +397,7 @@
     @(129.6000 mm, 151.1000 mm): Footprint R8
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
-    @(146.8000 mm, 140.3000 mm): Footprint RS1
+    @(147.5000 mm, 141.4500 mm): Footprint RS1
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(104.6000 mm, 133.6000 mm): Footprint C25
