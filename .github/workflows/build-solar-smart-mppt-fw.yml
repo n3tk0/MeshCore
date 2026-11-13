@@ -1,0 +1,70 @@
+name: Build solar-smart-mppt firmware
+
+# MSPM0L1306 firmware of hardware/solar-smart-mppt (see firmware/README.md).
+# - pull request / push to main that touches it, manual run: host tests + .hex/.bin on the run (Artifacts)
+# - tag "solar-smart-mppt-fw-v1": also a GitHub release with the files
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'hardware/solar-smart-mppt/firmware/**'
+      - '.github/workflows/build-solar-smart-mppt-fw.yml'
+  push:
+    branches: [main]
+    tags:
+      - 'solar-smart-mppt-fw-v*'
+    paths:
+      - 'hardware/solar-smart-mppt/firmware/**'
+      - '.github/workflows/build-solar-smart-mppt-fw.yml'
+
+env:
+  # TI MSPM0 SDK, pinned (only driverlib, the device headers, CMSIS and the startup files are used)
+  SDK_REPO: https://github.com/TexasInstruments/mspm0-sdk.git
+  SDK_COMMIT: e6793f41ce464fe78f03f100e715d5e30b43f25a
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hardware/solar-smart-mppt/firmware
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Install ARM GCC
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Get the MSPM0 SDK
+        run: |
+          git clone --filter=blob:none --no-checkout "$SDK_REPO" "$RUNNER_TEMP/mspm0-sdk"
+          cd "$RUNNER_TEMP/mspm0-sdk"
+          git sparse-checkout set source/ti/driverlib source/ti/devices/msp source/third_party/CMSIS/Core/Include
+          git checkout "$SDK_COMMIT"
+
+      - name: Host tests
+        run: make test
+
+      - name: Build
+        run: make SDK_ROOT="$RUNNER_TEMP/mspm0-sdk"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: solar-smart-mppt-fw
+          path: |
+            hardware/solar-smart-mppt/firmware/build/smppt.hex
+            hardware/solar-smart-mppt/firmware/build/smppt.bin
+            hardware/solar-smart-mppt/firmware/build/smppt.elf
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/solar-smart-mppt-fw-v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            hardware/solar-smart-mppt/firmware/build/smppt.hex
+            hardware/solar-smart-mppt/firmware/build/smppt.bin
