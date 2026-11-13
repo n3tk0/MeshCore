@@ -115,7 +115,7 @@ left (CE, SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, J5 SDA), right (ba
   `tools/gen_pcb.py`): SWD row and HT7533 on the left, BM / VBAT dividers and JP4 under the MCU,
   balancing FETs Q8/Q10 on the right next to R37/R41.
 - Shunt filter (C24, R21–R24) and net tie NT1 at the shunt RS1; SH_P on F.Cu, SH_N under it on B.Cu.
-- MLCCs keep ≥ 0.9 mm from the V-cut edges (C21 turned parallel to the cut).
+- MLCCs keep ≥ 0.9 mm from the V-cut edges (C21 and C20 turned parallel to the cut); U5, Q5, Q9, D1 pads ≥ 1.5 mm from the left edge.
 - BMS, shunt, fuse at the bottom next to J4.
 
 ## Files and tools
@@ -162,3 +162,4 @@ Known layout compromises / DRC leftovers:
   2026-11-13: J5 host I2C moved from PA10/PA11 to PA0/PA1 (5 V tolerant, ROM BSL I2C: flash over J5), OC_G on PA10;
   Q3 (HJ8205) CPL rotation +270 (`tools/run.py`, JLC model has its pins in two columns; checked against the
   EasyEDA footprint of C20069150); `run.py export` now really applies the run.py overrides (LED fix was lost on export).
+  2026-11-13: U5 (HT7533, turned 270°), Q5, Q9, Q11, C20 (turned parallel to the cut) and D1 moved so that pads and body of U5, Q5, Q9, C20 and D1 stay ≥ 1.5 mm from the left V-cut edge (pads now ≥ 1.53 mm; C21 1.38 mm, right edge R35 / C38 1.28 mm unchanged).

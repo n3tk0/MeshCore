@@ -62,18 +62,19 @@ PLACE.update({
     # one header row on top: J6 SYS OUT (+ -), M2 hole, J5 host I2C (SCL SDA NC GND), J7 U (+ -):
     # the regulated and the unregulated output on the two sides of the I2C header
     "J6": (2.4, 3.0, 90), "H1": (9.3, 3.0, 0), "J5": (13.7, 3.0, 90), "J7": (25.3, 3.0, 90),
+    # Q5 / Q9 / Q11 / C20 / D1 / U5 (HT7533, rotated 270) keep their pads >= 1.5 mm from the left V-cut edge
     # ideal diode under J6: Q5 source straight up to J6 pin 1, its PNP mirror Q9 + Q11 (two MMBT3906 side by side) + R43/R44 under it
     # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
     "R31": (26.9, 20.6, 0),
-    "Q5": (2.6, 6.7, 0), "Q9": (2.6, 10.3, 0), "Q11": (6.6, 10.3, 0),
-    "R43": (5.6, 13.0, 0), "R44": (6.0, 14.3, 0), "C20": (2.8, 13.6, 0),
+    "Q5": (3.2, 6.7, 0), "Q9": (3.2, 10.3, 0), "Q11": (7.2, 10.3, 0),
+    "R43": (5.6, 13.0, 0), "R44": (6.0, 14.3, 0), "C20": (2.4, 14.2, 90),
     # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
     # (above it are the inductor and the VOUT caps); VREG test point next to J7
     "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (22.8, 6.3, 0),
     # LEDs under the hole, next to the I2C header
     "D6": (9.6, 7.4, 90), "R16": (9.6, 10.1, 90), "D7": (11.6, 7.4, 90), "R17": (11.6, 10.1, 90),
     # solar input on the left edge next to the charger's VBUS copper: J1, SS54 (D1), TVS (D3)
-    "D1": (4.3, 17.2, 180), "J1": (1.85, 21.3, 0), "D3": (5.4, 25.0, 270),
+    "D1": (4.8, 17.7, 180), "J1": (1.85, 21.3, 0), "D3": (5.4, 25.0, 270),
     # MSPM0L1306 (VQFN-24) turned 180, pins grouped by direction (see MCU_STUBS): CE, LED,
     # J7 EN, OC_G up; SH_N, SWD, VBM left; CHEM, VBAT, SH_P, OD, VCORE, SDA_E / SCL_E (J5 I2C) down / right; BAL2/BAL1, VDD, NRST right
     "U4": (13.5, 53.6, 180),
@@ -86,7 +87,7 @@ PLACE.update({
     "C24": (13.25, 67.2, 270), "R24": (10.85, 68.2, 90), "R23": (14.6, 65.4, 270), "R22": (11.9, 68.2, 90), "R21": (14.6, 67.6, 90), "NT1": (12.6, 69.9, 0),
     "R25": (9.2, 65.7, 90), "R26": (10.4, 65.7, 270), "C26": (11.6, 65.7, 270),
     "R27": (7.2, 60.6, 90), "R28": (8.4, 60.6, 270), "C27": (9.6, 60.6, 270), "JP4": (9.6, 62.9, 0),
-    "U5": (3.6, 62.2, 0), "C21": (2.1, 56.3, 90), "C22": (5.4, 56.3, 0),
+    "U5": (3.6, 61.3, 270), "C21": (2.1, 56.3, 90), "C22": (5.4, 56.3, 0),
     # SWD pads on the bottom side (B.Cu, B_SIDE), one row at 2.54 mm under the MCU band:
     # 3V3M, GND, SWDIO, SWCLK, NRST (a 5-pin header or pogo pins from below)
     "TP12": (2.2, 59.2, 0), "TP13": (4.74, 59.2, 0), "TP11": (7.28, 59.2, 0),
