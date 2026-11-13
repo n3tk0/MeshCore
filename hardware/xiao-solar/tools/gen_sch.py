@@ -266,7 +266,7 @@ C47N = "C1622"           # 47nF 50V 0603
 C4U7 = "C1779"           # 4.7uF 25V 0805
 C0402 = "Capacitor_SMD:C_0402_1005Metric"
 C100N0402 = "C1525"      # 100nF 16V X7R 0402 (SYS)
-C100N0402HV = "C131394"  # 100nF 50V X7R 0402 (PMID: up to 25 V)
+C100N0402HV = "C307331"  # 100nF 50V X7R 0402, JLC basic (PMID: up to 25 V); was C131394 (extended)
 
 # ==============================================================================
 # CONNECTED SCHEMATIC LAYOUT (A3: 420 x 297 mm)

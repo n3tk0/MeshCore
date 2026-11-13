@@ -34,7 +34,10 @@ v0.4 (2026-10-30, Argon review + v0.4 proposals, shared with the main board):
   fence, GND vias at caps and signal vias, B.Cu kept whole under the charger, teardrops,
   3 fiducials, test points VBUS/PMID/SYS/BAT/GND/3V3/SCL/SDA, parts ≥ 1 mm from the edge,
   silk ≥ 0.8 mm without overlaps (some refs in tight spots are hidden, they stay on F.Fab).
-- All polarized part rotations (U1, U2, Q2, Q3, D1, D3, D4, D5) verified in JLC's placement preview.
+- Rotations in the CPL: U1, U2, Q2, D1, D3, D4 agree with JLC's footprints. **Q3 and D5 are open**
+  (2026-11-13): JLC's footprint for the HJ8205 has the pins in two columns, so Q3 is now +270 in the
+  CPL (it was 0); by the same comparison D5 (LM66100) would need +270 too, but it was set to 0 after a
+  look at JLC's placement preview. Check both in JLC's preview before the next order.
 
 ## Connections
 | Where | Pins | Notes |
@@ -62,8 +65,9 @@ v0.4 (2026-10-30, Argon review + v0.4 proposals, shared with the main board):
   SFET_PRESENT (only with Q2) and VREG again.
 
 ## JLC
-23 BOM lines, 6 extended parts with a $3 fee (BQ25798, LM66100, MWSA0402S inductor, 100n/50V 0402,
-DW01A, HJ8205); SMBJ24A is a preferred extended part (no fee), everything else is basic. Headers are
+23 BOM lines, 4 extended parts with a $3 fee (BQ25798, LM66100, MWSA0402S inductor, DW01A);
+SMBJ24A and HJ8205 are preferred extended parts (no fee), everything else is basic (since 2026-11-13
+C9 100n/50V 0402 is the basic C307331). Parts cost about $4.5 per board. Headers are
 hand-soldered (`production/bom-hand.csv`).
 
 Panel: `panel/` holds 4 boards on 92×72 mm (V-cut, 5 mm rails with tooling holes and fiducials),
