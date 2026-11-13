@@ -5,7 +5,7 @@ of [`../xiao-solar-lite`](../xiao-solar-lite): the same BQ25798 MPPT buck-boost 
 XIAO stack is gone and a **TI MSPM0L1306** supervisor (VQFN-24, 64 KB flash) runs everything:
 
 - drives the BQ25798 on its own I2C bus (hardware I2C1 master, PA15/PA16),
-- shows itself to the repeater as an **INA260 on 0x41** (hardware I2C0 target, PA10/PA11 → J5),
+- shows itself to the repeater as an **INA260 on 0x41** (hardware I2C0 target, PA0/PA1 → J5; the ROM BSL I2C sits on the same pins),
   so MeshCore reads voltage, current and charge with `ENV_INCLUDE_INA260` and no firmware change,
 - counts the charge through a 20 mΩ shunt: both shunt ends go through the zero-drift OPA0/OPA1
   (PGA up to 32×) into the 12-bit ADC,
@@ -37,7 +37,7 @@ answers in the project thread (phase 2).
 | J3 NTC | TS / GND | optional 10k NTC (103AT); without it the MCU sets `TS_IGNORE` |
 | J6 OUT | + / − | SYS through a discrete ideal diode (Q5 AO3401A + Q9/Q11 MMBT3906): battery or charger voltage, up to 5.6 V with LTO |
 | J7 U | + / − | TPS63070 buck-boost, 3.3 V or 5.0 V (JP6), on/off by JP5 |
-| J5 I2C host | SCL SDA 3V3 GND | to the repeater; **no pull-ups on this board** (the repeater has them); 3V3 is not used here; the bus must be 3.3 V (PA10/PA11 are not 5 V tolerant) |
+| J5 I2C host | SCL SDA 3V3 GND | to the repeater; **no pull-ups on this board** (the repeater has them); 3V3 is not used here; PA0/PA1 are 5 V tolerant open-drain pins, and the ROM bootloader (BSL, I2C) listens on them, so the host can also flash the MCU over J5 |
 | TP12, TP13, TP11, TP16, TP17 | 3V3M, GND, SWDIO, SWCLK, NRST | SWD on the **bottom side**, one row at 2.54 mm under the MCU band, left to right seen from the top (a 5-pin header or pogo pins from below) |
 
 ## Jumpers
@@ -62,7 +62,7 @@ answers in the project thread (phase 2).
 - **BMS (Q3 HJ8205 in BATT−):** S1 = cell minus, S2 → shunt RS1 → GND.
   OD (discharge, G1) is **on by default** through R18 to BATT+, so SYS starts from the battery alone;
   the MCU turns it off through Q6 (PA26, no MCU pin sees BATT+). OC (charge, G2) is on as soon as
-  3V3M is up (R20) and the MCU turns it off (PA0).
+  3V3M is up (R20) and the MCU turns it off (PA10).
   Under-voltage uses the BQ25798 ship mode (Q2, SDRV): sun on VBUS wakes the charger, SYS comes back
   and the MCU starts again. There is **no DW01A**: over-current and short are handled by the MCU
   (OPA + COMP0 with the DAC threshold) and by the BQ25798 BATFET OCP.
@@ -87,24 +87,24 @@ answers in the project thread (phase 2).
 ## MCU pins (MSPM0L1306SRGER, VQFN-24)
 | Pin | Port | Net | Use |
 |---|---|---|---|
-| 9 / 10 | PA10 / PA11 | SDA_E / SCL_E | I2C0 target (INA260 0x41) → J5, 3.3 V bus only |
+| 24 / 1 | PA0 / PA1 | SDA_E / SCL_E | I2C0 target (INA260 0x41) → J5, open-drain 5 V tolerant, also the ROM BSL I2C (SDA / SCL) |
 | 12 / 11 | PA16 / PA15 | SDA_I / SCL_I | I2C1 controller → BQ25798 (R13/R14 4.7k) |
 | 21 / 14 | PA25 / PA18 | SH_P / SH_N | OPA0 / OPA1 IN+ (shunt) |
 | 20 / 17 | PA24 / PA21 | ADC_VBAT / ADC_VBM | ADC A3 / A5 |
 | 19 | PA23 | ADC_CHEM | JP4 (digital) |
 | 13 | PA17 | CE | ~CE low = charge (R4 pull-up) |
-| 24 | PA0 | OC_G | open-drain, R20 pull-up: low = charge FET off |
+| 9 | PA10 | OC_G | R20 pull-up to 3V3M: low = charge FET off (drive low or Hi-Z, never high: PA10 is push-pull and not 5 V tolerant) |
 | 22 | PA26 | OD_CTL | discharge FET off (Q6) |
 | 5 / 6 | PA2 / PA3 | BAL1 / BAL2 | balancing |
 | 8 | PA9 | LED | D6 / D7 |
 | 7 | PA4 | REG_CTL | J7 EN through JP5 2-3 |
-| 1 | PA1 | – | not connected (open-drain only) |
+| 10 | PA11 | – | not connected |
 | 18 | PA22 | – | OPA0 output pin, not connected (keep the OPA0 output off the pin) |
 | 15 / 16 / 2 | PA19 / PA20 / NRST | SWD | TP11 / TP16 / TP17 |
 | 3 / 23 / 4, EP | VDD / VCORE / VSS | | 3V3M, 470 nF, GND (4 vias in the EP, tented from below) |
 
-The pins are grouped by direction so every pin leaves the package without crossing: up (I2C, CE,
-LED, J7 EN), left (SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, OC_G), right (balancing, NRST).
+The pins are grouped by direction so every pin leaves the package without crossing: up (OC_G, LED, J7 EN),
+left (CE, SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, J5 SDA), right (balancing, NRST, J5 SCL).
 
 ## Layout
 - Charger part = the xiao-solar-lite layout (shared cluster `../xiao-solar/tools/charger.py`).
@@ -159,3 +159,6 @@ Known layout compromises / DRC leftovers:
   (BOM 43 → 40 lines).
   CPL 2026-11-11: LEDs D4 / D6 / D7 turned 180° (JLC preview showed them reversed; no LED
   offset for this board in tools/run.py).
+  2026-11-13: J5 host I2C moved from PA10/PA11 to PA0/PA1 (5 V tolerant, ROM BSL I2C: flash over J5), OC_G on PA10;
+  Q3 (HJ8205) CPL rotation +270 (`tools/run.py`, JLC model has its pins in two columns; checked against the
+  EasyEDA footprint of C20069150); `run.py export` now really applies the run.py overrides (LED fix was lost on export).

@@ -34,8 +34,19 @@ route.free_point = _free_point
 # JLC's library has these LEDs (C2297, C84256, C2296) with pad 1 where KiCad's LED_0805 has it:
 # no +180 here (checked in JLC's placement preview, 2026-11-11: with +180 D4/D6/D7 came out reversed)
 import export  # noqa: E402
-export.ROT_FIX = dict(export.ROT_FIX, LED_0805_2012Metric=0)
+# Q3 (HJ8205, LCSC C20069150) sits on the DW01A-style SOT-23-6 footprint, but JLC's model has its
+# pins in two columns: CPL rotation = KiCad rotation + 270 (same fix as ROT_LCSC in xiao-solar,
+# commit 15a2abe; the shared export.py of this branch has no ROT_LCSC, so it is keyed by footprint
+# here, Q3 is the only part on it). panel.py reads export.ROT_FIX too.
+export.ROT_FIX = dict(export.ROT_FIX, LED_0805_2012Metric=0,
+                      **{"SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL": 270})
 dfm._Placer.__init__.__defaults__ = ("GND", ("U1", "U4"))
 tool = sys.argv.pop(1)
 sys.argv[0] = tool + ".py"
-runpy.run_module(tool, run_name="__main__")
+if tool == "export":
+    # runpy would re-run export.py as __main__ with its own ROT_FIX, without the overrides above
+    # (the LED fix of 2026-11-11 was lost on every `run.py export` that way): call the module
+    export.gerbers()
+    export.cpl()
+else:
+    runpy.run_module(tool, run_name="__main__")

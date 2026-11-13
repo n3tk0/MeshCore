@@ -63,9 +63,9 @@ box("MSPM0L1306_FUNC", "U",
           ("21", "PA25/OPA0_IN0+", "input"), ("14", "PA18/OPA1_IN0+", "input"),
           ("22", "PA26", "output"), ("17", "PA21/A5", "input"), ("8", "PA9", "input"),
           ("18", "PA22/OPA0_OUT", "passive")],
-    right=[("9", "PA10/I2C0_SDA", "bidirectional"), ("10", "PA11/I2C0_SCL", "bidirectional"),
+    right=[("9", "PA10", "output"), ("10", "PA11", "passive"),
            ("12", "PA16/I2C1_SDA", "bidirectional"), ("11", "PA15/I2C1_SCL", "bidirectional"),
-           ("1", "PA1/OD", "passive"), ("24", "PA0/OD", "output"), ("19", "PA23", "input"),
+           ("1", "PA1/I2C0_SCL", "bidirectional"), ("24", "PA0/I2C0_SDA", "bidirectional"), ("19", "PA23", "input"),
            ("6", "PA3", "output"), ("7", "PA4", "output"), ("5", "PA2", "output"),
            ("20", "PA24/A3", "input"), ("13", "PA17", "output")],
     bottom=[("4", "VSS", "power_in", -1.27), ("25", "EP", "power_in", 1.27)],
@@ -130,7 +130,7 @@ RAIL("SW2", [(155.0, 91.81), (155.0, 95.0), (145.08, 95.0)])
 
 TP("TP2", "QON", 112.0, 122.62, rot=90, value="QON (to GND = wake)")
 RAIL("QON", [(112.0, 122.62), (124.76, 122.62)])
-# ~CE: pulled up to 3V3M, MSPM0 PA11 pulls it low = charge. No MCU = no charging.
+# ~CE: pulled up to 3V3M, MSPM0 PA17 pulls it low = charge. No MCU = no charging.
 RS("R4", "100k", 118, 148, "3V3M", "CE", R100K, rot=180)
 RAIL("CE", [(118.0, 125.16), (124.76, 125.16)])
 RAIL("CE", [(118.0, 125.16), (118.0, 144.19)])
@@ -161,7 +161,7 @@ TP("TP10", "SDA_I", 176, 115.00, rot=0)
 
 T(20, 174, "SS54: защита от обратна полярност и връщане към панела. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
 T(20, 177.5, "PROG = 1S винаги (R1 4.7k): с 2S PROG BQ тръгва с VSYSMIN ~7 V. За LTO 2S MSPM0 записва VREG 5.6 V и чак тогава пуска CE.", 1.27)
-T(20, 181, "~CE: R4 към 3V3M = без заряд, докато MSPM0 не го свали (PA11). TP2 (QON) към GND = излизане от ship режим.", 1.27)
+T(20, 181, "~CE: R4 към 3V3M = без заряд, докато MSPM0 не го свали (PA17). TP2 (QON) към GND = излизане от ship режим.", 1.27)
 
 # ---- 2. SYS -> 3V3M (HT7533) + LTC4412 ideal diode -> J6 -------------------------------
 BLOCK(225, 22, "2. SYS -> 3V3M (HT7533, 2.5 uA) за MSPM0 + J6 OUT (SYS през идеален диод Q5 + Q9/Q11)")
@@ -270,7 +270,7 @@ BLOCK(370, 22, "5. MSPM0L1306: BQ25798 master (I2C1), INA260 емулатор 0x
 P("U4", "custom:MSPM0L1306_FUNC", "MSPM0L1306SRGER", 470, 100,
   {"3": "3V3M", "23": "VCORE", "2": "NRST", "15": "SWDIO", "16": "SWCLK",
    "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": "ADC_VBM", "19": "ADC_CHEM", "18": None,
-   "9": "SDA_E", "10": "SCL_E", "12": "SDA_I", "11": "SCL_I", "1": None, "24": "OC_G",
+   "9": "OC_G", "10": None, "12": "SDA_I", "11": "SCL_I", "1": "SCL_E", "24": "SDA_E",
    "6": "BAL2", "5": "BAL1", "7": "REG_CTL", "22": "OD_CTL", "13": "CE", "8": "LED",
    "4": "GND", "25": "GND"},
   "Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", "C19189323")
@@ -299,7 +299,7 @@ TP("TP13", "GND", 400, 105, rot=180)
 TP("TP16", "SWCLK", 400, 110, rot=180)
 TP("TP17", "NRST", 400, 115, rot=180)
 T(370, 176, "J5 pin 3 (3V3E) е захранването на репийтъра: тук не се ползва, pull-up резисторите са на репийтъра.", 1.27)
-T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA10/PA11 (само 3.3 V шина), ~CE PA17, OC_G PA0 (open-drain), LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA1 и PA22 (изход на OPA0) не се свързват.", 1.27)
+T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA0/PA1 (SDA/SCL, open-drain, 5 V толерантни, ROM BSL I2C: хостът може да програмира през J5), ~CE PA17, OC_G PA10, LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA11 и PA22 (изход на OPA0) не се свързват.", 1.27)
 
 # ---- 6. TPS63070 buck-boost -> J7 (3.3 / 5.0 V) -----------------------------------------
 BLOCK(20, 300, "6. J7 U: TPS63070 buck-boost 3.3 V / 5.0 V (JP6), вкл. с JP5: - изкл. / 1-2 винаги / 2-3 от MSPM0")

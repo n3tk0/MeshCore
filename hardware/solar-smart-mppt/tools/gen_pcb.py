@@ -74,8 +74,8 @@ PLACE.update({
     "D6": (9.6, 7.4, 90), "R16": (9.6, 10.1, 90), "D7": (11.6, 7.4, 90), "R17": (11.6, 10.1, 90),
     # solar input on the left edge next to the charger's VBUS copper: J1, SS54 (D1), TVS (D3)
     "D1": (4.3, 17.2, 180), "J1": (1.85, 21.3, 0), "D3": (5.4, 25.0, 270),
-    # MSPM0L1306 (VQFN-24) turned 180, pins grouped by direction (see MCU_STUBS): I2C, CE, LED,
-    # J7 EN up; SH_N, SWD, VBM left; CHEM, VBAT, SH_P, OD, VCORE, OC_G down; BAL2/BAL1, VDD, NRST right
+    # MSPM0L1306 (VQFN-24) turned 180, pins grouped by direction (see MCU_STUBS): CE, LED,
+    # J7 EN, OC_G up; SH_N, SWD, VBM left; CHEM, VBAT, SH_P, OD, VCORE, SDA_E / SCL_E (J5 I2C) down / right; BAL2/BAL1, VDD, NRST right
     "U4": (13.5, 53.6, 180),
     # C28 / C29 between BAL1 (over them) and NRST (under C28); C39 right of the VCORE pin
     "C28": (17.6, 53.85, 0), "C29": (20.0, 54.6, 90), "C39": (15.6, 57.3, 0),
@@ -371,20 +371,21 @@ SYS_RUN = ((17.05, 38.15), tps(5.8, 9.0))   # kept out from under the TPS63070 (
 # Freerouting closes them badly or not at all on this narrow board
 PRE_ROUTES = [("SYS", ("Q5", "3"), tps(5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1")),
               # MSPM0: the fan-out itself is MCU_STUBS (below); these finish the far ends
-              ("OC_G", (16.1, 56.25), ("Q3", "4")),
+              ("OC_G", ("U4", "9"), ("Q3", "4")),
               ("OD_CTL", (16.6, 58.2), ("Q6", "1")), ("BAL1", (21.8, 52.85), ("Q7", "1")),
               ("CE", (9.0, 51.3), ("U1", "13")), ("REGN", ("C10", "1"), (10.55, 31.6)),
               ("VREG", ("TP14", "1"), ("C36", "1")),
               ("BAL2", ("R39", "1"), ("Q10", "1")),
               ("SYS", ("C21", "1"), ("U5", "2")),
               ("SDA_I", ("U4", "12"), ("R13", "2")), ("SCL_I", ("U4", "11"), ("R14", "2")),
-              ("SDA_E", ("U4", "9"), ("J5", "2")), ("SCL_E", ("U4", "10"), ("J5", "1")),
+              # J5 host I2C on PA0 (SDA, pin 24) / PA1 (SCL, pin 1): from the vias of their MCU_STUBS
+              ("SDA_E", (15.45, 56.2), ("J5", "2")), ("SCL_E", (15.9, 55.55), ("J5", "1")),
               ("LED", ("U4", "8"), ("D7", "1")), ("REG_CTL", ("U4", "7"), ("JP5", "3")),
               ("VREG", ("R33", "1"), ("C35", "1"))]
 # MSPM0 fan-out by hand (0.2 mm, F.Cu, locked), board mm. Left side nested (the upper pin goes
 # out further): CE up, SH_N to a via (B.Cu down to the shunt filter), SWDIO / SWCLK to the
 # TP row, VBM to its divider under the TP row. Bottom: CHEM, VBAT and SH_P straight down to
-# JP4, the VBAT divider and C24; OD_CTL under C39; VCORE to C39; OC_G to a via. Right: BAL2 /
+# JP4, the VBAT divider and C24; OD_CTL under C39; VCORE to C39; PA0 / PA1 (J5 SDA / SCL) to vias. Right: BAL2 /
 # BAL1 over C28 / C29 to the balancer strip, 3V3M to C28, NRST under C28 to R42.
 MCU_STUBS = [
     ("CE", [(11.51, 52.35), (9.0, 52.35), (9.0, 51.3)]),
@@ -406,7 +407,9 @@ MCU_STUBS = [
     ("GND", [(18.08, 53.85), (20.0, 53.85)]),
     ("OD_CTL", [(13.75, 55.59), (13.75, 58.2), (16.6, 58.2)]),
     ("VCORE", [(14.25, 55.59), (14.25, 56.7), (14.82, 57.27), (14.82, 57.3)]),
-    ("OC_G", [(14.75, 55.59), (14.75, 55.95), (15.05, 56.25), (16.1, 56.25)]),
+    # PA0 (SDA_E) down and PA1 (SCL_E) right, each to a via; then B.Cu up to J5 (PRE_ROUTES)
+    ("SDA_E", [(14.75, 55.59), (14.75, 56.0), (15.45, 56.2)]),
+    ("SCL_E", [(15.49, 54.85), (15.9, 54.85), (15.9, 55.55)]),
     ("GND", [(15.49, 53.35), (14.6, 53.35)]),
     ("3V3M", [(15.49, 53.85), (17.12, 53.85)]),
     ("NRST", [(15.49, 54.35), (16.3, 54.35), (16.9, 54.95), (18.51, 54.95), (18.51, 55.9)]),
@@ -414,7 +417,7 @@ MCU_STUBS = [
     ("BAL2", [(15.49, 52.35), (22.72, 52.35), (22.72, 51.4)]),
 ]
 # + 4 GND vias in the exposed pad of U4 (its only way to the B.Cu ground plane)
-MCU_VIAS = [("SH_N", (8.2, 52.85)), ("SH_N", (13.25, 68.5)), ("OC_G", (16.1, 56.25)),
+MCU_VIAS = [("SH_N", (8.2, 52.85)), ("SH_N", (13.25, 68.5)), ("SDA_E", (15.45, 56.2)), ("SCL_E", (15.9, 55.55)),
             ("SWDIO", (8.0, 57.4)), ("SWCLK", (9.5, 58.3)),
             ("GND", (12.8, 53.1)), ("GND", (13.7, 53.1)), ("GND", (12.8, 54.1)), ("GND", (13.7, 54.1))]
 def add_mcu_stubs(board):
