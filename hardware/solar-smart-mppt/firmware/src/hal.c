@@ -59,7 +59,7 @@ void hal_init(void) {
 
   // safe state before anything else: FETs as the hardware pulls them, no charging, J7 off
   out_pin(PIN_OD_IOMUX, PIN_OD, false);
-  out_pin(PIN_OC_G_IOMUX, PIN_OC_G, true);   // open drain released = charge FET on
+  out_pin(PIN_OC_G_IOMUX, PIN_OC_G, true);   // high, same as R20 = charge FET on
   out_pin(PIN_CE_IOMUX, PIN_CE, true);       // ~CE high = no charging until the BQ is set up
   out_pin(PIN_J7_IOMUX, PIN_J7, false);
   out_pin(PIN_BAL1_IOMUX, PIN_BAL1, false);
