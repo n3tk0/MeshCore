@@ -24,9 +24,8 @@ CI: `.github/workflows/build-solar-smart-mppt-fw.yml` (tag `solar-smart-mppt-fw-
 
 Flashing: SWD on the bottom pads (TP11 SWDIO, TP16 SWCLK, TP17 NRST, TP12 3V3M, TP13 GND) with an
 XDS110 or a J-Link / CMSIS-DAP probe that knows the MSPM0. `smppt cmd bsl` (or command 8) starts the
-ROM bootloader, but the ROM BSL listens on its default pins (I2C on PA0/PA1), not on J5.
-Updating over J5 would need the BSL pins changed in NONMAIN flash, which can brick the chip if done wrong,
-so it is not done in v0.1.
+ROM bootloader. Its I2C is on PA0/PA1, which are the J5 pins, so the host can flash the MSPM0 over J5
+(ROM BSL I2C address 0x48, TI BSL protocol). NONMAIN flash is left at the factory defaults.
 
 ## Files
 
@@ -122,7 +121,7 @@ battery gauge expects), VOLTAGE (0x02, 1.25 mV/bit, pack), POWER (0x03, 10 mW/bi
 
 - The shunt bias is only ~33 mV (R23/R24 1M with R21/R22 10k). SH_P reaches 0 V at about **1.6 A of
   discharge**: discharge readings and the short trip stop there. Lower R23/R24 (e.g. 220k) would move it.
-- The ROM bootloader is not on J5 (see Build).
+- The ROM bootloader is reachable over J5 (PA0/PA1); SWD stays as the fallback.
 - The OPAs run without chopping (COMP0 sees their output); the offset is taken out with ZERO.
 - Not yet checked on hardware: COMP0 channel for the OPA0 output (`COMP_IMSEL_OPA0_OUT`), I2C target in
   STOP0, ADC timing with the 1M dividers.
