@@ -26,6 +26,8 @@ Flashing: SWD on the bottom pads (TP11 SWDIO, TP16 SWCLK, TP17 NRST, TP12 3V3M, 
 XDS110 or a J-Link / CMSIS-DAP probe that knows the MSPM0. `smppt cmd bsl` (or command 8) starts the
 ROM bootloader. Its I2C is on PA0/PA1, which are the J5 pins, so the host can flash the MSPM0 over J5
 (ROM BSL I2C address 0x48, TI BSL protocol). NONMAIN flash is left at the factory defaults.
+A blank chip starts the BSL by itself; one with broken firmware needs SWD (the BSL invoke pin PA18 is
+not on J5).
 
 ## Files
 
