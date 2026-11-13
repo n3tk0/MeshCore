@@ -40,11 +40,10 @@ def gerbers():
 # SOT-23 pin 1 sits top left in KiCad and bottom right in EasyEDA. Footprints imported with
 # easyeda2kicad need no correction.
 # SOT-23-8 (INA219) checked the same way: EasyEDA has pin 1 bottom right, KiCad top left.
-# SC-70-6 (LM66100) has pin 1 top left in both KiCad and EasyEDA (checked in JLC preview): 0.
-# (checked in JLC's placement preview: no rotation offset needed).
+# SOT-363_SC-70-6 (LM66100) needs +270, confirmed by JLC's DFM view on 2026-11-13.
 # 0805 LEDs (C2297 green, C84256 red, C2296 yellow): JLC's model has pad 1 where KiCad has it, so no
 # offset (2026-11-11: with +180 JLC's preview showed D4 reversed and their engineer turned it back).
-ROT_FIX = {"SOT-23": 180, "SOT-23-8": 180,
+ROT_FIX = {"SOT-23": 180, "SOT-23-8": 180, "SOT-363_SC-70-6": 270,
            "TSSOP-16_4.4x5mm_P0.65mm": 270}
 # Per part, where the board reuses another part's footprint: the HJ8205 sits on the DW01A's
 # SOT-23-6 (pins in two rows, pin 1 bottom left), JLC's HJ8205 model (C20069150) has the pins in
