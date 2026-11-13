@@ -63,7 +63,7 @@ def main():
     for i in range(nx):
         for j in range(ny):
             x, y = i * STEP, j * STEP
-            if x < edge or y < edge or x > gen_pcb.W - edge or y > gen_pcb.H - edge:
+            if x < edge or y < getattr(gen_pcb, "TOP", 0.0) + edge or x > gen_pcb.W - edge or y > gen_pcb.H - edge:
                 blocked[j * nx + i] = 1
     s0 = (round(x1 / STEP), round(y1 / STEP))
     s1 = (round(x2 / STEP), round(y2 / STEP))

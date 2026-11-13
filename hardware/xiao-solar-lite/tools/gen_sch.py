@@ -22,7 +22,7 @@ base.ROOT = ROOT
 base.PROJECT = "xiao-solar-lite"
 base.ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0002"
 base.TITLE = "Solar charger layer for XIAO + Wio (BQ25798 + BMS)"
-base.REV = "0.4"
+base.REV = "0.5"
 P, R, C, T, TP, RAIL, BLOCK, OFF = base.P, base.R, base.C, base.T, base.TP, base.RAIL, base.BLOCK, base.OFF
 parts, ROOT_UUID = base.parts, base.ROOT_UUID
 C0402, C0603, C0805, C1206, SOT23, CONN2, CONN4 = (
@@ -117,9 +117,9 @@ RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
 T(20, 174, "SS54: защита от обратна полярност и връщане към панела. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
 T(20, 177.5, "CE (D0): JP2 1-2 (Li-ion) зарежда автоматично; 2-3 (LiFePO4) изчаква фърмуера (VREG=3.6V, D0=0). TP2 (QON) към GND = wake.", 1.27)
 
-# ---- 3. SYS Rail -> Ideal Diode D5 (LM66100) -> XIAO + Wio Stack & I2C -------
-BLOCK(225, 22, "2. СИСТЕМНО ЗАХРАНВАНЕ (SYS -> LM66100 -> VOUT 5V) + XIAO & Wio-SX1262 СТЕК + I2C")
-# Continuous SYS wire from U1.SYS (155.24, 109.92) up to y = 55 and right into D5.VIN (266.11, 55)
+# ---- 3. SYS Rail -> Ideal Diode Q5/Q6/Q7 -> XIAO + Wio Stack & I2C -------
+BLOCK(225, 22, "2. СИСТЕМНО ЗАХРАНВАНЕ (SYS -> ideal diode Q5-Q7 -> VOUT 5V) + XIAO & Wio-SX1262 СТЕК + I2C")
+# Continuous SYS wire from U1.SYS (155.24, 109.92) up to y = 55 and right towards Q5 (266.11, 55)
 RAIL("SYS", [(155.24, 109.92), (168.0, 109.92), (168.0, 55.0), (266.11, 55.0)])
 for i, (ref, val, lcsc, fp) in enumerate([
         ("C16", "100n", C100N0402, C0402), ("C11", "10u/25V", C10U, C0805),
@@ -128,11 +128,17 @@ for i, (ref, val, lcsc, fp) in enumerate([
     C(ref, val, 180 + 12 * i, 64, "SYS", "GND", lcsc, fp)
 TP("TP5", "SYS", 252, 55.0, rot=0)
 
-P("D5", "custom:LM66100", "LM66100", 275, 57.54,
-  {"1": "SYS", "2": "GND", "3": "VOUT", "4": "GND", "5": "GND", "6": "VOUT"},
-  "Package_TO_SOT_SMD:SOT-363_SC-70-6", "C2869734")
+# Discrete ideal diode SYS -> VOUT (same circuit as the xiao-solar main board, no extended-part
+# fee): Q5 AO3401A (D at SYS, S at VOUT, its body diode points to the Xiao), PNP mirror Q6/Q7
+# (MMBT3906). Q6 (diode connected, E at SYS) sets the base; Q7 (E at VOUT) pulls the gate up
+# to VOUT as soon as VOUT > SYS (USB on the Xiao), so no current flows back into SYS.
+P("Q5", "Transistor_FET:BSS84", "AO3401A (ideal diode)", 275, 50, {"1": "OR_G", "2": "VOUT", "3": "SYS"},
+  SOT23, "C15127", rot=90)
+P("Q6", "Transistor_BJT:MMBT3906", "MMBT3906", 266, 72, {"1": "OR_B", "2": "SYS", "3": "OR_B"}, SOT23, "C7420354")
+P("Q7", "Transistor_BJT:MMBT3906", "MMBT3906", 284, 72, {"1": "OR_B", "2": "VOUT", "3": "OR_G"}, SOT23, "C7420354")
+R("R30", "1M", 262, 86, "OR_B", "GND", "C22935", rot=90)
+R("R31", "470k", 288, 86, "OR_G", "GND", "C23178", rot=90)
 RAIL("VOUT", [(283.89, 55.0), (305.0, 55.0)])
-RAIL("VOUT", [(283.89, 57.54), (288.0, 57.54), (288.0, 55.0)])
 C("C20", "10u/25V", 296, 64, "VOUT", "GND", C10U)
 
 # U3 (XIAO + Wio stack) in Top-View orientation (D0..D6 left, 5V..D7 right)
@@ -140,7 +146,7 @@ P("U3", "custom:XIAO_nRF52840", "XIAO + Wio stack", 342, 62.62,
   {"1": "CE", "2": None, "3": None, "4": None, "5": None, "6": None, "7": "SCL",
    "14": "VOUT", "13": "GND", "12": "3V3", "11": None, "10": None, "9": None, "8": "SDA"},
   "xiao_solar:XIAO_14P_2.54_21x17.8mm")
-# Connect VOUT directly from D5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
+# Connect VOUT directly from Q5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
 RAIL("VOUT", [(305.0, 55.0), (305.0, 42.0), (358.0, 42.0), (358.0, 55.0), (353.43, 55.0)])
 # Connect CE directly from U1.~CE (118.0, 125.16) over the top lane (y=36.0) into U3.D0 (330.57, 55.0)
 RAIL("CE", [(118.0, 125.16), (118.0, 36.0), (326.0, 36.0), (326.0, 55.0), (330.57, 55.0)])
@@ -227,7 +233,7 @@ T(20, 259, "LiFePO4: прагът 4.3V на DW01A е над 3.65V, т.е. от �
 # ERC power flags placed directly on their rail wires
 for i, (net, fx, fy) in enumerate([
         ("VBUS", 55.0, 78.0), ("BATT+", 300.0, 210.0), ("BATT-", 355.0, 212.54),
-        ("DW_VCC", 326.0, 228.0), ("GND", 202.0, 212.54)]):
+        ("DW_VCC", 326.0, 228.0), ("GND", 202.0, 212.54), ("VOUT", 300.0, 55.0)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
 
 write_bom = base.write_bom

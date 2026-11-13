@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generates xiao-solar.kicad_sch (KiCad 7+) from the part list below.
 
-Parts are arranged in a continuous left-to-right functional flow (Solar/VIN2 input ->
+Parts are arranged in a continuous left-to-right functional flow (Solar input ->
 BQ25798 MPPT buck-boost charger with L1/bootstrap above and NTC/PROG below ->
-SYS ideal-diode feed to XIAO+Wio & I2C on top-right, and BAT Ship-FET + INA219 +
-DW01A/HJ8205 BMS + Battery on bottom-right) and wired with direct orthogonal nets.
+SYS ideal-diode feed to XIAO+Wio & I2C on top-right, BAT Ship-FET + DW01A/HJ8205 BMS +
+50 mOhm shunt (2x 100 mOhm) + Battery on bottom-right, MSPM0L1306 supervisor + heater on the far right)
+and wired with direct orthogonal nets.
 Run: python3 tools/gen_sch.py  (from hardware/xiao-solar)
 """
 import os, re, uuid
@@ -18,7 +19,8 @@ LOCAL = os.path.join(ROOT, "lib", "xiao_solar.kicad_sym")
 PROJECT = "xiao-solar"
 ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0001"
 TITLE = "Xiao nRF52840 + Wio-SX1262 solar board"
-REV = "0.4"
+REV = "0.5"
+PAPER = "A2"
 
 def uid():
     return str(uuid.uuid4())
@@ -153,12 +155,25 @@ custom_box("HJ8205_FUNC", "Q",
            right=[("2", "D1/D2", "passive"), ("5", "D1/D2", "passive"), ("3", "S2", "passive")],
            width=12.7, fp="xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL")
 
-custom_box("INA219_FUNC", "U",
-           left=[("4", "VS", "power_in")],
-           right=[("5", "SCL", "input"), ("6", "SDA", "bidirectional")],
-           top=[("2", "IN-", "input", -2.54), ("1", "IN+", "input", 2.54)],
-           bottom=[("7", "A0", "input", -2.54), ("3", "GND", "power_in", 0.0), ("8", "A1", "input", 2.54)],
-           width=12.7, fp="Package_TO_SOT_SMD:SOT-23-8", pad_top=2.54, pad_bot=2.54)
+# MSPM0L1306 (VQFN-24) and HT7533 (SOT-89): same symbols as hardware/solar-smart-mppt
+custom_box("MSPM0L1306_FUNC", "U",
+           left=[("3", "VDD", "power_in"), ("23", "VCORE", "passive"), ("2", "NRST", "input"),
+                 ("15", "PA19/SWDIO", "bidirectional"), ("16", "PA20/SWCLK", "input"),
+                 ("21", "PA25/OPA0_IN0+", "input"), ("14", "PA18/OPA1_IN0+", "input"),
+                 ("22", "PA26", "output"), ("17", "PA21/A5", "input"), ("8", "PA9", "input"),
+                 ("18", "PA22/OPA0_OUT", "passive")],
+           right=[("24", "PA0/I2C0_SDA", "bidirectional"), ("1", "PA1/I2C0_SCL", "bidirectional"),
+                  ("12", "PA16/I2C1_SDA", "bidirectional"), ("11", "PA15/I2C1_SCL", "bidirectional"),
+                  ("9", "PA10", "passive"), ("10", "PA11", "passive"), ("19", "PA23", "input"),
+                  ("6", "PA3", "output"), ("7", "PA4", "output"), ("5", "PA2", "output"),
+                  ("20", "PA24/A3", "input"), ("13", "PA17", "output")],
+           bottom=[("4", "VSS", "power_in", -1.27), ("25", "EP", "power_in", 1.27)],
+           width=22.86, fp="Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", pad_bot=0.0)
+
+custom_box("HT7533_FUNC", "U",
+           left=[("2", "VIN", "power_in")], right=[("3", "VOUT", "power_out")],
+           bottom=[("1", "GND", "power_in", 0.0)],
+           width=10.16, fp="xiao_solar:SOT-89-3_L4.5-W2.5-P1.50-LS4.2-BR")
 
 custom_box("SHT40_FUNC", "U",
            left=[("2", "SCL", "input"), ("1", "SDA", "bidirectional"), ("3", "VDD", "power_in")],
@@ -251,7 +266,7 @@ C47N = "C1622"           # 47nF 50V 0603
 C4U7 = "C1779"           # 4.7uF 25V 0805
 C0402 = "Capacitor_SMD:C_0402_1005Metric"
 C100N0402 = "C1525"      # 100nF 16V X7R 0402 (SYS)
-C100N0402HV = "C131394"  # 100nF 50V X7R 0402 (PMID: up to 25 V)
+C100N0402HV = "C307331"  # 100nF 50V X7R 0402, JLC basic (PMID: up to 25 V); was C131394 (extended)
 
 # ==============================================================================
 # CONNECTED SCHEMATIC LAYOUT (A3: 420 x 297 mm)
@@ -263,15 +278,12 @@ C100N0402HV = "C131394"  # 100nF 50V X7R 0402 (PMID: up to 25 V)
 # ==============================================================================
 
 # ---- 1. Solar & Aux Inputs -> VBUS & PMID rails (Left of U1) -----------------
-BLOCK(20, 22, "1. ВХОДОВЕ (5-22 V соларен панел + втори вход) -> MPPT ЗАРЯДНО BQ25798 (1S, 750 kHz, 2.2 uH)")
+BLOCK(20, 22, "1. ВХОД (5-22 V соларен панел, SS54 срещу обърнат поляритет) -> MPPT ЗАРЯДНО BQ25798 (1S, 750 kHz, 2.2 uH)")
 P("J1", "Connector_Generic:Conn_01x02", "SOLAR", 28, 78.0, {"1": "SOLAR_IN", "2": "GND"}, CONN2, mirror=True)
 P("D1", "Device:D_Schottky", "SS54", 46, 78.0, {"2": "SOLAR_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C22452", mirror=True)
-P("J2", "Connector_Generic:Conn_01x02", "VIN2 5-20V", 28, 95.0, {"1": "VIN2_IN", "2": "GND"}, CONN2, mirror=True)
-P("D2", "Device:D_Schottky", "SS54", 46, 95.0, {"2": "VIN2_IN", "1": "VBUS"}, "Diode_SMD:D_SMA", "C22452", mirror=True)
 
 # VBUS rail at y = 78.0 from D1 (x=49.81) across D3, C1..C3, TP3 and down into U1.VBUS/VAC1/VAC2
 RAIL("VBUS", [(49.81, 78.0), (116.0, 78.0), (116.0, 109.92), (124.76, 109.92)])
-RAIL("VBUS", [(49.81, 95.0), (55.0, 95.0), (55.0, 78.0)])
 RAIL("VBUS", [(116.0, 109.92), (116.0, 117.54), (124.76, 117.54)])
 RAIL("VBUS", [(116.0, 112.46), (124.76, 112.46)])
 RAIL("VBUS", [(116.0, 115.00), (124.76, 115.00)])
@@ -287,13 +299,13 @@ RAIL("PMID", [(60.0, 120.08), (124.76, 120.08)])
 C("C6", "10u/50V", 60, 128.5, "PMID", "GND", C10U50, C1206)
 C("C7", "10u/50V", 72, 128.5, "PMID", "GND", C10U50, C1206)
 C("C8", "10u/50V", 84, 128.5, "PMID", "GND", C10U50, C1206)
-C("C9", "100n/50V", 96, 128.5, "PMID", "GND", C100N0402HV, C0402)
+C("C9", "100n/50V", 96, 128.5, "PMID", "GND", "C14663", C0603)
 TP("TP4", "PMID", 104, 120.08, rot=0)
 
 # ---- 2. Charger U1 (BQ25798) + Switching Stage (Top) + NTC/PROG (Bottom) -----
 bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": None, "7": None,
-      "8": "VBUS", "9": "VBUS", "10": "GND", "11": "GND", "12": "QON", "13": "CE", "14": "SCL",
-      "15": "SDA", "16": "TS", "17": "REGN", "18": "BATP", "19": "BTST2", "20": "PROG",
+      "8": "VBUS", "9": "VBUS", "10": "GND", "11": "GND", "12": "QON", "13": "CE", "14": "SCL_I",
+      "15": "SDA_I", "16": "TS", "17": "REGN", "18": "BATP", "19": "BTST2", "20": "PROG",
       "21": None, "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
       "28": "SW1", "29": "PMID"}
 P("U1", "custom:BQ25798RQMR_FUNC", "BQ25798RQMR", 140, 125, bq,
@@ -315,12 +327,10 @@ RAIL("SW2", [(155.0, 91.81), (155.0, 95.0), (145.08, 95.0)])
 TP("TP2", "QON", 112.0, 122.62, rot=90, value="QON (to GND = wake)")
 RAIL("QON", [(112.0, 122.62), (124.76, 122.62)])
 
-R("R4", "100k", 118, 148, "CE_PULL", "CE", "C25803", rot=180)
+# ~CE: R4 pulls it up to 3V3M = no charging until the MSPM0 (PA17) pulls it low
+R("R4", "100k", 118, 148, "3V3M", "CE", "C25803", rot=180)
 RAIL("CE", [(118.0, 125.16), (124.76, 125.16)])
 RAIL("CE", [(118.0, 125.16), (118.0, 144.19)])
-P("JP2", "Jumper:SolderJumper_3_Bridged12", "CE: 1-2 Li-ion / 2-3 LiFePO4", 118, 162,
-  {"1": "GND", "2": "CE_PULL", "3": "3V3"}, "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm", rot=180)
-RAIL("CE_PULL", [(118.0, 151.81), (118.0, 158.19)])
 
 # STAT LED (D4 + R6), REGN (C10), NTC divider (R2/R3/J3), PROG (R1) on the bottom-right of U1
 # U1 right pins: STAT=127.70, REGN=130.24, ILIM_HIZ=132.78, TS=135.32, PROG=137.86
@@ -349,11 +359,11 @@ R("R1", "4.7k 1%", 164, 152, "PROG", "GND", "C23162")
 RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
 
 T(20, 174, "SS54 = OR на двата входа + защита от обратна полярност. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
-T(20, 177.5, "CE (D0): JP2 1-2 (Li-ion) зарежда автоматично; 2-3 (LiFePO4) изчаква фърмуера (VREG=3.6V, D0=0). TP2 (QON) към GND = wake.", 1.27)
+T(20, 177.5, "~CE: R4 към 3V3M = без заряд, докато MSPM0 не го свали (PA17). BQ25798 е на собствена I2C шина (SCL_I/SDA_I) към MSPM0. TP2 (QON) към GND = wake.", 1.27)
 
-# ---- 3. SYS Rail -> Ideal Diode D5 (LM66100) -> XIAO nRF52840 + Wio-SX1262 ---
-BLOCK(225, 22, "2. СИСТЕМНО ЗАХРАНВАНЕ (SYS -> LM66100 -> XIAO 5V) + XIAO nRF52840 & Wio-SX1262 + I2C")
-# Continuous SYS wire from U1.SYS (155.24, 109.92) up to y = 55 and right into D5.VIN (266.11, 55)
+# ---- 3. SYS Rail -> discrete ideal diode Q5/Q6/Q7 -> XIAO nRF52840 + Wio-SX1262 ---
+BLOCK(225, 22, "2. СИСТЕМНО ЗАХРАНВАНЕ (SYS -> идеален диод Q5 AO3401A + Q6/Q7 -> XIAO 5V) + XIAO nRF52840 & Wio-SX1262 + I2C")
+# Continuous SYS wire from U1.SYS (155.24, 109.92) up to y = 55 and right towards Q5
 RAIL("SYS", [(155.24, 109.92), (168.0, 109.92), (168.0, 55.0), (266.11, 55.0)])
 for i, (ref, val, lcsc, fp) in enumerate([
         ("C16", "100n", C100N0402, C0402), ("C11", "10u/25V", C10U, C0805),
@@ -362,22 +372,26 @@ for i, (ref, val, lcsc, fp) in enumerate([
     C(ref, val, 180 + 12 * i, 64, "SYS", "GND", lcsc, fp)
 TP("TP5", "SYS", 252, 55.0, rot=0)
 
-P("D5", "custom:LM66100", "LM66100", 275, 57.54,
-  {"1": "SYS", "2": "GND", "3": "XIAO_5V", "4": "GND", "5": "GND", "6": "XIAO_5V"},
-  "Package_TO_SOT_SMD:SOT-363_SC-70-6", "C2869734")
+# discrete ideal diode SYS -> XIAO_5V (as on solar-smart-mppt, no extended fee): Q5 AO3401A
+# (D at SYS, S at XIAO_5V, its body diode points to the Xiao), PNP mirror Q6/Q7 (MMBT3906).
+# Q6 (diode connected, E at SYS) sets the base; Q7 (E at XIAO_5V) pulls the gate up to
+# XIAO_5V as soon as XIAO_5V > SYS (USB on the Xiao), so no current flows back into SYS.
+P("Q5", "Transistor_FET:BSS84", "AO3401A (ideal diode)", 275, 50, {"1": "OR_G", "2": "XIAO_5V", "3": "SYS"},
+  SOT23, "C15127", rot=90)
+P("Q6", "Transistor_BJT:MMBT3906", "MMBT3906", 266, 72, {"1": "OR_B", "2": "SYS", "3": "OR_B"}, SOT23, "C7420354")
+P("Q7", "Transistor_BJT:MMBT3906", "MMBT3906", 284, 72, {"1": "OR_B", "2": "XIAO_5V", "3": "OR_G"}, SOT23, "C7420354")
+R("R30", "1M", 262, 86, "OR_B", "GND", "C22935", rot=90)
+R("R31", "470k", 288, 86, "OR_G", "GND", "C23178", rot=90)
 RAIL("XIAO_5V", [(283.89, 55.0), (305.0, 55.0)])
-RAIL("XIAO_5V", [(283.89, 57.54), (288.0, 57.54), (288.0, 55.0)])
 C("C20", "10u/25V", 296, 64, "XIAO_5V", "GND", C10U)
 
 # Both U3 (XIAO nRF52840) and U4 (Wio-SX1262) have the EXACT SAME Top-View orientation (D0..D6 left, 5V..D7 right)!
 P("U3", "custom:XIAO_nRF52840", "XIAO nRF52840", 342, 62.62,
-  {"1": "CE", "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
+  {"1": None, "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
    "6": "LORA_RXEN", "7": "SCL", "14": "XIAO_5V", "13": "GND", "12": "3V3",
    "11": "SPI_MOSI", "10": "SPI_MISO", "9": "SPI_SCK", "8": "SDA"}, "xiao_solar:XIAO_14P_2.54_21x17.8mm")
-# Connect XIAO_5V directly from D5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
+# Connect XIAO_5V directly from Q5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
 RAIL("XIAO_5V", [(305.0, 55.0), (305.0, 42.0), (358.0, 42.0), (358.0, 55.0), (353.43, 55.0)])
-# Connect CE directly from U1.~CE (118.0, 125.16) over the top lane (y=36.0) into U3.D0 (330.57, 55.0)
-RAIL("CE", [(118.0, 125.16), (118.0, 36.0), (326.0, 36.0), (326.0, 55.0), (330.57, 55.0)])
 
 P("U4", "custom:Wio-SX1262_for_XIAO", "Wio-SX1262 for XIAO", 342, 108.34,
   {"1": None, "2": "LORA_DIO1", "3": "LORA_RST", "4": "LORA_BUSY", "5": "LORA_NSS",
@@ -396,7 +410,7 @@ for i, net in enumerate(["3V3", "SPI_MOSI", "SPI_MISO", "SPI_SCK"]):
     y_u4 = 105.80 + 2.54 * i
     lane_x = 370.0 + 2.54 * i
     RAIL(net, [(353.43, y_u3), (lane_x, y_u3), (lane_x, y_u4), (355.97, y_u4)])
-RAIL("GND", [(353.43, 57.54), (363.0, 57.54), (363.0, 48.0), (368.0, 48.0)])
+RAIL("GND", [(353.43, 57.54), (363.0, 57.54)])
 RAIL("GND", [(355.97, 103.26), (363.0, 103.26), (363.0, 57.54)])
 
 # 3V3 decoupling caps right on the 3V3 rail next to U3/U4
@@ -405,34 +419,29 @@ C("C21", "10u/25V", 386, 69, "3V3", "GND", C10U)
 C("C22", "100n", 398, 69, "3V3", "GND", C100N, C0603)
 TP("TP8", "3V3", 386, 60.08, rot=0)
 
-# I2C bus (SCL, SDA, 3V3) + Pull-ups R11/R12 + J5 + SHT40 (U5) — wired directly to U1 and U3!
+# I2C bus (SCL, SDA, 3V3) + Pull-ups R11/R12 + J5 — wired directly to U1 and U3!
 P("J5", "Connector_Generic:Conn_01x04", "I2C rail", 252, 146.0,
   {"1": "SCL", "2": "SDA", "3": "3V3", "4": "GND"}, CONN4, mirror=True)
 R("R11", "4.7k", 272, 134, "3V3", "SCL", "C23162")
 R("R12", "4.7k", 282, 134, "3V3", "SDA", "C23162")
 TP("TP9", "SCL", 292, 143.46, rot=0)
 TP("TP10", "SDA", 300, 146.00, rot=0)
-P("U5", "custom:SHT40_FUNC", "SHT40-AD1B", 332, 146.0,
-  {"1": "SDA", "2": "SCL", "3": "3V3", "4": "GND", "5": "GND"},
-  "xiao_solar:DFN-4_L1.5-W1.5-P0.8-TL-EP", "C2848306")
-C("C23", "100n", 316, 156, "3V3", "GND", C100N, C0603)
+# v0.5: no SHT40. The MSPM0 answers on 0x5A as an MLX90614 (object = battery NTC, ambient =
+# its own die sensor), a sensor stock MeshCore already reads.
 
-# Wire SCL & SDA continuously from U1 (155.24, 112.46 & 115.0) across J5, R11, R12, TP9, TP10, U5, U3, and down to U7!
-RAIL("SCL", [(257.08, 143.46), (323.11, 143.46)])
+# Xiao I2C bus: J5, R11, R12, TP9, TP10, U3 and the MSPM0 target (I2C0)
+RAIL("SCL", [(257.08, 143.46), (310.0, 143.46)])
 RAIL("SDA", [(257.08, 146.00), (323.11, 146.00)])
-RAIL("SCL", [(155.24, 112.46), (262.0, 112.46), (262.0, 143.46)])
-RAIL("SDA", [(155.24, 115.00), (260.0, 115.00), (260.0, 146.00)])
 RAIL("SCL", [(272.0, 137.81), (272.0, 143.46)])
 RAIL("SDA", [(282.0, 137.81), (282.0, 146.00)])
 RAIL("3V3", [(257.08, 148.54), (323.11, 148.54)])
 RAIL("3V3", [(272.0, 130.19), (282.0, 130.19), (282.0, 126.0), (264.0, 126.0), (264.0, 148.54)])
-RAIL("3V3", [(316.0, 148.54), (316.0, 152.19)])
 RAIL("3V3", [(370.0, 105.80), (370.0, 148.54), (323.11, 148.54)])
 RAIL("SCL", [(330.57, 70.24), (310.0, 70.24), (310.0, 143.46)])
 RAIL("SDA", [(353.43, 70.24), (364.0, 70.24), (364.0, 146.00), (323.11, 146.00)])
 
 # ---- 4. Battery Path: BAT -> Ship FET Q2 (+JP3) -> Shunt RS1 (INA219) -> J4 + BMS ----
-BLOCK(20, 188, "3. БАТЕРИЯ 1S (Li-ion / LiFePO4): Ship FET (Q2 + JP3) -> Шунт RS1 (INA219) -> BMS (DW01A + HJ8205) -> J4")
+BLOCK(20, 188, "3. БАТЕРИЯ 1S (Li-ion / LiFePO4): Ship FET (Q2 + JP3) -> J4 -> BMS (DW01A + HJ8205) -> шунт RS1||RS2 50 mOhm -> GND")
 # Continuous BAT wire from U1.BAT (155.24, 120.08 & 122.62) down to y = 210 and right into Q2.2 (Source at 214.92, 210.0)
 RAIL("BAT", [(155.24, 120.08), (158.0, 120.08), (158.0, 122.62), (155.24, 122.62)])
 RAIL("BAT", [(158.0, 121.35), (232.0, 121.35), (232.0, 210.0), (259.92, 210.0)])
@@ -442,35 +451,20 @@ TP("TP6", "BAT", 232, 210.0, rot=0)
 
 # Ship FET Q2 (rot=270 at (265, 207.46): Pin 1 Gate=(265, 202.38), Pin 2 Source=(259.92, 210.0), Pin 3 Drain=(270.08, 210.0))
 P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 265, 207.46,
-  {"1": "SDRV", "2": "BAT", "3": "BATS"}, SOT23, "C20917", rot=270)
+  {"1": "SDRV", "2": "BAT", "3": "BATT+"}, SOT23, "C20917", rot=270)
 RAIL("SDRV", [(155.24, 117.54), (236.0, 117.54), (236.0, 198.0), (265.0, 198.0), (265.0, 202.38)])
 P("JP3", "Jumper:SolderJumper_2_Open", "no ship FET (LiFePO4)", 265, 191.0,
-  {"1": "BAT", "2": "BATS"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm")
+  {"1": "BAT", "2": "BATT+"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm")
 RAIL("BAT", [(255.0, 210.0), (255.0, 191.0), (259.92, 191.0)])
-RAIL("BATS", [(270.08, 191.0), (275.0, 191.0), (275.0, 210.0)])
+RAIL("BATT+", [(270.08, 191.0), (275.0, 191.0), (275.0, 210.0)])
 
-# BATP Kelvin sense through R8 (100R) below Q2 to BATS (no crossover with SDRV or J3!)
-R("R8", "100", 265, 226.0, "BATS", "BATP", "C22775", rot=270)
+# BATP Kelvin sense through R8 (100R) below Q2 to BATT+ (no crossover with SDRV or J3!)
+R("R8", "100", 265, 226.0, "BATT+", "BATP", "C22775", rot=270)
 RAIL("BATP", [(155.24, 125.16), (228.0, 125.16), (228.0, 226.0), (261.19, 226.0)])
-RAIL("BATS", [(268.81, 226.0), (275.0, 226.0), (275.0, 210.0)])
+RAIL("BATT+", [(268.81, 226.0), (275.0, 226.0), (275.0, 210.0)])
 
-# Current sense shunt RS1 (0.05R 1W, rot=270 so Pin 2 BATS is at left 291.19 and Pin 1 BATT+ is at right 298.81!)
-RAIL("BATS", [(270.08, 210.0), (291.19, 210.0)])
-TP("TP11", "BATS", 281, 210.0, rot=0)
-P("RS1", "Device:R", "0.05 1W", 295, 210.0, {"1": "BATT+", "2": "BATS"},
-  "Resistor_SMD:R_1206_3216Metric", "C154645", rot=270)
-P("U7", "custom:INA219_FUNC", "INA219AIDCNR", 295, 229.0,
-  {"1": "BATT+", "2": "BATS", "3": "GND", "4": "3V3", "5": "SCL", "6": "SDA", "7": "GND", "8": "GND"},
-  "Package_TO_SOT_SMD:SOT-23-8", "C87469")
-RAIL("BATS", [(292.46, 218.84), (292.46, 216.0), (288.0, 216.0), (288.0, 210.0)])
-RAIL("BATT+", [(297.54, 218.84), (297.54, 216.0), (302.0, 216.0), (302.0, 210.0)])
-C("C24", "100n", 278, 233, "3V3", "GND", C100N, C0603)
-RAIL("3V3", [(278.0, 229.19), (278.0, 226.46), (286.11, 226.46)])
-RAIL("SCL", [(303.89, 226.46), (310.0, 226.46), (310.0, 143.46)])
-RAIL("SDA", [(303.89, 229.00), (313.0, 229.00), (313.0, 146.00)])
-
-# BATT+ rail continues right from RS1 (298.81, 210.0) to J4 (BATTERY) pin 1 (374.92, 210.0)
-RAIL("BATT+", [(298.81, 210.0), (374.92, 210.0)])
+# BATT+ rail from Q2 (270.08, 210.0) to J4 (BATTERY) pin 1 (374.92, 210.0)
+RAIL("BATT+", [(270.08, 210.0), (374.92, 210.0)])
 P("J4", "Connector_Generic:Conn_01x02", "BATTERY", 380, 210.0,
   {"1": "BATT+", "2": "BATT-"}, CONN2)
 
@@ -485,7 +479,7 @@ P("U2", "custom:DW01A_FUNC", "DW01A", 340, 230.54,
   {"1": "DW_OD", "2": "DW_CS", "3": "DW_OC", "4": None, "5": "DW_VCC", "6": "BATT-"},
   "xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL", "C351410")
 P("Q3", "custom:HJ8205_FUNC", "HJ8205", 368, 228.0,
-  {"1": "BATT-", "2": "FS_D", "3": "GND", "4": "DW_OC", "5": "FS_D", "6": "DW_OD"},
+  {"1": "BATT-", "2": "FS_D", "3": "BATT_S", "4": "DW_OC", "5": "FS_D", "6": "DW_OD"},
   "xiao_solar:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL", "C20069150")
 
 # Direct horizontal gate wires DW_OD and DW_OC from U2 to Q3, plus BATT- and DW_CS (R10)
@@ -495,18 +489,85 @@ RAIL("BATT-", [(374.92, 212.54), (355.0, 212.54), (355.0, 225.46), (359.11, 225.
 RAIL("BATT-", [(322.0, 239.81), (322.0, 242.0), (328.0, 242.0), (328.0, 230.54), (331.11, 230.54)])
 RAIL("BATT-", [(328.0, 242.0), (355.0, 242.0), (355.0, 225.46)])
 RAIL("FS_D", [(376.89, 225.46), (380.0, 225.46), (380.0, 228.0), (376.89, 228.0)])
-R("R10", "1k", 354, 250, "DW_CS", "GND", "C21190")
+# DW01A CS on the FET side of the shunt: its over-current threshold stays as before
+R("R10", "1k", 354, 250, "DW_CS", "BATT_S", "C21190")
 RAIL("DW_CS", [(348.89, 233.08), (354.0, 233.08), (354.0, 246.19)])
 
 TP("TP7", "GND", 202, 210.0, rot=0)
 RAIL("GND", [(202.0, 210.0), (202.0, 215.08)])
 T(20, 252, "Q2 (AO3400A): S към BAT, D към батерията; в shutdown спира разреждането. За LiFePO4: затвори JP3 (без Q2).", 1.27)
-T(20, 255.5, "BMS (DW01A + HJ8205) в минуса на батерията (BATT- към GND): защита от презареждане (4.3V), преразреждане (2.4V) и късо.", 1.27)
+T(20, 255.5, "BMS (DW01A + HJ8205) в минуса на батерията (BATT- -> BATT_S -> RS1 -> GND): защита от презареждане (4.3V), преразреждане (2.4V) и късо.", 1.27)
 T(20, 259, "LiFePO4: прагът 4.3V на DW01A е над 3.65V, т.е. от презареждане пази само VREG=3.6V на BQ25798; DW01A остава за 2.4V и късо/свръхток (~3A).", 1.27)
+
+# ---- 4. MSPM0L1306 supervisor: BQ25798 master, INA260 0x41 on the Xiao bus, shunt, heater ----
+# (pins as on hardware/solar-smart-mppt, so its firmware (PR #36) runs with a board header)
+BLOCK(430, 22, "4. MSPM0L1306: BQ25798 (I2C1), INA260 0x41 + 0x42 (I2C0)")
+R0402 = "Resistor_SMD:R_0402_1005Metric"
+def R4x(ref, val, x, y, a, b, lcsc, rot=0):
+    P(ref, "Device:R", val, x, y, {"1": a, "2": b}, R0402, lcsc, rot=rot)
+P("U6", "custom:MSPM0L1306_FUNC", "MSPM0L1306SRGER", 500, 100,
+  {"3": "3V3M", "23": "VCORE", "2": "NRST", "15": "SWDIO", "16": "SWCLK",
+   "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": None, "19": "ADC_CHEM", "18": None,
+   "24": "SDA", "1": "SCL", "12": "SDA_I", "11": "SCL_I", "9": None, "10": None,
+   "6": None, "5": None, "7": None, "22": "HEAT", "13": "CE", "8": None,
+   "4": "GND", "25": "GND"},
+  "Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", "C19189323")
+# 3V3M: HT7533 (2.5 uA) from SYS, only for the MSPM0, its pull-ups and dividers
+P("U8", "custom:HT7533_FUNC", "HT7533-1", 455, 45, {"1": "GND", "2": "SYS", "3": "3V3M"},
+  "xiao_solar:SOT-89-3_L4.5-W2.5-P1.50-LS4.2-BR", "C14289")
+C("C25", "10u/25V", 440, 54, "SYS", "GND", C10U)
+C("C26", "10u/25V", 470, 54, "3V3M", "GND", C10U)
+C("C27", "100n", 480, 54, "3V3M", "GND", "C1525", C0402)
+C("C28", "470n", 465, 70, "VCORE", "GND", "C1623", C0603)
+R4x("R13", "47k", 445, 80, "3V3M", "NRST", "C25792")
+C("C29", "10n", 455, 92, "NRST", "GND", "C15195", C0402)
+# BQ25798 bus (MSPM0 is the only master)
+R4x("R14", "4.7k", 540, 60, "3V3M", "SDA_I", "C25900")
+R4x("R15", "4.7k", 550, 60, "3V3M", "SCL_I", "C25900")
+# chemistry jumper: open = Li-ion (PA23 follows the internal pull), closed = LiFePO4
+P("JP2", "Jumper:SolderJumper_2_Open", "CHEM: open Li-ion / closed LiFePO4", 560, 140,
+  {"1": "ADC_CHEM", "2": "GND"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm", rot=90)
+# shunt in BATT- (+ = charging): Kelvin taps, 330k bias to 3V3M (~97 mV) keeps both OPA inputs above 0 V down to ~2 A discharge at 50 mOhm
+# two basic 100 mOhm 1206 in parallel = 50 mOhm / 0.5 W (no extended fee); Kelvin taps on RS1
+P("RS1", "Device:R", "100m 1%", 440, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
+P("RS2", "Device:R", "100m 1%", 425, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
+R4x("R21", "10k", 470, 205, "BATT_S", "SH_P", "C25744", rot=270)
+R4x("R22", "10k", 470, 235, "SH_K", "SH_N", "C25744", rot=270)
+P("NT1", "Device:NetTie_2", "NetTie", 455, 245, {"1": "SH_K", "2": "GND"}, "NetTie:NetTie-2_SMD_Pad0.5mm", rot=90)
+R4x("R23", "330k", 490, 195, "3V3M", "SH_P", "C25778")
+R4x("R24", "330k", 505, 195, "3V3M", "SH_N", "C25778")
+C("C24", "100n", 490, 220, "SH_P", "SH_N", "C1525", C0402)
+# battery voltage for the MSPM0 ADC
+R4x("R25", "1M", 530, 195, "BATT+", "ADC_VBAT", "C26083")
+R("R26", "470k", 530, 215, "ADC_VBAT", "GND", "C23178")
+C("C30", "100n", 545, 215, "ADC_VBAT", "GND", "C1525", C0402)
+TP("TP11", "SWDIO", 440, 130, rot=180)
+TP("TP12", "3V3M", 440, 135, rot=180)
+TP("TP13", "GND", 440, 140, rot=180)
+TP("TP14", "SWCLK", 440, 145, rot=180)
+TP("TP15", "NRST", 440, 150, rot=180)
+T(430, 170, "SWD отдолу, колона 2.54 (отгоре надолу): TP12 3V3M, TP15 NRST, TP11 SWDIO, TP14 SWCLK, TP13 GND.", 1.27)
+T(430, 173.5, "I2C0 (PA0/PA1, open-drain, BSL) = шината на Xiao: INA260 0x41 + 0x42. I2C1 (PA16/PA15) -> BQ25798.", 1.27)
+T(430, 177, "~CE PA17, нагревател PA26, CHEM PA23, VBAT PA24/A3, шунт PA25/PA18 (OPA0/OPA1).", 1.27)
+
+# ---- 5. Battery heater: J6 from SYS, low-side AO3400A, PWM from the MSPM0 -----------------
+BLOCK(430, 260, "5. НАГРЕВАТЕЛ J6: SYS -> Q4 AO3400A, PWM от MSPM0 (PA26)")
+P("J6", "Connector_Generic:Conn_01x02", "HEATER", 560, 275, {"1": "SYS", "2": "HEAT_D"}, CONN2)
+P("Q4", "Transistor_FET:BSS138", "AO3400A (heater)", 530, 285, {"1": "HEAT_G", "2": "GND", "3": "HEAT_D"}, SOT23, "C20917")
+R("R27", "100", 505, 285, "HEAT", "HEAT_G", "C22775", rot=90)
+R("R28", "100k", 520, 300, "HEAT_G", "GND", "C25803")
+# red LED across the heater: lights while Q4 conducts (dimmer at low PWM), ~2 mA from SYS
+R("R29", "1k", 575, 285, "SYS", "LED_HEAT", "C21190", rot=90)
+P("D6", "Device:LED", "red (heater on)", 575, 300, {"1": "HEAT_D", "2": "LED_HEAT"},
+  "LED_SMD:LED_0805_2012Metric", "C84256", rot=90)
+T(430, 312, "Студена батерия: MSPM0 спира заряда, BQ25798 продължава MPPT към SYS,", 1.27)
+T(430, 315.5, "нагревателят взима излишъка от панела. MSPM0 намалява PWM, щом през", 1.27)
+T(430, 319, "шунта RS1 потече разряд. Рестарт / без MSPM0: R28 държи Q4 изключен.", 1.27)
+T(430, 322.5, "D6 (червен) + R29 1k успоредно на нагревателя: свети, докато Q4 е включен.", 1.27)
 
 # ERC power flags placed directly on their rail wires (so no detached PWR_FLAG box is needed!)
 for i, (net, fx, fy) in enumerate([
-        ("VBUS", 55.0, 78.0), ("BATS", 275.0, 210.0), ("BATT+", 318.0, 210.0),
+        ("VBUS", 55.0, 78.0), ("BATT+", 318.0, 210.0), ("XIAO_5V", 300.0, 55.0),
         ("BATT-", 355.0, 212.54), ("DW_VCC", 326.0, 228.0), ("GND", 202.0, 212.54)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
 for i in range(4):
@@ -520,7 +581,7 @@ def fmt(v):
     s = s.rstrip("0").rstrip(".")
     return "0" if s == "-0" else s
 
-POWER = ["GND", "3V3"]
+POWER = ["GND", "3V3", "3V3M"]
 OUTWARD = {0: (-1, 0), 180: (1, 0), 90: (0, 1), 270: (0, -1)}
 EPS = 1e-6
 NC_POINTS = []
@@ -874,7 +935,7 @@ def emit():
         if p["lib"] not in used:
             used.append(p["lib"])
     install_custom()
-    head = ['(kicad_sch (version 20230121) (generator eeschema)', '  (uuid %s)' % ROOT_UUID, '  (paper "A3")',
+    head = ['(kicad_sch (version 20230121) (generator eeschema)', '  (uuid %s)' % ROOT_UUID, '  (paper "%s")' % PAPER,
             '  (title_block (title "%s") (date "2026-10-31") (rev "%s") (company "n3tk0/MeshCore"))' % (TITLE, REV),
             '  (lib_symbols']
     for lid in used:
@@ -1022,7 +1083,7 @@ def write_bom():
     groups, hand = {}, []
     for p in parts:
         r = p["ref"]
-        if r.startswith(("#", "H", "TP", "JP")):
+        if r.startswith(("#", "H", "TP", "JP", "NT")):
             continue
         if not p["lcsc"]:
             hand.append(p)
