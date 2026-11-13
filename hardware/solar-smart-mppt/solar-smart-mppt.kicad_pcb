@@ -2978,17 +2978,6 @@
 			(uuid "375ef8cd-1c32-4e00-8cc8-593b9dc8e647")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Capacitor_SMD:C_0805_2012Metric"
 		(layer "F.Cu")
@@ -6132,17 +6121,6 @@
 			(uuid "ca3b0890-f369-41f4-9b5c-7f26ace9957f")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/VQFN-15_L3.0-W2.5-H0.9-P0.50-BL.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "xiao_solar:SOT-89-3_L4.5-W2.5-P1.50-LS4.2-BR"
 		(layer "F.Cu")
@@ -6397,17 +6375,6 @@
 			(uuid "8a78441d-2553-43b1-944f-ae94feeed311")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/SOT-89-3_L4.3-W2.5-H1.6-LS4.1-P1.50.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 180)
-			)
-		)
 	)
 	(footprint "Capacitor_SMD:C_0805_2012Metric"
 		(layer "F.Cu")
@@ -15797,17 +15764,6 @@
 			(uuid "88b1b5de-a961-476d-9465-ba76c07bd9f6")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SMB_L4.6-W3.6-LS5.3-RD.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Capacitor_SMD:C_0805_2012Metric"
 		(layer "F.Cu")
@@ -19593,17 +19549,6 @@
 			(uuid "ab8dd46b-9504-4bd2-960e-ec2918abaa59")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SOT-23-6_L2.9-W1.6-H1.5-LS2.8-P0.95.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "Package_TO_SOT_SMD:SOT-23"
 		(layer "F.Cu")

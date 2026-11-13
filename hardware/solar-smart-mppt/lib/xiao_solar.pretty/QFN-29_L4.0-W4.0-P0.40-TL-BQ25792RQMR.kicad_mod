@@ -86,9 +86,4 @@
 	(fp_line (start -2.00 -2.02) (end 2.00 -2.02) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 2.00 -2.02) (end 2.00 1.98) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 2.00 1.98) (end -2.00 1.98) (layer F.CrtYd) (width 0.05))
-	(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR.wrl"
-		(offset (xyz 0.000 0.000 0.000))
-		(scale (xyz 1 1 1))
-		(rotate (xyz 0 0 0))
-	)
 )

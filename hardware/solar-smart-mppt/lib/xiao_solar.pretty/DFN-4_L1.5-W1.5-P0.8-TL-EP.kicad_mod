@@ -23,9 +23,4 @@
 	(fp_line (start -0.75 0.75) (end 0.75 0.75) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 0.75 0.75) (end 0.75 -0.75) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 0.75 -0.75) (end -0.75 0.75) (layer F.CrtYd) (width 0.05))
-	(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/DFN-4_L1.5-W1.5-P0.8.wrl"
-		(offset (xyz 0.000 0.000 0.000))
-		(scale (xyz 1 1 1))
-		(rotate (xyz 0 0 0))
-	)
 )

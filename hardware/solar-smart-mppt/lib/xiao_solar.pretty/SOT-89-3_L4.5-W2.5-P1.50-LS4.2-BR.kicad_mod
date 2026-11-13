@@ -31,9 +31,4 @@
 	(fp_line (start -1.87 -2.25) (end 0.63 -2.25) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 0.63 -2.25) (end 0.63 2.25) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 0.63 2.25) (end -1.87 2.25) (layer F.CrtYd) (width 0.05))
-	(model "/tmp/claude-0/ee/lib.3dshapes/SOT-89-3_L4.3-W2.5-H1.6-LS4.1-P1.50.wrl"
-		(offset (xyz 0.000 0.000 0.000))
-		(scale (xyz 1 1 1))
-		(rotate (xyz 0 0 180))
-	)
 )

@@ -25,9 +25,4 @@
 	(fp_line (start 2.30 1.80) (end -2.30 1.80) (layer F.CrtYd) (width 0.05))
 	(fp_poly (pts (xy -2.667508 -1.962404) (xy -2.667508 -1.248588) (xy -3.124708 -1.248588) (xy -3.124708 -1.962404) (xy -2.667508 -1.962404)) (stroke (width 0) (type solid)) (fill solid) (layer "F.SilkS"))
 	(fp_poly (pts (xy -2.667508 1.962404) (xy -2.667508 1.248588) (xy -3.124708 1.248588) (xy -3.124708 1.962404) (xy -2.667508 1.962404)) (stroke (width 0) (type solid)) (fill solid) (layer "F.SilkS"))
-	(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SMB_L4.6-W3.6-LS5.3-RD.wrl"
-		(offset (xyz 0.000 0.000 0.000))
-		(scale (xyz 1 1 1))
-		(rotate (xyz 0 0 0))
-	)
 )

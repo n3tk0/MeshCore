@@ -42,9 +42,4 @@
 	(fp_line (start -1.50 -1.44) (end 1.50 -1.44) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 1.50 -1.44) (end 1.50 1.06) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 1.50 1.06) (end -1.50 1.06) (layer F.CrtYd) (width 0.05))
-	(model "/tmp/claude-0/ee/lib.3dshapes/VQFN-15_L3.0-W2.5-H0.9-P0.50-BL.wrl"
-		(offset (xyz 0.000 0.000 0.000))
-		(scale (xyz 1 1 1))
-		(rotate (xyz 0 0 270))
-	)
 )

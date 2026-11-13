@@ -10704,17 +10704,6 @@
 			(uuid "bebbd154-9e2d-476d-985f-d0027ff96751")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/SOT-89-3_L4.3-W2.5-H1.6-LS4.1-P1.50.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 180)
-			)
-		)
 	)
 	(footprint "TestPoint:TestPoint_Pad_D1.0mm"
 		(layer "F.Cu")
@@ -13910,17 +13899,6 @@
 			(uuid "8f37d05c-9154-4438-8e10-bae77968a4c7")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/SOT-89-3_L4.3-W2.5-H1.6-LS4.1-P1.50.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 180)
-			)
-		)
 	)
 	(footprint "Package_TO_SOT_SMD:SOT-23"
 		(layer "F.Cu")
@@ -20074,17 +20052,6 @@
 			(uuid "7e6a3ab3-c95d-488d-8634-bb4865ad12fe")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Package_TO_SOT_SMD:SOT-23"
 		(layer "F.Cu")
@@ -23460,17 +23427,6 @@
 			(uuid "c730cc64-c36d-4270-9c85-e67482f68648")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/SOT-89-3_L4.3-W2.5-H1.6-LS4.1-P1.50.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 180)
-			)
-		)
 	)
 	(footprint "Resistor_SMD:R_1206_3216Metric"
 		(layer "F.Cu")
@@ -24301,17 +24257,6 @@
 			(uuid "3a38a163-97a2-4a89-8a6b-999d5051972f")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Capacitor_SMD:C_1206_3216Metric"
 		(layer "F.Cu")
@@ -25783,17 +25728,6 @@
 			(uuid "5d20cbb0-1eff-4665-92c2-cca7e5a4725a")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/VQFN-15_L3.0-W2.5-H0.9-P0.50-BL.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "LED_SMD:LED_0805_2012Metric"
 		(layer "F.Cu")
@@ -29603,17 +29537,6 @@
 			(uuid "f02c44a3-ea5e-4083-ba2f-700f40659fbb")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SMB_L4.6-W3.6-LS5.3-RD.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Fiducial_1mm_Mask2mm"
 		(layer "F.Cu")
@@ -30395,17 +30318,6 @@
 			(uuid "8a8b95e6-e0fe-4083-8d6a-8c2b7b35083b")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Resistor_SMD:R_0603_1608Metric"
 		(layer "F.Cu")
@@ -30793,17 +30705,6 @@
 			(uuid "5a2bf4fa-476c-47ea-9d7e-61a3551974b0")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SOT-23-6_L2.9-W1.6-H1.5-LS2.8-P0.95.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "Resistor_SMD:R_1206_3216Metric"
 		(layer "F.Cu")
@@ -37642,17 +37543,6 @@
 			(uuid "bacda26c-01a9-45d1-8514-b1f95188b4fc")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SOT-23-6_L2.9-W1.6-H1.5-LS2.8-P0.95.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "Package_TO_SOT_SMD:SOT-23"
 		(layer "F.Cu")
@@ -46222,17 +46112,6 @@
 			(uuid "3bcde58b-9405-413b-9118-4158aded0cf2")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/VQFN-15_L3.0-W2.5-H0.9-P0.50-BL.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "Package_TO_SOT_SMD:SOT-23"
 		(layer "F.Cu")
@@ -53612,17 +53491,6 @@
 			(uuid "16baec14-66a4-42b5-b66d-8b2ab1702bab")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SOT-23-6_L2.9-W1.6-H1.5-LS2.8-P0.95.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "LED_SMD:LED_0805_2012Metric"
 		(layer "F.Cu")
@@ -61789,17 +61657,6 @@
 			(uuid "bcc9d247-468c-4c42-9e8f-c5dcb0f163b4")
 		)
 		(embedded_fonts no)
-		(model "/tmp/claude-0/ee/lib.3dshapes/VQFN-15_L3.0-W2.5-H0.9-P0.50-BL.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 270)
-			)
-		)
 	)
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
@@ -63989,17 +63846,6 @@
 			(uuid "64267e42-e753-4571-a1bc-b31274a8c854")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SMB_L4.6-W3.6-LS5.3-RD.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
@@ -64554,17 +64400,6 @@
 			(uuid "c593e4b0-de74-4f8b-bb25-f3e64f4c4f1a")
 		)
 		(embedded_fonts no)
-		(model "/home/user/MeshCore/hardware/xiao-solar/lib/xiao_solar.3dshapes/SMB_L4.6-W3.6-LS5.3-RD.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")

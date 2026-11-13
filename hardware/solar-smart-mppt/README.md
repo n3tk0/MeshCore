@@ -37,13 +37,13 @@ answers in the project thread (phase 2).
 | J3 NTC | TS / GND | optional 10k NTC (103AT); without it the MCU sets `TS_IGNORE` |
 | J6 OUT | + / − | SYS through a discrete ideal diode (Q5 AO3401A + Q9/Q11 MMBT3906): battery or charger voltage, up to 5.6 V with LTO |
 | J7 U | + / − | TPS63070 buck-boost, 3.3 V or 5.0 V (JP6), on/off by JP5 |
-| J5 I2C host | SCL SDA 3V3 GND | to the repeater; **no pull-ups on this board** (the repeater has them); 3V3 is not used here; PA0/PA1 are 5 V tolerant open-drain pins, and the ROM bootloader (BSL, I2C) listens on them, so the host can also flash the MCU over J5 |
+| J5 I2C host | SCL SDA 3V3 GND | to the repeater; **no pull-ups on this board** (the repeater has them); 3V3 is not used here; PA0/PA1 are 5 V tolerant open-drain pins, and the ROM bootloader (BSL, I2C) listens on them, so the host can also flash the MCU over J5: a blank chip starts the BSL by itself, a programmed one on `smppt cmd bsl`; a chip with broken firmware needs SWD (the BSL invoke pin PA18 is not on J5) |
 | TP12, TP13, TP11, TP16, TP17 | 3V3M, GND, SWDIO, SWCLK, NRST | SWD on the **bottom side**, one row at 2.54 mm under the MCU band, left to right seen from the top (a 5-pin header or pogo pins from below) |
 
 ## Jumpers
 | Jumper | Open | 1-2 | 2-3 |
 |---|---|---|---|
-| JP4 CHEM | Li-ion (PA3 follows the internal pull) | LiFePO4 (always 0) | LTO 2S (always 1) |
+| JP4 CHEM | Li-ion (PA23 follows the internal pull) | LiFePO4 (always 0) | LTO 2S (always 1) |
 | JP5 EN of J7 | off | always on | MCU PA4 switches it |
 | JP6 VSEL of J7 | 3.3 V | closed = 5.0 V | |
 | JP3 | ship FET Q2 in use | closed = no ship FET | |
@@ -74,7 +74,8 @@ answers in the project thread (phase 2).
   SH_P → PA25 (OPA0 IN+), SH_N → PA18 (OPA1 IN+). Positive = charging.
   The offset is calibrated at zero current. Firmware: keep the OPA1 output pin off (PA16 is I2C1 SDA)
   and the OPA0 output pin PA22 unused; PA18 is also the BSL pin and sits at ~33 mV at reset (no BSL).
-- **Dividers:** VBAT 1M/470k (PA24, A3), BM 1M/1M (PA21, A5), both with 100 nF.
+- **Dividers:** VBAT 1M/470k (PA24, A3), BM 1M/1M (PA21, A5), both with 100 nF. Highest ADC input is ~1.79 V
+  (VBAT at 5.6 V, 2S LTO) and ~1.4 V (BM), so the firmware uses the internal 2.5 V VREF (1.4 V would clip).
 - **CHEM jumper (JP4 → PA23):** read twice, once with the internal pull-up and once with the pull-down.
 - **Balancing:** cell 1 (BATT−..BM) through Q7 (PA2) + R37 100 Ω; cell 2 (BM..BATT+) through the P-FET Q8
   + R41 100 Ω, its gate pulled down by Q10 (PA3). Both need push-pull pins. ~40 mA at 4.2 V, 0.18 W per 1206. Only for 2S.
@@ -93,7 +94,7 @@ answers in the project thread (phase 2).
 | 20 / 17 | PA24 / PA21 | ADC_VBAT / ADC_VBM | ADC A3 / A5 |
 | 19 | PA23 | ADC_CHEM | JP4 (digital) |
 | 13 | PA17 | CE | ~CE low = charge (R4 pull-up) |
-| 9 | PA10 | OC_G | R20 pull-up to 3V3M: low = charge FET off (drive low or Hi-Z, never high: PA10 is push-pull and not 5 V tolerant) |
+| 9 | PA10 | OC_G | R20 pull-up to 3V3M: low = charge FET off (push-pull; driving it high gives the same 3.3 V as R20) |
 | 22 | PA26 | OD_CTL | discharge FET off (Q6) |
 | 5 / 6 | PA2 / PA3 | BAL1 / BAL2 | balancing |
 | 8 | PA9 | LED | D6 / D7 |

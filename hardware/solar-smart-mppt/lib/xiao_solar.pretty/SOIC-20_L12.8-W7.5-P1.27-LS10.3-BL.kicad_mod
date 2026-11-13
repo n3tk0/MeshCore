@@ -43,9 +43,4 @@
 	(fp_line (start 6.40 -3.75) (end 6.40 3.75) (layer F.CrtYd) (width 0.05))
 	(fp_line (start 6.40 3.75) (end -6.40 3.75) (layer F.CrtYd) (width 0.05))
 	(fp_poly (pts (xy -5.994959 2.180006) (xy -4.825035 2.180006) (xy -5.994959 2.180006)) (stroke (width 0) (type solid)) (fill solid) (layer "F.SilkS"))
-	(model "/tmp/claude-0/ee/lib.3dshapes/SOIC-20_L12.8-W7.5-P1.27-LS10.3-BL.wrl"
-		(offset (xyz 0.000 0.000 0.000))
-		(scale (xyz 1 1 1))
-		(rotate (xyz 0 0 0))
-	)
 )
