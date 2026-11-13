@@ -162,9 +162,9 @@ custom_box("MSPM0L1306_FUNC", "U",
                  ("21", "PA25/OPA0_IN0+", "input"), ("14", "PA18/OPA1_IN0+", "input"),
                  ("22", "PA26", "output"), ("17", "PA21/A5", "input"), ("8", "PA9", "input"),
                  ("18", "PA22/OPA0_OUT", "passive")],
-           right=[("9", "PA10/I2C0_SDA", "bidirectional"), ("10", "PA11/I2C0_SCL", "bidirectional"),
+           right=[("24", "PA0/I2C0_SDA", "bidirectional"), ("1", "PA1/I2C0_SCL", "bidirectional"),
                   ("12", "PA16/I2C1_SDA", "bidirectional"), ("11", "PA15/I2C1_SCL", "bidirectional"),
-                  ("1", "PA1/OD", "passive"), ("24", "PA0/OD", "output"), ("19", "PA23", "input"),
+                  ("9", "PA10", "passive"), ("10", "PA11", "passive"), ("19", "PA23", "input"),
                   ("6", "PA3", "output"), ("7", "PA4", "output"), ("5", "PA2", "output"),
                   ("20", "PA24/A3", "input"), ("13", "PA17", "output")],
            bottom=[("4", "VSS", "power_in", -1.27), ("25", "EP", "power_in", 1.27)],
@@ -508,7 +508,7 @@ def R4x(ref, val, x, y, a, b, lcsc, rot=0):
 P("U6", "custom:MSPM0L1306_FUNC", "MSPM0L1306SRGER", 500, 100,
   {"3": "3V3M", "23": "VCORE", "2": "NRST", "15": "SWDIO", "16": "SWCLK",
    "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": None, "19": "ADC_CHEM", "18": None,
-   "9": "SDA", "10": "SCL", "12": "SDA_I", "11": "SCL_I", "1": None, "24": None,
+   "24": "SDA", "1": "SCL", "12": "SDA_I", "11": "SCL_I", "9": None, "10": None,
    "6": None, "5": None, "7": None, "22": "HEAT", "13": "CE", "8": None,
    "4": "GND", "25": "GND"},
   "Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", "C19189323")
@@ -547,7 +547,7 @@ TP("TP13", "GND", 440, 140, rot=180)
 TP("TP14", "SWCLK", 440, 145, rot=180)
 TP("TP15", "NRST", 440, 150, rot=180)
 T(430, 170, "SWD отдолу, колона 2.54 (отгоре надолу): TP12 3V3M, TP15 NRST, TP11 SWDIO, TP14 SWCLK, TP13 GND.", 1.27)
-T(430, 173.5, "I2C0 (PA10/PA11) = шината на Xiao: INA260 0x41 + 0x42. I2C1 (PA16/PA15) -> BQ25798.", 1.27)
+T(430, 173.5, "I2C0 (PA0/PA1, open-drain, BSL) = шината на Xiao: INA260 0x41 + 0x42. I2C1 (PA16/PA15) -> BQ25798.", 1.27)
 T(430, 177, "~CE PA17, нагревател PA26, CHEM PA23, VBAT PA24/A3, шунт PA25/PA18 (OPA0/OPA1).", 1.27)
 
 # ---- 5. Battery heater: J6 from SYS, low-side AO3400A, PWM from the MSPM0 -----------------

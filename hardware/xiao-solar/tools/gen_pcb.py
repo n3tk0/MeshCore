@@ -88,7 +88,7 @@ PLACE.update({
     "C21": (15.0, 35.5, 90), "C22": (41.3, 31.3, 0),
     "U6": (_m(27.2, 45.6)[0], _m(27.2, 45.6)[1], 0),
     "C27": _m(23.55, 45.35) + (180,), "C29": _m(23.55, 44.3) + (180,), "R13": _m(23.55, 43.3) + (0,),
-    "C28": _m(24.9, 41.9) + (180,),
+    "C28": _m(24.9, 40.9) + (180,),
     "R14": _m(29.62, 48.95) + (180,), "R15": _m(29.62, 50.9) + (180,), "R4": _m(31.3, 48.75) + (90,),
     "R25": (30.5, 32.7, 180), "C30": (30.5, 33.9, 0), "R26": (30.5, 35.4, 0),
     "JP2": (35.5, 34.0, 90),
@@ -209,16 +209,18 @@ def _track(board, a, b, net, width):
 
 # MSPM0 fan-out by hand (as on solar-smart-mppt): locked F.Cu stubs from each pin to its part
 # or to a via. MCU_LOCAL is in the coordinates of the first v0.5 place and moves with the
-# cluster by MCU_D; top pins nest upwards to vias, SWD / SH_N right, I2C down to the pull-ups.
+# cluster by MCU_D; top pins nest upwards to vias, SWD / SH_N right, the BQ25798 bus down to its pull-ups.
 MCU_LOCAL = [
     ("NRST", [(25.21, 44.85), (24.45, 44.85), (24.03, 44.43)]),
     ("NRST", [(24.03, 43.3), (24.03, 44.3)]),
-    ("NRST", [(24.06, 43.3), (24.85, 42.95)]),
+    ("NRST", [(24.06, 43.3), (24.06, 42.5)]),               # via above R13: leaves pin 1 a way out
+    ("NRST", [(24.06, 42.5), (24.61, 43.05), (25.0, 43.05)], 0.2, "B"),
     ("3V3M", [(25.21, 45.35), (24.03, 45.35)], 0.25),
     ("3V3M", [(24.03, 45.35), (24.1, 46.3)], 0.25),
     ("3V3M", [(23.07, 43.3), (23.07, 42.4)], 0.25),
     ("GND", [(25.21, 45.85), (26.2, 45.85)]),
-    ("VCORE", [(26.45, 43.61), (26.45, 42.5), (25.85, 41.9)]),
+    ("VCORE", [(26.45, 43.61), (26.45, 41.25), (26.1, 40.9), (25.675, 40.9)]),
+    ("GND", [(24.125, 39.85), (24.125, 40.9)], 0.3),          # C28 GND pad to its via
     ("HEAT", [(26.95, 43.61), (26.95, 41.2), (30.2, 41.2)]),
     ("SH_P", [(27.45, 43.61), (27.45, 41.9), (31.0, 41.9)]),
     ("ADC_VBAT", [(27.95, 43.61), (27.95, 42.6), (30.2, 42.6)]),
@@ -238,14 +240,18 @@ MCU_LOCAL = [
               (24.1, 46.3)], 0.25, "B"),
     # GND tie the pour cannot reach: C29 + C27 (MSPM0 VDD caps) to a via
     ("GND", [(23.07, 44.3), (23.07, 45.35), (23.4, 46.6)], 0.3),
-    ("SDA", [(26.95, 47.59), (26.95, 48.2), (26.1, 49.05)]),
-    ("SCL", [(27.45, 47.59), (27.45, 48.6), (26.95, 49.1), (26.95, 50.0)]),
+    # Xiao bus on the two open-drain pins PA0 (24) / PA1 (1): no diode to 3V3M, and the ROM BSL
+    # is there. SDA: via above pin 24, B.Cu north; SCL: F.Cu up past the NRST parts and west.
+    ("SDA", [(25.95, 43.61), (25.95, 42.85), (25.8, 42.35)]),
+    ("SDA", [(25.8, 42.35), (25.2, 41.75), (25.2, 41.15)], 0.2, "B"),
+    ("SCL", [(25.21, 44.35), (24.9, 44.35), (24.9, 42.15), (24.5, 41.75), (22.4, 41.75)]),
 ]
 MCU_LOCAL_VIAS = [("3V3M", (24.1, 46.3)), ("3V3M", (23.07, 42.4)), ("HEAT", (30.2, 41.2)), ("SH_P", (31.0, 41.9)),
                   ("ADC_VBAT", (30.2, 42.6)), ("ADC_CHEM", (31.0, 43.2)), ("SWCLK", (30.4, 44.85)),
                   ("SWDIO", (31.2, 45.85)), ("SH_N", (31.6, 46.85)),
                   ("CE", (30.4, 48.1)), ("SDA_I", (29.11, 49.9)), ("SCL_I", (29.11, 51.7)),
-                  ("NRST", (24.85, 42.95)), ("3V3M", (30.13, 49.9)), ("GND", (23.4, 46.6)),
+                  ("NRST", (24.06, 42.5)), ("3V3M", (30.13, 49.9)), ("GND", (23.4, 46.6)),
+                  ("SDA", (25.8, 42.35)), ("GND", (24.125, 39.85)),
                   # 4 GND vias in the exposed pad, tented from below
                   ("GND", (26.7, 45.1)), ("GND", (27.7, 45.1)), ("GND", (26.7, 46.1)), ("GND", (27.7, 46.1))]
 _cl, _cv = _m(29.11, 51.7), _m(30.4, 48.1)          # SCL_I and CE vias of the cluster
@@ -606,7 +612,7 @@ def write_project():
 # (net, from, to): a (ref, pad) or a point in board mm (a stub end or via of MCU_STUBS)
 PRE_ROUTES = [
     # Xiao bus from the MSPM0 stubs to the Xiao pins (first: SDA climbs the channel to the top row)
-    ("SDA", _m(26.1, 49.05), ("U3", "8")), ("SCL", _m(26.95, 50.0), ("U3", "7")),
+    ("SDA", _m(25.2, 41.15), ("U3", "8")), ("SCL", _m(22.4, 41.75), ("U3", "7")),
     # SPI and 3V3, Xiao top row -> Wio bottom row, on B.Cu: over the Xiao pins, down the channel
     # and in under the Wio pins from below (the F.Cu of the channel stays for the ideal diode)
     ("SPI_SCK", ("U3", "9"), ("U4", "9")), ("SPI_MISO", ("U3", "10"), ("U4", "10")),
@@ -622,7 +628,7 @@ PRE_ROUTES = [
     ("LORA_DIO1", ("U3", "2"), ("U4", "2")),
     # SWD on B.Cu to the pads of the row (the farthest pad first, so the runs nest)
     ("SWCLK", _m(30.4, 44.85), ("TP14", "1")), ("SWDIO", _m(31.2, 45.85), ("TP11", "1")),
-    ("NRST", _m(24.85, 42.95), ("TP15", "1")), ("3V3M", _m(30.13, 49.9), ("TP12", "1")),
+    ("NRST", _m(25.0, 43.05), ("TP15", "1")), ("3V3M", _m(30.13, 49.9), ("TP12", "1")),
     # analog from the cluster vias to the shunt, divider, CHEM jumper and heater gate
     ("ADC_VBAT", _m(30.2, 42.6), ("R25", "2")), ("ADC_CHEM", _m(31.0, 43.2), ("JP2", "1")),
     ("SH_P", _m(31.0, 41.9), ("R23", "2")), ("SH_N", _m(31.6, 46.85), ("R24", "2")),

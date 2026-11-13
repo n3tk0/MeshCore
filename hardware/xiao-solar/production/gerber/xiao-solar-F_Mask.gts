@@ -1,12 +1,12 @@
 G04 #@! TF.GenerationSoftware,KiCad,Pcbnew,10.0.8-10.0.8~ubuntu24.04.1*
-G04 #@! TF.CreationDate,2026-11-13T07:15:40+00:00*
+G04 #@! TF.CreationDate,2026-11-13T07:37:36+00:00*
 G04 #@! TF.ProjectId,xiao-solar,7869616f-2d73-46f6-9c61-722e6b696361,rev?*
 G04 #@! TF.SameCoordinates,Original*
 G04 #@! TF.FileFunction,Soldermask,Top*
 G04 #@! TF.FilePolarity,Negative*
 %FSLAX46Y46*%
 G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
-G04 Created by KiCad (PCBNEW 10.0.8-10.0.8~ubuntu24.04.1) date 2026-11-13 07:15:40*
+G04 Created by KiCad (PCBNEW 10.0.8-10.0.8~ubuntu24.04.1) date 2026-11-13 07:37:36*
 %MOMM*%
 %LPD*%
 G01*
@@ -504,8 +504,8 @@ X111800000Y-150400000D03*
 G04 #@! TD*
 D44*
 G04 #@! TO.C,C28*
-X120475000Y-129150000D03*
-X118925000Y-129150000D03*
+X120475000Y-128150000D03*
+X118925000Y-128150000D03*
 G04 #@! TD*
 D20*
 G04 #@! TO.C,C26*
