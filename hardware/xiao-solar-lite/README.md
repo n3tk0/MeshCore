@@ -4,11 +4,10 @@ The power part of [`../xiao-solar`](../xiao-solar) as the third layer of the sta
 XIAO nRF52840 + Wio-SX1262 sandwich: this board at the bottom, Wio in the middle, XIAO on top
 (USB and buttons stay reachable). Solar input, BQ25798 MPPT buck-boost charger, optional NTC,
 ship FET, and DW01A + HJ8205 battery protection (BMS).
-23 × 64.1 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
+25 × 65 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
 
-The stack sits over the 14 XIAO holes at the USB end; only flat parts (two 0603 pull-ups, in v0.5 also the SOT-23 ideal diode, R30/R31 and C20) are
-under it, since the header plastic leaves ~2.5 mm and the inductor is 3 mm tall. The charger
-and BMS sit below the stack. Long pin headers go through all three boards.
+The stack sits over the 14 XIAO holes at the USB end; since v0.5 nothing at all is under it (no SMD part inside the U3 outline, only tracks and vias): the
+charger, the ideal diode and the BMS sit below the stack, 3 mm or more away from the header pins. Long pin headers go through all three boards.
 
 Status v0.5: schematic, routed PCB, Gerber, JLC BOM/CPL. Not built or tested.
 
@@ -30,7 +29,7 @@ v0.4 (2026-10-30, Argon review + v0.4 proposals, shared with the main board):
 - **Optional NTC** (`J3` + `R2/R3 = 5.1k/30k`), matching the main board: firmware sets `TS_IGNORE`
   by default when no NTC is fitted; CLI command enables the 0–60 °C NTC window.
 - D5 was an **LM66100** ideal diode (~30 mV drop instead of ~0.3 V), replaced in v0.5 (see below); D1 is **SS54**.
-- DFM: no vias in SMD courtyards except the tented ones under U1 (v0.5: and the two OR_B vias at Q7 / Q6), 4 mm GND via grid + 3 mm edge
+- DFM: no vias in SMD courtyards except the tented ones under U1, 4 mm GND via grid + 3 mm edge
   fence, GND vias at caps and signal vias, B.Cu kept whole under the charger, teardrops,
   3 fiducials, test points VBUS/PMID/SYS/BAT/GND/3V3/SCL/SDA, parts ≥ 1 mm from the edge,
   silk ≥ 0.8 mm without overlaps (some refs in tight spots are hidden, they stay on F.Fab).
@@ -41,18 +40,22 @@ v0.4 (2026-10-30, Argon review + v0.4 proposals, shared with the main board):
 v0.5 (2026-11-13):
 - **Discrete ideal diode instead of the LM66100** (same circuit as the xiao-solar main board, no extended-part
   fee): `Q5` AO3401A (C15127) in the SYS to VOUT path, mirror `Q6` / `Q7` MMBT3906 (C7420354),
-  `R30` 1M and `R31` 470k (0603). The power path is 0.8 mm copper (SYS) and 0.6 mm (VOUT); the mirror
-  lines are 0.25 mm tracks, OR_B changes to B.Cu once (two vias beside Q7 / Q6, not in pads).
+  `R30` 1M and `R31` 470k (0603, C22935 / C23178). Q5, Q6, Q7, R30, R31 and C20 sit in one column
+  right of the SYS caps (x = 22.2 mm, y = 38 to 57 mm); SYS reaches the Q5 drain over a short 0.8 mm stub,
+  VOUT leaves the source on a 0.8 mm track along the right edge to U3 pin 14 (about 45 mm). The
+  mirror lines are hand-routed 0.25 mm tracks on F.Cu, no vias.
 - **All SMD pads are at least 3.0 mm (copper to copper) from every pin of the headers** (U3, J1, J3, J4, J5),
-  as JLC's DFM asked on the main board. The charger and everything below it moved down 0.4 mm, the
-  connector row 2.1 mm, R2/R3 0.9 mm to the right, so the board is now **23 × 64.1 mm** (was 62).
-- The ideal diode (Q5, Q6, Q7, R30, R31) and C20 sit in the free window between the two XIAO header rows, with
-  R11 / R12 (flat SOT-23 and 0603 parts, 1.2 mm high at most, under the 2.5 mm header plastic). SYS reaches
-  Q5 on a 0.8 mm track up the right edge.
+  as JLC's DFM asked on the main board, and **nothing is under the XIAO / Wio stack** (no courtyard overlaps
+  U3). The board is now **25 × 65 mm** (was 23 × 62): the extra 2 mm of width hold the ideal diode column,
+  R11 / R12 (I2C pull-ups, right of the charger top) and the VOUT track; the stack sits against the left edge
+  (U3 pins at x = 3.9 and 19.1 mm). The charger cluster moved down 0.7 mm, the bottom group (input diodes,
+  BMS) 0.9 mm, the connector row to 3 mm from the bottom edge, R2 / R3 1.0 mm to the right and JP3 turned
+  by 180 degrees.
 - C9 is the basic C307331 (100n/50V 0402).
-- Hand patches on the routed board that `gen_pcb.py` does not reproduce: the 3V3 link to U3 pin 12
-  on B.Cu (with one via at 8.0, 16.9), two GND vias (3.3, 43.4 and 2.1, 31.0) and two shortened stubs
-  (REGN, SCL).
+- Hand patches on the routed board that `gen_pcb.py` does not reproduce: two locked stubs shortened to remove
+  `track_dangling` warnings (REGN on B.Cu to end at 9.49, 32.3 and SCL on F.Cu to end at 7.11, 35.0).
+  Re-running `route` / `finish` can also leave one GND island or open pad that needs a via (see the
+  gndfix / patch_route docs).
 
 ## Connections
 | Where | Pins | Notes |
@@ -85,7 +88,7 @@ SMBJ24A and HJ8205 are preferred extended parts (no fee), everything else is bas
 C9 100n/50V 0402 is the basic C307331). Parts cost about $4.5 per board (not recalculated for v0.5). Headers are
 hand-soldered (`production/bom-hand.csv`).
 
-Panel: `panel/` holds 4 boards on 92×74.1 mm (V-cut, 5 mm rails with tooling holes and fiducials),
+Panel: `panel/` holds 4 boards on 100×75 mm (V-cut, 5 mm rails with tooling holes and fiducials),
 made by `python3 tools/run.py panel` (KiKit; Gerber/BOM/CPL in `panel/production/`). Order it as
 "Panel by Customer" with V-cut. Copper keeps 0.4 mm from every edge, as JLC wants next to a V-cut.
 
