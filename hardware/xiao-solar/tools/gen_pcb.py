@@ -96,13 +96,14 @@ PLACE.update({
     "TP12": (31.5, 31.6, 0), "TP15": (34.04, 31.6, 0), "TP11": (36.58, 31.6, 0),
     "TP14": (39.12, 31.6, 0), "TP13": (41.66, 31.6, 0),
     # BMS (DW01A + HJ8205) and the low-side shunt on the right: two basic 100 mOhm 1206 in
-    # parallel (RS1 bottom, RS2 above it, both horizontal): BATT_S on the left pads (fed from Q3 S2
-    # below), GND on the right pads (edge side). Kelvin on RS1: R21 taps its BATT_S pad, R22 gets
-    # SH_K from net tie NT1 under the RS1 GND pad. C24 across them, bias R23 / R24 to 3V3M
+    # parallel, vertical and in line 1.5 mm from the right (V-cut) edge, long side along the edge:
+    # RS2 above RS1, BATT_S on the two inner pads (fed from Q3 S2), GND on the outer pads.
+    # Kelvin on RS2: R21 runs to its BATT_S pad, R22 gets SH_K from net tie NT1 on its GND pad.
+    # C24 across them, bias R23 / R24 to 3V3M
     "R9": (45.0, 31.5, 0), "U2": (45.0, 34.7, 0), "C19": (48.2, 34.7, 90), "R10": (45.0, 37.9, 0),
     "R23": (40.6, 37.6, 0), "R24": (40.6, 38.8, 0),
-    "Q3": (41.0, 41.8, 0), "RS1": (47.5, 43.35, 0), "RS2": (47.5, 41.0, 0),
-    "R22": (44.2, 40.74, 180), "C24": (44.2, 42.2, 0), "R21": (44.2, 43.66, 180), "NT1": (48.96, 44.7, 90),
+    "Q3": (41.0, 41.8, 0), "RS1": (47.6, 46.1, 270), "RS2": (47.6, 41.4, 90),
+    "R22": (44.2, 40.74, 180), "C24": (44.2, 42.2, 0), "R21": (44.2, 43.66, 180), "NT1": (46.55, 40.2, 0),
     # connectors: SOLAR | BAT | NTC along the bottom edge (pin 1 = + square), HEAT (J6) on the right
     "J1": (9.0, 63.3, 90), "J4": (27.0, 63.3, -90), "J3": (35.0, 63.3, 90), "J6": (47.5, 52.0, 0),
     # SOLAR -> D1 (reverse polarity) -> VBUS, TVS D3 beside it, both above the bottom row
@@ -342,9 +343,10 @@ def preroute(board):
     knee = pcbnew.VECTOR2I(c20.x, yv + (p5.x - c20.x))
     _track(board, c20, knee, v5, 0.6)
     _track(board, knee, pcbnew.VECTOR2I(p5.x, yv), v5, 0.6)
-    # heater feed (up to ~2.5 A), all on F.Cu: 1.2 mm from the SYS copper along y 56.3 and down
-    # the right edge to J6 pin 1; the return from the Q4 drain to J6 pin 2
-    run = [pt(31.3, 47.6), pt(32.6, 46.3), pt(46.2, 46.3), pt(47.5, 47.6), _pad(board, "J6", "1").GetPosition()]
+    # heater feed (up to ~2.5 A), all on F.Cu: 1.2 mm from the SYS copper along y 46.3, down
+    # past the left of RS1 and under it to J6 pin 1; the return from the Q4 drain to J6 pin 2
+    run = [pt(31.3, 47.6), pt(32.6, 46.3), pt(44.9, 46.3), pt(45.8, 47.2), pt(45.8, 49.3), pt(47.5, 51.0),
+           _pad(board, "J6", "1").GetPosition()]   # left of RS1 and under it
     for a_, b_ in zip(run, run[1:]):
         _track(board, a_, b_, sys_, 1.2)
     d, j62 = _pad(board, "Q4", "3").GetPosition(), _pad(board, "J6", "2").GetPosition()
@@ -366,28 +368,39 @@ def preroute(board):
     for i, (a_, b_) in enumerate(zip(pts, pts[1:])):
         # 1.0 mm, but 0.8 on the diagonal past the TS via
         _track(board, a_, b_, bat, 0.8 if i == 2 else 1.0)
-    # BATT_S (battery current): Q3 pin 3 (S2) straight down and right under the Kelvin column,
-    # up into the RS1 BATT_S pad and on to RS2 (1.0 mm); R21 taps the RS1 pad. GND pads joined
-    # 1.0 mm, solid to the pour, vias above RS2 and below RS1 (NT1 sits under the RS1 GND pad).
-    bs = board.FindNet("BATT_S")
-    q3, r1 = _pad(board, "Q3", "3").GetPosition(), _pad(board, "RS1", "1").GetPosition()
+    # BATT_S (battery current): Q3 pin 3 (S2) straight down, right under the Kelvin column and up
+    # into the joint of the two inner shunt pads; R21 runs to the RS2 pad on its own (Kelvin).
+    # DW01A CS (R10) reaches the joint over B.Cu. Outer GND pads: solid to the pour + vias.
+    # (coordinates below are the 50 x 60 ones, pt() stretches them)
+    bs, gn = board.FindNet("BATT_S"), board.FindNet("GND")
+    q3 = _pad(board, "Q3", "3").GetPosition()
     yb = q3.y + mm(1.7)
     _track(board, q3, pcbnew.VECTOR2I(q3.x, yb - mm(0.75)), bs, 0.5)
-    pts = [pcbnew.VECTOR2I(q3.x, yb - mm(0.75)), pcbnew.VECTOR2I(q3.x + mm(0.75), yb), pcbnew.VECTOR2I(r1.x, yb), r1]
+    pts = [pcbnew.VECTOR2I(q3.x, yb - mm(0.75)), pcbnew.VECTOR2I(q3.x + mm(0.75), yb),
+           pt(46.1, 44.65), pt(47.0, 43.75), pt(47.6, 43.75)]
     for a_, b_ in zip(pts, pts[1:]):
         _track(board, a_, b_, bs, 0.8)
-    _track(board, r1, _pad(board, "RS2", "1").GetPosition(), bs, 1.0)
-    r21 = _pad(board, "R21", "1").GetPosition()
-    _track(board, r21, pcbnew.VECTOR2I(r1.x - mm(0.44), r21.y), bs, 0.25)
-    gn = board.FindNet("GND")
-    g1, g2 = _pad(board, "RS1", "2").GetPosition(), _pad(board, "RS2", "2").GetPosition()
-    _track(board, g1, g2, gn, 1.0)
-    for x_, y_, stub in ((48.9, 39.25, True), (47.7, 39.25, False), (46.9, 45.3, False)):
-        at = pt(x_, y_)
-        if stub:
-            _track(board, at, pcbnew.VECTOR2I(g2.x, g2.y - mm(0.6)), gn, 0.6)
-        v = pcbnew.PCB_VIA(board); v.SetPosition(at); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3)); v.SetNet(gn); v.SetLocked(True)
-        board.Add(v)
+    _track(board, _pad(board, "RS2", "1").GetPosition(), _pad(board, "RS1", "1").GetPosition(), bs, 1.0)
+    pts = [_pad(board, "R21", "1").GetPosition(), pt(46.2, 43.66), pt(46.76, 43.1), pt(47.1, 43.1)]
+    for a_, b_ in zip(pts, pts[1:]):
+        _track(board, a_, b_, bs, 0.25)
+    _track(board, pt(47.6, 43.75), pt(48.95, 43.75), bs, 0.6)
+    charger._via(board, pt(48.95, 43.75), bs, 0.6, 0.3)
+    r10 = _pad(board, "R10", "2").GetPosition()
+    pts = [r10, pcbnew.VECTOR2I(r10.x, r10.y + mm(1.24)), pt(45.69, 39.28)]
+    for a_, b_ in zip(pts, pts[1:]):
+        _track(board, a_, b_, bs, 0.6)
+    charger._via(board, pt(45.69, 39.28), bs, 0.6, 0.3)
+    pts = [pt(45.69, 39.28), pt(48.61, 42.2), pt(48.95, 42.54), pt(48.95, 43.75)]
+    for a_, b_ in zip(pts, pts[1:]):
+        charger._track(board, a_, b_, bs, 0.3, pcbnew.B_Cu)
+    sk = board.FindNet("SH_K")
+    pts = [_pad(board, "NT1", "1").GetPosition(), pt(45.51, 40.74), _pad(board, "R22", "1").GetPosition()]
+    for a_, b_ in zip(pts, pts[1:]):
+        _track(board, a_, b_, sk, 0.2)
+    for vx, vy, tx, ty in ((47.2, 38.8, 47.2, 39.8), (48.4, 38.8, 48.4, 39.8), (48.6, 49.5, 48.1, 47.9)):
+        _track(board, pt(vx, vy), pt(tx, ty), gn, 0.6)
+        charger._via(board, pt(vx, vy), gn, 0.6, 0.3)
     # BATT- from J4 pin 2 on B.Cu along the bottom (under J4 / J3) and up to the HJ8205
     bm = board.FindNet("BATT-")
     j42 = _pad(board, "J4", "2").GetPosition()

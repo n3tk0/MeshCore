@@ -70,7 +70,7 @@ def fab(pcb, n):
             zf.write(os.path.join(gerb, f), f)
     # every copy keeps the board's references on the silk; JLC needs unique designators in
     # the BOM and CPL, so copy k (left to right) gets "_k"
-    fix = {p["ref"]: export.ROT_FIX.get(p["fp"].split(":")[-1], 0)
+    fix = {p["ref"]: export.ROT_LCSC.get(p["lcsc"], export.ROT_FIX.get(p["fp"].split(":")[-1], 0))
            for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
     tmp = os.path.join(prod, "pos.csv")
     export.run("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",

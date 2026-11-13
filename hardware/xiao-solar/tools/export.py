@@ -46,11 +46,17 @@ def gerbers():
 # offset (2026-11-11: with +180 JLC's preview showed D4 reversed and their engineer turned it back).
 ROT_FIX = {"SOT-23": 180, "SOT-23-8": 180,
            "TSSOP-16_4.4x5mm_P0.65mm": 270}
+# Per part, where the board reuses another part's footprint: the HJ8205 sits on the DW01A's
+# SOT-23-6 (pins in two rows, pin 1 bottom left), JLC's HJ8205 model (C20069150) has the pins in
+# two columns with pin 1 bottom right, i.e. our footprint is JLC's turned 270 deg CCW
+# (2026-11-13, compared pad by pad with the EasyEDA footprint; before this Q3 went out 90 deg off).
+ROT_LCSC = {"C20069150": 270}
 
 def cpl():
     """KiCad position file -> JLC CPL (Designator, Mid X, Mid Y, Layer, Rotation).
     Only parts with an LCSC number (the ones JLC places) are kept."""
-    jlc = {p["ref"]: ROT_FIX.get(p["fp"].split(":")[-1], 0) for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
+    jlc = {p["ref"]: ROT_LCSC.get(p["lcsc"], ROT_FIX.get(p["fp"].split(":")[-1], 0))
+           for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
     tmp = os.path.join(OUT, "pos.csv")
     run("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",
         "--use-drill-file-origin", "-o", tmp, PCB)
