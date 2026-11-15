@@ -184,7 +184,10 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
-### Charger - BQ25798 on xiao-solar-lite (Repeater Only, `Xiao_nrf52_solar_lite_repeater`)
+### Charger - BQ25798 (Repeater Only)
+
+One command for every board with a BQ25798. With the chip on the node's own I2C bus (xiao-solar-lite, xiao-solar v0.4; env `Xiao_nrf52_solar_lite_repeater`) it talks to the chip. When no BQ25798 is on the bus but a solar-smart-mppt / xiao-solar v0.5 MSPM0 answers on 0x42 (envs with `ENV_INCLUDE_INA260`), the same words go to the MSPM0 and every change is saved in the board's flash (see `smppt` for the rest of its settings).
+
 **Usage:**
 - `charger` (state and settings)
 - `charger chem liion|lifepo4` (VREG 4.20 V / 3.60 V)
@@ -194,6 +197,8 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 - `charger shipfet on|off` (Q2 fitted, the default; `off` when JP3 is closed)
 - `charger cutoff <mV>|off` (Li-ion 2900..3800, default 3300; LiFePO4 2900..3300, default 3000)
 - `charger ship` (cut the battery off for transport or storage)
+- `charger reg 0xNN [value]` (read or write one BQ25798 register, 0x00..0x48. Direct: the bits the firmware manages come back within 10 s. MSPM0 boards: the read is the board's copy (1 s old); a write becomes an expert setting, only 0x03..0x18 without 0x0A and 0x11, at most 8; `charger reg 0xNN auto` removes it)
+- MSPM0 boards: `chem liion|lifepo4|lto|auto` (auto = by the jumper), `ichg` 50..3000, `ntc on|off|auto`, `cutoff <mV>` = the discharge FET off level (no `off`), no `shipfet`.
 
 **Example reply:** `sun 17.95V 450mA, batt 3.952V +1050mA fast, mppt on, die 41C, liion 4.20V 1000mA, ntc off, shipfet on, cut 3300mV`
 

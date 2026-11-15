@@ -1,4 +1,5 @@
 #include "MyMesh.h"
+#include <helpers/SmartMppt.h>
 #include <algorithm>
 
 #define RADIO_SWITCH_WAIT_MAX    10000   // a radio settings switch waits this long at most for sending to finish
@@ -1526,9 +1527,18 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     handlePowerSaveCommand(&command[8], reply);
   } else if (memcmp(command, "battery", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleBatteryCommand(&command[7], reply);
-#if ENV_INCLUDE_BQ25798
+#if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
   } else if (memcmp(command, "charger", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleChargerCommand(&command[7], reply);
+#endif
+#if ENV_INCLUDE_INA260
+  } else if (memcmp(command, "smppt", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
+    // solar-smart-mppt board (an INA260 on 0x41 to the sensors, its own registers on 0x42)
+#if ENV_PIN_SDA && ENV_PIN_SCL
+    smpptCommand(Wire1, &command[5], reply, 155);
+#else
+    smpptCommand(Wire, &command[5], reply, 155);
+#endif
 #endif
 #ifdef WITH_MAILBOX
   } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
@@ -2337,17 +2347,49 @@ void MyMesh::loadCharger() {
   c->apply(s);
 }
 
+#endif   // ENV_INCLUDE_BQ25798
+
+#if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
+#if ENV_PIN_SDA && ENV_PIN_SCL
+#define CHARGER_WIRE Wire1
+#else
+#define CHARGER_WIRE Wire
+#endif
+
+// One command for every board with a BQ25798: on the node's own bus (xiao-solar-lite, xiao-solar v0.4)
+// it talks to the chip, behind an MSPM0 (solar-smart-mppt, xiao-solar v0.5) to the MSPM0 on 0x42.
 // charger                       the charger's state and settings
 // charger chem liion|lifepo4    the cell (VREG 4.20 V / 3.60 V; the cut-off and battsave follow)
+//                               (MSPM0 boards also: lto, auto = by the jumper)
 // charger ichg <mA>             charge current, 100..2000
 // charger vin mppt|<mV>         MPPT (default) or a fixed input voltage limit for the panel
 // charger ntc on|off            an NTC on J3 (TS used) or not (TS_IGNORE)
 // charger shipfet on|off        Q2 fitted, or JP3 closed (no ship / shutdown mode then)
 // charger cutoff <mV>|off       no sun and the battery under this for 5 min: shutdown until the sun is back
 // charger ship                  disconnect the battery for transport/storage (sun or TP2 to GND wakes it)
+// charger reg 0xNN [value]      read / write one BQ25798 register (direct: the managed bits come back
+//                               within 10 s; MSPM0 boards: kept as an expert setting, `auto` drops it)
 void MyMesh::handleChargerCommand(char* args, char* reply) {
   while (*args == ' ') args++;
+  char* val = strchr(args, ' ');
+  if (val) { *val++ = 0; while (*val == ' ') val++; } else val = (char*)"";
+#if ENV_INCLUDE_BQ25798
   BQ25798* c = sensors.getCharger();
+  bool direct = c != NULL && c->found();
+#else
+  bool direct = false;
+#endif
+#if ENV_INCLUDE_INA260
+  if (!direct && smpptPresent(CHARGER_WIRE)) {
+    smpptCharger(CHARGER_WIRE, args, val, reply, 155);   // 155: room for a 3-byte "xx|" tag
+    return;
+  }
+#endif
+#if !ENV_INCLUDE_BQ25798
+  (void)direct;
+  strcpy(reply, "Err - no charger found (BQ25798 or solar-smart-mppt)");
+}
+#else
   if (c == NULL) {
     strcpy(reply, "Err - no BQ25798 charger found");
     return;
@@ -2356,9 +2398,23 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     c->formatStatus(reply, 155);   // the reply may already hold a 3-byte "xx|" tag (see SELFTEST_MAX)
     return;
   }
+  if (strcmp(args, "reg") == 0) {
+    char* v2 = strchr(val, ' ');
+    if (v2) { *v2++ = 0; while (*v2 == ' ') v2++; }
+    char* end;
+    long reg = strtol(val, &end, 0);
+    if (*val == 0 || *end || reg < 0 || reg > 0x48) { strcpy(reply, "Err - charger reg 0x00..0x48 [value]"); return; }
+    uint8_t b;
+    if (v2 && *v2) {
+      long v = strtol(v2, &end, 0);
+      if (*end || v < 0 || v > 0xFF) { strcpy(reply, "Err - charger reg 0xNN 0..255"); return; }
+      if (!c->regWrite((uint8_t)reg, (uint8_t)v)) { strcpy(reply, "Err - I2C (or no BQ25798)"); return; }
+    }
+    if (!c->regRead((uint8_t)reg, &b)) { strcpy(reply, "Err - I2C (or no BQ25798)"); return; }
+    sprintf(reply, "> REG%02lX = 0x%02X%s", reg, b, v2 && *v2 ? " (managed bits come back within 10 s)" : "");
+    return;
+  }
   BQ25798Settings s = c->settings();
-  char* val = strchr(args, ' ');
-  if (val) { *val++ = 0; while (*val == ' ') val++; } else val = (char*)"";
   const char* note = "";
   bool to_psave = false;
   PowerSaverConfig new_psave;
@@ -2418,7 +2474,8 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   }
   sprintf(reply, "OK%s", note);
 }
-#endif
+#endif   // ENV_INCLUDE_BQ25798
+#endif   // ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
 
 // One line for the app's Health page and for a person: what does not work comes first. At most
 // SELFTEST_MAX bytes: the reply buffer (160 on serial, 161 over the air) may already hold a 3-byte "xx|" tag.

@@ -164,6 +164,10 @@ public:
   // -3 = I2C error
   int shipMode();
 
+  // one register, for `charger reg` (enforce() puts the managed bits back at the next poll)
+  bool regRead(uint8_t reg, uint8_t* v) { return _found && read(reg, v, 1); }
+  bool regWrite(uint8_t reg, uint8_t v) { return _found && write8(reg, v); }
+
   // one line: "sun 17.9V 0.31A, batt 3.95V +1.05A fast, mppt, die 41C, liion 4.20V 1000mA"
   int formatStatus(char* buf, int len) const;
 };
