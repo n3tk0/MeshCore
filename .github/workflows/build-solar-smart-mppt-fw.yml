@@ -3,6 +3,7 @@ name: Build solar-smart-mppt firmware
 # MSPM0L1306 firmware of hardware/solar-smart-mppt (see firmware/README.md).
 # - pull request / push to main that touches it, manual run: host tests + .hex/.bin on the run (Artifacts)
 # - tag "solar-smart-mppt-fw-v1": also a GitHub release with the files
+# The ESP32-C3 SWD programmer (../programmer) is built here too: it carries both MSPM0 images.
 
 permissions:
   contents: write
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'hardware/solar-smart-mppt/firmware/**'
+      - 'hardware/solar-smart-mppt/programmer/**'
       - '.github/workflows/build-solar-smart-mppt-fw.yml'
   push:
     branches: [main]
@@ -19,6 +21,7 @@ on:
       - 'solar-smart-mppt-fw-v*'
     paths:
       - 'hardware/solar-smart-mppt/firmware/**'
+      - 'hardware/solar-smart-mppt/programmer/**'
       - '.github/workflows/build-solar-smart-mppt-fw.yml'
 
 env:
@@ -56,6 +59,28 @@ jobs:
           cp build-pa10/smppt.hex build/smppt-j5-pa10.hex
           cp build-pa10/smppt.bin build/smppt-j5-pa10.bin
 
+      - name: Programmer host tests
+        working-directory: hardware/solar-smart-mppt/programmer
+        run: make test
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build the ESP32-C3 programmer
+        working-directory: hardware/solar-smart-mppt/programmer
+        run: |
+          pio run -e supermini
+          B=.pio/build/supermini
+          BA=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
+          python ~/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32c3 merge_bin -o ../firmware/build/mspm0-prog-full.bin \
+            0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$BA" 0x10000 $B/firmware.bin
+          cp $B/firmware.bin ../firmware/build/mspm0-prog-update.bin
+
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
@@ -65,9 +90,13 @@ jobs:
             hardware/solar-smart-mppt/firmware/build/smppt.bin
             hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
             hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
+            hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
+            hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
             hardware/solar-smart-mppt/firmware/build/smppt.elf
             hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
             hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
+            hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
+            hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/solar-smart-mppt-fw-v')
@@ -78,3 +107,5 @@ jobs:
             hardware/solar-smart-mppt/firmware/build/smppt.bin
             hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
             hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
+            hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
+            hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
