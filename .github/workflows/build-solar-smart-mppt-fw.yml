@@ -50,7 +50,11 @@ jobs:
         run: make test
 
       - name: Build
-        run: make SDK_ROOT="$RUNNER_TEMP/mspm0-sdk"
+        run: |
+          make SDK_ROOT="$RUNNER_TEMP/mspm0-sdk"
+          make J5=pa10 SDK_ROOT="$RUNNER_TEMP/mspm0-sdk"
+          cp build-pa10/smppt.hex build/smppt-j5-pa10.hex
+          cp build-pa10/smppt.bin build/smppt-j5-pa10.bin
 
       - name: Upload
         uses: actions/upload-artifact@v7
@@ -59,7 +63,11 @@ jobs:
           path: |
             hardware/solar-smart-mppt/firmware/build/smppt.hex
             hardware/solar-smart-mppt/firmware/build/smppt.bin
+            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
+            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
             hardware/solar-smart-mppt/firmware/build/smppt.elf
+            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
+            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/solar-smart-mppt-fw-v')
@@ -68,3 +76,5 @@ jobs:
           files: |
             hardware/solar-smart-mppt/firmware/build/smppt.hex
             hardware/solar-smart-mppt/firmware/build/smppt.bin
+            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
+            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin

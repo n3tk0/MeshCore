@@ -96,7 +96,11 @@ static uint16_t run_cmd(uint8_t cmd, const settings_t *s) {
       return ERR_OK;
     }
     case CMD_SHIP: ship_tried = false; go_ship(hal_ms()); return ERR_NOT_NOW;   // still here: not taken
+#if SMPPT_J5_PA10
+    case CMD_BSL: return ERR_NOT_NOW;   // the ROM BSL listens on PA0/PA1, not on J5 here: SWD only
+#else
     case CMD_BSL: save_gauge(); hal_delay_ms(20); hal_enter_bsl(); return ERR_OK;
+#endif
     case CMD_REBOOT: save_gauge(); hal_delay_ms(20); hal_reboot(); return ERR_OK;
     default: return ERR_UNKNOWN_CMD;
   }

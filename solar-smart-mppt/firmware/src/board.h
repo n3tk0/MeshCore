@@ -1,14 +1,23 @@
-// solar-smart-mppt v0.3 pins (J5 on PA0/PA1, OC_G on PA10) (MSPM0L1306SRGER, VQFN-24). IOMUX index = PINCM(n) = PA(n-1).
+// solar-smart-mppt v0.3 pins (J5 on PA0/PA1, OC_G on PA10; `make J5=pa10` for the earlier boards) (MSPM0L1306SRGER, VQFN-24). IOMUX index = PINCM(n) = PA(n-1).
 #pragma once
 #include <ti/devices/msp/msp.h>
 #include <ti/driverlib/driverlib.h>
 
 // I2C0 target on J5 (INA260 0x41 + our map 0x42), 3.3 V bus, pull-ups on the repeater.
+#if SMPPT_J5_PA10
+// boards made from the files before 2026-11-13 (d6a898d): J5 on PA10/PA11, OC_G on PA0.
+// The ROM BSL (PA0/PA1) is not on J5 there: flash over SWD.
+#define PIN_SDA_E_IOMUX  IOMUX_PINCM11     // PA10
+#define PIN_SDA_E_FUNC   IOMUX_PINCM11_PF_I2C0_SDA
+#define PIN_SCL_E_IOMUX  IOMUX_PINCM12     // PA11
+#define PIN_SCL_E_FUNC   IOMUX_PINCM12_PF_I2C0_SCL
+#else
 // PA0/PA1 are open-drain (fail-safe: no diode to VDD) and are the ROM BSL's I2C pins.
 #define PIN_SDA_E_IOMUX  IOMUX_PINCM1      // PA0
 #define PIN_SDA_E_FUNC   IOMUX_PINCM1_PF_I2C0_SDA
 #define PIN_SCL_E_IOMUX  IOMUX_PINCM2      // PA1
 #define PIN_SCL_E_FUNC   IOMUX_PINCM2_PF_I2C0_SCL
+#endif
 
 // I2C1 controller to the BQ25798 (R13/R14 4.7k)
 #define PIN_SCL_I_IOMUX  IOMUX_PINCM16     // PA15
@@ -17,8 +26,13 @@
 #define PIN_SDA_I_FUNC   IOMUX_PINCM17_PF_I2C1_SDA
 
 // digital
+#if SMPPT_J5_PA10
+#define PIN_OC_G      DL_GPIO_PIN_0        // PA0 is open drain: high = released, R20 pulls up = charge FET on
+#define PIN_OC_G_IOMUX IOMUX_PINCM1
+#else
 #define PIN_OC_G      DL_GPIO_PIN_10       // R20 pull-up to 3V3M: low = charge FET off, high = on
 #define PIN_OC_G_IOMUX IOMUX_PINCM11
+#endif
 #define PIN_BAL1      DL_GPIO_PIN_2        // cell 1 bleed (Q7)
 #define PIN_BAL1_IOMUX IOMUX_PINCM3
 #define PIN_BAL2      DL_GPIO_PIN_3        // cell 2 bleed (Q10 -> Q8)

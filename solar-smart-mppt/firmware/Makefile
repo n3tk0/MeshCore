@@ -1,5 +1,6 @@
 # solar-smart-mppt firmware (MSPM0L1306). Needs arm-none-eabi-gcc and the TI MSPM0 SDK:
 #   make SDK_ROOT=/path/to/mspm0-sdk        -> build/smppt.hex, build/smppt.bin
+#   make J5=pa10 ...                        -> build-pa10/: boards from before 2026-11-13 (J5 on PA10/PA11, OC_G on PA0)
 #   make test                               -> host unit tests (gcc)
 SDK_ROOT ?= $(HOME)/mspm0-sdk
 CC      = arm-none-eabi-gcc
@@ -12,7 +13,13 @@ DL  = dl_common.c dl_i2c.c dl_flashctl.c dl_adc12.c dl_comp.c dl_opa.c dl_vref.c
       m0p/sysctl/dl_sysctl_mspm0l11xx_l13xx.c
 STARTUP = $(SDK_ROOT)/source/ti/devices/msp/m0p/startup_system_files/gcc/startup_mspm0l130x_gcc.c
 
-CFLAGS = -mcpu=cortex-m0plus -mthumb -Os -g -std=c11 -Wall -Wextra -Wno-unused-parameter \
+J5 ?= pa0
+ifeq ($(J5),pa10)
+  REVFLAGS = -DSMPPT_J5_PA10=1
+  BUILD = build-pa10
+endif
+
+CFLAGS = $(REVFLAGS) -mcpu=cortex-m0plus -mthumb -Os -g -std=c11 -Wall -Wextra -Wno-unused-parameter \
          -ffunction-sections -fdata-sections -D__MSPM0L1306__ \
          -I src -I $(SDK_ROOT)/source -I $(SDK_ROOT)/source/third_party/CMSIS/Core/Include
 LDFLAGS = -mcpu=cortex-m0plus -mthumb -T tools/mspm0l1306_smppt.lds -Wl,--gc-sections -Wl,-Map=$(BUILD)/smppt.map \

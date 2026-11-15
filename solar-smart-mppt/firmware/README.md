@@ -29,6 +29,11 @@ ROM bootloader. Its I2C is on PA0/PA1, which are the J5 pins, so the host can fl
 A blank chip starts the BSL by itself; one with broken firmware needs SWD (the BSL invoke pin PA18 is
 not on J5).
 
+Boards made from the files before 2026-11-13 (PR #35 d6a898d) have J5 on PA10/PA11 and OC_G on PA0:
+build them with `make J5=pa10` (CI: `smppt-j5-pa10.hex`). There the ROM BSL is not on J5, so they are
+flashed over SWD only and `smppt cmd bsl` answers "not now". The two images are not interchangeable:
+the wrong one drives the charge FET gate from an I2C pin.
+
 ## Files
 
 | File | What |
