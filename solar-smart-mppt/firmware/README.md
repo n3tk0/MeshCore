@@ -64,7 +64,7 @@ the wrong one drives the charge FET gate from an I2C pin.
 | 0x08 | battery mA, signed, + = charging | | 0x27 | ntc: 0 auto, 1 off, 2 on | 0 |
 | 0x09 | panel mV | | 0x28/29 | od_off / od_on mV (pack) | 3000/3300, 2700/3000, 3600/4000 |
 | 0x0A | panel mA | | 0x2A | ship mV | 2900 / 2600 / 3400 |
-| 0x0B | temperature 0.1 °C (BQ die) | | 0x2B/2C | j7_off / j7_on mV | 3300/3500, 3000/3150, 4400/4700 |
+| 0x0B | temperature 0.1 °C (BQ die) | | 0x2B/2C | j7_off / j7_on mV | 3300/3500, 3000/3150, 4000/4400 |
 | 0x0C | active chem << 8 \| JP4 | | 0x2D | idsg_max mA (0 = off) | 0 |
 | 0x0D | BQ CHG_STAT | | 0x2E | isc mA (short trip) | 1500 |
 | 0x0E | BQ REG20 << 8 \| REG21 | | 0x2F/30 | bal_delta / bal_start mV (LTO, per cell) | 30 / 2500 |

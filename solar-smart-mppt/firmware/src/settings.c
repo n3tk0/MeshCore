@@ -14,7 +14,7 @@ static const chem_table_t CHEM[CHEM_COUNT] = {
   //  vchg  min   max   od_off od_on ship  j7_off j7_on  pack_min pack_max
   { 4200, 4000, 4250, 3000, 3300, 2900, 3300, 3500, 2500, 4250 },   // Li-ion 1S
   { 3600, 3400, 3650, 2700, 3000, 2600, 3000, 3150, 2500, 3650 },   // LiFePO4 1S
-  { 5600, 4800, 5600, 3600, 4000, 3400, 4400, 4700, 3000, 5600 },   // LTO 2S (2.8 V/cell max)
+  { 5600, 4800, 5600, 3600, 4000, 3400, 4000, 4400, 3000, 5600 },   // LTO 2S (2.8 V/cell max); J7 to 2.0 V/cell
 };
 
 void settings_defaults(settings_t *s, uint8_t chem) {
