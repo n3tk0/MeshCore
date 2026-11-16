@@ -62,8 +62,8 @@ box("MSPM0L1306_FUNC", "U",
           ("15", "PA19/SWDIO", "bidirectional"), ("16", "PA20/SWCLK", "input"),
           ("21", "PA25/OPA0_IN0+", "input"), ("14", "PA18/OPA1_IN0+", "input"),
           ("22", "PA26", "output"), ("17", "PA21/A5", "input"), ("8", "PA9", "input"),
-          ("18", "PA22/OPA0_OUT", "passive")],
-    right=[("9", "PA10", "output"), ("10", "PA11", "passive"),
+          ("18", "PA22 (INT)", "input")],
+    right=[("9", "PA10", "output"), ("10", "PA11 (HEAT)", "output"),
            ("12", "PA16/I2C1_SDA", "bidirectional"), ("11", "PA15/I2C1_SCL", "bidirectional"),
            ("1", "PA1/I2C0_SCL", "bidirectional"), ("24", "PA0/I2C0_SDA", "bidirectional"), ("19", "PA23", "input"),
            ("6", "PA3", "output"), ("7", "PA4", "output"), ("5", "PA2", "output"),
@@ -113,7 +113,7 @@ TP("TP4", "PMID", 104, 120.08, rot=0)
 bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": None, "7": None,
       "8": "VBUS", "9": "VBUS", "10": "GND", "11": "GND", "12": "QON", "13": "CE", "14": "SCL_I",
       "15": "SDA_I", "16": "TS", "17": "REGN", "18": "BATP", "19": "BTST2", "20": "PROG",
-      "21": None, "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
+      "21": "INT_BQ", "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
       "28": "SW1", "29": "PMID"}
 P("U1", "custom:BQ25798RQMR_FUNC", "BQ25798RQMR", 140, 125, bq,
   "xiao_solar:QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR", "C2876593")
@@ -158,6 +158,8 @@ RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
 # BQ I2C (internal bus, MSPM0 is the master) + INT, pull-ups to 3V3M
 TP("TP9", "SCL_I", 168, 112.46, rot=0)
 TP("TP10", "SDA_I", 176, 115.00, rot=0)
+# BQ25798 ~INT has no copper path to PA22 on this board (see README, open items): test pad for a wire to R47.2 / U4.18
+TP("TP18", "INT_BQ", 184, 115.00, rot=0)
 
 T(20, 174, "SS54: защита от обратна полярност и връщане към панела. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
 T(20, 177.5, "PROG = 1S винаги (R1 4.7k): с 2S PROG BQ тръгва с VSYSMIN ~7 V. За LTO 2S MSPM0 записва VREG 5.6 V и чак тогава пуска CE.", 1.27)
@@ -198,7 +200,7 @@ RAIL("BAT", [(158.0, 121.35), (232.0, 121.35), (232.0, 210.0), (259.92, 210.0)])
 CS("C17", "10u/25V", 238, 219, "BAT", "GND", C10U)
 CS("C18", "10u/25V", 248, 219, "BAT", "GND", C10U)
 TP("TP6", "BAT", 232, 210.0, rot=0)
-P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 265, 207.46,
+P("Q2", "Transistor_FET:BSS138", "AO3400A", 265, 207.46,
   {"1": "SDRV", "2": "BAT", "3": "BATT+"}, SOT23, "C20917", rot=270)
 RAIL("SDRV", [(155.24, 117.54), (236.0, 117.54), (236.0, 198.0), (265.0, 198.0), (265.0, 202.38)])
 P("JP3", "Jumper:SolderJumper_2_Open", "no ship FET", 265, 191.0,
@@ -234,14 +236,15 @@ RS("R19", "100k", 326, 262, "OD_CTL", "GND", R100K)
 # through its body diode; the MSPM0 PA10 pulls it low to stop charging. No MSPM0, no
 # charging anyway: ~CE of the BQ25798 has its pull-up to 3V3M (R4)
 RS("R20", "1M", 380, 262, "OC_G", "3V3M", R1M)
-# shunt sense: 10k + 1M bias to 3V3M keeps both inputs above 0 V at -3.2 A
+# shunt sense: 10k + 470k bias to 3V3M (~69 mV) keeps both inputs above 0 V up to ~3.4 A of discharge
 RS("R21", "10k", 420, 226, "BATT_S", "SH_P", R10K, rot=270)
 RS("R22", "10k", 420, 246, "SH_K", "SH_N", R10K, rot=270)
 # Kelvin tap of the shunt's GND end: its own net up to the RS1 GND pad, joined there by a net tie
 # (load current in the GND pour does not reach the SH_N reading)
 P("NT1", "Device:NetTie_2", "NetTie", 420, 262, {"1": "SH_K", "2": "GND"}, "NetTie:NetTie-2_SMD_Pad0.5mm", rot=90)
-RS("R23", "1M", 440, 212, "3V3M", "SH_P", R1M)
-RS("R24", "1M", 452, 212, "3V3M", "SH_N", R1M)
+# 470k 0402 C25790 (preferred part, no fee): C23178 is 0603 and does not fit between R21 / R22 / R26
+base.P("R23", "Device:R", "470k", 440, 212, {"1": "3V3M", "2": "SH_P"}, R0402, "C25790")
+base.P("R24", "Device:R", "470k", 452, 212, {"1": "3V3M", "2": "SH_N"}, R0402, "C25790")
 # one differential filter cap across the PGA inputs: no CMRR loss from two caps to GND
 # that do not match (fast LoRa TX current steps)
 CS("C24", "100n", 440, 236, "SH_P", "SH_N", C100N, C0603)
@@ -263,14 +266,14 @@ RS("R28", "1M", 500, 296, "ADC_VBM", "GND", R1M)
 CS("C27", "100n", 512, 296, "ADC_VBM", "GND", C100N, C0603)
 T(330, 272, "Q3 е в минуса: S1 = BATT- (клетката), S2 = BATT_S -> RS1 -> GND. OD (G1) вкл. по подразбиране (R18), OC (G2) вкл. щом има 3V3M (R20), MSPM0 го изключва.", 1.27)
 T(330, 275.5, "Без DW01A: ток/късо пази MSPM0 (OPA0 PGA + COMP0 с DAC, 32 ns) и BATFET OCP на BQ25798.", 1.27)
-T(330, 279, "Шунт: + заряд, - разряд; R21-R24 изместват входовете с ~33 mV. Балансиране ~40 mA (100 Ohm, 0.18 W).", 1.27)
+T(330, 279, "Шунт: + заряд, - разряд; R21-R24 изместват входовете с ~69 mV (разряд до ~3.4 A, заряд до ~4.3 A). Балансиране ~40 mA (100 Ohm, 0.18 W).", 1.27)
 
 # ---- 5. MSPM0L1306 supervisor + INA260 emulator on J5 ----------------------------------
 BLOCK(370, 22, "5. MSPM0L1306: BQ25798 master (I2C1), INA260 емулатор 0x41 (I2C0 -> J5), BMS, LED")
 P("U4", "custom:MSPM0L1306_FUNC", "MSPM0L1306SRGER", 470, 100,
   {"3": "3V3M", "23": "VCORE", "2": "NRST", "15": "SWDIO", "16": "SWCLK",
-   "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": "ADC_VBM", "19": "ADC_CHEM", "18": None,
-   "9": "OC_G", "10": None, "12": "SDA_I", "11": "SCL_I", "1": "SCL_E", "24": "SDA_E",
+   "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": "ADC_VBM", "19": "ADC_CHEM", "18": "INT",
+   "9": "OC_G", "10": "HEAT", "12": "SDA_I", "11": "SCL_I", "1": "SCL_E", "24": "SDA_E",
    "6": "BAL2", "5": "BAL1", "7": "REG_CTL", "22": "OD_CTL", "13": "CE", "8": "LED",
    "4": "GND", "25": "GND"},
   "Package_DFN_QFN:VQFN-24-1EP_4x4mm_P0.5mm_EP2.45x2.45mm", "C19189323")
@@ -281,6 +284,8 @@ CS("C28", "100n", 420, 70, "3V3M", "GND", C100N, C0603)
 CS("C29", "10u/25V", 430, 70, "3V3M", "GND", C10U)
 RS("R13", "4.7k", 520, 60, "3V3M", "SDA_I", "C23162")
 RS("R14", "4.7k", 530, 60, "3V3M", "SCL_I", "C23162")
+# BQ25798 ~INT (open drain, low = event) on PA22: 10k pull-up to 3V3M
+RS("R47", "10k", 545, 60, "3V3M", "INT", R10K)
 # chemistry jumper read digitally (internal pull-up, then pull-down): open = Li-ion (follows
 # the pull), 1-2 = LiFePO4 (always 0), 2-3 = LTO 2S (always 1)
 P("JP4", "Jumper:SolderJumper_3_Open", "CHEM: - Li-ion / 1-2 LiFePO4 / 2-3 LTO", 420, 158,
@@ -299,7 +304,7 @@ TP("TP13", "GND", 400, 105, rot=180)
 TP("TP16", "SWCLK", 400, 110, rot=180)
 TP("TP17", "NRST", 400, 115, rot=180)
 T(370, 176, "J5 pin 3 (3V3E) е захранването на репийтъра: тук не се ползва, pull-up резисторите са на репийтъра.", 1.27)
-T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA0/PA1 (SDA/SCL, open-drain, 5 V толерантни, ROM BSL I2C: хостът може да програмира през J5), ~CE PA17, OC_G PA10, LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA11 и PA22 (изход на OPA0) не се свързват.", 1.27)
+T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA0/PA1 (SDA/SCL, open-drain, 5 V толерантни, ROM BSL I2C: хостът може да програмира през J5), ~CE PA17, OC_G PA10, LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA22 = ~INT на BQ25798 (R47 10k към 3V3M, изходът на OPA0 остава изключен), PA11 = нагревател (R45 към гейта на Q12).", 1.27)
 
 # ---- 6. TPS63070 buck-boost -> J7 (3.3 / 5.0 V) -----------------------------------------
 BLOCK(20, 300, "6. J7 U: TPS63070 buck-boost 3.3 V / 5.0 V (JP6), вкл. с JP5: - изкл. / 1-2 винаги / 2-3 от MSPM0")
@@ -330,6 +335,15 @@ P("J7", "Connector_Generic:Conn_01x02", "U (3.3/5 V)", 245, 345, {"1": "VREG", "
 TP("TP14", "VREG", 232, 342.46, rot=0)
 T(20, 402, "FB: R33/R34 = 3.3 V; VSEL високо свързва R35 паралелно на R34 = 5.0 V. EN, VSEL, PS/SYNC към VIN само през R30 10k (TI 11.1).", 1.27)
 T(20, 405.5, "L2 2.2 uH (като L1) + 10 uF + 3x22 uF (TI табл. 3, Cout,eff >= 10 x L,eff). PS/SYNC високо = PFM при малък товар (~50 uA).", 1.27)
+
+# ---- 7. Battery heater (as on xiao-solar v0.5): J8 from SYS, low-side AO3400A, PA11 -------
+BLOCK(330, 300, "7. НАГРЕВАТЕЛ J8 HEAT: SYS -> Q12 AO3400A (низка страна), гейт от MSPM0 PA11 (PWM)")
+P("J8", "Connector_Generic:Conn_01x02", "HEAT (+ SYS / - drain)", 420, 330, {"1": "SYS", "2": "HEAT_D"}, CONN2)
+P("Q12", "Transistor_FET:BSS138", "AO3400A (heater)", 390, 335, {"1": "HEAT_G", "2": "GND", "3": "HEAT_D"}, SOT23, "C20917")
+RS("R45", "100", 365, 335, "HEAT", "HEAT_G", "C22775", rot=90)
+RS("R46", "100k", 380, 350, "HEAT_G", "GND", R100K)
+T(330, 362, "Нагревател (резистивен, до ~2.5 A): SYS -> J8 +, J8 - -> дрейн на Q12, сорс към GND. PA11 (TIMG4_CCP1 е възможен за PWM) през R45 100 Ohm към гейта,", 1.27)
+T(330, 365.5, "R46 100k към GND държи Q12 изключен, докато MSPM0 е в рестарт или няма захранване. Без маховик/TVS (резистивен товар), както на xiao-solar v0.5 (там има и червен LED + 1k успоредно).", 1.27)
 
 # ERC power flags on the source nets
 for i, (net, fx, fy) in enumerate([

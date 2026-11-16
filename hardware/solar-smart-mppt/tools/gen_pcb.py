@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Builds solar-smart-mppt.kicad_pcb (30 x 77 mm): placement, outline, net classes, GND pours.
-Top: header row J6 SYS OUT | J5 I2C | J7 regulated out, ideal diode (Q5 + Q9/Q11) under J6, TPS63070 and its
+Top: header row J6 SYS OUT | J5 I2C | J8 HEAT | J7 regulated out, ideal diode (Q5 + Q9/Q11) under J6, TPS63070 and its
 jumpers under J7, LEDs. Solar input (J1, SS54, TVS) on the left edge next to the charger.
 Then the charger part of xiao-solar-lite (charger cluster of ../xiao-solar/tools/charger.py,
 turned), the MSPM0L1306 band and at the bottom the BMS it drives, the fuse and J4.
@@ -62,7 +62,7 @@ PLACE.update({k: tps(x, y) + (r,) for k, (x, y, r) in _TPS.items()})
 PLACE.update({
     # one header row on top: J6 SYS OUT (+ -), M2 hole, J5 host I2C (SCL SDA NC GND), J7 U (+ -):
     # the regulated and the unregulated output on the two sides of the I2C header
-    "J6": (1.9, 1.5, 90), "J5": (8.1, 1.5, 90), "H1": (20.5, 3.0, 0), "J7": (25.3, 1.5, 90),
+    "J6": (1.9, 1.5, 90), "J5": (8.1, 1.5, 90), "H1": (27.6, 6.4, 0), "J7": (25.6, 1.5, 90),
     # Q5 / Q9 / Q11 / C20 / D1 / U5 (HT7533, rotated 270) keep their pads >= 1.5 mm from the left V-cut edge
     # ideal diode under J6: Q5 source straight up to J6 pin 1, its PNP mirror Q9 + Q11 (two MMBT3906 side by side) + R43/R44 under it
     # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
@@ -71,7 +71,7 @@ PLACE.update({
     "R43": (5.6, 13.0, 0), "R44": (6.0, 14.3, 0), "C20": (2.4, 14.2, 90),
     # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
     # (above it are the inductor and the VOUT caps); VREG test point next to J7
-    "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (22.8, 6.3, 0),
+    "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (24.0, 5.8, 0), "TP18": (11.33, 40.1, 0),
     # LEDs under the hole, next to the I2C header
     "D6": (9.6, 7.4, 90), "R16": (9.6, 10.1, 90), "D7": (11.6, 7.4, 90), "R17": (11.6, 10.1, 90),
     # solar input on the left edge next to the charger's VBUS copper: J1, SS54 (D1), TVS (D3)
@@ -111,7 +111,23 @@ PLACE.update({
     "C36": (23.84, 11.3, 90), "C37": (25.81, 11.3, 90), "C38": (27.78, 11.3, 90),
     "JP5": (26.68, 22.4, 0), "JP6": (22.6, 22.4, 0),
 })
+# v0.4 (second round): battery heater J8 in the top row between J5 and J7 (J7 +0.3 mm to the right, H1 moves under J7), its low-side FET Q12
+# and gate parts R45 / R46 under it, R47 = INT pull-up next to the MCU; R23 / R24 are 470k 0603 now
+PLACE.update({
+    "J8": (19.38, 1.5, 90), "H1": (27.6, 6.4, 0),
+    "Q12": (19.0, 6.9, 180), "R45": (22.0, 6.6, 270), "R46": (23.4, 7.9, 90),
+    "R47": (11.3, 57.0, 90),
+})
 # test points on the bottom side (flipped footprints): the SWD row
+def mini_tp(fp):
+    """TP18 (BQ25798 INT) squeezes between R1, C17 and C18: 0.6 mm pad, courtyard and silk circle moved to F.Fab, reference hidden."""
+    fp.Reference().SetVisible(False)
+    for pad in fp.Pads():
+        pad.SetSize(pcbnew.VECTOR2I(mm(0.6), mm(0.6)))
+    for g in [g for g in fp.GraphicalItems() if g.GetLayer() in (pcbnew.F_CrtYd, pcbnew.F_SilkS)]:
+        g.SetLayer(pcbnew.F_Fab)
+
+
 B_SIDE = {"TP11", "TP12", "TP13", "TP16", "TP17"}
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -243,8 +259,11 @@ def build():
             if n:
                 pad.SetNet(net(n))
         fp.Reference().SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8)))
-        fp.Reference().SetTextThickness(mm(0.12))
+        fp.Reference().SetTextThickness(mm(0.15))
         fp.Value().SetVisible(False)
+        labels.thicken_silk(fp)   # JLC: silk lines >= 0.15 mm
+        if ref == "TP18":
+            mini_tp(fp)
         for f in fp.GetFields():
             if f.GetName() != "Reference":
                 f.SetVisible(False)
@@ -254,7 +273,7 @@ def build():
             fp.Reference().SetVisible(False)
             tps[ref] = (fp, p["nets"]["1"])
             continue
-        if ref in ("J1", "J3", "J4", "J5", "J6", "J7"):
+        if ref in ("J1", "J3", "J4", "J5", "J6", "J7", "J8"):
             # the header outlines touch the edge or each other; the labels say it
             for g in list(fp.GraphicalItems()):
                 if g.GetLayer() == pcbnew.F_SilkS and isinstance(g, pcbnew.PCB_SHAPE):
@@ -322,14 +341,14 @@ def build():
         t.SetText(s); t.SetPosition(pt(x, y)); t.SetLayer(layer)
         if layer == pcbnew.B_SilkS:
             t.SetMirrored(True)
-        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.12))
+        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.15))
         t.SetTextAngleDegrees(angle)
         board.Add(t)
     # swd labels (bottom side)
     jp = lambda ref, num: pcbnew.ToMM(charger._pad(board, ref, num).GetPosition().x) - OX
     for ref, s_ in (("TP11", "IO"), ("TP16", "CLK"), ("TP12", "3V3"), ("TP13", "GND"), ("TP17", "RST")):
-        text(s_, jp(ref, "1"), PLACE[ref][1] + 1.3, 0.6, layer=pcbnew.B_SilkS)
-    text("SWD", 7.28, PLACE["TP11"][1] - 1.3, 0.6, layer=pcbnew.B_SilkS)
+        text(s_, jp(ref, "1"), PLACE[ref][1] + 1.3, 0.8, layer=pcbnew.B_SilkS)
+    text("SWD", 7.28, PLACE["TP11"][1] - 1.3, 0.8, layer=pcbnew.B_SilkS)
     # labels next to the pads (+/- of the power connectors, jumper settings); dfm.place_silk keeps them in place
     def padxy(ref, num):
         p = charger._pad(board, ref, num).GetPosition()
@@ -337,11 +356,11 @@ def build():
     placed, made = labels.add_labels(board, padxy, mm, pt)
     t = pcbnew.PCB_TEXT(board)
     t.SetText("solar-smart-mppt v0.4"); t.SetPosition(pt(*labels.VERSION_AT)); t.SetLayer(pcbnew.F_SilkS)
-    t.SetTextSize(pcbnew.VECTOR2I(mm(0.7), mm(0.7))); t.SetTextThickness(mm(0.12)); t.SetTextAngleDegrees(90)
+    t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.15)); t.SetTextAngleDegrees(90)
     board.Add(t); made.append(t)
     for r_ in ("JP3", "JP4", "JP5", "JP6"):
         board.FindFootprintByReference(r_).Reference().SetVisible(False)
-    hidden = labels.place_refs(board, dfm, made)
+    hidden = labels.place_refs(board, dfm, made, thick=0.15)
     print("silk: hidden refs", " ".join(hidden) or "none")
     return board
 
@@ -434,6 +453,73 @@ def add_mcu_stubs(board):
         if name == "GND":   # in the EP of U4: tented from below so no solder runs out
             v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
         board.Add(v)
+# battery heater power copper (locked, board mm): SYS feeder from the SYS copper of the TPS63070 up to J8 pin 1
+# (0.8 mm, F.Cu only, right of C32), drain of Q12 to J8 pin 2 (0.8 mm), gate net of Q12 / R45 / R46, two GND vias
+# beside the Q12 source. Designed for ~2.5 A: >= 0.8 mm wide, no layer change.
+HEATER_ROUTES = [
+    ("SYS", [(16.75, 14.0), (16.75, 3.2), (19.38, 3.2), (19.38, 1.5)], 0.8),
+    ("HEAT_D", [(18.062, 6.9), (18.06, 4.3), (21.92, 4.3), (21.92, 1.5)], 0.8),
+    ("HEAT_G", [(19.938, 7.85), (22.0, 7.85)], 0.25),
+    ("HEAT_G", [(22.0, 7.85), (22.56, 8.41), (23.4, 8.41)], 0.25),
+]
+HEATER_GND_VIAS = [(21.0, 5.3), (21.0, 6.6)]
+# top row after J8: the I2C lanes keep left of the SYS feeder (SDA on B.Cu at x = 15.0 / 15.5 around the C32 / C33 GND
+# tie vias, SCL on F.Cu over it and a via to B.Cu at (15.7, 5.2)); TP14 sits 3 mm from J7 / J8 and feeds J7.1 and the sense line
+TOP_ROUTES = [
+    ("SDA_E", "B.Cu", [(10.64, 2.9), (15.0, 2.9), (15.0, 8.5), (15.5, 9.0), (15.5, 19.3), (16.0, 19.8), (16.0, 20.8)], 0.2, True),
+    ("SCL_E", "F.Cu", [(14.2, 3.7), (15.7, 5.2)], 0.2, True),
+    ("SCL_E", "B.Cu", [(15.7, 5.2), (17.4, 6.9)], 0.2, True),
+    ("VREG", "F.Cu", [(24.0, 5.8), (25.6, 4.2), (25.6, 1.5)], 0.6, False),
+    ("VREG", "F.Cu", [(24.0, 5.8), (25.0, 6.8), (25.0, 8.4), (26.1, 9.5)], 0.25, True),
+]
+TOP_VIAS = [("SCL_E", (15.7, 5.2))]
+def add_top_routes(board):
+    for name, layer, pts, w, lock in TOP_ROUTES:
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
+            t.SetLayer(pcbnew.F_Cu if layer == "F.Cu" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(lock); board.Add(t)
+    for name, at in TOP_VIAS:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
+        v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+    board.FindFootprintByReference("R46").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+# BQ25798 INT (U1.21) cannot reach PA22 (U4.18): both pins sit in pockets walled by the I2C / SWD / sense lanes. U1.21 leaves
+# as net INT_BQ to the 0.6 mm test pad TP18 (a wire to R47.2 / U4.18 joins them); the PROG lane at U1.20 steps aside to give it room.
+# HEAT (U4.10 -> R45.1) is routed by hand: B.Cu / F.Cu hops with vias (layer, points), plus one GND via that keeps the F.Cu GND
+# strip left of the lane connected.
+INT_HEAT_ROUTES = [
+    ("INT_BQ", "F.Cu", [(11.42, 34.75), (11.42, 36.0), (11.2, 36.22), (11.2, 40.1)], 0.2),
+    ("PROG", "F.Cu", [(11.02, 34.75), (11.02, 35.25), (10.62, 35.65), (10.62, 38.38), (10.4, 38.38)], 0.2),
+    ("HEAT", "F.Cu", [(13.25, 51.35), (13.25, 48.9)], 0.25),
+    ("HEAT", "B.Cu", [(13.25, 48.9), (5.5, 41.15), (5.5, 21.05), (12.6, 13.95)], 0.25),
+    ("HEAT", "F.Cu", [(12.6, 13.95), (12.6, 10.55)], 0.25),
+    ("HEAT", "B.Cu", [(12.6, 10.55), (13.15, 10.0), (13.15, 6.2), (10.05, 3.1)], 0.25),
+    ("HEAT", "F.Cu", [(10.05, 3.1), (15.85, 3.1)], 0.25),
+    ("HEAT", "B.Cu", [(15.85, 3.1), (20.7, 3.1), (22.55, 4.95)], 0.25),
+    ("HEAT", "F.Cu", [(22.55, 4.95), (22.15, 5.35), (22.15, 5.5)], 0.25),
+]
+INT_HEAT_VIAS = [("HEAT", (13.25, 48.9)), ("HEAT", (12.6, 13.95)), ("HEAT", (12.6, 10.55)), ("HEAT", (10.05, 3.1)),
+                 ("HEAT", (15.85, 3.1)), ("HEAT", (22.55, 4.95)), ("GND", (5.6, 42.2))]
+def add_int_heat_routes(board):
+    for name, layer, pts, w in INT_HEAT_ROUTES:
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
+            t.SetLayer(pcbnew.F_Cu if layer == "F.Cu" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+    for name, at in INT_HEAT_VIAS:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
+        v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+def add_heater_power(board):
+    for name, pts, w in HEATER_ROUTES:
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
+            t.SetLayer(pcbnew.F_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+    for at in HEATER_GND_VIAS:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
+        v.SetNet(board.FindNet("GND")); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+    board.FindFootprintByReference("Q12").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)   # 2.5 A source: solid to the pour
+
 # hand routes kept from v0.2 (TPS63070 control pins with the R31 move, VSEL / FB2 B.Cu hops,
 # the C31 / C35 GND vias, REGN / TS at the BQ25798): fixed wiring, board mm
 HAND_ROUTES = os.path.join(HERE, "hand_routes.json")
@@ -482,6 +568,9 @@ if __name__ == "__main__":
     print(patch2.route_net(b, "SOLAR_IN", (pad_mm("J1", "1"), pad_mm("D1", "2")), width=0.8, lock=True,
                            via_w=0.8, layer_cost=(1.0, 8.0)))
     add_hand_routes(b)
+    add_heater_power(b)
+    add_top_routes(b)
+    add_int_heat_routes(b)
     add_mcu_stubs(b)
     for net_, a_, b_ in PRE_ROUTES:
         try:

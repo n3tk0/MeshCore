@@ -12,12 +12,14 @@ XIAO stack is gone and a **TI MSPM0L1306** supervisor (VQFN-24, 64 KB flash) run
 - is the BMS: discharge FET (OD) and charge FET (OC) of an HJ8205 in the battery minus,
   short-circuit cut-off with COMP0 (32 ns) against its 8-bit DAC,
 - balances a 2S LTO pack (~40 mA per cell),
-- shows errors and BMS state on two LEDs on one pin.
+- shows errors and BMS state on two LEDs on one pin,
+- switches a battery heater (J8, low-side AO3400A, PWM from PA11),
+- has the BQ25798 interrupt (INT) on PA22 with a 10k pull-up; **the copper path from U1.21 to PA22 is a wire on the v0.4 board** (see Open items: TP18 to R47.2).
 
 30 × 77.5 mm (three across a 100 mm JLC panel), 2 layers, all SMD parts on the top side (JLC assembly), headers by hand.
 
 Status v0.4 (2026-11-16, v0.3 is ordered, v0.4 is the DFM and silkscreen revision of it, same circuit): schematic, placement, routing, Gerber, JLC BOM/CPL, 3-up panel. ERC: no errors,
-DRC: 0 unconnected, no clearance or short errors (only cosmetic items left, see Layout).
+DRC: no clearance or short errors, 0 unconnected. HEAT is routed. **One connection is a wire on this revision: BQ25798 INT (U1.21) ends at the test pad TP18, the MCU side (U4.18 / R47.2) is a separate net named INT, see "Open items".**
 **Not built or tested.** Firmware for the MSPM0 (TI MSPM0 SDK, C) is a separate task.
 
 v0.3 is the cost version (JLC quote for 15 boards was 213.63 €; v0.3 is about 150 €, see the cost
@@ -37,6 +39,7 @@ answers in the project thread (phase 2).
 | J3 NTC | TS / GND | optional 10k NTC (103AT); without it the MCU sets `TS_IGNORE` |
 | J6 OUT | + / − | SYS through a discrete ideal diode (Q5 AO3401A + Q9/Q11 MMBT3906): battery or charger voltage, up to 5.6 V with LTO |
 | J7 U | + / − | TPS63070 buck-boost, 3.3 V or 5.0 V (JP6), on/off by JP5 |
+| J8 HEAT | + / − | battery heater, resistive, up to ~2.5 A: **+ = SYS**, **− = drain of Q12** (AO3400A, low side, source on GND); PA11 drives the gate through R45 100 Ω, R46 100k to GND keeps the heater off while the MCU is in reset or unpowered. No flyback diode (resistive load; xiao-solar v0.5 has none either). |
 | J5 I2C host | SCL SDA 3V3 GND | to the repeater; **no pull-ups on this board** (the repeater has them); 3V3 is not used here; PA0/PA1 are 5 V tolerant open-drain pins, and the ROM bootloader (BSL, I2C) listens on them, so the host can also flash the MCU over J5: a blank chip starts the BSL by itself, a programmed one on `smppt cmd bsl`; a chip with broken firmware needs SWD (the BSL invoke pin PA18 is not on J5) |
 | TP12, TP13, TP11, TP16, TP17 | 3V3M, GND, SWDIO, SWCLK, NRST | SWD on the **bottom side**, one row at 2.54 mm under the MCU band, left to right seen from the top (a 5-pin header or pogo pins from below) |
 
@@ -56,7 +59,7 @@ JP4 pad 1 (GND, LiFePO4 side) is on the left. v0.4 prints the setting of every j
 - **Charger:** BQ25798, PROG always 1S (R1 4.7k, 750 kHz). With a 2S PROG the chip would start
   with VSYSMIN ≈ 7 V, too much for the 5.5 V parts on SYS. For LTO the MCU writes VREG 5.6 V
   (2.8 V/cell) and only then pulls ~CE low (PA17). ~CE has a pull-up to 3V3M (R4): no MCU, no charging.
-  INT is not connected; the MCU polls.
+  INT (open drain, low = event) goes to PA22 with a 10k pull-up to 3V3M (R47); the firmware can wake on it or poll. On the v0.4 board the BQ side (net INT_BQ, TP18) is joined to R47.2 / U4.18 by a wire; without the wire PA22 just reads high and the firmware polls the BQ25798 over I2C.
 - **3V3M:** HT7533 (2.5 µA) from SYS, only for the MCU and its dividers. VDD 10 µF + 100 nF,
   VCORE 470 nF, NRST 47k + 10 nF (TI minimum circuit).
 - **Ideal diode (J6):** Q5 (P-FET, D at SYS, S at J6) conducts SYS → OUT through its body diode
@@ -70,14 +73,15 @@ JP4 pad 1 (GND, LiFePO4 side) is on the left. v0.4 prints the setting of every j
   Under-voltage uses the BQ25798 ship mode (Q2, SDRV): sun on VBUS wakes the charger, SYS comes back
   and the MCU starts again. There is **no DW01A**: over-current and short are handled by the MCU
   (OPA + COMP0 with the DAC threshold) and by the BQ25798 BATFET OCP.
-- **Shunt:** 20 mΩ 1 % (±3.2 A). R21/R22 (10k) take Kelvin taps from both shunt ends, R23/R24 (1M to 3V3M)
-  lift both inputs by ~33 mV so they stay above 0 V while discharging, C24 100 nF across them.
+- **Shunt:** 20 mΩ 1 %, PGA ×16. R21/R22 (10k) take Kelvin taps from both shunt ends, R23/R24 (470k to 3V3M)
+  lift both inputs by 3.3 V × 10k / 480k ≈ **69 mV** (v0.3: 1M, 33 mV) so they stay above 0 V while discharging, C24 100 nF across them.
+  Discharge is visible up to 69 mV / 20 mΩ ≈ **3.4 A** (v0.3: 1.6 A), charge up to ~4.3 A (PGA output at the 2.5 V reference).
   The GND-end tap is a real Kelvin connection: R22 sits on its own net SH_K, joined to the RS1 GND
   pad by the net tie NT1, so load current in the GND pour does not shift the reading.
   SH_P runs straight down from the MCU on F.Cu with SH_N under it on B.Cu (a pair).
   SH_P → PA25 (OPA0 IN+), SH_N → PA18 (OPA1 IN+). Positive = charging.
   The offset is calibrated at zero current. Firmware: keep the OPA1 output pin off (PA16 is I2C1 SDA)
-  and the OPA0 output pin PA22 unused; PA18 is also the BSL pin and sits at ~33 mV at reset (no BSL).
+  and the OPA0 output-pin switch off (PA22 is a GPIO input for INT); PA18 is also the BSL pin and sits at ~69 mV at reset (no BSL).
 - **Dividers:** VBAT 1M/470k (PA24, A3), BM 1M/1M (PA21, A5), both with 100 nF. Highest ADC input is ~1.79 V
   (VBAT at 5.6 V, 2S LTO) and ~1.4 V (BM), so the firmware uses the internal 2.5 V VREF (1.4 V would clip).
 - **CHEM jumper (JP4 → PA23):** read twice, once with the internal pull-up and once with the pull-down.
@@ -103,19 +107,24 @@ JP4 pad 1 (GND, LiFePO4 side) is on the left. v0.4 prints the setting of every j
 | 5 / 6 | PA2 / PA3 | BAL1 / BAL2 | balancing |
 | 8 | PA9 | LED | D6 / D7 |
 | 7 | PA4 | REG_CTL | J7 EN through JP5 2-3 |
-| 10 | PA11 | – | not connected |
-| 18 | PA22 | – | OPA0 output pin, not connected (keep the OPA0 output off the pin) |
+| 10 | PA11 | HEAT | heater gate (Q12) through R45 100 Ω, R46 100k pull-down; GPIO or TIMG4_CCP1 for PWM |
+| 18 | PA22 | INT | BQ25798 ~INT, open drain, R47 10k to 3V3M (GPIO input; it is the OPA0 output pin, keep that output switch off) |
 | 15 / 16 / 2 | PA19 / PA20 / NRST | SWD | TP11 / TP16 / TP17 |
 | 3 / 23 / 4, EP | VDD / VCORE / VSS | | 3V3M, 470 nF, GND (4 vias in the EP, tented from below) |
 
-The pins are grouped by direction so every pin leaves the package without crossing: up (OC_G, LED, J7 EN),
-left (CE, SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, J5 SDA), right (balancing, NRST, J5 SCL).
+The pins are grouped by direction so every pin leaves the package without crossing: up (OC_G, HEAT, LED, J7 EN),
+left (CE, SWD, SH_N, VBM, INT), down (CHEM, VBAT, SH_P, OD, VCORE, J5 SDA), right (balancing, NRST, J5 SCL).
 
 ## Layout
 - Charger part = the xiao-solar-lite layout (shared cluster `../xiao-solar/tools/charger.py`).
 - TPS63070 after the TI layout example: inductor above the IC, SW nodes as short copper, VIN caps left,
   VOUT caps right, PGND and GND joined under the package and taken to two vias.
-- Top row: J6 OUT | J5 I2C | J7 U, ideal diode under J6, jumpers JP5/JP6 under J7.
+- Top row: J6 OUT | J5 I2C | J8 HEAT | J7 U (J7 0.3 mm to the right of v0.3, so J8 fits between J5 and J7 without overlapping courtyards), ideal diode under J6, jumpers JP5/JP6 under J7. H1 (M2) moved under J7 to (27.6, 6.4); TP14 (VREG) to (24.0, 5.8), 3.0 mm from J7 / J8.
+- Heater: Q12 with R45 / R46 right under J8. The SYS feeder to J8 pin 1 is a 0.8 mm F.Cu track straight up from the SYS copper of the TPS63070 (x = 16.75, right of C32, no layer change) and the drain run to J8 pin 2 is 0.8 mm too (designed for ~2.5 A, no layer change either); the Q12 source is solid to the GND pour (two vias next to it). SMD pads are ≥ 3 mm from the J8 pads. The I2C lanes (SDA on B.Cu at x = 15.0 / 15.5, SCL over it with one via) were moved left of the feeder.
+
+## Open items (v0.4)
+- **INT is not routed on the board (bodge wire).** BQ25798 pin 21 sits between the PROG lane and the 0.6 mm BAT lane with C17 / C18 / R1 beside it, and the MCU pin 18 (left, below the SWD / sense / CE lanes) is boxed in by the SWD / sense / I2C lanes; both ends are in closed pockets. Tried: MCU pin swaps (every pin that can reach the BQ pocket needs its signal moved to pin 18, which only a bottom-right signal could use and cannot reach), the A* router with the blocking nets released (INT alone finds a 22 mm zig-zag, but then CE / SH_N / SDA_I find no path), partial and full Freerouting runs (33 unconnected after a full re-route), a longer board (the walls are lanes, not board size). U1.21 therefore ends at TP18 (0.6 mm pad, F.Cu, (11.33, 40.1), net INT_BQ); the MCU side keeps the net INT with R47. A 0.2 mm wire from TP18 to R47.2 (or U4.18) on the first sample joins them; PA22 works as polled input without it. HEAT: routed (U4.10 to R45.1: B.Cu / F.Cu hops, 6 vias, 0.25 mm, around the top of the board), plus one GND via at (5.6, 42.2) that keeps the left F.Cu ground strip connected.
+- Silkscreen: every text is >= 0.8 mm high and every silk line >= 0.15 mm wide. Reference designators of R14, R20, R28, R42, R45, R46, C9, C29, C33, C36, C37, C39, D6, Q12, RS1, TP14, TP18, J7, J8, H1 do not fit at 0.8 mm next to their parts and are hidden (J7 and J8 have the +/- and name labels).
 - MCU band under the charger: MSPM0 turned 180°, its fan-out drawn by hand (`MCU_STUBS` in
   `tools/gen_pcb.py`): SWD row and HT7533 on the left, BM / VBAT dividers and JP4 under the MCU,
   balancing FETs Q8/Q10 on the right next to R37/R41.
@@ -168,7 +177,7 @@ Known layout compromises / DRC leftovers:
   Q3 (HJ8205) CPL rotation +270 (`tools/run.py`, JLC model has its pins in two columns; checked against the
   EasyEDA footprint of C20069150); `run.py export` now really applies the run.py overrides (LED fix was lost on export).
   2026-11-13: U5 (HT7533, turned 270°), Q5, Q9, Q11, C20 (turned parallel to the cut) and D1 moved so that pads and body of U5, Q5, Q9, C20 and D1 stay ≥ 1.5 mm from the left V-cut edge (pads now ≥ 1.53 mm; C21 1.38 mm, right edge R35 / C38 1.28 mm unchanged).
-- v0.4 (2026-11-16): DFM and silkscreen revision of the ordered v0.3, same circuit, same 30 × 77.5 mm, same 3-up panel.
+- v0.4 (2026-11-16): DFM and silkscreen revision of the ordered v0.3, same 30 × 77.5 mm, same 3-up panel; circuit changes (second round, owner decisions): R23 / R24 1M -> 470k (C25790, 0402, preferred; shunt bias 33 -> 69 mV, discharge visible to 3.4 A instead of 1.6 A, charge to ~4.3 A), BQ25798 INT on PA22 (R47 10k pull-up to 3V3M, C25744 basic), battery heater output J8 HEAT (SYS +, Q12 AO3400A C20917 low side, R45 100 Ω, R46 100k, PA11), all silkscreen text >= 0.8 mm / lines >= 0.15 mm. HEAT is routed; INT ends at the test pad TP18 (U1.21) and the MCU side is joined by a wire (see Open items). H1 stays at (27.6, 6.4): between J5 and J7 the J8 header (6.17 mm) and the hole courtyard (5 mm) do not fit in the 5.95 mm gap.
   DFM: every SMD pad >= 3.0 mm from the THT pads of J1, J3, J4, J5, J6, J7 (was 1.52 mm at F1-J4); every SMD
   pad >= 1.5 mm from all four edges (R35, C38, C21 and the JP5 pads were 1.2-1.4 mm); MLCC long sides parallel
   to the edge. Moves: J6, J5, J7 to y = 1.5 (J5 now left of the hole), J1, D3, R6, J3, C21, F1, R35, R33, C36-C38,

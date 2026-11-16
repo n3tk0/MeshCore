@@ -10,14 +10,14 @@ def add_labels(board, pad, mm, pt, version="v0.4"):
         t.SetText(s); t.SetPosition(pt(x, y)); t.SetLayer(layer)
         if layer == pcbnew.B_SilkS:
             t.SetMirrored(True)
-        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(thick or (0.15 if size >= 1.0 else 0.12)))
+        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(thick or 0.15))
         t.SetTextAngleDegrees(angle)
         t.SetHorizJustify({"c": pcbnew.GR_TEXT_H_ALIGN_CENTER, "l": pcbnew.GR_TEXT_H_ALIGN_LEFT, "r": pcbnew.GR_TEXT_H_ALIGN_RIGHT}[h])
         board.Add(t)
         placed[key] = (x, y, s)
         made.append(t)
         return t
-    def line(pts, w=0.12):
+    def line(pts, w=0.15):
         for a, b in zip(pts, pts[1:]):
             s = pcbnew.PCB_SHAPE(board)
             s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetStart(pt(*a)); s.SetEnd(pt(*b))
@@ -28,10 +28,14 @@ def add_labels(board, pad, mm, pt, version="v0.4"):
     text("J6+", "+", j6a[0], 3.5, 1.0); text("J6-", "-", j6b[0], 3.5, 1.0)
     text("J6 name", "SYS", (j6a[0] + j6b[0]) / 2, 4.6)
     for i, s_ in enumerate(("SCL", "SDA", "NC", "GND")):
-        text("J5 " + s_, s_, pad("J5", str(i + 1))[0], 3.4)
+        text("J5 " + s_, s_, pad("J5", str(i + 1))[0], 3.95)
     j7a, j7b = pad("J7", "1"), pad("J7", "2")
     text("J7+", "+", j7a[0], 3.5, 1.0); text("J7-", "-", j7b[0], 3.5, 1.0)
-    text("J7 name", "3V3/5V", (j7a[0] + j7b[0]) / 2, 4.6)
+    text("J7 name", "3V3/5V", (j7a[0] + j7b[0]) / 2 + 0.3, 4.6)
+    # battery heater: + (SYS) / - (FET drain), HEAT under the pads
+    j8a, j8b = pad("J8", "1"), pad("J8", "2")
+    text("J8+", "+", j8a[0], 3.4, 1.0); text("J8-", "-", j8b[0], 3.4, 1.0)
+    text("J8 name", "HEAT", (j8a[0] + j8b[0]) / 2 - 0.4, 4.5)
     # solar input: + / - right of the pads
     j1a, j1b = pad("J1", "1"), pad("J1", "2")
     text("J1+", "+", j1a[0] + 1.9, j1a[1], 1.0); text("J1-", "-", j1b[0] + 1.9, j1b[1], 1.0)
@@ -55,14 +59,23 @@ def add_labels(board, pad, mm, pt, version="v0.4"):
     p6 = pad("JP6", "1"), pad("JP6", "2")
     text("JP6 name", "J7 5V", (p6[0][0] + p6[1][0]) / 2 + 0.2, p6[0][1] + 1.9)
     q = [pad("JP4", str(i)) for i in (1, 2, 3)]
-    text("JP4 LFP", "LFP", q[0][0] - 0.95, q[0][1] + 0.2, 0.6, h="r")
-    text("JP4 LTO", "LTO", q[2][0] + 1.05, q[2][1] - 0.3, 0.6, h="l")
-    text("JP4 name", "CHEM", q[2][0] + 1.7, q[2][1] + 0.65, 0.6, h="l")
+    text("JP4 LFP", "LFP", q[0][0] - 1.0, q[0][1] + 1.4, 0.8, h="r")
+    text("JP4 LTO", "LTO", q[2][0] + 1.05, q[2][1] - 0.3, 0.8, h="l")
+    text("JP4 name", "CHEM", q[2][0] + 1.7, q[2][1] + 0.65, 0.8, h="l")
     r = pad("JP3", "1"), pad("JP3", "2")
     ym = (r[0][1] + r[1][1]) / 2
-    text("JP3 a", "NO SHIP FET", r[0][0] - 1.8, ym + 0.1, 0.5, angle=90)
-    text("JP3 b", "LFP: close", r[0][0] - 2.6, ym + 0.6, 0.5, angle=90)
+    text("JP3 a", "NO SHIP FET", r[0][0] - 2.6, ym + 2.6, 0.8, angle=90)
+    text("JP3 b", "LFP: close", r[0][0] - 3.6, ym + 2.6, 0.8, angle=90)
     return placed, made
+
+def thicken_silk(fp, w=0.15):
+    """Footprint silk graphics and texts at least w mm wide (JLC: 0.15 mm lines)."""
+    for g in fp.GraphicalItems():
+        if g.GetLayer() in (pcbnew.F_SilkS, pcbnew.B_SilkS):
+            if isinstance(g, pcbnew.PCB_SHAPE) and g.GetWidth() < pcbnew.FromMM(w):
+                g.SetWidth(pcbnew.FromMM(w))
+            elif isinstance(g, pcbnew.PCB_TEXT) and g.GetTextThickness() < pcbnew.FromMM(w):
+                g.SetTextThickness(pcbnew.FromMM(w))
 
 def place_refs(board, dfm, texts, **kw):
     """dfm.place_silk moves board texts that are not clear; the labels above stand where the pads
