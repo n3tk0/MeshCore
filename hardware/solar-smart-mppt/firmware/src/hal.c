@@ -32,6 +32,11 @@ static const DL_I2C_ClockConfig i2c_clk = {
   .divideRatio = DL_I2C_CLOCK_DIVIDE_1,
 };
 
+#if !SMPPT_J5_PA10
+static volatile bool int_flag;
+static bool heat_pwm;           // PA11 is on the timer, not a GPIO
+#endif
+
 static void out_pin(uint32_t iomux, uint32_t pin, bool high) {
   DL_GPIO_initDigitalOutput(iomux);
   if (high) DL_GPIO_setPins(GPIOA, pin); else DL_GPIO_clearPins(GPIOA, pin);
@@ -66,6 +71,15 @@ void hal_init(void) {
   out_pin(PIN_BAL2_IOMUX, PIN_BAL2, false);
   DL_GPIO_initDigitalOutput(PIN_LED_IOMUX);
   DL_GPIO_disableOutput(GPIOA, PIN_LED);     // Hi-Z = both LEDs off
+#if !SMPPT_J5_PA10
+  out_pin(PIN_HEAT_IOMUX, PIN_HEAT, false);  // heater off
+  // BQ25798 INT: input, the board has the pull-up; falling edge wakes the main loop
+  DL_GPIO_initDigitalInputFeatures(PIN_INT_IOMUX, DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+      DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+  DL_GPIO_setUpperPinsPolarity(GPIOA, DL_GPIO_PIN_22_EDGE_FALL);
+  DL_GPIO_clearInterruptStatus(GPIOA, PIN_INT);
+  DL_GPIO_enableInterrupt(GPIOA, PIN_INT);
+#endif
 
   // I2C1 controller, 100 kHz from 4 MHz: SCL = clk / (10 * (TPR + 1))
   DL_GPIO_initPeripheralInputFunctionFeatures(PIN_SDA_I_IOMUX, PIN_SDA_I_FUNC,
@@ -88,12 +102,64 @@ void hal_init(void) {
   DL_TimerG_enableInterrupt(TIMG0, DL_TIMERG_INTERRUPT_ZERO_EVENT);
   DL_TimerG_enableClock(TIMG0);
   NVIC_EnableIRQ(TIMG0_INT_IRQn);
+
+#if !SMPPT_J5_PA10
+  // heater PWM: TIMG4 CCP1 on PA11 (edge aligned: high from load to the compare value, so CC = 100 - duty)
+  static const DL_TimerG_PWMConfig pwm_cfg = {
+    .period = HEAT_PWM_STEPS,
+    .pwmMode = DL_TIMER_PWM_MODE_EDGE_ALIGN,
+    .isTimerWithFourCC = false,
+    .startTimer = DL_TIMER_START,
+  };
+  DL_TimerG_reset(TIMG4);
+  DL_TimerG_enablePower(TIMG4);
+  delay_cycles(16);
+  DL_TimerG_setClockConfig(TIMG4, (DL_TimerG_ClockConfig *)&tim_clk);
+  DL_TimerG_initPWMMode(TIMG4, &pwm_cfg);
+  DL_TimerG_setCaptureCompareValue(TIMG4, HEAT_PWM_STEPS, DL_TIMER_CC_1_INDEX);
+  DL_TimerG_setCCPDirection(TIMG4, DL_TIMER_CC1_OUTPUT);
+  DL_TimerG_enableClock(TIMG4);
+  NVIC_EnableIRQ(GPIOA_INT_IRQn);   // same group vector as COMP0 (analog.c)
+#endif
 }
 
 void hal_od_off(bool off) { if (off) DL_GPIO_setPins(GPIOA, PIN_OD); else DL_GPIO_clearPins(GPIOA, PIN_OD); }
 void hal_oc_off(bool off) { if (off) DL_GPIO_clearPins(GPIOA, PIN_OC_G); else DL_GPIO_setPins(GPIOA, PIN_OC_G); }
 void hal_charge(bool on) { if (on) DL_GPIO_clearPins(GPIOA, PIN_CE); else DL_GPIO_setPins(GPIOA, PIN_CE); }
 void hal_j7(bool on) { if (on) DL_GPIO_setPins(GPIOA, PIN_J7); else DL_GPIO_clearPins(GPIOA, PIN_J7); }
+
+#if !SMPPT_J5_PA10
+void hal_heater(uint8_t pct) {
+  if (pct > 100) pct = 100;
+  if (pct == 0 || pct == 100) {
+    if (pct) DL_GPIO_setPins(GPIOA, PIN_HEAT); else DL_GPIO_clearPins(GPIOA, PIN_HEAT);
+    if (heat_pwm) {
+      DL_GPIO_initDigitalOutput(PIN_HEAT_IOMUX);   // back to the GPIO function
+      DL_GPIO_enableOutput(GPIOA, PIN_HEAT);
+      heat_pwm = false;
+    }
+    return;
+  }
+  DL_TimerG_setCaptureCompareValue(TIMG4, HEAT_PWM_STEPS - pct, DL_TIMER_CC_1_INDEX);
+  if (!heat_pwm) {
+    DL_GPIO_initPeripheralOutputFunction(PIN_HEAT_IOMUX, PIN_HEAT_PWM);
+    heat_pwm = true;
+  }
+}
+
+void hal_int_isr(void) {
+  if (DL_GPIO_getEnabledInterruptStatus(GPIOA, PIN_INT)) {
+    DL_GPIO_clearInterruptStatus(GPIOA, PIN_INT);
+    int_flag = true;
+  }
+}
+
+bool hal_int_taken(void) {
+  bool f = int_flag;
+  int_flag = false;
+  return f;
+}
+#endif
 
 void hal_bal(bool b1, bool b2) {
   if (b1 && b2) b1 = b2 = false;   // never both

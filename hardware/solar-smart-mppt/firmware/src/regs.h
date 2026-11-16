@@ -28,6 +28,9 @@
 #define R_BQ_FAULT    0x0E   // REG20 << 8 | REG21
 #define R_CAP_LEARNT  0x0F   // mAh learnt from a full charge down to empty, 0 = not yet
 #define R_CYCLES      0x10   // full-equivalent cycles * 10
+#define R_BAT_TEMP    0x11   // battery NTC (BQ25798 TS) 0.1 degC, signed, 0x8000 = no reading
+#define R_HEAT_PCT    0x12   // heater PWM percent now (0 = off)
+#define R_STATUS2     0x13   // ST2_*
 
 #define R_SET_FIRST   0x20
 #define R_CHEM_SET    0x20   // 0 Li-ion, 1 LiFePO4, 2 LTO 2S, 0xFF = by JP4
@@ -52,7 +55,10 @@
 #define R_INA_SIGN    0x33
 #define R_EXPERT_N    0x34
 #define R_EXPERT0     0x35   // .. 0x3C: (BQ reg << 8) | value
-#define R_SET_LAST    (R_EXPERT0 + EXPERT_MAX - 1)
+#define R_HEAT_ON     0x3D   // 0.1 degC, signed: heater on below this
+#define R_HEAT_OFF    0x3E   // 0.1 degC, signed: heater off above this
+#define R_HEAT_DUTY   0x3F   // PWM percent, 0 = heater disabled
+#define R_SET_LAST    R_HEAT_DUTY
 
 #define R_UNLOCK      0x60   // write 0xA55A, then one protected command within 2 s
 #define R_CMD         0x61
