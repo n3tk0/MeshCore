@@ -144,6 +144,8 @@ With an INA219 in the battery line (the battery on Vin+, the load and the charge
 
 ### xiao-solar-lite charger (BQ25798)
 
+All solar boards (commands and capabilities per board and version): [docs/solar-boards.bg.md](docs/solar-boards.bg.md).
+
 `Xiao_nrf52_solar_lite_repeater` is the XIAO nRF52840 + Wio-SX1262 repeater for the [xiao-solar-lite](./hardware/xiao-solar-lite) board: BQ25798 on I2C (0x6B, SCL D6 / SDA D7), its ~CE on D0 (so D0 is no button here). The firmware turns the charger's watchdog off and keeps its setup (Li-ion 4.20 V or LiFePO4 3.60 V, 1 A, MPPT on again every morning, TS ignored unless an NTC is fitted, ship FET), reads battery and panel voltage and current from the charger's ADC every 10 s for status, telemetry, charge counting and `battsave`, and puts the board into shutdown mode when the battery is empty and there is no sun (only the panel wakes it). `charger` in the CLI ([docs](./docs/cli_commands.md#charger---bq25798-on-xiao-solar-lite-repeater-only-xiao_nrf52_solar_lite_repeater)). The XIAO ESP32-C3 is not supported on this board (D0 is a strapping pin there). Not hardware-tested yet.
 
 ### Repeaters that look after themselves

@@ -186,6 +186,8 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ### Charger - BQ25798 (Repeater Only)
 
+Per board (xiao-solar-lite, xiao-solar v0.4/v0.5, solar-smart-mppt): what each has, the `charger` / `smppt` commands and how the MSPM0 is flashed, in Bulgarian: [solar-boards.bg.md](solar-boards.bg.md).
+
 One command for every board with a BQ25798. With the chip on the node's own I2C bus (xiao-solar-lite, xiao-solar v0.4; env `Xiao_nrf52_solar_lite_repeater`) it talks to the chip. When no BQ25798 is on the bus but a solar-smart-mppt / xiao-solar v0.5 MSPM0 answers on 0x42 (envs with `ENV_INCLUDE_INA260`), the same words go to the MSPM0 and every change is saved in the board's flash (see `smppt` for the rest of its settings).
 
 **Usage:**
