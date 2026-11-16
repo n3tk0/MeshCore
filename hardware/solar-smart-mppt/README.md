@@ -46,7 +46,7 @@ answers in the project thread (phase 2).
 | JP4 CHEM | Li-ion (PA23 follows the internal pull) | LiFePO4 (always 0) | LTO 2S (always 1) |
 | JP5 EN of J7 | off | always on | MCU PA4 switches it |
 | JP6 VSEL of J7 | 3.3 V | closed = 5.0 V | |
-| JP3 | ship FET Q2 in use | closed = no ship FET | |
+| JP3 | ship FET Q2 in use (Li-ion, LTO) | closed = no ship FET: **use it for LiFePO4** (with a ship FET the BQ25798 starts from the battery only above ~3.40 V and stops below ~3.20 V, SLUSDV2C 6.5; without it 2.6 / 2.4 V) | |
 
 **Ordered v0.3 boards: the jumper silkscreen is misleading.** "ON" sits next to JP5 pads 2-3 (that is MCU) and
 "MCU" is pushed to the left; "LFP/LTO" sit next to Q7, ~15 mm from JP4. Go by the pads: JP5 pad 1 is on the left,
