@@ -8,7 +8,7 @@ OBJCOPY = arm-none-eabi-objcopy
 SIZE    = arm-none-eabi-size
 BUILD   = build
 
-SRC = src/main.c src/hal.c src/analog.c src/i2c_target.c src/regs.c src/settings.c src/gauge.c src/bms.c src/bq25798.c
+SRC = src/main.c src/hal.c src/analog.c src/i2c_target.c src/regs.c src/settings.c src/gauge.c src/bms.c src/heater.c src/bq25798.c
 DL  = dl_common.c dl_i2c.c dl_flashctl.c dl_adc12.c dl_comp.c dl_opa.c dl_vref.c dl_timer.c m0p/dl_interrupt.c \
       m0p/sysctl/dl_sysctl_mspm0l11xx_l13xx.c
 STARTUP = $(SDK_ROOT)/source/ti/devices/msp/m0p/startup_system_files/gcc/startup_mspm0l130x_gcc.c
@@ -51,7 +51,7 @@ $(BUILD)/smppt.hex: $(BUILD)/smppt.elf
 $(BUILD)/smppt.bin: $(BUILD)/smppt.elf
 	$(OBJCOPY) -O binary $< $@
 
-HOST_SRC = test/test_main.c src/regs.c src/settings.c src/gauge.c src/bms.c src/bq25798.c
+HOST_SRC = test/test_main.c src/regs.c src/settings.c src/gauge.c src/bms.c src/heater.c src/bq25798.c
 test: $(BUILD)/host_test
 	$(BUILD)/host_test
 

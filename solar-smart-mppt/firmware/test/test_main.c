@@ -7,6 +7,7 @@
 #include "settings.h"
 #include "gauge.h"
 #include "bms.h"
+#include "heater.h"
 #include "bq25798.h"
 
 static int fails, checks;
@@ -364,6 +365,130 @@ static void test_bq(void) {
   CHECK(bq_ship(&b) && (chip[BQ_REG_CTRL2] & 7) == 5);
 }
 
+static void test_heater(void) {
+  settings_t s;
+  settings_defaults(&s, CHEM_LIION);
+  CHECK(s.heat_on_x10 == 20 && s.heat_off_x10 == 50 && s.heat_duty_pct == 100);
+  CHECK(sizeof(settings_t) <= 96);                                  // fits one flash record
+  // settings limits
+  settings_t t = s;
+  t.heat_off_x10 = 20; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);   // off must be above on
+  t = s; t.heat_on_x10 = -300; t.heat_off_x10 = -290; CHECK(settings_check(&t, CHEM_LIION) == ERR_OK);
+  t = s; t.heat_on_x10 = -301; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_off_x10 = 501; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_on_x10 = 401; t.heat_off_x10 = 450; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_duty_pct = 101; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_duty_pct = 0; CHECK(settings_check(&t, CHEM_LIION) == ERR_OK);
+  // another JP4 chemistry keeps the heater settings
+  t = s; t.heat_on_x10 = -50; t.heat_off_x10 = 0; t.heat_duty_pct = 40; t.chem_jumper = CHEM_LIION;
+  uint8_t act;
+  CHECK(settings_resolve_chem(&t, CHEM_LFP, &act) && t.heat_on_x10 == -50 && t.heat_off_x10 == 0 && t.heat_duty_pct == 40);
+
+  // TS -> temperature (10k B3435, 5.1k / 30k): table points and in between
+  int16_t T;
+  CHECK(heater_ts_to_temp(595, &T) && T == 250);
+  CHECK(heater_ts_to_temp(742, &T) && T == 0);
+  CHECK(heater_ts_to_temp(718, &T) && T == 50);
+  CHECK(heater_ts_to_temp(347, &T) && T == 600);
+  CHECK(heater_ts_to_temp(835, &T) && T == -350);
+  CHECK(heater_ts_to_temp(730, &T) && T > 0 && T < 50 && T >= 20 && T <= 30);     // about 2.5 degC
+  CHECK(!heater_ts_to_temp(850, &T) && !heater_ts_to_temp(346, &T) && !heater_ts_to_temp(0, &T));
+  int16_t prev = -10000;
+  for (uint16_t ts = 835; ts >= 347; ts--) {                                   // monotonic: hotter = lower TS
+    CHECK(heater_ts_to_temp(ts, &T) && T >= prev);
+    prev = T;
+  }
+
+  // logic: cold battery, panel there
+  heater_t h; heater_init(&h);
+  heater_in_t in = { .sun = true, .bq_ok = true, .bq_fault = false, .ntc_present = true, .ntc_mode = NTC_AUTO, .ts_x10 = 742 }; // 0 degC
+  heater_out_t o;
+  heater_step(&h, &s, &in, &o);
+  CHECK(o.temp_valid && o.temp_x10 == 0 && o.duty == 100 && h.on);
+  in.ts_x10 = 730;                                   // ~2.5 degC: between on (2.0) and off (5.0): stays on
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  in.ts_x10 = 712;                                   // ~5.6 degC: above heat_off -> off
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !h.on && o.temp_x10 > 50);
+  in.ts_x10 = 726;                                   // ~3.4 degC: between, was off: stays off
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && o.temp_valid);
+  in.ts_x10 = 730;                                   // ~2.5 degC: still not below 2.0
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+  in.ts_x10 = 742;                                   // 0 degC: on again
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+
+  // weak panel: the battery discharges with the heater on -> off for 60 s, then it may try again
+  in.ibat_ma = -150; in.now_ms = 1000;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && h.blocked);
+  in.ibat_ma = 0; in.now_ms = 1000 + HEAT_BLOCK_MS - 1;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+  in.now_ms = 1000 + HEAT_BLOCK_MS;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100 && !h.blocked);
+  in.ibat_ma = -50;                                  // small discharge: stays on
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  in.ibat_ma = 0;
+
+  // no sun: off, but the temperature is still reported; sun back: on again
+  in.sun = false;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && o.temp_valid && o.temp_x10 == 0);
+  in.sun = true;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+
+  // NTC missing, NTC off, no I2C, fault, TS out of range: all off
+  in.ntc_present = false; in.ts_x10 = 855;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid && o.temp_x10 == HEAT_TEMP_NONE);
+  in.ntc_present = true; in.ts_x10 = 742; in.ntc_mode = NTC_OFF;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid);
+  in.ntc_mode = NTC_ON;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  in.bq_ok = false;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid);
+  in.bq_ok = true; in.bq_fault = true;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && o.temp_valid);
+  in.bq_fault = false;
+  in.ts_x10 = 0;                                     // shorted NTC reads hot: off
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid);
+  in.ts_x10 = 742;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  // a fault in between: after it clears the state starts from off (cold = on again at once)
+  in.bq_fault = true; heater_step(&h, &s, &in, &o); CHECK(!h.on);
+  in.bq_fault = false; in.ts_x10 = 726;              // ~3.4 degC, between the limits: stays off after a fault
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+
+  // duty limit and disabled
+  s.heat_duty_pct = 35;
+  in.ts_x10 = 742;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 35);
+  s.heat_duty_pct = 0;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !h.on && o.temp_valid);
+  s.heat_duty_pct = 100; s.heat_on_x10 = -100; s.heat_off_x10 = -50;   // thresholds from the settings
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);                     // 0 degC is above -5
+  in.ts_x10 = 781;                                                       // -10 degC: not below -10 yet
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+  in.ts_x10 = 790;                                                       // about -12 degC
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+
+  // registers: signed thresholds, status2, live values
+  memset(&R, 0, sizeof(R));
+  settings_defaults(&R.set, CHEM_LIION);
+  R.live.chem_jumper = CHEM_LIION; R.live.chem = CHEM_LIION;
+  R.live.bat_temp_x10 = -75; R.live.heat_pct = 60; R.live.status2 = ST2_HEATING;
+  CHECK(rd(ADDR_SMPPT, R_BAT_TEMP) == (uint16_t)-75 && rd(ADDR_SMPPT, R_HEAT_PCT) == 60 && rd(ADDR_SMPPT, R_STATUS2) == 1);
+  CHECK(rd(ADDR_SMPPT, R_HEAT_ON) == 20 && rd(ADDR_SMPPT, R_HEAT_OFF) == 50 && rd(ADDR_SMPPT, R_HEAT_DUTY) == 100);
+  wr(ADDR_SMPPT, R_HEAT_ON, (uint16_t)-30);
+  CHECK(R.result == ERR_OK && R.set.heat_on_x10 == -30 && rd(ADDR_SMPPT, R_HEAT_ON) == (uint16_t)-30);
+  wr(ADDR_SMPPT, R_HEAT_OFF, 10);
+  CHECK(R.result == ERR_OK && R.set.heat_off_x10 == 10);
+  wr(ADDR_SMPPT, R_HEAT_OFF, (uint16_t)-30);
+  CHECK(R.result == ERR_RANGE && R.set.heat_off_x10 == 10);
+  wr(ADDR_SMPPT, R_HEAT_DUTY, 50);
+  CHECK(R.result == ERR_OK && R.set.heat_duty_pct == 50);
+  wr(ADDR_SMPPT, R_HEAT_DUTY, 150);
+  CHECK(R.result == ERR_RANGE && R.set.heat_duty_pct == 50);
+  wr(ADDR_SMPPT, R_SET_LAST + 1, 1);
+  CHECK(R.result == ERR_BAD_REG);
+  CHECK(R_SET_LAST == 0x3F && R_EXPERT0 == 0x35 && R_CYCLES == 0x10 && R_CMD == 0x61);   // old addresses did not move
+}
+
 int main(void) {
   test_settings();
   test_store();
@@ -371,6 +496,7 @@ int main(void) {
   test_gauge();
   test_bms();
   test_bq();
+  test_heater();
   printf("%d checks, %d failed\n", checks, fails);
   return fails ? 1 : 0;
 }

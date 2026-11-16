@@ -5,8 +5,9 @@
 //  VBAT PA24 A3, VBM PA21 A5; ADC reference: internal VREF 2.5 V
 //
 // Discharge pulls SH_P below SH_N. COMP0 trips when OPA0 falls below its DAC, which is set from the
-// latest SH_N reading minus Isc * R * 16. The shunt bias is only ~33 mV, so with the v0.3 parts
-// SH_P reaches 0 V at about 1.6 A of discharge: the trip point and the discharge reading end there.
+// latest SH_N reading minus Isc * R * 16. The shunt bias (R21/R22 10k, R23/R24 to 3V3M) limits the range:
+//  v0.3 (1M): ~33 mV, SH_P reaches 0 V at about 1.6 A of discharge: trip point and reading end there.
+//  v0.4 (470k): ~69 mV, discharge to ~3.4 A. Charge: x16 output reaches VREF (2.5 V) at ~4.3 A.
 #include "hal.h"
 #include "board.h"
 
@@ -103,6 +104,9 @@ void GROUP1_IRQHandler(void) {
     DL_GPIO_setPins(GPIOA, PIN_OD);    // discharge FET off first, then tell the main loop
     short_flag = true;
   }
+#if !SMPPT_J5_PA10
+  hal_int_isr();                       // BQ25798 INT (PA22), after the short circuit
+#endif
 }
 
 bool analog_short_pending(void) { return short_flag; }

@@ -6,11 +6,13 @@
 #include "gauge.h"
 #include "bms.h"
 #include "bq25798.h"
+#include "heater.h"
 #include <string.h>
 
 static bq_t bq;
 static gauge_t gauge;
 static bms_t bms;
+static heater_t heater;
 static settings_t saved;           // what is in flash (for ST_SETTINGS_DIRTY)
 static uint8_t chem_active, chem_jumper;
 static uint16_t last_sh_n_mv;
@@ -51,6 +53,14 @@ static void save_gauge(void) {
   if (moved && store_save(REC_GAUGE, g, sizeof(*g))) gauge_saved = *g;
 }
 
+// heater gate low (v0.3 boards have no heater: the pin is not touched there)
+static void heater_off(void) {
+#if !SMPPT_J5_PA10
+  hal_heater(0);
+#endif
+  heater_init(&heater);
+}
+
 static uint32_t ship_tried_ms;
 static bool ship_tried;
 
@@ -61,6 +71,7 @@ static void go_ship(uint32_t now) {
   ship_tried = true;
   ship_tried_ms = now;
   save_gauge();
+  heater_off();
   hal_charge(false);
   if (bq_ship(&bq)) hal_delay_ms(100);
 }
@@ -99,9 +110,9 @@ static uint16_t run_cmd(uint8_t cmd, const settings_t *s) {
 #if SMPPT_J5_PA10
     case CMD_BSL: return ERR_NOT_NOW;   // the ROM BSL listens on PA0/PA1, not on J5 here: SWD only
 #else
-    case CMD_BSL: save_gauge(); hal_delay_ms(20); hal_enter_bsl(); return ERR_OK;
+    case CMD_BSL: save_gauge(); heater_off(); hal_delay_ms(20); hal_enter_bsl(); return ERR_OK;
 #endif
-    case CMD_REBOOT: save_gauge(); hal_delay_ms(20); hal_reboot(); return ERR_OK;
+    case CMD_REBOOT: save_gauge(); heater_off(); hal_delay_ms(20); hal_reboot(); return ERR_OK;
     default: return ERR_UNKNOWN_CMD;
   }
 }
@@ -115,6 +126,7 @@ int main(void) {
   gauge_init(&gauge, store_load(REC_GAUGE, &gs, sizeof(gs)) ? &gs : 0);
   gauge_saved = gauge.st;
   bms_init(&bms);
+  heater_init(&heater);
   bq_init(&bq, &hal_bq_bus);
   R.ina_config = INA_CONFIG_DEFAULT;
   R.result = ERR_OK;
@@ -140,9 +152,21 @@ int main(void) {
       __disable_irq(); R.result = res; R.pending_cmd = CMD_NONE; __enable_irq();
     }
 
-    if (first || sc || (uint32_t)(now - last_s) >= 1000u) {
+    bool tick = first || sc || (uint32_t)(now - last_s) >= 1000u;
+    bool early = false;
+#if !SMPPT_J5_PA10
+    // BQ25798 INT (v0.4): a light pass at once, at most every 100 ms (BQ, charge state, heater). The ADC,
+    // BMS and gauge keep their one-second step. Without INT edges nothing changes.
+    static bool int_pending;
+    static uint32_t last_int;
+    if (hal_int_taken()) int_pending = true;
+    if (int_pending && !tick && (uint32_t)(now - last_int) >= 100u) early = true;
+    if (tick || early) { int_pending = false; last_int = now; }
+#endif
+
+    if (tick || early) {
       uint32_t dt = first ? 0 : now - last_s;
-      last_s = now;
+      if (tick) last_s = now;
       first = false;
 
       settings_t s;
@@ -150,12 +174,17 @@ int main(void) {
       chem_active = active_chem(&s);
 
       static analog_t a;           // the last good reading stays if the ADC did not finish
-      bool adc_ok = analog_read(&a);
-      last_shunt_uv = a.shunt_uv;
-      last_sh_n_mv = a.sh_n_mv;
-      int32_t ib = (a.shunt_uv - s.zero_uv) * 1000 / (int32_t)s.shunt_uohm;   // mA, + = charging
-      if (ib > 32767) ib = 32767; else if (ib < -32768) ib = -32768;
-      analog_set_short(s.isc_ma, s.shunt_uohm, last_sh_n_mv);
+      static int32_t ib;           // mA, + = charging
+      static bool adc_ok;
+      static bms_out_t o;          // the BMS output holds between its steps
+      if (tick) {
+        adc_ok = analog_read(&a);
+        last_shunt_uv = a.shunt_uv;
+        last_sh_n_mv = a.sh_n_mv;
+        ib = (a.shunt_uv - s.zero_uv) * 1000 / (int32_t)s.shunt_uohm;
+        if (ib > 32767) ib = 32767; else if (ib < -32768) ib = -32768;
+        analog_set_short(s.isc_ma, s.shunt_uohm, last_sh_n_mv);
+      }
 
       bq_refresh(&bq);
       bool sun = bq.ok && bq_u16(&bq, BQ_REG_VBUS) > 3500;
@@ -170,10 +199,24 @@ int main(void) {
         .bq_fault = bq.ok && (bq.r[BQ_REG_FAULT0] | bq.r[BQ_REG_FAULT1]) != 0,
         .bq_i2c_err = bq.errors >= 3,
       };
-      bms_out_t o;
-      bms_step(&bms, &s, chem_active, &in, &o);
-      if (o.empty) gauge_empty(&gauge);
-      if (o.ship) go_ship(now);
+      if (tick) {
+        bms_step(&bms, &s, chem_active, &in, &o);
+        if (o.empty) gauge_empty(&gauge);
+        if (o.ship) go_ship(now);
+      }
+
+      // heater: panel power only, battery NTC through the BQ25798 TS ADC; any doubt = off
+      heater_in_t hi = {
+        .sun = sun, .bq_ok = bq.ok, .bq_fault = in.bq_fault, .ntc_present = bq.ntc_present,
+        .ntc_mode = s.ntc_mode, .ts_x10 = bq_ts_x10(&bq), .ibat_ma = (int16_t)ib, .now_ms = now,
+      };
+      heater_out_t ho;
+      heater_step(&heater, &s, &hi, &ho);
+#if SMPPT_J5_PA10
+      ho.duty = 0;                 // v0.3: no heater, PA11 is J5 SCL
+#else
+      hal_heater(o.ship ? 0 : ho.duty);
+#endif
 
       hal_od_off(o.od_off || analog_short_pending());   // a trip since 'sc' was read stays off
       hal_oc_off(o.oc_off);
@@ -181,14 +224,14 @@ int main(void) {
       hal_bal(o.bal1, o.bal2);
       bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok);   // always: ADC, NTC, limits
       hal_charge(o.charge_ok && applied);   // ~CE low only with our settings in the chip
-      if ((uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
+      if (tick && (uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
 
       uint8_t chg_stat = (uint8_t)(bq.r[BQ_REG_STAT1] >> 5);
       bool done = bq.ok && chg_stat == BQ_CHG_DONE;
       if (done && !was_done) gauge_full(&gauge, &s);   // once, on the way into "charge done"
       if (bq.ok) was_done = done;
-      if (adc_ok) gauge_step(&gauge, &s, (int16_t)ib, dt);
-      if ((uint32_t)(now - last_save) >= 3600000u) { last_save = now; save_gauge(); }
+      if (tick && adc_ok) gauge_step(&gauge, &s, (int16_t)ib, dt);
+      if (tick && (uint32_t)(now - last_save) >= 3600000u) { last_save = now; save_gauge(); }
 
       bool from_v;
       uint16_t soc = gauge_soc(&gauge, &s, chem_active, a.vbat_mv, &from_v);
@@ -198,6 +241,10 @@ int main(void) {
       if (from_v) st |= ST_SOC_FROM_V;
       if (bq.ok && !bq.ntc_present) st |= ST_NTC_MISSING;
       if (memcmp(&s, &saved, sizeof(s)) != 0) st |= ST_SETTINGS_DIRTY;
+      // the sun flag and the BQ flags come from this pass, not from the last BMS step
+      if (sun) st |= ST_SUN; else st &= (uint16_t)~ST_SUN;
+      if (in.bq_fault) st |= ST_BQ_FAULT; else st &= (uint16_t)~ST_BQ_FAULT;
+      if (in.bq_i2c_err) st |= ST_BQ_I2C_ERR; else st &= (uint16_t)~ST_BQ_I2C_ERR;
 
       live_t L = {0};
       L.vpack_mv = a.vbat_mv;
@@ -206,6 +253,13 @@ int main(void) {
       L.vbus_mv = bq_u16(&bq, BQ_REG_VBUS);
       L.ibus_ma = bq_i16(&bq, BQ_REG_IBUS);
       L.temp_x10 = (int16_t)(bq_i16(&bq, BQ_REG_TDIE) * 5);
+      L.bat_temp_x10 = ho.temp_x10;
+      L.heat_pct = ho.duty;
+#if SMPPT_J5_PA10
+      L.status2 = ST2_V03;
+#else
+      L.status2 = ho.duty ? ST2_HEATING : 0;
+#endif
       L.soc_x100 = soc;
       L.remaining_mah = gauge_remaining_mah(&gauge);
       L.status = st;
