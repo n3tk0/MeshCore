@@ -334,9 +334,10 @@ def build():
     text("ON", (jp("JP5", "1") + jp("JP5", "2")) / 2, 24.2, 0.6)
     text("MCU", (jp("JP5", "2") + jp("JP5", "3")) / 2, 24.2, 0.6)
     text("J7 5V", jp("JP6", "1") + 0.65, 24.2, 0.6)
-    y4 = lambda num: pcbnew.ToMM(charger._pad(board, "JP4", num).GetPosition().y) - OY
-    text("LFP", 27.2, (y4("1") + y4("2")) / 2, 0.6)
-    text("LTO", 27.2, (y4("2") + y4("3")) / 2, 0.6)
+    # JP4 lies horizontal (pad 1 GND on the left): labels under the pad pairs, not at a fixed x
+    y4 = pcbnew.ToMM(charger._pad(board, "JP4", "1").GetPosition().y) - OY + 1.4
+    text("LFP", (jp("JP4", "1") + jp("JP4", "2")) / 2, y4, 0.6)
+    text("LTO", (jp("JP4", "2") + jp("JP4", "3")) / 2, y4, 0.6)
     # SWD pads: a 5-pin header (SWDIO, 3V3M, GND, SWCLK, NRST)
     for ref, s_ in (("TP11", "IO"), ("TP16", "CLK"), ("TP12", "3V3"), ("TP13", "GND"), ("TP17", "RST")):
         text(s_, jp(ref, "1"), PLACE[ref][1] + 1.3, 0.6, layer=pcbnew.B_SilkS)
