@@ -48,6 +48,10 @@ answers in the project thread (phase 2).
 | JP6 VSEL of J7 | 3.3 V | closed = 5.0 V | |
 | JP3 | ship FET Q2 in use | closed = no ship FET | |
 
+**Ordered v0.3 boards: the jumper silkscreen is misleading.** "ON" sits next to JP5 pads 2-3 (that is MCU) and
+"MCU" is pushed to the left; "LFP/LTO" sit next to Q7, ~15 mm from JP4. Go by the pads: JP5 pad 1 is on the left,
+JP4 pad 1 (GND, LiFePO4 side) is on the left. The generator places the JP4 labels under the pads now.
+
 ## How it works
 - **Charger:** BQ25798, PROG always 1S (R1 4.7k, 750 kHz). With a 2S PROG the chip would start
   with VSYSMIN ≈ 7 V, too much for the 5.5 V parts on SYS. For LTO the MCU writes VREG 5.6 V
