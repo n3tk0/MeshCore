@@ -14,6 +14,8 @@ public:
   bool zeros_after_shot = false; // a chip that clears the results when a one-shot ends
   uint16_t vbat_now = 0;       // for VSYS_STAT when VSYSMIN is written (0 = not modelled)
   bool ce_on = false;          // the ~CE pin as the MCU drives it
+  int8_t jumper = -1;          // readCeJumper(): -1 no pin, 0 JP2 1-2, 1 JP2 2-3
+  int jumper_reads = 0;
   std::vector<bool> ce_log;
   std::vector<uint8_t> writes; // register numbers written
 
@@ -79,6 +81,7 @@ public:
     return true;
   }
   void setChargeEnable(bool on) override { ce_on = on; ce_log.push_back(on); }
+  int8_t readCeJumper() override { jumper_reads++; return jumper; }
 };
 
 static BQ25798Settings settings(uint8_t chem = BQ_CHEM_LIION) {
@@ -393,8 +396,54 @@ TEST(BQ25798, SettingsValidation) {
   EXPECT_TRUE(BQ25798::valid(s));
 }
 
+TEST(BQ25798, LiFePO4JumperHoldsChargingUntilChemIsSet) {
+  FakeBQ f;
+  f.jumper = 1;                         // JP2 at 2-3
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());                 // no /charger file yet: Li-ion defaults
+  EXPECT_TRUE(bq.chargeHeld());
+  EXPECT_FALSE(f.ce_on);
+  runFor(bq, t, 60000);
+  EXPECT_FALSE(f.ce_on);                // stays off at every poll
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "HELD"), nullptr) << buf;
+
+  bq.begin(t);                          // back after I2C errors: the pin is driven now, not read again
+  EXPECT_EQ(f.jumper_reads, 1);
+
+  bq.apply(settings(BQ_CHEM_LIFEPO4));  // charger chem lifepo4
+  EXPECT_FALSE(bq.chargeHeld());
+  EXPECT_EQ(f.get16(0x01), 360);
+  EXPECT_TRUE(f.ce_on);
+}
+
+TEST(BQ25798, LiIonJumperOrNoPinChargesAsBefore) {
+  for (int8_t j : { (int8_t)0, (int8_t)-1 }) {
+    FakeBQ f;
+    f.jumper = j;
+    BQ25798 bq(f);
+    bq.begin(0);
+    bq.apply(settings());
+    EXPECT_FALSE(bq.chargeHeld());
+    EXPECT_TRUE(f.ce_on);
+  }
+  FakeBQ f;
+  f.jumper = 0;                         // JP2 1-2 with a LiFePO4 cell: charges, but warns
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings(BQ_CHEM_LIFEPO4));
+  EXPECT_TRUE(f.ce_on);
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "JP2 1-2"), nullptr) << buf;
+}
+
 TEST(BQ25798, StatusLineFits) {
   FakeBQ f;
+  f.jumper = 0;                         // the longest line: with the JP2 warning
   BQ25798 bq(f);
   bq.begin(0);
   bq.apply(settings(BQ_CHEM_LIFEPO4));
@@ -405,7 +454,7 @@ TEST(BQ25798, StatusLineFits) {
   bq.loop(10000);
   char buf[160];
   int n = bq.formatStatus(buf, sizeof(buf));
-  EXPECT_LT(n, 160);
+  EXPECT_LT(n, 155);                    // the CLI reply room
   EXPECT_EQ((int)strlen(buf), n);
   EXPECT_NE(strstr(buf, "sun 17.95V 450mA"), nullptr) << buf;
   EXPECT_NE(strstr(buf, "lifepo4 3.60V"), nullptr) << buf;
