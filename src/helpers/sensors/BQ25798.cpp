@@ -8,6 +8,8 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   defaults(_s);
   memset(&_r, 0, sizeof(_r));
   memset(_status, 0, sizeof(_status));
+  _jumper = -1;
+  _jumper_read = false;
   _found = _applied = _ce_on = _adc_pending = _full = _shutdown_sent = _low_timing = _configured = _adc_continuous = false;
   _mppt_reg = 0;
   _prev_state = 0;
@@ -66,6 +68,10 @@ bool BQ25798::begin(uint32_t now) {
   _found = false;
   if (!read(BQ_REG_PART, &part, 1) || ((part >> 3) & 0x07) != 3) return false;   // PN 011b = BQ25798
   _found = true;
+  if (!_jumper_read) {   // the first start only: the pin is not driven yet
+    _jumper = _bus.readCeJumper();
+    _jumper_read = true;
+  }
   // a new start (also when it comes back after I2C errors): nothing carried over from before
   _low_timing = _adc_pending = _shutdown_sent = _adc_continuous = false;
   _r.valid = false;
@@ -108,7 +114,11 @@ void BQ25798::enforce() {
       if (read(BQ_REG_VREG, b, 2)) vreg = ((b[0] << 8) | b[1]) & 0x7FF;
     }
   }
-  if (vreg == want_vreg && !_ce_on) setCE(true);
+  if (chargeHeld()) {
+    if (_ce_on) setCE(false);
+  } else if (vreg == want_vreg && !_ce_on) {
+    setCE(true);
+  }
 
   // VSYSMIN under a LiFePO4 cell's plateau: MPPT does not run while VBAT < VSYSMIN (power-on: 3.5 V)
   uint8_t want_sys = (uint8_t)((vsysminFor(_s.chem) - 2500) / 250);
@@ -280,13 +290,14 @@ int BQ25798::formatStatus(char* buf, int len) const {
   } else {
     n = addf(buf, len, n, "%s, batt ?", vbusPresent() ? "sun" : "no sun");
   }
-  n = addf(buf, len, n, " %s", _ce_on ? stateName(chargeState()) : "CE-off");
+  n = addf(buf, len, n, " %s", _ce_on ? stateName(chargeState()) : chargeHeld() ? "HELD: JP2 lifepo4" : "CE-off");
   if (_s.vindpm_mv) n = addf(buf, len, n, ", vin %u.%uV", _s.vindpm_mv / 1000, _s.vindpm_mv % 1000 / 100);
   else n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
   if (_r.valid) n = addf(buf, len, n, ", die %dC", _r.tdie_dc / 10);
   n = addf(buf, len, n, ", %s %u.%02uV %umA", _s.chem == BQ_CHEM_LIFEPO4 ? "lifepo4" : "liion",
            vregFor(_s.chem) / 1000, vregFor(_s.chem) % 1000 / 10, _s.ichg_ma);
   n = addf(buf, len, n, ", ntc %s, shipfet %s, cut %umV", _s.ntc ? "on" : "off", _s.shipfet ? "on" : "off", _s.cutoff_mv);
+  if (_jumper == 0 && _s.chem == BQ_CHEM_LIFEPO4) n = addf(buf, len, n, ", JP2 1-2 (4.2V at boot)!");
   if (_status[5] || (_status[6] & 0xF4)) n = addf(buf, len, n, ", FAULT %02X/%02X", _status[5], _status[6]);
   if (_reconfigs) n = addf(buf, len, n, ", reset x%u", _reconfigs);
   return n;

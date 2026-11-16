@@ -150,6 +150,15 @@ public:
     (void)on;
   #endif
   }
+  int8_t readCeJumper() override {
+  #ifdef BQ25798_PIN_CE
+    pinMode(BQ25798_PIN_CE, INPUT);   // no pull: JP2 pulls it through 100k
+    delayMicroseconds(100);
+    return digitalRead(BQ25798_PIN_CE) == HIGH ? 1 : 0;
+  #else
+    return -1;
+  #endif
+  }
 };
 static WireBQ25798Bus bq_bus;
 static BQ25798 bq_charger(bq_bus);

@@ -14,6 +14,9 @@
 //     will not take it while the battery is under VSYSMIN;
 //   - ~CE (charge enable, active low) stays high until VREG reads back right, so a LiFePO4 cell is
 //     never charged towards 4.2 V (JP2 at 2-3 holds CE high until then on the board);
+//   - the CE jumper is read once at the first start, before the pin is driven: JP2 at 2-3 (LiFePO4)
+//     with the chemistry still Li-ion (the default, or a mistake) keeps charging off until
+//     `charger chem lifepo4`;
 //   - one-shot ADC every 10 s: battery and panel voltage / current, SYS, die temperature (continuous
 //     instead, should the results ever read as zeros after a one-shot);
 //   - an empty battery with no sun for 5 min: shutdown mode (the ship FET cuts the battery; only
@@ -74,6 +77,9 @@ public:
   virtual bool readRegs(uint8_t reg, uint8_t* buf, uint8_t n) = 0;
   virtual bool writeRegs(uint8_t reg, const uint8_t* buf, uint8_t n) = 0;
   virtual void setChargeEnable(bool on) { (void)on; }   // the ~CE pin (low = charge), if the MCU has it
+  // the ~CE jumper as the pin reads before the MCU drives it: 1 = pulled high (LiFePO4, JP2 2-3),
+  // 0 = pulled low (Li-ion, JP2 1-2), -1 = no pin / unknown
+  virtual int8_t readCeJumper() { return -1; }
   virtual ~BQ25798Bus() { }
 };
 
@@ -104,6 +110,8 @@ class BQ25798 {
   uint8_t  _status[7];   // 0x1B..0x21
   uint8_t  _mppt_reg;    // REG15 as last read
   uint8_t  _prev_state;  // charge state at the last poll
+  int8_t   _jumper;      // readCeJumper() at the first begin(); -1 = unknown
+  bool     _jumper_read; // ... only once: after that the MCU drives the pin
   uint32_t _next_poll, _adc_at, _low_since;
   uint16_t _reconfigs;   // times the setup was found back at reset values
   uint32_t _errors;      // failed register transfers
@@ -146,6 +154,9 @@ public:
   bool inVindpm() const { return _status[0] & 0x40; }
   uint8_t chargeState() const { return _status[1] >> 5; }
   bool chargingEnabled() const { return _ce_on; }
+  int8_t ceJumper() const { return _jumper; }
+  // JP2 says LiFePO4 but the settings say Li-ion: no charging until `charger chem lifepo4`
+  bool chargeHeld() const { return _jumper == 1 && _s.chem != BQ_CHEM_LIFEPO4; }
   bool adcContinuous() const { return _adc_continuous; }
   bool mpptOn() const;
   uint8_t faults0() const { return _status[5]; }
