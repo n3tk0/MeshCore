@@ -27,7 +27,7 @@ base._libcache.clear()
 base.PROJECT = "solar-smart-mppt"
 base.ROOT_UUID = "6b1f3c1e-6a5e-4b7e-9d65-5f0b3a1d0003"
 base.TITLE = "solar-smart-mppt: MPPT charger + BMS 1S/2S + coulomb counter"
-base.REV = "0.3"
+base.REV = "0.4"
 base.POWER[:] = ["GND", "3V3M"]
 P, R, C, T, TP, RAIL, BLOCK = base.P, base.R, base.C, base.T, base.TP, base.RAIL, base.BLOCK
 parts, ROOT_UUID = base.parts, base.ROOT_UUID
@@ -337,7 +337,7 @@ for i, (net, fx, fy) in enumerate([
         ("GND", 202.0, 212.54), ("3V3E", 575.0, 65.08)]):
     P("#FLG%02d" % (i + 1), "power:PWR_FLAG", "PWR_FLAG", fx, fy, {"1": net})
 
-for i in range(2):
+for i in range(3):
     P("H%d" % (i + 1), "Mechanical:MountingHole", "M2", 575 + i * 15, 90, {},
       "MountingHole:MountingHole_2.2mm_M2", blk=-1)
 

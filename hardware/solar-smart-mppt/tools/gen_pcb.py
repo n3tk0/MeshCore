@@ -24,6 +24,7 @@ if SHARED not in sys.path:
 _spec.loader.exec_module(base)
 import charger  # noqa: E402
 import dfm  # noqa: E402
+import labels  # noqa: E402
 mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "solar-smart-mppt"
@@ -61,7 +62,7 @@ PLACE.update({k: tps(x, y) + (r,) for k, (x, y, r) in _TPS.items()})
 PLACE.update({
     # one header row on top: J6 SYS OUT (+ -), M2 hole, J5 host I2C (SCL SDA NC GND), J7 U (+ -):
     # the regulated and the unregulated output on the two sides of the I2C header
-    "J6": (2.4, 3.0, 90), "H1": (9.3, 3.0, 0), "J5": (13.7, 3.0, 90), "J7": (25.3, 3.0, 90),
+    "J6": (1.9, 1.5, 90), "J5": (8.1, 1.5, 90), "H1": (20.5, 3.0, 0), "J7": (25.3, 1.5, 90),
     # Q5 / Q9 / Q11 / C20 / D1 / U5 (HT7533, rotated 270) keep their pads >= 1.5 mm from the left V-cut edge
     # ideal diode under J6: Q5 source straight up to J6 pin 1, its PNP mirror Q9 + Q11 (two MMBT3906 side by side) + R43/R44 under it
     # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
@@ -99,7 +100,16 @@ PLACE.update({
     "R37": (24.20, 40.2 + DY, 90), "R41": (24.20, 45.0 + DY, 90), "Q7": (25.20, 49.4 + DB, 0), "Q10": (26.2, 52.7, 0),
     "R38": (24.30, 52.6 + DB, 90), "R39": (23.2, 51.4, 0), "Q8": (25.4, 49.1, 180), "R40": (28.0, 49.1, 270),
     # J4 BATT+ BM BATT- along the bottom edge (pin 1 left), its fuse F1 next to BATT+, M2 hole
-    "J4": (22.4, 62.0 + DB, 90), "F1": (18.0, 62.0 + DB, 0), "H2": (4.0, 61.5 + DB, 0),
+    "J4": (22.4, 62.0 + DB, 90), "F1": (16.5, 75.0, 0), "H2": (4.0, 61.5 + DB, 0),
+})
+# v0.4 DFM: every SMD pad >= 3.0 mm from the THT pads of J1 J3 J4 J5 J6 J7 and >= 1.5 mm from all four edges
+# (V-cut of the panel); H1 between J5 and J7, a third M2 hole H3 under JP5 / JP6
+PLACE.update({
+    "H3": (27.0, 30.0, 0), "J1": (1.25, 22.5, 0), "D3": (6.2, 23.5, -90), "R6": (9.1, 21.8, 0),
+    "J3": (2.1, 43.5, 0), "C21": (2.25, 56.3, 90),
+    "R35": (27.28, 18.0, 0), "R33": (24.3, 18.0, 0),
+    "C36": (23.84, 11.3, 90), "C37": (25.81, 11.3, 90), "C38": (27.78, 11.3, 90),
+    "JP5": (26.68, 22.4, 0), "JP6": (22.6, 22.4, 0),
 })
 # test points on the bottom side (flipped footprints): the SWD row
 B_SIDE = {"TP11", "TP12", "TP13", "TP16", "TP17"}
@@ -306,8 +316,6 @@ def build():
             for dx, dy in ((-r, -r), (r, -r), (r, r), (-r, r)):
                 ol.Append(c.x + dx, c.y + dy)
             board.Add(ka)
-    base.plus_marks(board, ["J1", "J4"], dx=0.0, dy=-1.6)
-    base.plus_marks(board, ["J6", "J7"], dx=0.0, dy=1.9)
     charger.pin1_dot(board, CHARGER_FRAME)
     def text(s, x, y, size=0.8, angle=0, layer=pcbnew.F_SilkS):
         t = pcbnew.PCB_TEXT(board)
@@ -317,33 +325,23 @@ def build():
         t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.12))
         t.SetTextAngleDegrees(angle)
         board.Add(t)
-    # one label per pin, next to the pin
-    for ref, names, y in (("J4", ("BAT+", "BM", "BAT-"), H - 0.9),
-                          ("J6", ("SYS",), 0.9), ("J7", ("3V3/5V",), 0.9), ("J5", ("SCL", "SDA", "NC", "GND"), 0.9)):
-        p1 = charger._pad(board, ref, "1").GetPosition()
-        x1 = pcbnew.ToMM(p1.x) - OX
-        if len(names) == 1:
-            text(names[0], x1 + 1.27, y)
-        else:
-            for i, s_ in enumerate(names):
-                text(s_, x1 + 2.54 * i, y, 0.7)
-    text("NTC", 2.1, 37.3 + DY)
-    text("SOLAR", 1.85, 26.6 + DY, 0.6)
-    # jumper settings next to the pads (bridge = solder blob)
+    # swd labels (bottom side)
     jp = lambda ref, num: pcbnew.ToMM(charger._pad(board, ref, num).GetPosition().x) - OX
-    text("ON", (jp("JP5", "1") + jp("JP5", "2")) / 2, 24.2, 0.6)
-    text("MCU", (jp("JP5", "2") + jp("JP5", "3")) / 2, 24.2, 0.6)
-    text("J7 5V", jp("JP6", "1") + 0.65, 24.2, 0.6)
-    # JP4 lies horizontal (pad 1 GND on the left): labels under the pad pairs, not at a fixed x
-    y4 = pcbnew.ToMM(charger._pad(board, "JP4", "1").GetPosition().y) - OY + 1.4
-    text("LFP", (jp("JP4", "1") + jp("JP4", "2")) / 2, y4, 0.6)
-    text("LTO", (jp("JP4", "2") + jp("JP4", "3")) / 2, y4, 0.6)
-    # SWD pads: a 5-pin header (SWDIO, 3V3M, GND, SWCLK, NRST)
     for ref, s_ in (("TP11", "IO"), ("TP16", "CLK"), ("TP12", "3V3"), ("TP13", "GND"), ("TP17", "RST")):
         text(s_, jp(ref, "1"), PLACE[ref][1] + 1.3, 0.6, layer=pcbnew.B_SilkS)
     text("SWD", 7.28, PLACE["TP11"][1] - 1.3, 0.6, layer=pcbnew.B_SilkS)
-    text("solar-smart-mppt v0.3", 26.0, 28.0 + DY, 0.7, 90)
-    hidden = dfm.place_silk(board)
+    # labels next to the pads (+/- of the power connectors, jumper settings); dfm.place_silk keeps them in place
+    def padxy(ref, num):
+        p = charger._pad(board, ref, num).GetPosition()
+        return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
+    placed, made = labels.add_labels(board, padxy, mm, pt)
+    t = pcbnew.PCB_TEXT(board)
+    t.SetText("solar-smart-mppt v0.4"); t.SetPosition(pt(*labels.VERSION_AT)); t.SetLayer(pcbnew.F_SilkS)
+    t.SetTextSize(pcbnew.VECTOR2I(mm(0.7), mm(0.7))); t.SetTextThickness(mm(0.12)); t.SetTextAngleDegrees(90)
+    board.Add(t); made.append(t)
+    for r_ in ("JP3", "JP4", "JP5", "JP6"):
+        board.FindFootprintByReference(r_).Reference().SetVisible(False)
+    hidden = labels.place_refs(board, dfm, made)
     print("silk: hidden refs", " ".join(hidden) or "none")
     return board
 

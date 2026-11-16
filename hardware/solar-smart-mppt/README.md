@@ -16,7 +16,7 @@ XIAO stack is gone and a **TI MSPM0L1306** supervisor (VQFN-24, 64 KB flash) run
 
 30 × 77.5 mm (three across a 100 mm JLC panel), 2 layers, all SMD parts on the top side (JLC assembly), headers by hand.
 
-Status v0.3 (2026-11-04): schematic, placement, routing, Gerber, JLC BOM/CPL, 3-up panel. ERC: no errors,
+Status v0.4 (2026-11-16, v0.3 is ordered, v0.4 is the DFM and silkscreen revision of it, same circuit): schematic, placement, routing, Gerber, JLC BOM/CPL, 3-up panel. ERC: no errors,
 DRC: 0 unconnected, no clearance or short errors (only cosmetic items left, see Layout).
 **Not built or tested.** Firmware for the MSPM0 (TI MSPM0 SDK, C) is a separate task.
 
@@ -48,9 +48,9 @@ answers in the project thread (phase 2).
 | JP6 VSEL of J7 | 3.3 V | closed = 5.0 V | |
 | JP3 | ship FET Q2 in use (Li-ion, LTO) | closed = no ship FET: **use it for LiFePO4** (with a ship FET the BQ25798 starts from the battery only above ~3.40 V and stops below ~3.20 V, SLUSDV2C 6.5; without it 2.6 / 2.4 V) | |
 
-**Ordered v0.3 boards: the jumper silkscreen is misleading.** "ON" sits next to JP5 pads 2-3 (that is MCU) and
+**Ordered v0.3 boards: the jumper silkscreen is misleading (fixed in v0.4).** "ON" sits next to JP5 pads 2-3 (that is MCU) and
 "MCU" is pushed to the left; "LFP/LTO" sit next to Q7, ~15 mm from JP4. Go by the pads: JP5 pad 1 is on the left,
-JP4 pad 1 (GND, LiFePO4 side) is on the left. The generator places the JP4 labels under the pads now.
+JP4 pad 1 (GND, LiFePO4 side) is on the left. v0.4 prints the setting of every jumper next to its pads (`tools/labels.py`; the positions are checked against the pad coordinates by script).
 
 ## How it works
 - **Charger:** BQ25798, PROG always 1S (R1 4.7k, 750 kHz). With a 2S PROG the chip would start
@@ -138,7 +138,7 @@ left (CE, SWD, SH_N, VBM), down (CHEM, VBAT, SH_P, OD, VCORE, J5 SDA), right (ba
 - `tools/run.py <tool>` runs a shared tool from `../xiao-solar/tools` on this board:
   `FREEROUTING_JAR=… python3 tools/run.py route`, `… finish`, `python3 tools/run.py export`.
 - `panel/`: 3-up panel (`KIKIT=… tools/run.py panel 3`, KiKit 1.8.1 for KiCad 10), 90.2 × 87.7 mm, V-cuts, 5 mm rails.
-- `production/`: Gerber zip, `bom-jlc.csv`, `cpl-jlc.csv`, `bom-hand.csv`, schematic PDF, board image, DRC report.
+- `production/`: Gerber zip, `bom-jlc.csv`, `cpl-jlc.csv`, `bom-hand.csv`, schematic PDF, board image (`solar-smart-mppt-v0.4.png`), DRC report.
 
 KiCad 10 (kicad-cli + pcbnew Python).
 
@@ -168,3 +168,12 @@ Known layout compromises / DRC leftovers:
   Q3 (HJ8205) CPL rotation +270 (`tools/run.py`, JLC model has its pins in two columns; checked against the
   EasyEDA footprint of C20069150); `run.py export` now really applies the run.py overrides (LED fix was lost on export).
   2026-11-13: U5 (HT7533, turned 270°), Q5, Q9, Q11, C20 (turned parallel to the cut) and D1 moved so that pads and body of U5, Q5, Q9, C20 and D1 stay ≥ 1.5 mm from the left V-cut edge (pads now ≥ 1.53 mm; C21 1.38 mm, right edge R35 / C38 1.28 mm unchanged).
+- v0.4 (2026-11-16): DFM and silkscreen revision of the ordered v0.3, same circuit, same 30 × 77.5 mm, same 3-up panel.
+  DFM: every SMD pad >= 3.0 mm from the THT pads of J1, J3, J4, J5, J6, J7 (was 1.52 mm at F1-J4); every SMD
+  pad >= 1.5 mm from all four edges (R35, C38, C21 and the JP5 pads were 1.2-1.4 mm); MLCC long sides parallel
+  to the edge. Moves: J6, J5, J7 to y = 1.5 (J5 now left of the hole), J1, D3, R6, J3, C21, F1, R35, R33, C36-C38,
+  JP5, JP6; the touched nets were re-routed.
+  Mounting holes: H1 moved between J5 and J7 (20.5, 3.0); new third M2 hole H3 under JP5 / JP6 (27.0, 30.0).
+  Silkscreen: + / - at every pad of J1, J4, J6, J7; JP4 "CHEM" with LFP / LTO, JP5 "J7 EN" with ON (pads 1-2) and
+  MCU (pads 2-3), JP6 "J7 5V", JP3 "NO SHIP FET" / "LFP: close", each next to its pads (jumper reference
+  designators hidden); "v0.4" on the board and in the schematic title block.
