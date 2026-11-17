@@ -52,8 +52,15 @@ v0.5 (2026-11-13):
   BMS) 0.9 mm, the connector row to 3 mm from the bottom edge, R2 / R3 1.0 mm to the right and JP3 turned
   by 180 degrees.
 - C9 is the basic C307331 (100n/50V 0402).
-- Hand patches on the routed board that `gen_pcb.py` does not reproduce: two locked stubs shortened to remove
-  `track_dangling` warnings (REGN on B.Cu to end at 9.49, 32.3 and SCL on F.Cu to end at 7.11, 35.0).
+- **Connector row (bottom edge, y = 62.0 mm):** J1 SOLAR on the left (pins at x = 2.10 and 4.64 mm), J5 I2C in the
+  middle (SCL SDA 3V3 GND at x = 8.69, 11.23, 13.77, 16.31 mm) and J4 BAT on the right (BATT+ at x = 20.36,
+  BATT- at x = 22.90 mm, 2.10 mm from the right edge). The groups are about 4 mm apart (centre to centre,
+  2.35 mm of free space between the pads), so a JST-style connector fits in place of each header; the 2.54 mm
+  header footprints and their vertical orientation are unchanged.
+- Hand patches on the routed board that `gen_pcb.py` does not reproduce (re-apply them after `route` / `finish`):
+  the locked REGN stub on B.Cu (10.55, 32.3) to (8.5, 32.3) is cut to end at 9.12 and split at 9.43 so that
+  it joins the router's tracks without a `track_dangling`, and BATT- got a second 0.8 / 0.4 via at
+  (13.98, 54.5) with a locked 0.6 mm B.Cu link to the via at (14.34, 53.73) (two vias per layer change).
   Re-running `route` / `finish` can also leave one GND island or open pad that needs a via (see the
   gndfix / patch_route docs).
 

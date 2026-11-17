@@ -65,7 +65,7 @@ PLACE.update({
     "U2": (16.0, 50.8 + DB, 0), "Q3": (16.0, 55.0 + DB, 0),
     "R9": (11.5, 50.2 + DB, 0), "C19": (11.5, 52.4 + DB, 0), "R10": (11.5, 54.6 + DB, 180),
     # connectors along the bottom edge (pin 1 left)
-    "J1": (2.1, 59.0 + DB + DJ, 90), "J5": (7.4, 59.0 + DB + DJ, 90), "J4": (17.9, 59.0 + DB + DJ, 90),
+    "J1": (2.1, 59.0 + DB + DJ, 90), "J5": (8.69, 59.0 + DB + DJ, 90), "J4": (20.36, 59.0 + DB + DJ, 90),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
