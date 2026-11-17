@@ -195,7 +195,7 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 - `charger chem liion|lifepo4` (VREG 4.20 V / 3.60 V)
 - `charger ichg <mA>` (charge current, 100..2000; default 1000)
 - `charger vin mppt|<mV>` (MPPT, the default, or a fixed input voltage limit 3600..22000)
-- `charger ntc on|off` (an NTC on J3; off = `TS_IGNORE`, the default). With `on` the cell temperature is read from the NTC (`cell 23C` in the reply, temperature in the battery telemetry channel) while the panel gives power; on battery alone it is not measured (the TS channel would keep REGN on and stop the ADC under 3.2 V). `NTC open?`: `ntc on` but no NTC found on J3.
+- `charger ntc on|off` (an NTC on J3; off = `TS_IGNORE`, the default). With `on` the cell temperature is read from the NTC (`cell 23C` in the reply, temperature in the battery telemetry channel) every 10 s while the panel gives power; on battery alone once every 10 min and only above 3.3 V (the TS channel keeps REGN on and stops the ADC under 3.2 V; a conversion that hangs is started again without TS). A value is shown up to 15 min after it was measured. `NTC open?`: `ntc on` but no NTC found on J3.
 - `charger shipfet on|off` (Q2 fitted, the default; `off` when JP3 is closed)
 - `charger cutoff <mV>|off` (Li-ion 2900..3800, default 3300; LiFePO4 2900..3300, default 3000)
 - `charger ship` (cut the battery off for transport or storage)

@@ -85,6 +85,9 @@
 #ifndef BQ_NTC_BETA
 #define BQ_NTC_BETA            3435.0f
 #endif
+#define BQ_TS_NIGHT_MS         600000UL   // on battery alone: one conversion with TS this often ...
+#define BQ_TS_NIGHT_MIN_MV     3300       // ... and only above this (with TS on the ADC stops under 3.2 V)
+#define BQ_TCELL_KEEP_MS       900000UL   // a cell temperature is shown this long after its conversion
 #define BQ_TCELL_NONE          INT16_MIN  // no reading (no NTC setting, no sun, open or shorted NTC)
 #define BQ_ADC_DIS1_VAL        0xF0   // D+, D-, VAC2, VAC1 off
 
@@ -116,7 +119,7 @@ struct BQ25798Reading {
   int16_t  ibat_ma;     // + = charging the battery, - = the battery feeds the node
   int16_t  ibus_ma;     // from the panel
   int16_t  tdie_dc;     // die temperature, 0.1 °C
-  uint16_t ts_pm;       // TS in 0.1 % of REGN, from the last conversion that had TS on (0 = none)
+  uint16_t ts_pm;       // TS in 0.1 % of REGN, from a conversion with TS on in the last 15 min (0 = none)
   int16_t  tcell_dc;    // cell temperature from the NTC, 0.1 °C, or BQ_TCELL_NONE
 };
 
@@ -125,6 +128,8 @@ class BQ25798 {
   BQ25798Settings _s;
   BQ25798Reading _r;
   bool     _ts_in_shot;  // the running conversion has the TS channel on
+  bool     _ts_night_any;
+  uint32_t _ts_night_at, _tcell_at;   // the last night conversion with TS, the last TS result
   bool     _found, _applied, _ce_on, _adc_pending, _adc_continuous, _full, _shutdown_sent, _low_timing, _configured;
   uint8_t  _status[7];   // 0x1B..0x21
   uint8_t  _mppt_reg;    // REG15 as last read
