@@ -1,5 +1,6 @@
 #include "BQ25798.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,6 +18,8 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _reconfigs = 0;
   _errors = 0;
   _polls = _adc_count = 0;
+  _ts_in_shot = false;
+  _r.tcell_dc = BQ_TCELL_NONE;
 }
 
 void BQ25798::defaults(BQ25798Settings& s) {
@@ -177,6 +180,13 @@ bool BQ25798::readAdc(uint32_t now) {
   _r.vbat_mv = (uint16_t)((d[10] << 8) | d[11]);
   _r.vsys_mv = vsys;
   _r.tdie_dc = (int16_t)((d[16] << 8) | d[17]) * 5;   // 0.5 °C a step
+  if (_ts_in_shot) {
+    _r.ts_pm = (uint16_t)((((uint32_t)((d[14] << 8) | d[15])) * 1000 + 512) / 1024);   // 0.0976563 % a step
+    _r.tcell_dc = ntcTemp(_r.ts_pm);
+  } else {
+    _r.ts_pm = 0;
+    _r.tcell_dc = BQ_TCELL_NONE;   // no sun (or no NTC): not measured, not an old value
+  }
   _r.valid = true;
   _adc_count++;
   _adc_at = now;
@@ -188,12 +198,21 @@ bool BQ25798::readAdc(uint32_t now) {
 void BQ25798::adc(uint32_t now) {
   uint8_t a[3];
   if (!read(BQ_REG_ADC_CTRL, a, sizeof(a))) return;
-  if (a[1] != BQ_ADC_DIS0_VAL) write8(BQ_REG_ADC_DIS0, BQ_ADC_DIS0_VAL);
+  // TS (the NTC) only with sun: on battery alone it keeps REGN on and stops the ADC under 3.2 V
+  uint8_t want_dis0 = _s.ntc && vbusPresent() ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
+  if (a[1] != want_dis0 && !write8(BQ_REG_ADC_DIS0, want_dis0)) want_dis0 = a[1];
   if (a[2] != BQ_ADC_DIS1_VAL) write8(BQ_REG_ADC_DIS1, BQ_ADC_DIS1_VAL);
   if (_adc_continuous) {
+    _ts_in_shot = (a[1] & 0x04) == 0 && (want_dis0 & 0x04) == 0;   // on since the last look too
     if ((a[0] & 0xC0) == 0x80) readAdc(now);           // running: the latest values
     else write8(BQ_REG_ADC_CTRL, BQ_ADC_CONTINUOUS);   // off again (a reset): back on
     _adc_pending = true;                                // stale counts from the last good result
+    return;
+  }
+  if ((a[0] & 0x80) && _ts_in_shot && (want_dis0 & 0x04)) {
+    // the sun went during a conversion with TS on: on battery under 3.2 V it would never end, so start
+    // again without TS (the stale timer keeps counting from the old start)
+    if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) _ts_in_shot = false;
     return;
   }
   if (a[0] & 0x80) return;   // still converting (or postponed: battery under 2.9 V, no sun)
@@ -204,6 +223,7 @@ void BQ25798::adc(uint32_t now) {
   }
   _adc_pending = false;
   if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) {
+    _ts_in_shot = (want_dis0 & 0x04) == 0;
     _adc_pending = true;
     if (!_r.valid) _adc_at = now;   // stale is counted from the first start
   }
@@ -279,6 +299,18 @@ static int addf(char* buf, int len, int n, const char* fmt, ...) {
   return n >= len ? len - 1 : n;
 }
 
+int16_t BQ25798::ntcTemp(uint16_t ts_pm) {
+  if (ts_pm > 840 || ts_pm < 50) return BQ_TCELL_NONE;
+  float p = ts_pm / 1000.0f;
+  float low = BQ_NTC_R_TOP * p / (1.0f - p);            // R_BOTTOM || NTC
+  if (low >= BQ_NTC_R_BOTTOM) return BQ_TCELL_NONE;
+  float ntc = 1.0f / (1.0f / low - 1.0f / BQ_NTC_R_BOTTOM);
+  float k = 1.0f / (1.0f / 298.15f + logf(ntc / BQ_NTC_R25) / BQ_NTC_BETA);
+  float c = (k - 273.15f) * 10.0f;
+  if (c < -400 || c > 1000) return BQ_TCELL_NONE;
+  return (int16_t)(c < 0 ? c - 0.5f : c + 0.5f);
+}
+
 int BQ25798::formatStatus(char* buf, int len) const {
   int n = 0;
   buf[0] = 0;
@@ -294,10 +326,12 @@ int BQ25798::formatStatus(char* buf, int len) const {
   if (_s.vindpm_mv) n = addf(buf, len, n, ", vin %u.%uV", _s.vindpm_mv / 1000, _s.vindpm_mv % 1000 / 100);
   else n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
   if (_r.valid) n = addf(buf, len, n, ", die %dC", _r.tdie_dc / 10);
+  if (_r.valid && _r.tcell_dc != BQ_TCELL_NONE) n = addf(buf, len, n, ", cell %dC", _r.tcell_dc / 10);
+  else if (_r.valid && ntcOpen()) n = addf(buf, len, n, ", NTC open?");
   n = addf(buf, len, n, ", %s %u.%02uV %umA", _s.chem == BQ_CHEM_LIFEPO4 ? "lifepo4" : "liion",
            vregFor(_s.chem) / 1000, vregFor(_s.chem) % 1000 / 10, _s.ichg_ma);
   n = addf(buf, len, n, ", ntc %s, shipfet %s, cut %umV", _s.ntc ? "on" : "off", _s.shipfet ? "on" : "off", _s.cutoff_mv);
-  if (_jumper == 0 && _s.chem == BQ_CHEM_LIFEPO4) n = addf(buf, len, n, ", JP2 1-2 (4.2V at boot)!");
+  if (_jumper == 0 && _s.chem == BQ_CHEM_LIFEPO4) n = addf(buf, len, n, ", JP2 1-2!");
   if (_status[5] || (_status[6] & 0xF4)) n = addf(buf, len, n, ", FAULT %02X/%02X", _status[5], _status[6]);
   if (_reconfigs) n = addf(buf, len, n, ", reset x%u", _reconfigs);
   return n;
