@@ -18,7 +18,8 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _reconfigs = 0;
   _errors = 0;
   _polls = _adc_count = 0;
-  _ts_in_shot = false;
+  _ts_in_shot = _ts_night_any = false;
+  _ts_night_at = _tcell_at = 0;
   _r.tcell_dc = BQ_TCELL_NONE;
 }
 
@@ -183,9 +184,10 @@ bool BQ25798::readAdc(uint32_t now) {
   if (_ts_in_shot) {
     _r.ts_pm = (uint16_t)((((uint32_t)((d[14] << 8) | d[15])) * 1000 + 512) / 1024);   // 0.0976563 % a step
     _r.tcell_dc = ntcTemp(_r.ts_pm);
-  } else {
+    _tcell_at = now;
+  } else if (!_s.ntc || (uint32_t)(now - _tcell_at) >= BQ_TCELL_KEEP_MS) {
     _r.ts_pm = 0;
-    _r.tcell_dc = BQ_TCELL_NONE;   // no sun (or no NTC): not measured, not an old value
+    _r.tcell_dc = BQ_TCELL_NONE;   // not measured lately: no old value
   }
   _r.valid = true;
   _adc_count++;
@@ -198,8 +200,12 @@ bool BQ25798::readAdc(uint32_t now) {
 void BQ25798::adc(uint32_t now) {
   uint8_t a[3];
   if (!read(BQ_REG_ADC_CTRL, a, sizeof(a))) return;
-  // TS (the NTC) only with sun: on battery alone it keeps REGN on and stops the ADC under 3.2 V
-  uint8_t want_dis0 = _s.ntc && vbusPresent() ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
+  // TS (the NTC) with sun; on battery alone it keeps REGN on and stops the ADC under 3.2 V, so then
+  // only one conversion every 10 min, above 3.3 V (a hung one is started again without TS below)
+  bool night_ts = _s.ntc && !vbusPresent() && !_adc_continuous && !(a[0] & 0x80) && _r.valid
+                  && _r.vbat_mv > BQ_TS_NIGHT_MIN_MV
+                  && (!_ts_night_any || (uint32_t)(now - _ts_night_at) >= BQ_TS_NIGHT_MS);
+  uint8_t want_dis0 = (_s.ntc && vbusPresent()) || night_ts ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
   if (a[1] != want_dis0 && !write8(BQ_REG_ADC_DIS0, want_dis0)) want_dis0 = a[1];
   if (a[2] != BQ_ADC_DIS1_VAL) write8(BQ_REG_ADC_DIS1, BQ_ADC_DIS1_VAL);
   if (_adc_continuous) {
@@ -224,6 +230,10 @@ void BQ25798::adc(uint32_t now) {
   _adc_pending = false;
   if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) {
     _ts_in_shot = (want_dis0 & 0x04) == 0;
+    if (night_ts && _ts_in_shot) {
+      _ts_night_any = true;
+      _ts_night_at = now;
+    }
     _adc_pending = true;
     if (!_r.valid) _adc_at = now;   // stale is counted from the first start
   }

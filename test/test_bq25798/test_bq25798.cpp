@@ -301,50 +301,71 @@ TEST(BQ25798, NtcTemperature) {
   EXPECT_LT(BQ25798::ntcTemp(800), 0);               // cold still reads
 }
 
-TEST(BQ25798, CellTemperatureOnlyWithNtcAndSun) {
+static int tsShots(FakeBQ& f, BQ25798& bq, uint32_t& t, uint32_t ms) {   // conversions started with TS on
+  int n = 0;
+  for (uint32_t end = t + ms; t < end; ) {
+    t += 10000;
+    bq.loop(t);
+    if (f.r[0x2F] == BQ_ADC_DIS0_TS && (f.r[0x2E] & 0x80)) n++;
+  }
+  return n;
+}
+
+TEST(BQ25798, CellTemperatureWithSunAndEvery10MinAtNight) {
   FakeBQ f;
   BQ25798 bq(f);
-  bq.begin(0);
+  uint32_t t = 0;
+  bq.begin(t);
   BQ25798Settings s = settings();
   s.ntc = 1;
   bq.apply(s);
   f.sun(true);
   f.adcValues(3950, 500, 18000, 120);
   f.put16(0x3F, 609);                   // 59.5 %: 25 °C
-  bq.loop(0);
+  bq.loop(t);
   EXPECT_EQ(f.r[0x2F], BQ_ADC_DIS0_TS);   // TS converted with sun
-  bq.loop(10000);
+  t += 10000;
+  bq.loop(t);
   EXPECT_NEAR(bq.reading().tcell_dc, 250, 5);
   char buf[160];
   bq.formatStatus(buf, sizeof(buf));
   EXPECT_NE(strstr(buf, "cell 2"), nullptr) << buf;
 
-  f.sun(false);                         // night: TS off (REGN, ADC under 3.2 V), no old value shown
-  bq.loop(20000);
+  f.sun(false);                         // night, battery 3.95 V: one TS conversion now, then every 10 min
+  EXPECT_EQ(tsShots(f, bq, t, 10000), 1);
+  EXPECT_EQ(tsShots(f, bq, t, 580000), 0);
   EXPECT_EQ(f.r[0x2F], BQ_ADC_DIS0_VAL);
-  bq.loop(30000);
+  EXPECT_NEAR(bq.reading().tcell_dc, 250, 5);   // kept between the night conversions
+  f.put16(0x3F, 760);                   // 74.2 %: 0 °C
+  EXPECT_EQ(tsShots(f, bq, t, 30000), 1);
+  t += 10000;
+  bq.loop(t);
+  EXPECT_NEAR(bq.reading().tcell_dc, 0, 5);
+
+  f.adcValues(3250, -50, 0, 0);         // under 3.3 V: no more TS, the value goes after 15 min
+  EXPECT_EQ(tsShots(f, bq, t, 900000), 0);
   EXPECT_EQ(bq.reading().tcell_dc, BQ_TCELL_NONE);
 
   f.sun(true);                          // NTC missing although `ntc on`
+  f.adcValues(3950, 500, 18000, 120);
   f.put16(0x3F, 876);                   // 85.5 %
-  bq.loop(40000);
-  bq.loop(50000);
-  bq.loop(60000);
+  runFor(bq, t, 30000);
   EXPECT_EQ(bq.reading().tcell_dc, BQ_TCELL_NONE);
   EXPECT_TRUE(bq.ntcOpen());
   bq.formatStatus(buf, sizeof(buf));
   EXPECT_NE(strstr(buf, "NTC open?"), nullptr) << buf;
 
-  FakeBQ g;                             // ntc off: TS never converted
+  FakeBQ g;                             // ntc off: TS never converted, day or night
   BQ25798 bq2(g);
-  bq2.begin(0);
+  uint32_t t2 = 0;
+  bq2.begin(t2);
   bq2.apply(settings());
   g.sun(true);
   g.adcValues(3950, 500, 18000, 120);
   g.put16(0x3F, 609);
-  bq2.loop(0);
-  bq2.loop(10000);
-  EXPECT_EQ(g.r[0x2F], BQ_ADC_DIS0_VAL);
+  EXPECT_EQ(tsShots(g, bq2, t2, 60000), 0);
+  g.sun(false);
+  EXPECT_EQ(tsShots(g, bq2, t2, 1200000), 0);
   EXPECT_EQ(bq2.reading().tcell_dc, BQ_TCELL_NONE);
 }
 
