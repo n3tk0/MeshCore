@@ -70,6 +70,22 @@
 #define BQ_ADC_START           0xD0   // ADC_EN, one shot, 14 bit (12 ms a channel)
 #define BQ_ADC_CONTINUOUS      0x90   // ADC_EN, continuous, 14 bit (fallback, see adc())
 #define BQ_ADC_DIS0_VAL        0x04   // TS off: with it on, the ADC stops under 3.2 V on battery alone
+#define BQ_ADC_DIS0_TS         0x00   // TS on: only with an NTC and sun (REGN is up then anyway)
+
+// the NTC divider on TS (xiao-solar-lite / xiao-solar: REGN - 5.1k - TS - 30k || NTC - GND)
+#ifndef BQ_NTC_R_TOP
+#define BQ_NTC_R_TOP           5100.0f
+#endif
+#ifndef BQ_NTC_R_BOTTOM
+#define BQ_NTC_R_BOTTOM        30000.0f
+#endif
+#ifndef BQ_NTC_R25
+#define BQ_NTC_R25             10000.0f   // 103AT
+#endif
+#ifndef BQ_NTC_BETA
+#define BQ_NTC_BETA            3435.0f
+#endif
+#define BQ_TCELL_NONE          INT16_MIN  // no reading (no NTC setting, no sun, open or shorted NTC)
 #define BQ_ADC_DIS1_VAL        0xF0   // D+, D-, VAC2, VAC1 off
 
 class BQ25798Bus {
@@ -100,12 +116,15 @@ struct BQ25798Reading {
   int16_t  ibat_ma;     // + = charging the battery, - = the battery feeds the node
   int16_t  ibus_ma;     // from the panel
   int16_t  tdie_dc;     // die temperature, 0.1 °C
+  uint16_t ts_pm;       // TS in 0.1 % of REGN, from the last conversion that had TS on (0 = none)
+  int16_t  tcell_dc;    // cell temperature from the NTC, 0.1 °C, or BQ_TCELL_NONE
 };
 
 class BQ25798 {
   BQ25798Bus& _bus;
   BQ25798Settings _s;
   BQ25798Reading _r;
+  bool     _ts_in_shot;  // the running conversion has the TS channel on
   bool     _found, _applied, _ce_on, _adc_pending, _adc_continuous, _full, _shutdown_sent, _low_timing, _configured;
   uint8_t  _status[7];   // 0x1B..0x21
   uint8_t  _mppt_reg;    // REG15 as last read
@@ -167,6 +186,9 @@ public:
   uint32_t adcCount() const { return _adc_count; }   // ADC results read
   bool shutdownSent() const { return _shutdown_sent; }
   static const char* stateName(uint8_t st);
+  // TS in 0.1 % of REGN -> 0.1 °C; BQ_TCELL_NONE for an open (no NTC, > 84 %) or shorted (< 5 %) NTC
+  static int16_t ntcTemp(uint16_t ts_pm);
+  bool ntcOpen() const { return _s.ntc && _r.ts_pm > 840; }
 
   // true once each time a charge ends ("done"): the gauge takes the cell as full
   bool takeFull() { bool f = _full; _full = false; return f; }

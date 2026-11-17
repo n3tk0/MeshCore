@@ -460,6 +460,7 @@ static void query_bq25798(uint8_t ch, uint8_t sub, CayenneLPP& lpp) {
     lpp.addAnalogInput(ch, amps);
     int pct = bq_gauge.percent();
     if (pct >= 0) lpp.addPercentage(ch, pct);
+    if (r.tcell_dc != BQ_TCELL_NONE) lpp.addTemperature(ch, r.tcell_dc / 10.0f);   // the NTC, with sun
   } else {
     float v = bq_charger.vbusPresent() ? r.vbus_mv / 1000.0f : 0;
     float a = bq_charger.vbusPresent() && r.ibus_ma > 0 ? r.ibus_ma / 1000.0f : 0;

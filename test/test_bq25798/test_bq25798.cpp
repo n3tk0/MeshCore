@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include <helpers/sensors/BQ25798.h>
@@ -290,6 +291,84 @@ TEST(BQ25798, ReadsTheAdc) {
   EXPECT_EQ(bq.adcCount(), 1u);
 }
 
+TEST(BQ25798, NtcTemperature) {
+  // 5.1k / 30k divider, 10k B3435: 25 °C = 59.5 %, 0 °C = 74.2 %, 60 °C = 34.7 %
+  EXPECT_NEAR(BQ25798::ntcTemp(595), 250, 5);
+  EXPECT_NEAR(BQ25798::ntcTemp(742), 0, 5);
+  EXPECT_NEAR(BQ25798::ntcTemp(347), 600, 8);
+  EXPECT_EQ(BQ25798::ntcTemp(855), BQ_TCELL_NONE);   // open: 30k alone
+  EXPECT_EQ(BQ25798::ntcTemp(0), BQ_TCELL_NONE);     // shorted / not converted
+  EXPECT_LT(BQ25798::ntcTemp(800), 0);               // cold still reads
+}
+
+TEST(BQ25798, CellTemperatureOnlyWithNtcAndSun) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  BQ25798Settings s = settings();
+  s.ntc = 1;
+  bq.apply(s);
+  f.sun(true);
+  f.adcValues(3950, 500, 18000, 120);
+  f.put16(0x3F, 609);                   // 59.5 %: 25 °C
+  bq.loop(0);
+  EXPECT_EQ(f.r[0x2F], BQ_ADC_DIS0_TS);   // TS converted with sun
+  bq.loop(10000);
+  EXPECT_NEAR(bq.reading().tcell_dc, 250, 5);
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "cell 2"), nullptr) << buf;
+
+  f.sun(false);                         // night: TS off (REGN, ADC under 3.2 V), no old value shown
+  bq.loop(20000);
+  EXPECT_EQ(f.r[0x2F], BQ_ADC_DIS0_VAL);
+  bq.loop(30000);
+  EXPECT_EQ(bq.reading().tcell_dc, BQ_TCELL_NONE);
+
+  f.sun(true);                          // NTC missing although `ntc on`
+  f.put16(0x3F, 876);                   // 85.5 %
+  bq.loop(40000);
+  bq.loop(50000);
+  bq.loop(60000);
+  EXPECT_EQ(bq.reading().tcell_dc, BQ_TCELL_NONE);
+  EXPECT_TRUE(bq.ntcOpen());
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "NTC open?"), nullptr) << buf;
+
+  FakeBQ g;                             // ntc off: TS never converted
+  BQ25798 bq2(g);
+  bq2.begin(0);
+  bq2.apply(settings());
+  g.sun(true);
+  g.adcValues(3950, 500, 18000, 120);
+  g.put16(0x3F, 609);
+  bq2.loop(0);
+  bq2.loop(10000);
+  EXPECT_EQ(g.r[0x2F], BQ_ADC_DIS0_VAL);
+  EXPECT_EQ(bq2.reading().tcell_dc, BQ_TCELL_NONE);
+}
+
+TEST(BQ25798, SunsetDuringATsConversionRestartsWithoutTs) {
+  FakeBQ f;
+  f.adc_works = false;                  // the conversion hangs (battery under 3.2 V with TS on)
+  BQ25798 bq(f);
+  bq.begin(0);
+  BQ25798Settings s = settings();
+  s.ntc = 1;
+  bq.apply(s);
+  f.sun(true);
+  bq.loop(0);
+  EXPECT_EQ(f.r[0x2F], BQ_ADC_DIS0_TS);
+  f.sun(false);
+  f.writes.clear();
+  bq.loop(10000);
+  EXPECT_EQ(f.r[0x2F], BQ_ADC_DIS0_VAL);
+  EXPECT_NE(std::find(f.writes.begin(), f.writes.end(), 0x2E), f.writes.end());   // started again
+  f.writes.clear();
+  bq.loop(20000);                       // without TS now: no more restarts
+  EXPECT_EQ(std::find(f.writes.begin(), f.writes.end(), 0x2E), f.writes.end());
+}
+
 TEST(BQ25798, EmptyBatteryWithNoSunShutsDown) {
   FakeBQ f;
   BQ25798 bq(f);
@@ -443,10 +522,14 @@ TEST(BQ25798, LiIonJumperOrNoPinChargesAsBefore) {
 
 TEST(BQ25798, StatusLineFits) {
   FakeBQ f;
-  f.jumper = 0;                         // the longest line: with the JP2 warning
+  f.jumper = 0;                         // the longest line: with the JP2 warning and the cell temperature
   BQ25798 bq(f);
   bq.begin(0);
-  bq.apply(settings(BQ_CHEM_LIFEPO4));
+  BQ25798Settings st = settings(BQ_CHEM_LIFEPO4);
+  st.ntc = 1;
+  bq.apply(st);
+  f.put16(0x3F, 900);                   // -10 °C or so
+  f.put16(0x3F, 800);
   f.adcValues(3300, 1500, 17950, 450);
   f.sun(true);
   f.r[0x20] = 0x40;
@@ -458,6 +541,7 @@ TEST(BQ25798, StatusLineFits) {
   EXPECT_EQ((int)strlen(buf), n);
   EXPECT_NE(strstr(buf, "sun 17.95V 450mA"), nullptr) << buf;
   EXPECT_NE(strstr(buf, "lifepo4 3.60V"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "cell "), nullptr) << buf;
 }
 
 TEST(BatteryGaugeChemistry, LiFePO4Curve) {

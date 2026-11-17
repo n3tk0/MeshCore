@@ -195,7 +195,7 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 - `charger chem liion|lifepo4` (VREG 4.20 V / 3.60 V)
 - `charger ichg <mA>` (charge current, 100..2000; default 1000)
 - `charger vin mppt|<mV>` (MPPT, the default, or a fixed input voltage limit 3600..22000)
-- `charger ntc on|off` (an NTC on J3; off = `TS_IGNORE`, the default)
+- `charger ntc on|off` (an NTC on J3; off = `TS_IGNORE`, the default). With `on` the cell temperature is read from the NTC (`cell 23C` in the reply, temperature in the battery telemetry channel) while the panel gives power; on battery alone it is not measured (the TS channel would keep REGN on and stop the ADC under 3.2 V). `NTC open?`: `ntc on` but no NTC found on J3.
 - `charger shipfet on|off` (Q2 fitted, the default; `off` when JP3 is closed)
 - `charger cutoff <mV>|off` (Li-ion 2900..3800, default 3300; LiFePO4 2900..3300, default 3000)
 - `charger ship` (cut the battery off for transport or storage)
@@ -205,7 +205,7 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 **Example reply:** `sun 17.95V 450mA, batt 3.952V +1050mA fast, mppt on, die 41C, liion 4.20V 1000mA, ntc off, shipfet on, cut 3300mV`
 
 **Notes:**
-- `batt` current: `+` charges the battery, `-` the battery feeds the node. States: `idle trickle pre fast taper topoff done`; `CE-off` while the firmware still holds charging off (VREG not confirmed yet); `HELD: JP2 lifepo4` when JP2 is at 2-3 (read on D0 at the first start) but the chemistry is still Li-ion: nothing charges until `charger chem lifepo4`. `JP2 1-2 (4.2V at boot)!`: chemistry LiFePO4 but JP2 at 1-2, so the charger aims at 4.2 V until the XIAO has started. `FAULT xx/yy`: REG20/REG21. `reset xN`: the charger lost its setup N times (a power-on reset) and got it back.
+- `batt` current: `+` charges the battery, `-` the battery feeds the node. States: `idle trickle pre fast taper topoff done`; `CE-off` while the firmware still holds charging off (VREG not confirmed yet); `HELD: JP2 lifepo4` when JP2 is at 2-3 (read on D0 at the first start) but the chemistry is still Li-ion: nothing charges until `charger chem lifepo4`. `JP2 1-2!`: chemistry LiFePO4 but JP2 at 1-2, so the charger aims at 4.2 V until the XIAO has started. `FAULT xx/yy`: REG20/REG21. `reset xN`: the charger lost its setup N times (a power-on reset) and got it back.
 - The firmware turns the charger's I2C watchdog off, so the setup stays when the XIAO hangs or restarts, reads it back every 10 s and writes again what is back at its reset value. MPPT is switched on again each morning (the chip clears it when the panel voltage goes).
 - `cutoff`: with no sun and the battery under it for 5 min the charger goes into shutdown mode: the ship FET cuts the battery off and only panel voltage brings it back (needs the ship FET). An ADC that stops (it does under 2.9 V on battery alone) counts as under the cut-off.
 - `ship`: refused while the panel gives voltage. Wakes with sun, or TP2 (QON) to GND for 1 s.
