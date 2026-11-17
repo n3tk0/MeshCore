@@ -23,23 +23,23 @@ def add_labels(board, pad, mm, pt, version="v0.4"):
             s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetStart(pt(*a)); s.SetEnd(pt(*b))
             s.SetLayer(pcbnew.F_SilkS); s.SetWidth(mm(w))
             board.Add(s)
-    # header row on top: + / - under the power pads, names under the signal pads
+    # header row on top (J6, J5, J7; JST XH housings, F.Fab outlines): + / - and names inside the housing, below the pads
     j6a, j6b = pad("J6", "1"), pad("J6", "2")
-    text("J6+", "+", j6a[0], 3.5, 1.0); text("J6-", "-", j6b[0], 3.5, 1.0)
-    text("J6 name", "SYS", (j6a[0] + j6b[0]) / 2, 4.6)
+    text("J6+", "+", j6a[0], 2.7, 1.0); text("J6-", "-", j6b[0], 2.7, 1.0)
+    text("J6 name", "SYS", (j6a[0] + j6b[0]) / 2, 3.7)
     for i, s_ in enumerate(("SCL", "SDA", "NC", "GND")):
-        text("J5 " + s_, s_, pad("J5", str(i + 1))[0], 3.95)
+        text("J5 " + s_, s_, pad("J5", str(i + 1))[0], 2.7)
     j7a, j7b = pad("J7", "1"), pad("J7", "2")
-    text("J7+", "+", j7a[0], 3.5, 1.0); text("J7-", "-", j7b[0], 3.5, 1.0)
-    text("J7 name", "3V3/5V", (j7a[0] + j7b[0]) / 2 + 0.3, 4.6)
-    # battery heater: + (SYS) / - (FET drain), HEAT under the pads
+    text("J7+", "+", j7a[0], 2.7, 1.0); text("J7-", "-", j7b[0], 2.7, 1.0)
+    text("J7 name", "3V3/5V", (j7a[0] + j7b[0]) / 2, 3.7)
+    # battery heater at the bottom (J8): + (SYS) / - (FET drain) above the pads, HEAT below
     j8a, j8b = pad("J8", "1"), pad("J8", "2")
-    text("J8+", "+", j8a[0], 3.4, 1.0); text("J8-", "-", j8b[0], 3.4, 1.0)
-    text("J8 name", "HEAT", (j8a[0] + j8b[0]) / 2 - 0.4, 4.5)
+    text("J8+", "+", j8a[0], j8a[1] - 1.9, 1.0); text("J8-", "-", j8b[0], j8b[1] - 1.9, 1.0)
+    text("J8 name", "HEAT", (j8a[0] + j8b[0]) / 2, j8a[1] + 1.6)
     # solar input: + / - right of the pads
     j1a, j1b = pad("J1", "1"), pad("J1", "2")
     text("J1+", "+", j1a[0] + 1.9, j1a[1], 1.0); text("J1-", "-", j1b[0] + 1.9, j1b[1], 1.0)
-    text("J1 name", "SOLAR", j1a[0] + 0.95, j1a[1] - 2.0)
+    text("J1 name", "SOLAR", j1a[0] + 0.5, j1a[1] - 2.0)
     j3 = pad("J3", "1")
     text("J3 name", "NTC", j3[0], j3[1] - 1.7)
     # battery: + / - above the outer pads, names below

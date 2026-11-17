@@ -30,6 +30,7 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 PROJECT = "solar-smart-mppt"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
 W, H = 30.0, 77.5   # 30 mm: three boards across a 100 mm panel
+YT = 1.85           # v0.4 round 3: the board starts at y = -YT (JST XH housings of the top row end at the edge), 30 x 79.35 mm
 DY = 0.0    # the xiao-solar-lite charger part sits where it is on lite, under the new top part
 DA = 32.0   # MCU band (v0.2 coordinates of its test point regions)
 DB = 13.0   # BMS, fuse and the bottom connectors: under the MCU band (QFN-24: 5 mm shorter than v0.2)
@@ -118,7 +119,14 @@ PLACE.update({
     "Q12": (19.0, 6.9, 180), "R45": (22.0, 6.6, 270), "R46": (23.4, 7.9, 90),
     "R47": (11.3, 57.0, 90),
 })
-# test points on the bottom side (flipped footprints): the SWD row
+# v0.4 round 3 (owner review): JST XH housings (F.Fab outlines, XH_HOUSINGS) on all THT connectors. Top row J6 | J5 | J7 with 0.5 mm
+# between the housings and 0.0 overhang (pins at y = 0.5, edge at -1.85); H1 (M2) just under the row between J5 and J7;
+# the heater J8 sits at the bottom next to J4 (Q12 / R45 / R46 above it); J1 pin 1.5 mm from the V-cut (housing overhangs 0.85 mm)
+PLACE.update({
+    "J6": (3.33, 0.5, 90), "J5": (11.19, 0.5, 90), "J7": (24.13, 0.5, 90), "H1": (21.45, 6.4, 0), "TP14": (25.0, 6.0, 0),
+    "J8": (7.8, 75.0, 90), "H2": (2.8, 74.5, 0), "Q12": (6.3, 70.0, 0), "R45": (5.3, 67.7, 0), "R46": (7.3, 67.35, 0),
+    "TP7": (2.0, 67.0, 0), "J1": (1.5, 22.5, 0), "J3": (2.3, 43.5, 0),
+})
 def mini_tp(fp):
     """TP18 (BQ25798 INT) squeezes between R1, C17 and C18: 0.6 mm pad, courtyard and silk circle moved to F.Fab, reference hidden."""
     fp.Reference().SetVisible(False)
@@ -140,7 +148,7 @@ TEST_POINTS = {
 FIDUCIALS = [
     (0.8, 27.5 + DY, 6.3, 30.5 + DY, 2.5, 29.0 + DY),
     (9.0, 12.0, 13.4, 20.0, 11.2, 17.5),
-    (0.8, 47.0 + DB, 22.2, 60.0 + DB, 6.5, 68.5),
+    (0.8, 47.0 + DB, 22.2, 60.0 + DB, 19.5, 67.5),
 ]
 # B.Cu stays plain GND (no autorouted B.Cu tracks) where long B.Cu runs would otherwise
 # cut a GND pocket loose: under the BQ25798 GND via, and left of the ATtiny
@@ -283,7 +291,7 @@ def build():
         raise SystemExit("not placed: " + " ".join(missing))
     charger.preroute(board, CHARGER_FRAME)
     fix_charger_routes(board)
-    corners = [(0, 0), (W, 0), (W, H), (0, H)]
+    corners = [(0, -YT), (W, -YT), (W, H), (0, H)]
     for i in range(4):
         s = pcbnew.PCB_SHAPE(board)
         s.SetShape(pcbnew.SHAPE_T_SEGMENT)
@@ -292,7 +300,7 @@ def build():
         board.Add(s)
     # 0.4 mm strip along the edges: Freerouting only keeps its track clearance to the outline
     e = 0.4
-    for (x0, y0, x1, y1) in ((0, 0, W, e), (0, H - e, W, H), (0, 0, e, H), (W - e, 0, W, H)):
+    for (x0, y0, x1, y1) in ((0, -YT, W, -YT + e), (0, H - e, W, H), (0, -YT, e, H), (W - e, -YT, W, H)):
         ka = pcbnew.ZONE(board)
         ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
         ka.SetDoNotAllowTracks(True); ka.SetDoNotAllowVias(True); ka.SetDoNotAllowPads(False)
@@ -312,7 +320,7 @@ def build():
         z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
         z.SetThermalReliefGap(mm(0.3)); z.SetThermalReliefSpokeWidth(mm(0.4))
         ol = z.Outline(); ol.NewOutline()
-        for (x, y) in [(0.3, 0.3), (W - 0.3, 0.3), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
+        for (x, y) in [(0.3, 0.3 - YT), (W - 0.3, 0.3 - YT), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(z)
     base.place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
@@ -542,6 +550,51 @@ def add_hand_routes(board):
                 continue
             t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*o["a"])); t.SetEnd(pt(*o["b"])); t.SetWidth(mm(o["w"]))
             t.SetLayer(pcbnew.F_Cu if o["layer"] == "F" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+# v0.4 round 3: copper that differs from the v0.4 round 2 board (heater moved to the bottom, new HEAT / INT_BQ lanes, top row
+# re-laid), as exported from the reference .kicad_pcb: "remove" = exact tracks / vias of the old routing, "add" = the new ones
+V04_DELTA = os.path.join(HERE, "v04_delta.json")
+def add_v04_delta(board):
+    d = json.load(open(V04_DELTA))
+    def key(t):
+        if t.GetClass() == "PCB_VIA":
+            return ("v", t.GetNetname(), round(pcbnew.ToMM(t.GetX()) - OX, 3), round(pcbnew.ToMM(t.GetY()) - OY, 3))
+        a, b_ = sorted([(round(pcbnew.ToMM(t.GetStart().x) - OX, 3), round(pcbnew.ToMM(t.GetStart().y) - OY, 3)),
+                        (round(pcbnew.ToMM(t.GetEnd().x) - OX, 3), round(pcbnew.ToMM(t.GetEnd().y) - OY, 3))])
+        return ("t", t.GetNetname(), t.GetLayerName()[0], a[0], a[1], b_[0], b_[1])
+    gone = {tuple(k[:4]) if k[0] == "v" else tuple(k[:7]) for k in d["remove"]}
+    for t in list(board.GetTracks()):
+        if key(t) in gone:
+            board.Remove(t)
+    for k in d["add"]:
+        n = board.FindNet(k[1])
+        if k[0] == "v":
+            v = pcbnew.PCB_VIA(board); v.SetPosition(pt(k[2], k[3])); v.SetWidth(mm(k[4])); v.SetDrill(mm(k[5]))
+            v.SetNet(n); v.SetLocked(k[-1]); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+        else:
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(k[3], k[4])); t.SetEnd(pt(k[5], k[6])); t.SetWidth(mm(k[7]))
+            t.SetLayer(pcbnew.F_Cu if k[2] == "F" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(k[-1]); board.Add(t)
+
+# JST XH housings (F.Fab): width (pins - 1) * 2.5 + 4.9 along the pin line, 5.75 deep, 2.35 mm from the pin line to the nearer
+# board edge side and 3.4 mm to the other (the 2.35 side faces the board edge: top row, left edge, bottom row)
+def xh_housings(board):
+    out = {}
+    for ref in ("J1", "J3", "J4", "J5", "J6", "J7", "J8"):
+        fp = board.FindFootprintByReference(ref)
+        pads = [(pcbnew.ToMM(p.GetX()) - OX, pcbnew.ToMM(p.GetY()) - OY) for p in fp.Pads()]
+        xs, ys = [q[0] for q in pads], [q[1] for q in pads]
+        L = (len(pads) - 1) * 2.5 + 4.9
+        if max(xs) - min(xs) < 0.1:      # pins in a column at the left edge
+            cy = (min(ys) + max(ys)) / 2
+            box_ = (xs[0] - 2.35, cy - L / 2, xs[0] + 3.4, cy + L / 2)
+        else:
+            cx = (min(xs) + max(xs)) / 2
+            box_ = (cx - L / 2, ys[0] - 2.35, cx + L / 2, ys[0] + 3.4) if ys[0] < H / 2 else (cx - L / 2, ys[0] - 3.4, cx + L / 2, ys[0] + 2.35)
+        x0, y0, x1, y1 = box_
+        for a_, b_ in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+            s_ = pcbnew.PCB_SHAPE(board); s_.SetShape(pcbnew.SHAPE_T_SEGMENT); s_.SetStart(pt(*a_)); s_.SetEnd(pt(*b_))
+            s_.SetLayer(pcbnew.F_Fab); s_.SetWidth(mm(0.1)); board.Add(s_)
+        out[ref] = box_
+    return out
 GND_TIES = {"R32", "C31", "C35", "R3", "JP4"}
 FINE = {"REG_EN", "VSEL", "FB", "FB2", "LOGIC_HI", "REGN", "TS"}
 
@@ -571,6 +624,8 @@ if __name__ == "__main__":
     add_heater_power(b)
     add_top_routes(b)
     add_int_heat_routes(b)
+    add_v04_delta(b)
+    xh_housings(b)
     add_mcu_stubs(b)
     for net_, a_, b_ in PRE_ROUTES:
         try:
