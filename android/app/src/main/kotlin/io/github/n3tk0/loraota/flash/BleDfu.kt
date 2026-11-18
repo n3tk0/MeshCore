@@ -7,7 +7,12 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.Build
+import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.MainActivity
+import io.github.n3tk0.loraota.R
+import io.github.n3tk0.loraota.ble.scanNeedsLocation
+import io.github.n3tk0.loraota.ble.scanNeedsLocationPermission
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -35,6 +40,8 @@ object BleDfu {
     suspend fun scan(ctx: Context, ms: Long): List<DfuDevice> {
         val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
             ?: throw FlashFailed("Bluetooth")
+        if (scanNeedsLocationPermission(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_no_location_permission))
+        if (scanNeedsLocation(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_location_off))
         val found = LinkedHashMap<String, DfuDevice>()
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, r: ScanResult) {
@@ -95,7 +102,7 @@ object BleDfu {
                 .setForeground(true)
                 .setDisableNotification(false)
                 .setZip(zip.path)
-            DfuServiceInitiator.createDfuNotificationChannel(ctx)
+            if (Build.VERSION.SDK_INT >= 26) DfuServiceInitiator.createDfuNotificationChannel(ctx)
             val controller = starter.start(ctx, DfuService::class.java)
             try {
                 done.await()

@@ -41,6 +41,9 @@ import io.github.n3tk0.loraota.backup.RestoreResult
 import io.github.n3tk0.loraota.backup.WrongPassword
 import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.CompanionLink
+import io.github.n3tk0.loraota.ble.scanNeedsLocation
+import io.github.n3tk0.loraota.ble.scanNeedsLocationPermission
+import io.github.n3tk0.loraota.ble.scanPermissionMessage
 import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.delta.DeltaGenerator
 import io.github.n3tk0.loraota.delta.DetoolsPatch
@@ -286,12 +289,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             messageIsError = true
             return
         }
+        if (scanNeedsLocationPermission(ctx)) {
+            message = str(R.string.msg_no_location_permission)
+            messageIsError = true
+            return
+        }
+        if (scanNeedsLocation(ctx)) {
+            message = str(R.string.msg_location_off)
+            messageIsError = true
+            return
+        }
         devices.clear()
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(CompanionLink.SERVICE)).build()
         try {
             scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
-        } catch (e: SecurityException) {   // 'Nearby devices' not allowed
-            message = str(R.string.msg_no_bt_permission)
+        } catch (e: SecurityException) {   // 'Nearby devices' (12+) or Location (7-11) not allowed
+            message = str(scanPermissionMessage())
             messageIsError = true
             return
         }
