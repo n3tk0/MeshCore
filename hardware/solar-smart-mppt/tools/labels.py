@@ -32,10 +32,11 @@ def add_labels(board, pad, mm, pt, version="v0.4"):
     j7a, j7b = pad("J7", "1"), pad("J7", "2")
     text("J7+", "+", j7a[0], 2.7, 1.0); text("J7-", "-", j7b[0], 2.7, 1.0)
     text("J7 name", "3V3/5V", (j7a[0] + j7b[0]) / 2, 3.7)
-    # battery heater at the bottom (J8): + (SYS) / - (FET drain) above the pads, HEAT below
+    # battery heater (J8) on the right edge next to H3, housing toward the board: + (SYS) / - (FET drain) left of the pads,
+    # HEAT rotated beside them
     j8a, j8b = pad("J8", "1"), pad("J8", "2")
-    text("J8+", "+", j8a[0], j8a[1] - 1.9, 1.0); text("J8-", "-", j8b[0], j8b[1] - 1.9, 1.0)
-    text("J8 name", "HEAT", (j8a[0] + j8b[0]) / 2, j8a[1] + 1.6)
+    text("J8+", "+", j8a[0] - 1.9, j8a[1], 1.0); text("J8-", "-", j8b[0] - 1.9, j8b[1], 1.0)
+    text("J8 name", "HEAT", j8a[0] - 2.9, (j8a[1] + j8b[1]) / 2, 0.8, angle=90)
     # solar input: + / - right of the pads
     j1a, j1b = pad("J1", "1"), pad("J1", "2")
     text("J1+", "+", j1a[0] + 1.9, j1a[1], 1.0); text("J1-", "-", j1b[0] + 1.9, j1b[1], 1.0)
@@ -96,4 +97,4 @@ def place_refs(board, dfm, texts, **kw):
         board.Add(t)
     return hidden
 
-VERSION_AT = (27.9, 40.0)
+VERSION_AT = (14.5, 4.3)

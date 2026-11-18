@@ -127,6 +127,14 @@ PLACE.update({
     "J8": (7.8, 75.0, 90), "H2": (2.8, 74.5, 0), "Q12": (6.3, 70.0, 0), "R45": (5.3, 67.7, 0), "R46": (7.3, 67.35, 0),
     "TP7": (2.0, 67.0, 0), "J1": (1.5, 22.5, 0), "J3": (2.3, 43.5, 0),
 })
+# v0.4 round 4 (owner review): the heater J8 moves from the bottom edge to the right edge next to H3 (pins x = 28.5, housing toward
+# the board, 0.85 mm overhang like J1) with Q12 / R45 / R46 under it; R37 +0.4 mm left for the 3 mm rule and the J8 housing; D3 and its
+# neighbours R6 / C2 / D4 / C1 shift right (D3 +0.3) so every SMD pad is >= 3.0 mm from J1's pads, TP4 down 1.85 mm
+PLACE.update({
+    "J8": (28.5, 34.53, 0), "Q12": (27.2, 42.7, 90), "R45": (26.25, 45.8, 90), "R46": (27.55, 45.8, 90), "R37": (23.8, 40.2, 90),
+    "D3": (6.5, 23.5, -90), "R6": (9.35, 21.8, 0), "C2": (9.55, 25.2, 90), "D4": (12.05, 21.8, 180), "C1": (11.95, 25.2, 90),
+    "TP4": (14.6, 24.85, 0),
+})
 def mini_tp(fp):
     """TP18 (BQ25798 INT) squeezes between R1, C17 and C18: 0.6 mm pad, courtyard and silk circle moved to F.Fab, reference hidden."""
     fp.Reference().SetVisible(False)
@@ -364,7 +372,7 @@ def build():
     placed, made = labels.add_labels(board, padxy, mm, pt)
     t = pcbnew.PCB_TEXT(board)
     t.SetText("solar-smart-mppt v0.4"); t.SetPosition(pt(*labels.VERSION_AT)); t.SetLayer(pcbnew.F_SilkS)
-    t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.15)); t.SetTextAngleDegrees(90)
+    t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.15)); t.SetTextAngleDegrees(0)
     board.Add(t); made.append(t)
     for r_ in ("JP3", "JP4", "JP5", "JP6"):
         board.FindFootprintByReference(r_).Reference().SetVisible(False)
@@ -583,9 +591,9 @@ def xh_housings(board):
         pads = [(pcbnew.ToMM(p.GetX()) - OX, pcbnew.ToMM(p.GetY()) - OY) for p in fp.Pads()]
         xs, ys = [q[0] for q in pads], [q[1] for q in pads]
         L = (len(pads) - 1) * 2.5 + 4.9
-        if max(xs) - min(xs) < 0.1:      # pins in a column at the left edge
+        if max(xs) - min(xs) < 0.1:      # pins in a column at the left or right edge
             cy = (min(ys) + max(ys)) / 2
-            box_ = (xs[0] - 2.35, cy - L / 2, xs[0] + 3.4, cy + L / 2)
+            box_ = (xs[0] - 2.35, cy - L / 2, xs[0] + 3.4, cy + L / 2) if xs[0] < W / 2 else (xs[0] - 3.4, cy - L / 2, xs[0] + 2.35, cy + L / 2)
         else:
             cx = (min(xs) + max(xs)) / 2
             box_ = (cx - L / 2, ys[0] - 2.35, cx + L / 2, ys[0] + 3.4) if ys[0] < H / 2 else (cx - L / 2, ys[0] - 3.4, cx + L / 2, ys[0] + 2.35)
