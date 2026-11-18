@@ -2,6 +2,7 @@ package io.github.n3tk0.loraota.github
 
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
+import android.os.Build
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -255,7 +256,7 @@ object BuildWatcher {
     @SuppressLint("MissingPermission")
     private fun notifyDone(ctx: Context, j: BuildJob) {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
-        if (nm.getNotificationChannel(DONE_CHANNEL) == null) {
+        if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(DONE_CHANNEL) == null) {   // Android 7: no channels
             nm.createNotificationChannel(NotificationChannel(DONE_CHANNEL, str(ctx, R.string.build_notif_channel_done),
                 NotificationManager.IMPORTANCE_DEFAULT))
         }

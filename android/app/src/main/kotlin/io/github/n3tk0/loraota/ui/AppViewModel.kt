@@ -41,6 +41,7 @@ import io.github.n3tk0.loraota.backup.RestoreResult
 import io.github.n3tk0.loraota.backup.WrongPassword
 import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.CompanionLink
+import io.github.n3tk0.loraota.ble.scanNeedsLocation
 import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.delta.DeltaGenerator
 import io.github.n3tk0.loraota.delta.DetoolsPatch
@@ -283,6 +284,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
         if (scanner == null) {
             message = str(R.string.msg_bluetooth_off)
+            messageIsError = true
+            return
+        }
+        if (scanNeedsLocation(ctx)) {
+            message = str(R.string.msg_location_off)
             messageIsError = true
             return
         }

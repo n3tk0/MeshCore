@@ -74,7 +74,7 @@ class BuildService : Service() {
         private fun notification(ctx: Context, j: BuildJob?): Notification {
             val l = Lang.wrap(ctx)
             val nm = ctx.getSystemService(NotificationManager::class.java)
-            if (nm.getNotificationChannel(CHANNEL) == null) {
+            if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL) == null) {   // Android 7: no channels
                 nm.createNotificationChannel(NotificationChannel(CHANNEL, l.getString(R.string.build_notif_channel),
                     NotificationManager.IMPORTANCE_LOW))
             }
@@ -86,6 +86,7 @@ class BuildService : Service() {
                 .setContentText(if (j == null) "" else phaseText(l, j))
                 .setProgress(0, 0, true)
                 .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)   // Android 7: no channel importance
                 .setOnlyAlertOnce(true)
                 .setContentIntent(open)
                 .build()
