@@ -1,5 +1,5 @@
 ** Drc report for xiao-solar.kicad_pcb **
-** Created on 2026-11-18T08:04:41 **
+** Created on 2026-11-18T08:09:53 **
 ** Report includes: Errors, Warnings **
 
 ** Found 126 DRC violations **
@@ -13,8 +13,8 @@
     @(124.5649 mm, 152.3428 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(128.6022 mm, 150.2029 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
-    @(129.1083 mm, 150.9340 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
+    @(118.6157 mm, 132.7405 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(118.9420 mm, 132.8480 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(113.6151 mm, 133.7546 mm): Zone 'teardrop' [3V3M] on B.Cu, priority 3
@@ -113,16 +113,12 @@
     @(137.9266 mm, 151.2780 mm): Zone 'teardrop' [HEAT] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(111.4830 mm, 152.1097 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
-    @(111.2500 mm, 152.9900 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(118.6157 mm, 132.7405 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(118.9420 mm, 132.8480 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
     @(118.6157 mm, 132.7405 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(119.1305 mm, 133.4127 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(111.4830 mm, 152.1097 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
+    @(111.2500 mm, 152.9900 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(112.6400 mm, 145.1300 mm): Zone 'teardrop' [BTST1] on F.Cu, priority 3
@@ -139,6 +135,10 @@
     Local override; error
     @(123.3850 mm, 153.2800 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
     @(123.5444 mm, 152.7091 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(128.6022 mm, 150.2029 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
+    @(129.1083 mm, 150.9340 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(143.9060 mm, 141.6320 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3

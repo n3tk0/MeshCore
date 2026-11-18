@@ -603,9 +603,10 @@ SILK_OLD_TEXTS = ("SCL SDA 3V3 GND", "LFP")   # replaced by the per-pin / per-ju
 SILK_REF_MOVES = {            # reference -> (x, y, angle)
     "JP2": (35.5, 34.3, 0),   # shown again, below the jumper
     "C13": (25.0, 44.59, 0),  # away from the SYS label of TP5
+    "D1": (7.3, 57.6, 0),     # left of the diode, towards the H3 hole (frees the spot above J1)
 }
 SILK_HIDE_REFS = ("TP2",)     # its name is the QON label now
-SILK_TEXT_MOVES = {}          # board text starting with ... -> (x, y)
+SILK_TEXT_MOVES = {"SOLAR": (11.0, 60.35)}   # board text starting with ... -> (x, y); SOLAR above J1
 SILK_PLUS = {"J6": (-2.1, 0.0)}   # '+' of J6 sits left of pin 1 (dfm.place_silk had put it between the pins)
 SILK_TEXTS = (                # (text, x, y, size, angle, justify)
     # JP2 (CHEM, CE pull): closed = LiFePO4, open = Li-ion; vertical, right of the jumper
