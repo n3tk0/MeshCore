@@ -98,15 +98,12 @@ void analog_init(void) {
   NVIC_EnableIRQ(COMP0_INT_IRQn);
 }
 
-// GPIOA and COMP0 share this vector
+// COMP0 (shares the vector with GPIOA, no GPIO interrupt is used)
 void GROUP1_IRQHandler(void) {
   if (DL_COMP_getPendingInterrupt(COMP0) == DL_COMP_IIDX_OUTPUT_EDGE) {
     DL_GPIO_setPins(GPIOA, PIN_OD);    // discharge FET off first, then tell the main loop
     short_flag = true;
   }
-#if !SMPPT_J5_PA10
-  hal_int_isr();                       // BQ25798 INT (PA22), after the short circuit
-#endif
 }
 
 bool analog_short_pending(void) { return short_flag; }

@@ -1,5 +1,5 @@
-// solar-smart-mppt v0.4 pins (J5 on PA0/PA1, OC_G on PA10, INT on PA22, heater on PA11; `make J5=pa10` for the v0.3 boards
-// without INT and heater) (MSPM0L1306SRGER, VQFN-24). IOMUX index = PINCM(n) = PA(n-1).
+// solar-smart-mppt v0.4 pins (J5 on PA0/PA1, OC_G on PA10, heater on PA11; `make J5=pa10` for the v0.3 boards
+// without heater) (MSPM0L1306SRGER, VQFN-24). IOMUX index = PINCM(n) = PA(n-1).
 #pragma once
 #include <ti/devices/msp/msp.h>
 #include <ti/driverlib/driverlib.h>
@@ -35,9 +35,7 @@
 #define PIN_OC_G_IOMUX IOMUX_PINCM11
 #endif
 #if !SMPPT_J5_PA10
-// v0.4 only (on the v0.3 boards PA11 is J5 SCL and PA22 is not wired)
-#define PIN_INT       DL_GPIO_PIN_22       // BQ25798 INT: open drain, active low, 10k pull-up to 3V3M. PA22 is also the
-#define PIN_INT_IOMUX IOMUX_PINCM23        // OPA0 output pin: its output switch stays off, this is a plain input
+// v0.4 only (on the v0.3 boards PA11 is J5 SCL). PA22 (OPA0 output pin) is not wired on either board.
 #define PIN_HEAT      DL_GPIO_PIN_11       // heater MOSFET gate, high = on, 100k pull-down on the board
 #define PIN_HEAT_IOMUX IOMUX_PINCM12
 #define PIN_HEAT_PWM  IOMUX_PINCM12_PF_TIMG4_CCP1

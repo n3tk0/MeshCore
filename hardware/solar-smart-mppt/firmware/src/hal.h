@@ -18,8 +18,6 @@ void hal_led(uint8_t led);      // LED_*
 uint8_t hal_read_chem_jumper(void);
 #if !SMPPT_J5_PA10
 void hal_heater(uint8_t pct);   // heater gate: 0 off, 100 on, between = 1 kHz PWM (TIMG4)
-bool hal_int_taken(void);       // BQ25798 INT went low since the last call (and clears that)
-void hal_int_isr(void);         // from the GPIOA interrupt
 #endif
 
 extern const bq_bus_t hal_bq_bus;
