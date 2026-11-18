@@ -180,6 +180,8 @@ def build():
     ):
         for a_, b_ in zip(pts_, pts_[1:]):
             charger._track(board, pt(*a_), pt(*b_), net(n_), w_, lay)
+    # U1 D+ / D- (pads 6 and 7, 0.4 mm apart): joined by a 0.2 mm track on the outer ends of the pads (DCP detection)
+    charger._track(board, pt(10.22, 31.35), pt(10.62, 31.35), net("DPDM"), 0.2, pcbnew.F_Cu)
     for n_, vx, vy in (("DW_CS", 18.0, 52.95 + DB), ("DW_CS", 13.5, 56.1 + DB)):
         charger._via(board, pt(vx, vy), net(n_))
     # Ideal diode (column x = 22.2 right of the SYS caps). Hand routed: SYS 0.8 mm from the SYS stub to

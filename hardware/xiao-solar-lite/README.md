@@ -89,6 +89,9 @@ Use the board without our XIAO firmware (no I2C traffic, XIAO running something 
 2. **Close JP3** (no ship FET; the BQ25798 is not told about Q2 without firmware).
 3. **NTC:** fit the 10k NTC on J3, or **close JP5** (fake 10k from TS to GND through R32). Without one, TS reads "cold" and charging stops.
 
+4. **D+ / D- (net `DPDM`):** U1 pins 6 and 7 are shorted on the board (a 0.2 mm track on the outer ends of the pads), so without I2C the BC1.2
+   detection sees a DCP (3.25 A) and not an SDP (500 mA); nothing to do for the user.
+
 What is lost without our firmware: MPPT (EN_MPPT), battery voltage reporting in MeshCore, the low-battery cutoff, ship mode, and LiFePO4 charging
 (VREG 3.6 V is set over I2C; stand-alone charges to the 4.2 V default, so only use Li-ion). Not tested.
 
@@ -101,6 +104,7 @@ tracked afterwards. That fits 6 V panels (about 80 % of Voc) and 9 V panels (abo
 | Where | Pins | Notes |
 |---|---|---|
 | XIAO stack (`U3`) | D0 = `XIAO_D0`, to CE through JP4, D6 = SCL, D7 = SDA, 3V3, GND, 5V | 5V gets SYS (3.5–4.4 V) through the Q5/Q6/Q7 ideal diode (AO3401A + PNP mirror), so the XIAO USB cannot feed SYS. Other pins pass through. **No battery on the XIAO itself.** |
+| U1 D+ / D- | pins 6 + 7 = `DPDM` | Shorted together (DCP, 3.25 A input detection in stand-alone mode) |
 | J1 SOLAR | + / − | 5–22 V panel (Voc up to 25 V), SS54 against reverse polarity, SMBJ24A TVS |
 | J3 NTC | TS / GND | Optional 10k NTC (103AT, B = 3435); leave open if unused (`TS_IGNORE` on by default) |
 | J4 BAT | + / − | 1S cell (protected by onboard DW01A + HJ8205 BMS and ship FET Q2) |

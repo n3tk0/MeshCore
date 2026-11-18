@@ -58,7 +58,7 @@ C("C9", "100n/50V", 96, 128.5, "PMID", "GND", C100N0402HV, C0402)
 TP("TP4", "PMID", 104, 120.08, rot=0)
 
 # ---- 2. Charger U1 (BQ25798) + Switching Stage (Top) + NTC/PROG (Bottom) -----
-bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": None, "7": None,
+bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": "DPDM", "7": "DPDM",
       "8": "VBUS", "9": "VBUS", "10": "GND", "11": "GND", "12": "QON", "13": "CE", "14": "SCL",
       "15": "SDA", "16": "TS", "17": "REGN", "18": "BATP", "19": "BTST2", "20": "PROG",
       "21": None, "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
@@ -240,6 +240,7 @@ RAIL("GND", [(202.0, 210.0), (202.0, 215.08)])
 T(20, 252, "Q2 (AO3400A): S към BAT, D към батерията; в shutdown спира разреждането. За LiFePO4: затвори JP3 (без Q2).", 1.27)
 T(20, 255.5, "BMS (DW01A + HJ8205) в минуса на батерията (BATT- към GND): защита от презареждане (4.3V), преразреждане (2.4V) и късо.", 1.27)
 T(20, 259, "LiFePO4: прагът 4.3V на DW01A е над 3.65V, т.е. от презареждане пази само VREG=3.6V на BQ25798; DW01A остава за 2.4V и късо/свръхток (~3A).", 1.27)
+T(20, 262.5, "U1 D+ / D- (net DPDM) are shorted: without I2C the BC1.2 detection sees a DCP (3.25 A) instead of an SDP (500 mA).", 1.27)
 
 # ERC power flags placed directly on their rail wires
 for i, (net, fx, fy) in enumerate([
