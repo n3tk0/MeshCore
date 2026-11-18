@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 1
+#define FW_VERSION_MINOR 2
 
 // Battery chemistry. JP4: open = Li-ion, 1-2 = LiFePO4, 2-3 = LTO 2S.
 enum { CHEM_LIION = 0, CHEM_LFP = 1, CHEM_LTO2S = 2, CHEM_COUNT = 3, CHEM_BY_JUMPER = 0xFF };
@@ -43,6 +43,9 @@ typedef struct {
   uint8_t  ina_sign;        // INA_SIGN_*
   uint8_t  expert_n;        // stored raw BQ25798 writes, applied after our own settings
   uint16_t expert[EXPERT_MAX];   // (reg << 8) | value
+  int16_t  heat_on_x10;     // heater on below this battery temperature (0.1 degC)
+  int16_t  heat_off_x10;    // ... off above this
+  uint16_t heat_duty_pct;   // PWM percent while on, 0 = heater disabled
 } settings_t;
 
 // Charge counter, saved hourly and before ship mode
@@ -70,6 +73,10 @@ typedef struct {
 #define ST_SOC_FROM_V    0x4000   // percent comes from voltage (capacity or charge unknown)
 #define ST_SETTINGS_DIRTY 0x8000  // RAM settings differ from flash (send SAVE)
 
+// Status 2 (register 0x13 on 0x42), the first status word is full
+#define ST2_HEATING      0x0001   // heater gate is driven (duty > 0)
+#define ST2_V03          0x0002   // build for v0.3 boards (make J5=pa10): no heater
+
 // Live values, written by the main loop, read by the I2C target
 typedef struct {
   uint16_t vpack_mv;
@@ -81,6 +88,9 @@ typedef struct {
   uint16_t soc_x100;              // 0..10000
   uint16_t remaining_mah;
   uint16_t status;                // ST_*
+  uint16_t status2;               // ST2_*
+  int16_t  bat_temp_x10;          // battery NTC (BQ25798 TS), 0.1 degC, 0x8000 = no reading
+  uint16_t heat_pct;              // heater PWM percent now
   uint8_t  chem;                  // active
   uint8_t  chem_jumper;
   uint8_t  bq_chg_stat;           // REG1C bits 7:5

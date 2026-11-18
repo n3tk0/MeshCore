@@ -14,8 +14,6 @@ uint16_t bq_ts_x10(const bq_t *b) {
   return (uint16_t)((uint32_t)bq_u16(b, BQ_REG_TS) * 1000u / 1024u);
 }
 
-bool bq_vbus_present(const bq_t *b) { return b->ok && (b->r[BQ_REG_STAT0] & 0x01); }
-
 bool bq_refresh(bq_t *b) {
   uint8_t tmp[BQ_NREGS];
   // two blocks keep each transfer short
@@ -25,6 +23,12 @@ bool bq_refresh(bq_t *b) {
   b->ok = ok;
   return ok;
 }
+
+bool bq_vbus_present(const bq_t *b) { return b->ok && (b->r[BQ_REG_STAT0] & 0x01); }
+
+// SFET_PRESENT: with it the chip unlocks ship mode but also stops on battery under 3.2 V (starts over
+// 3.4 V; without it 2.4 / 2.6 V, SLUSDV2C 6.5): mid-plateau for LiFePO4, so not for LiFePO4
+bool bq_sfet(uint8_t chem) { return chem != CHEM_LFP; }
 
 uint16_t bq_vsysmin_mv(uint8_t chem) {
   // below the BMS cut-off of the chemistry; LTO stays under the 5.5 V parts on SYS
@@ -59,7 +63,9 @@ static bool is_pair_hi(uint8_t reg) { return reg == BQ_REG_VREG || reg == BQ_REG
 
 bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   if (!b->ok) return false;
-  if (bq_u16(b, BQ_REG_TS) != 0) b->ntc_present = bq_ts_x10(b) < BQ_TS_OPEN_X10;
+  // TS reads 0 while the ADC (or its TS channel) is off: judge the NTC only with TS converting
+  if ((b->r[BQ_REG_ADC_CTRL] & 0x80) && !(b->r[BQ_REG_ADC_DIS0] & 0x04) && bq_u16(b, BQ_REG_TS) != 0)
+    b->ntc_present = bq_ts_x10(b) < BQ_TS_OPEN_X10;
   bool ts_ignore = s->ntc_mode == NTC_OFF || (s->ntc_mode == NTC_AUTO && !b->ntc_present);
 
   // wanted image: the chip as read, then the stored expert writes, then our own fields on top
@@ -78,12 +84,12 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (s->vindpm_mv ? 0 : 1)));
   set_bits(img, BQ_REG_NTC1, 0x01, ts_ignore ? 1 : 0);
   set_bits(img, BQ_REG_CTRL1, 0x07, 5);             // watchdog 40 s
-  // never ship/shutdown from here; no D+/D- detection (not connected: it could drop IINDPM to 500 mA)
-  set_bits(img, BQ_REG_CTRL2, 0x46, 0);
-  // SFET_PRESENT: without it SDRV_CTRL (ship mode, which the BMS needs without sun) is locked at 0.
-  set_bits(img, BQ_REG_CTRL5, 0x80, 0x80);          // Q2 fitted, else SDRV_CTRL (ship) is locked
+  if (!b->ship_sent) set_bits(img, BQ_REG_CTRL2, 0x06, 0);   // never ship/shutdown from here
+  // no D+/D- detection (not connected: it could drop IINDPM to 500 mA)
+  set_bits(img, BQ_REG_CTRL2, 0x40, 0);
+  set_bits(img, BQ_REG_CTRL5, 0x80, bq_sfet(chem) ? 0x80 : 0);
   set_bits(img, BQ_REG_ADC_CTRL, 0x80, 0x80);       // ADC on, continuous
-  // TS channel only with VBUS: on battery alone it keeps REGN on and stops the ADC under ~3.2 V
+  // TS channel only with VBUS: on battery alone it keeps REGN on and stops the ADC under 3.2 V
   set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) ? 0 : 0x04);
   // EN_CHG ours; EN_ICO off (MPPT runs instead); EN_HIZ always 0: a read that caught HIZ set (input
   // fault, VOC check) must never be written back and leave the charger in HIZ
@@ -110,7 +116,9 @@ bool bq_kick_watchdog(bq_t *b) {
 }
 
 bool bq_ship(bq_t *b) {
-  // SDRV_CTRL = 10 (ship), SDRV_DLY = 1 (no 10 s delay); keep r[] so bq_apply() does not undo it
-  uint8_t v = (uint8_t)((b->r[BQ_REG_CTRL2] & ~0x07) | 0x05);
-  return b->bus->write(BQ_REG_CTRL2, &v, 1);
+  if (!(b->r[BQ_REG_CTRL5] & 0x80)) return false;   // no SFET_PRESENT: SDRV_CTRL is locked at 00
+  // SDRV_CTRL = 10 (ship), SDRV_DLY = 1 (no 10 s delay)
+  if (!wr8(b, BQ_REG_CTRL2, (uint8_t)((b->r[BQ_REG_CTRL2] & ~0x07) | 0x05))) return false;
+  b->ship_sent = true;   // our supply may hold for a while: don't write it back to 00 meanwhile
+  return true;
 }

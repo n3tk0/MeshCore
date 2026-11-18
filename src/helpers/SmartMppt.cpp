@@ -18,13 +18,15 @@ const Name NAMES[] = {
   {"j7_off", R_J7_OFF, false}, {"j7_on", R_J7_ON, false}, {"idsg_max", R_IDSG_MAX, false}, {"isc", R_ISC, false},
   {"bal_delta", R_BAL_DELTA, false}, {"bal_start", R_BAL_START, false}, {"zero_uv", R_ZERO_UV, true},
   {"shunt_uohm", R_SHUNT_UOHM, false}, {"ina_sign", R_INA_SIGN, false}, {"expert_n", R_EXPERT_N, false},
+  {"heat_on", R_HEAT_ON, true}, {"heat_off", R_HEAT_OFF, true}, {"heat_duty", R_HEAT_DUTY, false},
   {"expert0", R_EXPERT0, false}, {"expert1", R_EXPERT0 + 1, false}, {"expert2", R_EXPERT0 + 2, false},
   {"expert3", R_EXPERT0 + 3, false}, {"expert4", R_EXPERT0 + 4, false}, {"expert5", R_EXPERT0 + 5, false},
   {"expert6", R_EXPERT0 + 6, false}, {"expert7", R_EXPERT0 + 7, false},
   // read only
   {"status", R_STATUS, false}, {"soc", R_SOC, false}, {"remain", R_REMAIN, false}, {"vpack", R_VPACK, false},
   {"vcell1", R_VCELL1, false}, {"vcell2", R_VCELL2, false}, {"ibat", R_IBAT, true}, {"vbus", R_VBUS, false},
-  {"ibus", R_IBUS, true}, {"temp", R_TEMP, true}, {"cap_learnt", R_CAP_LEARNT, false}, {"cycles", R_CYCLES, false},
+  {"ibus", R_IBUS, true}, {"temp", R_TEMP, true}, {"bat_temp", R_BAT_TEMP, true}, {"heat_pct", R_HEAT_PCT, false},
+  {"status2", R_STATUS2, false}, {"cap_learnt", R_CAP_LEARNT, false}, {"cycles", R_CYCLES, false},
   {"result", R_RESULT, false},
 };
 
@@ -109,6 +111,11 @@ void status(TwoWire& w, char* reply, size_t max) {
     snprintf(reply, max, "Err - read failed, try again");
     return;
   }
+  uint16_t bt = 0x8000, st2 = 0;   // older firmware has no such registers (they read 0)
+  if (ver >= 0x0002) {   // firmware 0.2 and newer
+    readReg(w, R_BAT_TEMP, bt);
+    readReg(w, R_STATUS2, st2);
+  }
   static const char* const CHEMS[] = { "Li-ion", "LiFePO4", "LTO2S" };
   int n = snprintf(reply, max, "v%u.%u %s %umV %dmA %u.%u%%%s %umAh sun:%umV",
                    ver >> 8, ver & 0xFF, (chem >> 8) < 3 ? CHEMS[chem >> 8] : "?", vpack, (int16_t)ibat,
@@ -119,6 +126,11 @@ void status(TwoWire& w, char* reply, size_t max) {
     if (b == 2 || b == 14) continue;   // sun shown above, SOC_FROM_V as (V)
     if (st & (1u << b)) n += snprintf(reply + n, max - n, " %s", FLAGS[b]);
   }
+  if (bt != 0x8000 && n > 0 && (size_t)n < max) {   // battery temperature (NTC), 0.1 degC
+    int t = (int16_t)bt;
+    n += snprintf(reply + n, max - n, " bat:%s%d.%dC", t < 0 ? "-" : "", abs(t) / 10, abs(t) % 10);
+  }
+  if ((st2 & ST2_HEATING) && n > 0 && (size_t)n < max) n += snprintf(reply + n, max - n, " heat");
 }
 }  // namespace
 
@@ -157,13 +169,20 @@ void smpptCommand(TwoWire& w, const char* args, char* reply, size_t max) {
     return;
   }
 
-  if (strcmp(args, "names") == 0) {
-    int n = 0;
+  if (strcmp(args, "names") == 0 || memcmp(args, "names ", 6) == 0) {
+    // settings only (expert1..7 work like expert0); a long list goes on over pages: "names 2"
+    int page = args[5] ? atoi(args + 6) : 1, cur = 1, n = 0;
+    if (page < 1) page = 1;
+    reply[0] = 0;
     for (const Name& nm : NAMES) {
-      if (nm.reg < 0x20 || nm.reg > 0x35) continue;   // settings only; expert1..7 work like expert0
-      if (n > 0 && (size_t)n < max) n += snprintf(reply + n, max - n, " ");
-      if ((size_t)n < max) n += snprintf(reply + n, max - n, "%s", nm.name);
-      if ((size_t)n >= max) break;
+      if (nm.reg < 0x20 || nm.reg > R_SET_LAST || (nm.reg > R_EXPERT0 && nm.reg < R_HEAT_ON)) continue;
+      size_t need = (n > 0 ? 1 : 0) + strlen(nm.name);
+      if ((size_t)n + need + 10 >= max) {   // keep room for " +names N"
+        if (cur == page) { snprintf(reply + n, max - n, " +names %d", page + 1); return; }
+        cur++; n = 0; need = strlen(nm.name);
+      }
+      if (cur == page) n += snprintf(reply + n, max - n, "%s%s", n > 0 ? " " : "", nm.name);
+      else n += (int)need;   // count only, for the page break
     }
     return;
   }

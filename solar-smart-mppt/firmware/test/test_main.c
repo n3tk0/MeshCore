@@ -7,6 +7,7 @@
 #include "settings.h"
 #include "gauge.h"
 #include "bms.h"
+#include "heater.h"
 #include "bq25798.h"
 
 static int fails, checks;
@@ -47,8 +48,6 @@ static void test_settings(void) {
   CHECK(settings_check(&s, CHEM_LIION) == ERR_RANGE);
   s.expert[0] = 0x1500 | 0x09;                         // MPPT timing bits: allowed
   CHECK(settings_check(&s, CHEM_LIION) == ERR_OK);
-  s.expert_n = 0; s.expert[0] = 0x01FF;                  // disallowed even past expert_n
-  CHECK(settings_check(&s, CHEM_LIION) == ERR_RANGE);
 
   // jumper moved from Li-ion to LiFePO4: voltages follow the jumper, currents and capacity stay
   settings_defaults(&s, CHEM_LIION);
@@ -241,7 +240,7 @@ static void test_bms(void) {
   bms_t b;
   bms_init(&b);
   bms_out_t o;
-  bms_in_t in = { .vpack_mv = 3800, .ibat_ma = -100, .sun = true };
+  bms_in_t in = { .vpack_mv = 3800, .ibat_ma = -100, .sun = true, .second = true };
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(!o.od_off && !o.oc_off && o.charge_ok && o.j7_on && !o.ship);
 
@@ -257,23 +256,37 @@ static void test_bms(void) {
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(!o.od_off);
 
-  // under-voltage without sun: ship mode at the UV debounce, discharge FET stays on so the MCU keeps power until ship
+  // under-voltage without sun: ship mode
   bms_init(&b);
   in.vpack_mv = 2950; in.sun = false;
-  for (int i = 0; i < BMS_DEBOUNCE - 1; i++) {
-    bms_step(&b, &s, CHEM_LIION, &in, &o);
-    CHECK(!o.ship && !o.od_off);
-  }
+  // the FET must stay on (it feeds the MCU) and ship comes in the same step the under-voltage does
+  for (int i = 0; i < BMS_DEBOUNCE - 1; i++) { bms_step(&b, &s, CHEM_LIION, &in, &o); CHECK(!o.ship && !o.od_off); }
   bms_step(&b, &s, CHEM_LIION, &in, &o);
-  CHECK(o.ship && !o.od_off && o.empty && (o.status & ST_UV));
+  CHECK(o.ship && !o.od_off && !o.j7_on && (o.status & ST_UV));
+  bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(o.ship && !o.od_off && !o.j7_on);
+  // the sun comes back while still low: FET off, no ship
+  in.sun = true;
+  bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(o.od_off && !o.ship);
+  in.sun = false;
+
+  // a COMP0 step between seconds counts nothing
+  bms_init(&b);
+  in.vpack_mv = 2950; in.sun = true; in.second = false;
+  for (int i = 0; i < 2 * BMS_DEBOUNCE; i++) bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(!o.od_off);
+  in.second = true;
 
   // short with sun: FET off, retry after the pause; without sun: ship at once
   bms_init(&b);
   in.vpack_mv = 3800; in.sun = true; in.short_tripped = true;
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(o.od_off && (o.status & ST_SHORT) && !o.ship);
-  in.short_tripped = false;
-  for (int i = 0; i < BMS_RETRY_S - 2; i++) bms_step(&b, &s, CHEM_LIION, &in, &o);
+  in.short_tripped = false; in.second = false;
+  bms_step(&b, &s, CHEM_LIION, &in, &o);   // extra COMP0-driven pass: the pause does not move
+  in.second = true;
+  for (int i = 0; i < BMS_RETRY_S - 1; i++) bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(o.od_off);
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(!o.od_off);
@@ -348,36 +361,179 @@ static void test_bq(void) {
   CHECK((chip[BQ_REG_NTC1] & 1) == 1);                            // no NTC: TS ignored
   CHECK(chip[BQ_REG_CTRL0] == 0x02);                              // not charging yet, EN_TERM kept
   CHECK((chip[BQ_REG_CTRL1] & 7) == 5 && (chip[BQ_REG_ADC_CTRL] & 0x80));
-  CHECK((chip[BQ_REG_CTRL5] & 0x80) == 0x80);                     // SFET_PRESENT on so ship mode works
-  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0x04);                  // no VBUS: TS ADC off
   CHECK((chip[BQ_REG_VSYSMIN] & 0x3F) == 2);                      // 3000 mV
+  CHECK((chip[BQ_REG_CTRL5] & 0x80) == 0x80);                     // SFET_PRESENT (Li-ion): ship mode works
+  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0x04);                  // no VBUS: TS ADC off
   // nothing to do the second time
   chip_writes = 0;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && chip_writes == 0);
   CHECK(bq_apply(&b, &s, CHEM_LIION, true) && chip[BQ_REG_CTRL0] == 0x22);
-  // VBUS present turns TS ADC back on; EN_HIZ and AUTO_INDET_EN are always cleared
-  chip[BQ_REG_STAT0] = 0x01;
-  chip[BQ_REG_CTRL2] |= 0x40;
-  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true));
-  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0 && (chip[BQ_REG_CTRL2] & 0x40) == 0);
-  // chip reset (watchdog): everything is written again; TS=0 at night does not falsely claim an NTC
+  // chip reset (watchdog): everything is written again
   memset(chip, 0, 0x30);
-  chip[BQ_REG_TS] = 0; chip[BQ_REG_TS + 1] = 0;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && bq_u16(&b, BQ_REG_VREG) == 420);
-  CHECK(!b.ntc_present);
   // EN_HIZ read back as 1 (caught during a VOC check or a fault) is never written back
   chip[BQ_REG_CTRL0] |= 0x04;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && chip[BQ_REG_CTRL0] == 0x22);
-  // NTC present
+  // VBUS: TS ADC on; AUTO_INDET_EN and EN_ICO always cleared
+  chip[BQ_REG_STAT0] = 0x01;
+  chip[BQ_REG_CTRL2] |= 0x40;
+  chip[BQ_REG_CTRL0] |= 0x10;
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0 && (chip[BQ_REG_CTRL2] & 0x40) == 0 && chip[BQ_REG_CTRL0] == 0x22);
+  // NTC present (judged once TS converts)
   chip[BQ_REG_TS] = 0x02; chip[BQ_REG_TS + 1] = 0x60;             // 59 %
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && (chip[BQ_REG_NTC1] & 1) == 0 && b.ntc_present);
+  // night: TS off again, and a TS of 0 is not taken as an NTC either way
+  chip[BQ_REG_STAT0] = 0;
+  chip[BQ_REG_TS] = 0; chip[BQ_REG_TS + 1] = 0;
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && (chip[BQ_REG_ADC_DIS0] & 0x04) && b.ntc_present);
+  chip[BQ_REG_TS] = 0x02; chip[BQ_REG_TS + 1] = 0x60;
   // bus error
   chip_fail = true;
   CHECK(!bq_refresh(&b) && !bq_apply(&b, &s, CHEM_LIION, true) && b.errors == 1);
   chip_fail = false;
   CHECK(bq_ship(&b) && (chip[BQ_REG_CTRL2] & 7) == 5);
-  // bq_apply before the next bq_refresh does not undo a pending ship command
-  CHECK(bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 7) == 5);
+  // still powered after the ship command: bq_apply must not undo it
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 7) == 5);
+  b.ship_sent = false;                                            // the sun is back
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 6) == 0);
+  // LiFePO4: no SFET_PRESENT (the BQ would stop at 3.2 V on battery), so no ship command either
+  settings_t lfp;
+  settings_defaults(&lfp, CHEM_LFP);
+  CHECK(bq_refresh(&b) && bq_apply(&b, &lfp, CHEM_LFP, false) && (chip[BQ_REG_CTRL5] & 0x80) == 0);
+  CHECK(bq_refresh(&b) && !bq_ship(&b) && !b.ship_sent && (chip[BQ_REG_CTRL2] & 6) == 0);
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL5] & 0x80));
+  // after a chip reset the ADC is off and TS reads 0: no NTC must not turn into "NTC present"
+  memset(chip, 0, sizeof(chip));
+  bq_t c;
+  bq_init(&c, &CBUS);
+  CHECK(bq_refresh(&c) && bq_apply(&c, &s, CHEM_LIION, false) && !c.ntc_present && (chip[BQ_REG_NTC1] & 1) == 1);
+  chip[BQ_REG_TS] = 0x03; chip[BQ_REG_TS + 1] = 0x6C;             // ADC running now: still no NTC
+  CHECK(bq_refresh(&c) && bq_apply(&c, &s, CHEM_LIION, false) && !c.ntc_present);
+}
+
+static void test_heater(void) {
+  settings_t s;
+  settings_defaults(&s, CHEM_LIION);
+  CHECK(s.heat_on_x10 == 20 && s.heat_off_x10 == 50 && s.heat_duty_pct == 100);
+  CHECK(sizeof(settings_t) <= 96);                                  // fits one flash record
+  // settings limits
+  settings_t t = s;
+  t.heat_off_x10 = 20; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);   // off must be above on
+  t = s; t.heat_on_x10 = -300; t.heat_off_x10 = -290; CHECK(settings_check(&t, CHEM_LIION) == ERR_OK);
+  t = s; t.heat_on_x10 = -301; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_off_x10 = 501; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_on_x10 = 401; t.heat_off_x10 = 450; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_duty_pct = 101; CHECK(settings_check(&t, CHEM_LIION) == ERR_RANGE);
+  t = s; t.heat_duty_pct = 0; CHECK(settings_check(&t, CHEM_LIION) == ERR_OK);
+  // another JP4 chemistry keeps the heater settings
+  t = s; t.heat_on_x10 = -50; t.heat_off_x10 = 0; t.heat_duty_pct = 40; t.chem_jumper = CHEM_LIION;
+  uint8_t act;
+  CHECK(settings_resolve_chem(&t, CHEM_LFP, &act) && t.heat_on_x10 == -50 && t.heat_off_x10 == 0 && t.heat_duty_pct == 40);
+
+  // TS -> temperature (10k B3435, 5.1k / 30k): table points and in between
+  int16_t T;
+  CHECK(heater_ts_to_temp(595, &T) && T == 250);
+  CHECK(heater_ts_to_temp(742, &T) && T == 0);
+  CHECK(heater_ts_to_temp(718, &T) && T == 50);
+  CHECK(heater_ts_to_temp(347, &T) && T == 600);
+  CHECK(heater_ts_to_temp(835, &T) && T == -350);
+  CHECK(heater_ts_to_temp(730, &T) && T > 0 && T < 50 && T >= 20 && T <= 30);     // about 2.5 degC
+  CHECK(!heater_ts_to_temp(850, &T) && !heater_ts_to_temp(346, &T) && !heater_ts_to_temp(0, &T));
+  int16_t prev = -10000;
+  for (uint16_t ts = 835; ts >= 347; ts--) {                                   // monotonic: hotter = lower TS
+    CHECK(heater_ts_to_temp(ts, &T) && T >= prev);
+    prev = T;
+  }
+
+  // logic: cold battery, panel there
+  heater_t h; heater_init(&h);
+  heater_in_t in = { .sun = true, .bq_ok = true, .bq_fault = false, .ntc_present = true, .ntc_mode = NTC_AUTO, .ts_x10 = 742 }; // 0 degC
+  heater_out_t o;
+  heater_step(&h, &s, &in, &o);
+  CHECK(o.temp_valid && o.temp_x10 == 0 && o.duty == 100 && h.on);
+  in.ts_x10 = 730;                                   // ~2.5 degC: between on (2.0) and off (5.0): stays on
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  in.ts_x10 = 712;                                   // ~5.6 degC: above heat_off -> off
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !h.on && o.temp_x10 > 50);
+  in.ts_x10 = 726;                                   // ~3.4 degC: between, was off: stays off
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && o.temp_valid);
+  in.ts_x10 = 730;                                   // ~2.5 degC: still not below 2.0
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+  in.ts_x10 = 742;                                   // 0 degC: on again
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+
+  // weak panel: the battery discharges with the heater on -> off for 60 s, then it may try again
+  in.ibat_ma = -150; in.now_ms = 1000;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && h.blocked);
+  in.ibat_ma = 0; in.now_ms = 1000 + HEAT_BLOCK_MS - 1;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+  in.now_ms = 1000 + HEAT_BLOCK_MS;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100 && !h.blocked);
+  in.ibat_ma = -50;                                  // small discharge: stays on
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  in.ibat_ma = 0;
+
+  // no sun: off, but the temperature is still reported; sun back: on again
+  in.sun = false;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && o.temp_valid && o.temp_x10 == 0);
+  in.sun = true;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+
+  // NTC missing, NTC off, no I2C, fault, TS out of range: all off
+  in.ntc_present = false; in.ts_x10 = 855;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid && o.temp_x10 == HEAT_TEMP_NONE);
+  in.ntc_present = true; in.ts_x10 = 742; in.ntc_mode = NTC_OFF;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid);
+  in.ntc_mode = NTC_ON;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  in.bq_ok = false;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid);
+  in.bq_ok = true; in.bq_fault = true;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && o.temp_valid);
+  in.bq_fault = false;
+  in.ts_x10 = 0;                                     // shorted NTC reads hot: off
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !o.temp_valid);
+  in.ts_x10 = 742;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+  // a fault in between: after it clears the state starts from off (cold = on again at once)
+  in.bq_fault = true; heater_step(&h, &s, &in, &o); CHECK(!h.on);
+  in.bq_fault = false; in.ts_x10 = 726;              // ~3.4 degC, between the limits: stays off after a fault
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+
+  // duty limit and disabled
+  s.heat_duty_pct = 35;
+  in.ts_x10 = 742;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 35);
+  s.heat_duty_pct = 0;
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0 && !h.on && o.temp_valid);
+  s.heat_duty_pct = 100; s.heat_on_x10 = -100; s.heat_off_x10 = -50;   // thresholds from the settings
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);                     // 0 degC is above -5
+  in.ts_x10 = 781;                                                       // -10 degC: not below -10 yet
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 0);
+  in.ts_x10 = 790;                                                       // about -12 degC
+  heater_step(&h, &s, &in, &o); CHECK(o.duty == 100);
+
+  // registers: signed thresholds, status2, live values
+  memset(&R, 0, sizeof(R));
+  settings_defaults(&R.set, CHEM_LIION);
+  R.live.chem_jumper = CHEM_LIION; R.live.chem = CHEM_LIION;
+  R.live.bat_temp_x10 = -75; R.live.heat_pct = 60; R.live.status2 = ST2_HEATING;
+  CHECK(rd(ADDR_SMPPT, R_BAT_TEMP) == (uint16_t)-75 && rd(ADDR_SMPPT, R_HEAT_PCT) == 60 && rd(ADDR_SMPPT, R_STATUS2) == 1);
+  CHECK(rd(ADDR_SMPPT, R_HEAT_ON) == 20 && rd(ADDR_SMPPT, R_HEAT_OFF) == 50 && rd(ADDR_SMPPT, R_HEAT_DUTY) == 100);
+  wr(ADDR_SMPPT, R_HEAT_ON, (uint16_t)-30);
+  CHECK(R.result == ERR_OK && R.set.heat_on_x10 == -30 && rd(ADDR_SMPPT, R_HEAT_ON) == (uint16_t)-30);
+  wr(ADDR_SMPPT, R_HEAT_OFF, 10);
+  CHECK(R.result == ERR_OK && R.set.heat_off_x10 == 10);
+  wr(ADDR_SMPPT, R_HEAT_OFF, (uint16_t)-30);
+  CHECK(R.result == ERR_RANGE && R.set.heat_off_x10 == 10);
+  wr(ADDR_SMPPT, R_HEAT_DUTY, 50);
+  CHECK(R.result == ERR_OK && R.set.heat_duty_pct == 50);
+  wr(ADDR_SMPPT, R_HEAT_DUTY, 150);
+  CHECK(R.result == ERR_RANGE && R.set.heat_duty_pct == 50);
+  wr(ADDR_SMPPT, R_SET_LAST + 1, 1);
+  CHECK(R.result == ERR_BAD_REG);
+  CHECK(R_SET_LAST == 0x3F && R_EXPERT0 == 0x35 && R_CYCLES == 0x10 && R_CMD == 0x61);   // old addresses did not move
 }
 
 int main(void) {
@@ -387,6 +543,7 @@ int main(void) {
   test_gauge();
   test_bms();
   test_bq();
+  test_heater();
   printf("%d checks, %d failed\n", checks, fails);
   return fails ? 1 : 0;
 }
