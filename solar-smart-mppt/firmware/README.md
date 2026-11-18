@@ -99,7 +99,8 @@ range, 5.5 V parts on SYS) and works at once; RESULT says why it was refused. It
 Changing `chem` loads that chemistry's voltage defaults (currents, capacity and calibration stay).
 
 Expert writes (BQ25798 registers 0x03..0x18 except 0x0A cell count and 0x11) are applied after our own; the bits we manage
-(VSYSMIN, VREG, ICHG, IINDPM, VINDPM, VOC_PCT/EN_MPPT, TS_IGNORE, WATCHDOG, ship, ADC_EN, EN_CHG) always win.
+(VSYSMIN, VREG, ICHG, IINDPM, VINDPM, VOC_PCT/EN_MPPT, TS_IGNORE, WATCHDOG, ship, AUTO_INDET_EN,
+SFET_PRESENT, ADC_EN, TS_ADC_DIS, EN_ICO, EN_HIZ, EN_CHG) always win.
 
 Commands (write to 0x61; `*` = write 0xA55A to 0x60 first, valid 2 s, one command):
 1 SAVE\*, 2 LOAD, 3 DEFAULTS\* (also saved), 4 COUNTER_RESET, 5 SET_FULL, 6 ZERO\* (0 A now; needs SAVE),
@@ -148,8 +149,12 @@ battery gauge expects), VOLTAGE (0x02, 1.25 mV/bit, pack), POWER (0x03, 10 mW/bi
   BQ25798 goes to **ship mode** instead, in the same step the under-voltage is confirmed (3 s), while the
   discharge FET stays on and J7 goes off; it wakes when the panel gives power. The gauge is saved first.
   Until the sun is back the firmware never writes SDRV_CTRL back to 0 and keeps ~CE high, in case its
-  own supply holds for a while after the command. With JP3 closed (LiFePO4) ship mode cannot cut the
-  pack, so the board stays on with J7 off.
+  own supply holds for a while after the command. LiFePO4: SFET_PRESENT stays 0 (with it the BQ25798
+  would stop on battery at 3.2 V, mid-plateau; without it at 2.4 V), so there is no ship mode: the board
+  stays on with J7 off until the BQ25798 cuts the pack at 2.4 V.
+- **BQ25798 extras:** SFET_PRESENT for Li-ion and LTO, AUTO_INDET_EN and EN_ICO off, the TS ADC channel
+  only with VBUS (on battery alone it keeps REGN on and stops the ADC under 3.2 V; the NTC is judged only
+  while TS converts), sun = VBUS_PRESENT_STAT and VBUS over 3.5 V.
 - **Short / over-current:** COMP0 turns the discharge FET off in its interrupt. With sun it tries again
   after 60 s; without sun ship mode is asked for in the same step, before the FET goes off in software.
   A COMP0 pass between the 1 s steps counts nothing (no debounce or pause step).
