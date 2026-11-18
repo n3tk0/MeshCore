@@ -71,7 +71,7 @@ All other pins are as in `src/board.h`.
 | Reg | Name | | Reg | Name (settings, R/W) | Default Li-ion / LiFePO4 / LTO 2S |
 |---|---|---|---|---|---|
 | 0x00 | ID 0x534D | | 0x20 | chem: 0 Li-ion, 1 LiFePO4, 2 LTO 2S, 0xFF = by JP4 | 0xFF |
-| 0x01 | version major<<8 \| minor (0.2) | | 0x21 | capacity mAh (0 = learn) | 0 |
+| 0x01 | version major<<8 \| minor (0.3) | | 0x21 | capacity mAh (0 = learn) | 0 |
 | 0x02 | status (below) | | 0x22 | vchg mV | 4200 / 3600 / 5600 |
 | 0x03 | SOC % × 100 | | 0x23 | ichg mA | 1000 |
 | 0x04 | remaining mAh | | 0x24 | iin mA (panel) | 3000 |
@@ -113,6 +113,19 @@ Status bits: 0 charging, 1 full, 2 sun, 3 no NTC, 4 discharge FET off, 5 charge 
 
 Status 2 (0x13): bit 0 heating (gate driven), bit 1 v0.3 build (no heater). The first status word is full,
 so the heater has its own word.
+Firmware 0.3 adds, with VBUS present: status 2 bit 2 `hiz` (the chip set EN_HIZ), bit 3 `no PG`, bit 4 poor
+source seen in the last 30 min; 0x14 poor source detections since start (REG22 POORSRC_FLAG, read to clear,
+so counted every second), 0x15 minutes since the last (0xFFFF = none). Older firmware reads 0 there. The input
+limit is REG05 in the mirror (0x85).
+
+**Weak panel at dawn (MPPT mode, `vindpm` 0).** The chip sets VINDPM = VBUS0 - 0.7 V (3.6 V at the clamp), which
+pulls a 5 V / 5 W panel under VPOORSRC: poor source, EN_HIZ = 1, PG = 0. EN_MPPT is now written only with PG = 1
+and VBUS > VBUS_PRESENT and VSYS_STAT = 0 (as the chip needs it). While MPPT is not running and the converter
+does not load the panel (EN_HIZ / no PG / poor source) the VBUS ADC is the open-circuit voltage Voc, if it was
+read with the converter off for a whole second (not right after we cleared EN_HIZ). VINDPM is then set to 80 % of
+Voc (down to 100 mV, 3.6..22 V) before EN_HIZ is cleared, at every drop-out, until PG = 1 and the chip's MPPT
+runs. EN_HIZ is kept for 2 seconds of every 6 to get that reading. A fixed `vindpm` is unchanged. Not tested on
+hardware.
 
 ## INA260 on 0x41
 

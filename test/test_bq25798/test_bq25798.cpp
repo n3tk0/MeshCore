@@ -563,6 +563,384 @@ TEST(BQ25798, LiIonJumperOrNoPinChargesAsBefore) {
   EXPECT_NE(strstr(buf, "JP2 1-2"), nullptr) << buf;
 }
 
+// A weak panel at dawn: the converter (VINDPM under 70 % of Voc) pulls it under VPOORSRC, the chip sets
+// EN_HIZ, PG = 0 and the poor source flag; the VBUS ADC reads Voc while the converter is off.
+struct DawnBQ : public FakeBQ {
+  uint16_t voc = 6000, loaded = 3300;
+  std::vector<std::pair<uint8_t, uint8_t>> wlog;   // register, value, in order
+  int poor_events = 0;
+  bool stubborn = false;   // the panel never holds, whatever VINDPM is
+  void measure() {                     // what the ADC converts now
+    bool off = (r[0x0F] & 0x04) || !(r[0x1B] & 0x08);
+    put16(0x35, (r[0x2F] & 0x20) ? 0 : off ? voc : loaded);   // VBUS_ADC_DIS: nothing
+    put16(0x3B, 3900);
+    put16(0x3D, 3950);
+  }
+  bool readRegs(uint8_t reg, uint8_t* buf, uint8_t n) override {
+    if (reg <= 0x35 && (r[0x2E] & 0xC0) == 0x80) measure();   // continuous conversion keeps going
+    bool ok = FakeBQ::readRegs(reg, buf, n);
+    if (ok && reg <= 0x22 && reg + n > 0x22) r[0x22] = 0;   // the flags clear when read
+    return ok;
+  }
+  bool writeRegs(uint8_t reg, const uint8_t* buf, uint8_t n) override {
+    bool ok = FakeBQ::writeRegs(reg, buf, n);
+    for (uint8_t i = 0; ok && i < n; i++) {
+      uint8_t a = reg + i;
+      wlog.push_back({ a, buf[i] });
+      if (a == 0x2E && (buf[i] & 0x80)) measure();   // a conversion: Voc without load, else the loaded panel
+      if (a == 0x0F && !(buf[i] & 0x04) && (r[0x1B] & 0x01)) {   // EN_HIZ cleared: the chip qualifies the panel
+        if (!stubborn && r[0x05] * 100 * 10 >= voc * 7) { r[0x1B] |= 0x08; }      // VINDPM high enough: the panel holds
+        else { r[0x1B] &= ~0x08; r[0x0F] |= 0x04; r[0x22] |= 0x10; poor_events++; }
+      }
+    }
+    return ok;
+  }
+  void dawn() {
+    sun(true);
+    r[0x1B] &= ~0x08;                   // no PG
+    r[0x0F] |= 0x04;                    // EN_HIZ
+    r[0x22] = 0x10;                     // poor source
+    r[0x05] = 0x24;                     // 3.6 V
+    adcValues(3900, 0, voc, 0);
+  }
+  int firstWrite(uint8_t reg, int from = 0) const {
+    for (size_t i = from; i < wlog.size(); i++) if (wlog[i].first == reg) return (int)i;
+    return -1;
+  }
+};
+
+TEST(BQ25798, VindpmFromVoc) {
+  EXPECT_EQ(BQ25798::vindpmFromVoc(6000), 4800);
+  EXPECT_EQ(BQ25798::vindpmFromVoc(5999), 4700);     // rounded down to 100 mV
+  EXPECT_EQ(BQ25798::vindpmFromVoc(4000), 3600);     // 3.2 V: clamped to the minimum
+  EXPECT_EQ(BQ25798::vindpmFromVoc(0), 3600);
+  EXPECT_EQ(BQ25798::vindpmFromVoc(18000), 14400);
+  EXPECT_EQ(BQ25798::vindpmFromVoc(40000), 22000);   // clamped to the maximum
+  EXPECT_EQ(BQ25798::vindpmFromVoc(65535), 22000);
+}
+
+TEST(BQ25798, WeakPanelAtDawnGetsVindpmFromVocBeforeHizIsCleared) {
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  f.wlog.clear();
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.r[0x05], 48);                          // 80 % of 6.0 V
+  EXPECT_EQ(bq.autoVindpm(), 4800);
+  EXPECT_EQ(bq.autoVindpmCount(), 1);
+  EXPECT_TRUE(bq.powerGood());
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
+  EXPECT_EQ(f.poor_events, 0);                       // the retry already started at the new floor
+  int v = f.firstWrite(0x05);
+  ASSERT_GE(v, 0);
+  for (size_t i = 0; i < f.wlog.size(); i++) {      // no EN_HIZ clear before the VINDPM write
+    if (f.wlog[i].first == 0x0F && !(f.wlog[i].second & 0x04)) { EXPECT_GT((int)i, v); break; }
+  }
+  EXPECT_EQ(f.r[0x15] & 1, 1);                       // PG: the existing path hands over to the chip's MPPT
+  EXPECT_TRUE(bq.mpptOn());
+  EXPECT_EQ(f.firstWrite(0x05, v + 1), -1);          // written once: MPPT is running now
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "mppt on"), nullptr) << buf;
+  EXPECT_EQ(strstr(buf, ", vin"), nullptr) << buf;   // the input limit is shown only while MPPT is off
+}
+
+TEST(BQ25798, LatchedEnMpptWithHizStillGetsVindpmFromVoc) {
+  // the chip clears EN_MPPT only when VBUS goes under VBUS_PRESENT: a poor-source HIZ above it leaves it set
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  f.r[0x15] = BQ_MPPT_BASE | 1;
+  bq.apply(settings());
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, ", vin 3.6V"), nullptr) << buf;   // MPPT "on" but not running: the limit is shown
+  EXPECT_NE(strstr(buf, ", hiz"), nullptr) << buf;
+  f.wlog.clear();
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.r[0x05], 48);
+  EXPECT_EQ(bq.autoVindpm(), 4800);
+  EXPECT_TRUE(bq.powerGood());
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
+  EXPECT_EQ(f.poor_events, 0);
+  EXPECT_EQ(f.r[0x15] & 1, 1);                       // running again, as the chip has it
+  int v = f.firstWrite(0x05);
+  ASSERT_GE(v, 0);
+  for (size_t i = 0; i < f.wlog.size(); i++) {
+    if (f.wlog[i].first == 0x0F && !(f.wlog[i].second & 0x04)) { EXPECT_GT((int)i, v); break; }
+  }
+  // MPPT really running (EN_MPPT, PG, no HIZ): hands off
+  f.r[0x05] = 60;
+  runFor(bq, t, 30000);
+  EXPECT_EQ(f.r[0x05], 60);
+  EXPECT_EQ(bq.autoVindpmCount(), 1);
+  // latched EN_MPPT, no HIZ but no PG: also recovered
+  f.voc = 7000;
+  f.r[0x1B] &= ~0x08;
+  runFor(bq, t, 30000);
+  EXPECT_EQ(f.r[0x05], 56);
+}
+
+TEST(BQ25798, VindpmIsSetAgainAtEachDropOut) {
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  runFor(bq, t, 60000);
+  ASSERT_EQ(f.r[0x05], 48);
+  // the light drops: Voc 4.5 V, the chip falls out again (poor source, EN_MPPT dropped with it)
+  f.voc = 4500;
+  f.r[0x1B] &= ~0x08;
+  f.r[0x0F] |= 0x04;
+  f.r[0x22] |= 0x10;
+  f.r[0x15] &= ~0x01;
+  f.r[0x05] = 0x24;                                  // the chip put its own 3.6 V back
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.r[0x05], 36);
+  EXPECT_EQ(bq.autoVindpm(), 3600);
+  EXPECT_TRUE(bq.powerGood());
+  f.voc = 7000;                                      // and again, brighter
+  f.r[0x1B] &= ~0x08;
+  f.r[0x0F] |= 0x04;
+  f.r[0x15] &= ~0x01;
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.r[0x05], 56);
+  EXPECT_GE(bq.autoVindpmCount(), 2);
+}
+
+TEST(BQ25798, LoadedVbusIsNeverTakenForVoc) {
+  // PG = 1, no HIZ, but MPPT refused (battery under VSYSMIN): the converter loads the panel
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.sun(true);
+  f.r[0x1B] |= 0x08;
+  f.r[0x1E] |= 0x10;
+  f.adcValues(3900, 0, 3500, 100);
+  f.r[0x05] = 0x24;
+  bq.apply(settings());
+  f.wlog.clear();
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.firstWrite(0x05), -1);
+  EXPECT_EQ(f.r[0x05], 0x24);
+  EXPECT_EQ(bq.autoVindpmCount(), 0);
+
+  // a reading taken while the converter ran (shot started after EN_HIZ was cleared) is not Voc either:
+  // the chip qualifies, falls out again; the new Voc comes only from a conversion made in HIZ
+  DawnBQ g;
+  BQ25798 bq2(g);
+  t = 0;
+  bq2.begin(t);
+  g.dawn();
+  g.voc = 5000; g.loaded = 4000;                     // 80 % of 4.0 V would be 3.2 V -> 3600
+  bq2.apply(settings());
+  runFor(bq2, t, 60000);
+  EXPECT_EQ(g.r[0x05], 40);                          // 80 % of 5.0 V, not of the loaded 4.0 V
+}
+
+TEST(BQ25798, LatchedPoorSourceFlagAloneIsNotUnloaded) {
+  // PG = 1, no HIZ, MPPT refused (VSYSMIN): only the latched poor source flag is set. The converter runs, so
+  // VINDPM stays and the flag is just counted.
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.sun(true);
+  f.r[0x1B] |= 0x08;
+  f.r[0x1E] |= 0x10;
+  f.adcValues(3900, 0, 3500, 100);
+  f.r[0x05] = 0x24;
+  f.r[0x22] = 0x10;
+  bq.apply(settings());
+  f.wlog.clear();
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.firstWrite(0x05), -1);
+  EXPECT_EQ(bq.autoVindpmCount(), 0);
+  EXPECT_GE(bq.poorSourceCount(), 1);
+}
+
+TEST(BQ25798, FixedVindpmKeepsItsPath) {
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  BQ25798Settings s = settings();
+  s.vindpm_mv = 4500;
+  bq.apply(s);
+  EXPECT_EQ(f.r[0x05], 45);
+  EXPECT_EQ(f.r[0x15] & 1, 0);                       // no MPPT
+  EXPECT_EQ(f.r[0x15] & 0xFE, BQ_MPPT_BASE);
+  f.wlog.clear();
+  f.r[0x0F] |= 0x04; f.r[0x1B] &= ~0x08;
+  bq.loop(t += 10000);
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);                    // EN_HIZ cleared at the poll: no hold, no waiting for Voc
+  runFor(bq, t, 30000);
+  EXPECT_EQ(f.r[0x05], 45);
+  EXPECT_EQ(bq.autoVindpmCount(), 0);
+  EXPECT_EQ(bq.autoVindpm(), 0);
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, ", vin 4.5V"), nullptr) << buf;
+}
+
+TEST(BQ25798, HizIsHeldOnlyBrieflyWithoutAnAdc) {
+  DawnBQ f;
+  f.adc_works = false;                               // ADC_EN never drops: no result ever
+  f.stubborn = true;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  EXPECT_NE(f.r[0x0F] & 0x04, 0);                    // held for the first result
+  f.wlog.clear();
+  bq.loop(t += 10000);                               // held again
+  EXPECT_EQ(f.firstWrite(0x0F), -1);
+  bq.loop(t += 10000);                               // given up: EN_HIZ cleared as before, 10 s retries
+  EXPECT_GE(f.firstWrite(0x0F), 0);
+  EXPECT_GE(f.poor_events, 1);
+  for (int i = 0; i < 3; i++) bq.loop(t += 10000);
+  EXPECT_EQ(bq.autoVindpmCount(), 0);
+  f.wlog.clear();
+  bq.loop(t += 10000);                               // a minute into the loop: held for another try
+  EXPECT_EQ(f.firstWrite(0x0F), -1);
+}
+
+TEST(BQ25798, ContinuousAdcGivesVocToo) {
+  DawnBQ f;
+  f.zeros_after_shot = true;                         // one-shot results read as zeros: continuous conversion
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  runFor(bq, t, 180000);
+  EXPECT_TRUE(bq.adcContinuous());
+  EXPECT_EQ(f.r[0x05], 48);
+  EXPECT_TRUE(bq.powerGood());
+  EXPECT_LT(f.poor_events, 8);                       // a few retries while the one-shot gave zeros, then Voc
+  EXPECT_EQ(f.r[0x2F] & 0x20, 0);                    // VBUS ADC channel on
+}
+
+TEST(BQ25798, VbusAdcChannelIsAlwaysOn) {
+  EXPECT_EQ(BQ_ADC_DIS0_VAL & 0x20, 0);              // REG2F VBUS_ADC_DIS: day, night and TS variants
+  EXPECT_EQ(BQ_ADC_DIS0_TS & 0x20, 0);
+  EXPECT_EQ(BQ_ADC_DIS1_VAL & 0x0F, 0);
+  for (int ntc = 0; ntc <= 1; ntc++) {
+    DawnBQ f;
+    BQ25798 bq(f);
+    uint32_t t = 0;
+    bq.begin(t);
+    BQ25798Settings s = settings();
+    s.ntc = ntc;
+    bq.apply(s);
+    f.dawn();
+    for (int i = 0; i < 6; i++) { bq.loop(t += 10000); EXPECT_EQ(f.r[0x2F] & 0x20, 0); EXPECT_TRUE(f.r[0x2E] & 0x80 || i > 0); }
+    f.sun(false);                                    // night
+    for (int i = 0; i < 6; i++) { bq.loop(t += 10000); EXPECT_EQ(f.r[0x2F] & 0x20, 0); }
+  }
+}
+
+TEST(BQ25798, PoorSourceIsCountedAndShown) {
+  DawnBQ f;
+  f.voc = 4000;                                      // 3.2 V: VINDPM stays at the clamp, the loop goes on
+  f.stubborn = true;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  EXPECT_EQ(bq.poorSourceCount(), 1);                // apply() read REG22 (and cleared the flag)
+  runFor(bq, t, 120000);
+  EXPECT_GT(bq.poorSourceCount(), 1);
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "mppt off"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, ", vin 3.6V"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, ", poor src x"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, ", hiz"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, ", no PG"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "0m"), nullptr) << buf;
+  // it goes on being shown for a while after the last one, then not
+  f.r[0x1B] |= 0x08;                                 // PG now
+  f.r[0x0F] &= ~0x04;
+  f.r[0x22] = 0;
+  f.put16(0x35, 4000);
+  f.voc = 20000;                                     // the next retry holds
+  t += 10000;
+  f.r[0x22] = 0;
+  bq.loop(t);
+  uint32_t last = t;
+  while (t < last + 15 * 60000UL) { t += 10000; f.r[0x22] = 0; f.r[0x0F] &= ~0x04; f.r[0x1B] |= 0x08; bq.loop(t); }
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "poor src x"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "m"), nullptr);
+  while (t < last + 45 * 60000UL) { t += 10000; f.r[0x22] = 0; f.r[0x0F] &= ~0x04; f.r[0x1B] |= 0x08; bq.loop(t); }
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_EQ(strstr(buf, "poor src"), nullptr) << buf;
+  EXPECT_EQ(strstr(buf, "no PG"), nullptr) << buf;
+}
+
+TEST(BQ25798, StatusLineWithAllReasonsFitsTheCliReply) {
+  // the CLI gives formatStatus() 155 bytes (reply[160], a 3-byte "xx|" tag)
+  const int ROOM = 155;
+  DawnBQ f;
+  f.jumper = 0;
+  f.stubborn = true;
+  f.voc = 4000;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  BQ25798Settings st = settings(BQ_CHEM_LIFEPO4);
+  st.ntc = 1;
+  st.cutoff_mv = 3300;
+  st.ichg_ma = 2000;
+  bq.apply(st);
+  f.dawn();
+  f.put16(0x3F, 800);
+  f.r[0x20] = 0x40;
+  f.r[0x21] = 0xF4;
+  // a power-on reset now and then, and more than 999 poor sources
+  for (int i = 0; i < 12; i++) { f.por(); f.dawn(); f.r[0x20] = 0x40; f.r[0x21] = 0xF4; bq.loop(t += 10000); }
+  for (int i = 0; i < 1100; i++) { f.dawn(); f.put16(0x3F, 800); f.r[0x20] = 0x40; f.r[0x21] = 0xF4; bq.loop(t += 10000); }
+  ASSERT_GT(bq.poorSourceCount(), 999);
+  f.dawn();
+  f.adcValues(3300, -1500, 17950, 450);
+  f.put16(0x3F, 800);
+  f.r[0x20] = 0x40;
+  f.r[0x21] = 0xF4;
+  bq.loop(t += 10000);
+  char buf[ROOM];
+  int n = bq.formatStatus(buf, ROOM);
+  EXPECT_LT(n, ROOM);
+  EXPECT_EQ((int)strlen(buf), n);
+  EXPECT_NE(strstr(buf, "poor src x999"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "no PG"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "JP2 1-2!"), nullptr) << buf;   // what must not be cut: the warnings
+  EXPECT_NE(strstr(buf, "FAULT 40/F4"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "reset x"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "lifepo4 3.60V 2000mA"), nullptr) << buf;
+  printf("longest status line: %d chars: %s\n", n, buf);
+  // any smaller buffer: cut, always terminated, never over
+  for (int len = 1; len <= ROOM; len++) {
+    char b2[ROOM + 1];
+    memset(b2, 'X', sizeof(b2));
+    int m = bq.formatStatus(b2, len);
+    ASSERT_LT(m, len) << len;
+    ASSERT_EQ((int)strlen(b2), m) << len;
+    ASSERT_EQ(b2[len < ROOM + 1 ? len : ROOM], 'X') << len;   // nothing written past len
+  }
+}
+
 TEST(BQ25798, StatusLineFits) {
   FakeBQ f;
   f.jumper = 0;                         // the longest line: with the JP2 warning and the cell temperature

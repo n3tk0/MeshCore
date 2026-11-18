@@ -357,7 +357,7 @@ static void test_bq(void) {
   CHECK(bq_u16(&b, BQ_REG_VREG) == 420 && chip[BQ_REG_VREG] == 0x01 && chip[BQ_REG_VREG + 1] == 0xA4);
   CHECK((chip[BQ_REG_ICHG] << 8 | chip[BQ_REG_ICHG + 1]) == 100);
   CHECK((chip[BQ_REG_IINDPM] << 8 | chip[BQ_REG_IINDPM + 1]) == 300);
-  CHECK(chip[BQ_REG_MPPT] == (uint8_t)((4 << 5) | 0x1E | 1));   // expert timing bits, our VOC_PCT
+  CHECK(chip[BQ_REG_MPPT] == (uint8_t)((4 << 5) | 0x1E));       // expert timing bits, our VOC_PCT; no EN_MPPT without PG
   CHECK((chip[BQ_REG_NTC1] & 1) == 1);                            // no NTC: TS ignored
   CHECK(chip[BQ_REG_CTRL0] == 0x02);                              // not charging yet, EN_TERM kept
   CHECK((chip[BQ_REG_CTRL1] & 7) == 5 && (chip[BQ_REG_ADC_CTRL] & 0x80));
@@ -410,6 +410,173 @@ static void test_bq(void) {
   CHECK(bq_refresh(&c) && bq_apply(&c, &s, CHEM_LIION, false) && !c.ntc_present && (chip[BQ_REG_NTC1] & 1) == 1);
   chip[BQ_REG_TS] = 0x03; chip[BQ_REG_TS + 1] = 0x6C;             // ADC running now: still no NTC
   CHECK(bq_refresh(&c) && bq_apply(&c, &s, CHEM_LIION, false) && !c.ntc_present);
+}
+
+// ---------------- weak panel at dawn: VINDPM from Voc ----------------
+// The converter (VINDPM under 70 % of Voc) pulls the panel under VPOORSRC: EN_HIZ, PG = 0, poor source flag.
+static uint16_t dawn_voc = 6000, dawn_loaded = 3300;
+static bool dawn_stubborn;
+static int dawn_poor;
+static uint8_t dawn_vindpm_at_hiz_clear;
+static void dawn_measure(void) {
+  bool off = (chip[BQ_REG_CTRL0] & 0x04) || !(chip[BQ_REG_STAT0] & 0x08);
+  uint16_t v = off ? dawn_voc : dawn_loaded;
+  chip[BQ_REG_VBUS] = (uint8_t)(v >> 8); chip[BQ_REG_VBUS + 1] = (uint8_t)v;
+}
+static bool d_read(uint8_t reg, uint8_t *buf, uint8_t n) {
+  if (chip_fail) return false;
+  if (chip[BQ_REG_ADC_CTRL] & 0x80) dawn_measure();            // continuous conversion
+  memcpy(buf, chip + reg, n);
+  if (reg <= BQ_REG_FLAG0 && reg + n > BQ_REG_FLAG0) chip[BQ_REG_FLAG0] = 0;   // the flags clear when read
+  return true;
+}
+static bool d_write(uint8_t reg, const uint8_t *buf, uint8_t n) {
+  if (chip_fail) return false;
+  for (uint8_t i = 0; i < n; i++) {
+    uint8_t a = (uint8_t)(reg + i);
+    bool was_hiz = chip[BQ_REG_CTRL0] & 0x04;
+    chip[a] = buf[i];
+    chip_writes++;
+    if (a == BQ_REG_CTRL0 && was_hiz && !(buf[i] & 0x04) && (chip[BQ_REG_STAT0] & 1)) {   // retry of the qualification
+      dawn_vindpm_at_hiz_clear = chip[BQ_REG_VINDPM];
+      if (!dawn_stubborn && chip[BQ_REG_VINDPM] * 100 * 10 >= dawn_voc * 7) chip[BQ_REG_STAT0] |= 0x08;
+      else { chip[BQ_REG_STAT0] &= (uint8_t)~0x08; chip[BQ_REG_CTRL0] |= 0x04; chip[BQ_REG_FLAG0] |= 0x10; dawn_poor++; }
+    }
+  }
+  return true;
+}
+static const bq_bus_t DBUS = { d_read, d_write };
+
+// one second of the main loop: refresh, then apply
+static void dawn_second(bq_t *b, const settings_t *s) {
+  CHECK(bq_refresh(b));
+  CHECK(bq_apply(b, s, CHEM_LIION, true));
+}
+static void dawn_start(bq_t *b, settings_t *s, uint16_t voc) {
+  memset(chip, 0, sizeof(chip));
+  chip[BQ_REG_TS] = 0x03; chip[BQ_REG_TS + 1] = 0x6C;
+  chip[BQ_REG_STAT0] = 0x01;            // VBUS present, no PG
+  chip[BQ_REG_CTRL0] = 0x06;            // EN_HIZ (the chip set it) + EN_TERM
+  chip[BQ_REG_FLAG0] = 0x10;            // poor source
+  chip[BQ_REG_VINDPM] = 0x24;           // 3.6 V
+  chip[BQ_REG_ADC_CTRL] = 0x80;
+  dawn_voc = voc; dawn_loaded = 3300; dawn_stubborn = false; dawn_poor = 0; chip_fail = false;
+  bq_init(b, &DBUS);
+  settings_defaults(s, CHEM_LIION);
+}
+
+static void test_bq_dawn(void) {
+  CHECK(bq_vindpm_from_voc(6000) == 4800 && bq_vindpm_from_voc(5999) == 4700);
+  CHECK(bq_vindpm_from_voc(4000) == 3600 && bq_vindpm_from_voc(0) == 3600);
+  CHECK(bq_vindpm_from_voc(40000) == 22000 && bq_vindpm_from_voc(65535) == 22000);
+
+  bq_t b; settings_t s;
+  dawn_start(&b, &s, 6000);
+  int hiz_clear_second = -1, vin_second = -1;
+  for (int i = 0; i < 12; i++) {
+    bool had_hiz = chip[BQ_REG_CTRL0] & 4;
+    dawn_second(&b, &s);
+    if (vin_second < 0 && chip[BQ_REG_VINDPM] == 48) vin_second = i;
+    if (hiz_clear_second < 0 && had_hiz && !(chip[BQ_REG_CTRL0] & 4)) hiz_clear_second = i;
+  }
+  CHECK(chip[BQ_REG_VINDPM] == 48 && b.auto_vin_mv == 4800 && b.auto_vin_count == 1);
+  CHECK(vin_second >= 0 && vin_second == hiz_clear_second);          // same pass: VINDPM first, then EN_HIZ
+  CHECK(dawn_vindpm_at_hiz_clear == 48);                              // the retry already started at the new floor
+  CHECK(dawn_poor == 0);
+  CHECK(chip[BQ_REG_STAT0] & 0x08);                                   // PG
+  CHECK(chip[BQ_REG_MPPT] & 1);                                       // MPPT now (PG)
+  CHECK(b.poorsrc_count == 1 && bq_poorsrc_age_min(&b) == 0);
+  CHECK(bq_why(&b) == ST2_POOR_SRC);                                  // PG, no HIZ any more, poor source seen < 30 min ago
+  // MPPT runs: VINDPM is the chip's now, we leave it alone
+  chip[BQ_REG_VINDPM] = 60;
+  for (int i = 0; i < 5; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 60 && b.auto_vin_count == 1);
+
+  // the light drops: poor source again, the chip puts 3.6 V back and drops EN_MPPT; Voc is 4.5 V now
+  dawn_voc = 4500;
+  chip[BQ_REG_STAT0] &= (uint8_t)~0x08; chip[BQ_REG_CTRL0] |= 4; chip[BQ_REG_FLAG0] |= 0x10;
+  chip[BQ_REG_MPPT] &= 0xFE; chip[BQ_REG_VINDPM] = 0x24;
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 36 && b.auto_vin_mv == 3600 && (chip[BQ_REG_STAT0] & 0x08));
+  CHECK(b.poorsrc_count == 2);
+  dawn_voc = 7000;                                                    // brighter, another drop-out
+  chip[BQ_REG_STAT0] &= (uint8_t)~0x08; chip[BQ_REG_CTRL0] |= 4; chip[BQ_REG_MPPT] &= 0xFE;
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 56);
+  CHECK(b.auto_vin_count >= 2);
+
+  // EN_MPPT latched (the chip clears it only when VBUS goes under VBUS_PRESENT) with HIZ / no PG: same recovery
+  dawn_start(&b, &s, 6000);
+  chip[BQ_REG_MPPT] |= 1;
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 48 && b.auto_vin_count == 1 && dawn_poor == 0 && (chip[BQ_REG_STAT0] & 0x08));
+  CHECK(dawn_vindpm_at_hiz_clear == 48 && (chip[BQ_REG_MPPT] & 1));
+  chip[BQ_REG_VINDPM] = 60;                                           // running (EN_MPPT, PG, no HIZ): hands off
+  for (int i = 0; i < 5; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 60 && b.auto_vin_count == 1);
+  dawn_voc = 7000;
+  chip[BQ_REG_STAT0] &= (uint8_t)~0x08;                               // no PG, no HIZ, EN_MPPT still set
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 56);
+
+  // a loaded reading is never Voc: PG = 1, no HIZ, MPPT refused (VBAT < VSYSMIN)
+  dawn_start(&b, &s, 6000);
+  chip[BQ_REG_STAT0] = 0x09; chip[BQ_REG_CTRL0] = 0x02; chip[BQ_REG_STAT3] = 0x10; chip[BQ_REG_FLAG0] = 0;
+  dawn_loaded = 3500;
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 0x24 && b.auto_vin_count == 0 && !(chip[BQ_REG_MPPT] & 1));   // no EN_MPPT under VSYSMIN
+  CHECK(bq_why(&b) == 0);
+
+  // EN_MPPT only with PG and VSYS_STAT = 0
+  chip[BQ_REG_STAT3] = 0;
+  dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_MPPT] & 1);
+
+  // fixed input voltage: no auto VINDPM, no hold
+  dawn_start(&b, &s, 6000);
+  s.vindpm_mv = 4500;
+  dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 45 && !(chip[BQ_REG_CTRL0] & 4) && !(chip[BQ_REG_MPPT] & 1));
+  for (int i = 0; i < 10; i++) {
+    chip[BQ_REG_CTRL0] |= 4; chip[BQ_REG_STAT0] &= (uint8_t)~0x08;
+    dawn_second(&b, &s);
+    CHECK(!(chip[BQ_REG_CTRL0] & 4) && chip[BQ_REG_VINDPM] == 45);
+  }
+  CHECK(b.auto_vin_count == 0 && b.auto_vin_mv == 0);
+
+  // no ADC: EN_HIZ is held 2 s of every 6, the rest cleared as before
+  dawn_start(&b, &s, 6000);
+  dawn_stubborn = true;
+  for (int i = 0; i < 12; i++) {
+    chip[BQ_REG_ADC_CTRL] = 0;           // the ADC never gives a result (bq_apply switches it on again each second)
+    dawn_second(&b, &s);
+  }
+  CHECK(dawn_poor == 8 && b.auto_vin_count == 0);   // held 4 s of 12 (2 of every 6), cleared (and failed again) the other 8
+
+  // bq_why keeps ST2_HIZ although bq_apply cleared EN_HIZ in r[] in the same pass
+  dawn_start(&b, &s, 6000);
+  CHECK(bq_refresh(&b) && b.hiz_seen);
+  CHECK(bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK((bq_why(&b) & (ST2_HIZ | ST2_NO_PG)) == (ST2_HIZ | ST2_NO_PG));   // from what the chip had at the refresh
+
+  // the latched poor-source flag alone (PG, no HIZ) does not mean the converter is off, and the TS ADC channel
+  dawn_start(&b, &s, 6000);
+  chip[BQ_REG_STAT0] = 0x09; chip[BQ_REG_CTRL0] = 0x02; chip[BQ_REG_FLAG0] = 0x10;
+  CHECK(bq_refresh(&b));
+  CHECK(!b.unl && !b.hiz_seen && b.poorsrc_count == 1);               // counted, not "unloaded"
+  CHECK(bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK(!(chip[BQ_REG_ADC_DIS0] & 0x04));                             // VBUS, no HIZ: TS on
+
+  // hiz_cleared marks only the first refresh after our EN_HIZ clear, even while the panel stays unloaded
+  dawn_start(&b, &s, 6000);
+  dawn_stubborn = true;
+  chip[BQ_REG_CTRL0] = 0x02; chip[BQ_REG_STAT0] = 0x01;               // no PG, no HIZ
+  b.hiz_cleared = true;
+  CHECK(bq_refresh(&b) && b.unl && !b.hiz_cleared);
+  chip[BQ_REG_CTRL0] |= 4;                                            // EN_HIZ seen: TS channel off during the hold
+  CHECK(bq_refresh(&b) && b.hiz_seen);
+  CHECK(bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK(chip[BQ_REG_ADC_DIS0] & 0x04);
 }
 
 static void test_heater(void) {
@@ -533,6 +700,9 @@ static void test_heater(void) {
   CHECK(R.result == ERR_RANGE && R.set.heat_duty_pct == 50);
   wr(ADDR_SMPPT, R_SET_LAST + 1, 1);
   CHECK(R.result == ERR_BAD_REG);
+  R.live.poorsrc_count = 3; R.live.poorsrc_age_min = 2; R.live.status2 = ST2_HIZ | ST2_NO_PG | ST2_POOR_SRC;
+  CHECK(rd(ADDR_SMPPT, R_POORSRC) == 3 && rd(ADDR_SMPPT, R_POORSRC_AGE) == 2 && rd(ADDR_SMPPT, R_STATUS2) == 0x1C);
+  CHECK(R_STATUS2 == 0x13 && R_POORSRC == 0x14 && (ST2_HEATING | ST2_V03) == 3);   // new bits only above the old ones
   CHECK(R_SET_LAST == 0x3F && R_EXPERT0 == 0x35 && R_CYCLES == 0x10 && R_CMD == 0x61);   // old addresses did not move
 }
 
@@ -543,6 +713,7 @@ int main(void) {
   test_gauge();
   test_bms();
   test_bq();
+  test_bq_dawn();
   test_heater();
   printf("%d checks, %d failed\n", checks, fails);
   return fails ? 1 : 0;

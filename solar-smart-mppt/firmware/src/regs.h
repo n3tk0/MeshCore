@@ -31,6 +31,8 @@
 #define R_BAT_TEMP    0x11   // battery NTC (BQ25798 TS) 0.1 degC, signed, 0x8000 = no reading
 #define R_HEAT_PCT    0x12   // heater PWM percent now (0 = off)
 #define R_STATUS2     0x13   // ST2_*
+#define R_POORSRC     0x14   // poor source detections since start (firmware 0.3; 0 on older ones)
+#define R_POORSRC_AGE 0x15   // minutes since the last one, 0xFFFF = none (the REG05 / REG15 mirror shows the rest)
 
 #define R_SET_FIRST   0x20
 #define R_CHEM_SET    0x20   // 0 Li-ion, 1 LiFePO4, 2 LTO 2S, 0xFF = by JP4

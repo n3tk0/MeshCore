@@ -18,10 +18,48 @@ bool bq_refresh(bq_t *b) {
   uint8_t tmp[BQ_NREGS];
   // two blocks keep each transfer short
   bool ok = b->bus->read(0x00, tmp, 0x30) && b->bus->read(0x30, tmp + 0x30, BQ_NREGS - 0x30);
-  if (ok) { memcpy(b->r, tmp, sizeof(tmp)); b->errors = 0; }
-  else if (b->errors < 255) b->errors++;
+  if (ok) {
+    memcpy(b->r, tmp, sizeof(tmp));
+    b->errors = 0;
+    b->secs++;
+    bool poor = tmp[BQ_REG_FLAG0] & 0x10;   // the read above cleared it: count it here
+    if (poor) {
+      if (b->poorsrc_count < 0xFFFF) b->poorsrc_count++;
+      b->poorsrc_secs = b->secs;
+    }
+    bool hiz = tmp[BQ_REG_CTRL0] & 0x04;
+    b->hiz_seen = hiz;   // as read: bq_apply clears EN_HIZ in r[] before bq_why looks
+    // the latched poor-source flag alone does not mean the converter is off: only EN_HIZ / no PG do
+    bool unl = (tmp[BQ_REG_STAT0] & 0x01) && (hiz || !(tmp[BQ_REG_STAT0] & 0x08));
+    // VBUS is the open-circuit voltage when the converter did not load it for the whole last second:
+    // not loading now and at the refresh before, ADC running, and not just restarted by our EN_HIZ clear
+    b->voc_mv = bq_u16(b, BQ_REG_VBUS);
+    b->voc_ok = unl && b->unl_prev && !b->hiz_cleared && (tmp[BQ_REG_ADC_CTRL] & 0x80) && b->voc_mv >= BQ_VOC_MIN_MV;
+    b->hiz_cleared = false;   // only marks the first refresh after our EN_HIZ clear
+    b->unl_prev = b->unl = unl;
+  } else if (b->errors < 255) b->errors++;
   b->ok = ok;
   return ok;
+}
+
+uint16_t bq_vindpm_from_voc(uint16_t voc_mv) {
+  uint32_t mv = (uint32_t)voc_mv * BQ_VOC_PCT / 100 / 100 * 100;
+  return (uint16_t)(mv < BQ_VINDPM_MIN_MV ? BQ_VINDPM_MIN_MV : mv > BQ_VINDPM_MAX_MV ? BQ_VINDPM_MAX_MV : mv);
+}
+
+uint16_t bq_poorsrc_age_min(const bq_t *b) {
+  if (!b->poorsrc_count) return 0xFFFF;
+  uint32_t m = (b->secs - b->poorsrc_secs) / 60u;
+  return (uint16_t)(m > 0xFFFE ? 0xFFFE : m);
+}
+
+uint16_t bq_why(const bq_t *b) {
+  if (!bq_vbus_present(b)) return 0;
+  uint16_t w = 0;
+  if (b->hiz_seen) w |= ST2_HIZ;
+  if (!(b->r[BQ_REG_STAT0] & 0x08)) w |= ST2_NO_PG;
+  if (b->poorsrc_count && bq_poorsrc_age_min(b) < BQ_POORSRC_KEEP_MIN) w |= ST2_POOR_SRC;
+  return w;
 }
 
 bool bq_vbus_present(const bq_t *b) { return b->ok && (b->r[BQ_REG_STAT0] & 0x01); }
@@ -80,8 +118,42 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set16(img, BQ_REG_VREG, 0x07FF, (uint16_t)(s->vchg_mv / 10));
   set16(img, BQ_REG_ICHG, 0x01FF, (uint16_t)(s->ichg_ma / 10));
   set16(img, BQ_REG_IINDPM, 0x01FF, (uint16_t)(s->iin_ma / 10));
-  if (s->vindpm_mv) set_bits(img, BQ_REG_VINDPM, 0xFF, (uint8_t)(s->vindpm_mv / 100));
-  set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (s->vindpm_mv ? 0 : 1)));
+  bool mppt_mode = s->vindpm_mv == 0;
+  // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
+  // poor-source HIZ with VBUS still up leaves it set. Running = EN_MPPT with PG and no EN_HIZ; otherwise the
+  // recovery below runs (VINDPM, then EN_HIZ). EN_MPPT stays as it is: the datasheet (7.3.6.3) does not block
+  // VINDPM writes while it is on, and it simply runs again once PG = 1.
+  bool mppt_en = b->r[BQ_REG_MPPT] & 1;
+  bool mppt_running = mppt_en && (b->r[BQ_REG_STAT0] & 0x08) && !(b->r[BQ_REG_CTRL0] & 0x04);
+  if (!mppt_mode) set_bits(img, BQ_REG_VINDPM, 0xFF, (uint8_t)(s->vindpm_mv / 100));
+  // EN_MPPT only with the panel qualified (PG) and the battery over VSYSMIN: the chip drops it when VBUS goes
+  // and refuses it under VSYSMIN; without them it is left as the chip has it (the VINDPM below takes over)
+  bool can = bq_vbus_present(b) && (b->r[BQ_REG_STAT0] & 0x08) && !(b->r[BQ_REG_STAT3] & 0x10);
+  set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (mppt_mode && (can || mppt_en) ? 1 : 0)));
+  // MPPT mode, MPPT not running, panel there but not loaded (EN_HIZ / no PG / poor source): the chip's own
+  // VINDPM (VBUS0 - 0.7 V, 3.6 V at the clamp) pulls a weak panel under VPOORSRC again and again. Take 80 %
+  // of the open-circuit voltage instead; REG05 goes before REG0F in the write loop below, so it is in place
+  // before EN_HIZ is cleared. EN_HIZ is held a little to get a no-load VBUS result first.
+  bool hold_hiz = false;
+  if (mppt_mode && !mppt_running && b->unl) {
+    bool set = false;
+    if (b->voc_ok) {
+      uint16_t vin = bq_vindpm_from_voc(b->voc_mv);
+      if (img[BQ_REG_VINDPM] != (uint8_t)(vin / 100)) b->auto_vin_count++;
+      set_bits(img, BQ_REG_VINDPM, 0xFF, (uint8_t)(vin / 100));
+      b->auto_vin_mv = vin;
+      b->voc_ok = false;
+      b->hiz_cnt = 0;
+      set = true;
+    }
+    if (!set && (b->r[BQ_REG_CTRL0] & 0x04)) {
+      if (b->hiz_cnt >= BQ_HIZ_HOLD_PERIOD) b->hiz_cnt = 0;
+      hold_hiz = b->hiz_cnt < BQ_HIZ_HOLD_POLLS;
+      if (b->hiz_cnt < 0xFF) b->hiz_cnt++;
+    }
+  } else {
+    b->hiz_cnt = 0;
+  }
   set_bits(img, BQ_REG_NTC1, 0x01, ts_ignore ? 1 : 0);
   set_bits(img, BQ_REG_CTRL1, 0x07, 5);             // watchdog 40 s
   if (!b->ship_sent) set_bits(img, BQ_REG_CTRL2, 0x06, 0);   // never ship/shutdown from here
@@ -89,11 +161,13 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_CTRL2, 0x40, 0);
   set_bits(img, BQ_REG_CTRL5, 0x80, bq_sfet(chem) ? 0x80 : 0);
   set_bits(img, BQ_REG_ADC_CTRL, 0x80, 0x80);       // ADC on, continuous
-  // TS channel only with VBUS: on battery alone it keeps REGN on and stops the ADC under 3.2 V
-  set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) ? 0 : 0x04);
+  // TS channel only with VBUS and not while EN_HIZ is seen set: on battery alone (or in the HIZ hold with a
+  // low battery) it keeps REGN on and stops the ADC under 3.2 V
+  set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) && !b->hiz_seen ? 0 : 0x04);
   // EN_CHG ours; EN_ICO off (MPPT runs instead); EN_HIZ always 0: a read that caught HIZ set (input
   // fault, VOC check) must never be written back and leave the charger in HIZ
   set_bits(img, BQ_REG_CTRL0, 0x34, charge_enable ? 0x20 : 0x00);
+  if (hold_hiz) img[BQ_REG_CTRL0] |= 0x04;
 
   bool ok = true;
   for (uint8_t reg = 0; ok && reg < BQ_NREGS; reg++) {
@@ -106,7 +180,11 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
     }
     if (img[reg] != b->r[reg]) ok = wr8(b, reg, img[reg]);
   }
-  if (ok && img[BQ_REG_CTRL0] != b->r[BQ_REG_CTRL0]) ok = wr8(b, BQ_REG_CTRL0, img[BQ_REG_CTRL0]);
+  if (ok && img[BQ_REG_CTRL0] != b->r[BQ_REG_CTRL0]) {
+    bool clears_hiz = (b->r[BQ_REG_CTRL0] & 0x04) && !(img[BQ_REG_CTRL0] & 0x04);
+    ok = wr8(b, BQ_REG_CTRL0, img[BQ_REG_CTRL0]);
+    if (ok && clears_hiz) b->hiz_cleared = true;   // the converter runs again: its VBUS is loaded
+  }
   return ok;
 }
 

@@ -21,6 +21,14 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _ts_in_shot = _ts_night_any = false;
   _ts_night_at = _tcell_at = 0;
   _r.tcell_dc = BQ_TCELL_NONE;
+  _now = 0;
+  _poorsrc_count = 0;
+  _poorsrc_at = 0;
+  _shot_unl = _unl_now = _unl_last = _voc_valid = _hiz_seen = false;
+  _voc_mv = 0;
+  _hiz_hold = 0;
+  _vindpm_reg = 0;
+  _auto_vin_mv = _auto_vin_count = 0;
 }
 
 void BQ25798::defaults(BQ25798Settings& s) {
@@ -67,6 +75,24 @@ void BQ25798::setCE(bool on) {
   _bus.setChargeEnable(on);
 }
 
+// REG1B..REG22 in one transfer. Reading REG22 clears its flags, so a poor source is counted here,
+// for every reader (loop() and apply()), and kept for the status line.
+bool BQ25798::readStatus() {
+  uint8_t st[BQ_STATUS_LEN];
+  if (!read(BQ_REG_STAT0, st, sizeof(st))) return false;
+  memcpy(_status, st, sizeof(st));
+  if (st[BQ_REG_FLAG0 - BQ_REG_STAT0] & 0x10) {
+    if (_poorsrc_count < 0xFFFF) _poorsrc_count++;
+    _poorsrc_at = _now;
+  }
+  return true;
+}
+
+uint16_t BQ25798::vindpmFromVoc(uint16_t voc_mv) {
+  uint32_t mv = (uint32_t)voc_mv * BQ_VOC_PCT / 100 / 100 * 100;
+  return (uint16_t)(mv < BQ_VINDPM_MIN ? BQ_VINDPM_MIN : mv > BQ_VINDPM_MAX ? BQ_VINDPM_MAX : mv);
+}
+
 bool BQ25798::begin(uint32_t now) {
   uint8_t part;
   _found = false;
@@ -78,6 +104,9 @@ bool BQ25798::begin(uint32_t now) {
   }
   // a new start (also when it comes back after I2C errors): nothing carried over from before
   _low_timing = _adc_pending = _shutdown_sent = _adc_continuous = false;
+  _shot_unl = _unl_now = _unl_last = _voc_valid = false;
+  _hiz_hold = 0;
+  _now = now;
   _r.valid = false;
   // the watchdog off at once: its 40 s would otherwise run out while the node boots
   uint8_t c1;
@@ -93,12 +122,32 @@ void BQ25798::apply(const BQ25798Settings& s) {
   _applied = true;
   if (!_found) return;
   if (vreg_changes) setCE(false);   // nothing charges until the new VREG reads back
-  uint8_t st[7];
-  if (read(BQ_REG_STAT0, st, sizeof(st))) memcpy(_status, st, sizeof(st));
+  readStatus();
   enforce();
 }
 
+// The VBUS ADC result is the panel's open-circuit voltage only if the converter was not loading the
+// panel when it was converted: a one-shot that was started while it was off (_shot_unl), or continuous
+// conversion with the converter off at the last poll as well (_unl_last: EN_HIZ was kept, not cleared).
+void BQ25798::harvestVoc(bool unloaded, bool mppt_running) {
+  _voc_valid = false;
+  if (!unloaded || mppt_running || _s.vindpm_mv != 0) return;
+  uint8_t a;
+  if (!read(BQ_REG_ADC_CTRL, &a, 1)) return;
+  bool fresh;
+  if (_adc_continuous) fresh = _unl_last && (a & 0xC0) == 0x80;
+  else fresh = _adc_pending && _shot_unl && !(a & 0x80);   // started without load and done
+  uint8_t b[2];
+  if (!fresh || !read(BQ_REG_VBUS_ADC, b, 2)) return;
+  uint16_t mv = (uint16_t)((b[0] << 8) | b[1]);
+  if (mv < BQ_VOC_MIN_MV) return;   // zeros: the channel is off or the result was cleared
+  _voc_mv = mv;
+  _voc_valid = true;
+}
+
 void BQ25798::enforce() {
+  _unl_last = _unl_now;
+  _unl_now = false;
   uint8_t c[BQ_CONFIG_LEN];
   if (!read(BQ_REG_VSYSMIN, c, sizeof(c))) return;
 
@@ -135,9 +184,53 @@ void BQ25798::enforce() {
     write16(BQ_REG_IINDPM, BQ_IINDPM_MA / 10);
   }
 
+  // MPPT mode with the panel there but not loaded (EN_HIZ, no PG, poor source) and MPPT not running:
+  // VBUS is the open-circuit voltage. The chip's own VINDPM (VBUS0 - 0.7 V, 3.6 V at the clamp) pulls a
+  // weak panel under VPOORSRC again and again, so set 80 % of Voc before EN_HIZ is cleared below.
+  bool hiz = c[BQ_REG_CTRL0] & 0x04;
+  bool mppt_mode = _s.vindpm_mv == 0;
+  // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
+  // poor-source HIZ with VBUS still up leaves it set. Running = EN_MPPT with PG and no EN_HIZ. A latched
+  // EN_MPPT with HIZ / no PG takes the recovery below: VINDPM, then EN_HIZ. EN_MPPT is left set: the
+  // datasheet (7.3.6.3) does not block VINDPM writes while it is on, the chip's own Voc cycle only rewrites
+  // VINDPM every VOC_RATE, and once PG = 1 it is simply running again.
+  bool mppt_running = (c[BQ_REG_MPPT] & 1) && powerGood() && !hiz;
+  bool unloaded = vbusPresent() && (hiz || !powerGood());   // the latched poor-source flag alone is not "off"
+  _hiz_seen = hiz;
+  _vindpm_reg = c[BQ_REG_VINDPM];
+  bool hold_hiz = false;
+  if (mppt_mode && !mppt_running && unloaded) {
+    harvestVoc(unloaded, mppt_running);
+    bool set = false;
+    if (_voc_valid) {
+      uint16_t vin = vindpmFromVoc(_voc_mv);
+      uint8_t reg = (uint8_t)(vin / 100);
+      if (reg == _vindpm_reg || write8(BQ_REG_VINDPM, reg)) {
+        if (reg != _vindpm_reg) _auto_vin_count++;
+        _vindpm_reg = reg;
+        _auto_vin_mv = vin;
+        _voc_valid = false;
+        _hiz_hold = 0;
+        set = true;
+      }
+    }
+    if (!set && hiz) {
+      // no no-load VBUS result yet: stay in HIZ for the one-shot of this poll. Only BQ_HIZ_HOLD_POLLS
+      // of every BQ_HIZ_HOLD_PERIOD polls, so an ADC that gives nothing costs a retry now and then,
+      // not the 10 s retry of the chip's poor source qualification (7 min by itself)
+      if (_hiz_hold >= BQ_HIZ_HOLD_PERIOD) _hiz_hold = 0;
+      hold_hiz = _hiz_hold < BQ_HIZ_HOLD_POLLS;
+      _hiz_hold++;
+    }
+  } else {
+    _voc_valid = false;
+    _hiz_hold = 0;
+  }
+
   // EN_CHG on, EN_ICO and EN_HIZ off (only one of ICO / VINDPM detection / MPPT may run)
-  uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x14) | 0x20;
+  uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x14) | 0x20 | (hold_hiz ? 0x04 : 0);
   if (c0 != c[BQ_REG_CTRL0]) write8(BQ_REG_CTRL0, c0);
+  _unl_now = unloaded && !(hiz && !hold_hiz);   // the converter restarts when EN_HIZ goes: not a no-load poll
 
   // SFET_PRESENT as the board is built; EN_IBAT: the discharge current is measured on battery alone too
   uint8_t c5 = (c[BQ_REG_CTRL5] & ~0xA0) | (_s.shipfet ? 0x80 : 0) | 0x20;
@@ -203,7 +296,7 @@ void BQ25798::adc(uint32_t now) {
   bool night_ts = _s.ntc && !vbusPresent() && !_adc_continuous && !(a[0] & 0x80) && _r.valid
                   && _r.vbat_mv > BQ_TS_NIGHT_MIN_MV
                   && (!_ts_night_any || (uint32_t)(now - _ts_night_at) >= BQ_TS_NIGHT_MS);
-  uint8_t want_dis0 = (_s.ntc && vbusPresent()) || night_ts ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
+  uint8_t want_dis0 = (_s.ntc && vbusPresent() && !_hiz_seen) || night_ts ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
   if (a[1] != want_dis0 && !write8(BQ_REG_ADC_DIS0, want_dis0)) want_dis0 = a[1];
   if (a[2] != BQ_ADC_DIS1_VAL) write8(BQ_REG_ADC_DIS1, BQ_ADC_DIS1_VAL);
   if (_adc_continuous) {
@@ -216,7 +309,10 @@ void BQ25798::adc(uint32_t now) {
   if ((a[0] & 0x80) && _ts_in_shot && (want_dis0 & 0x04)) {
     // the sun went during a conversion with TS on: on battery under 3.2 V it would never end, so start
     // again without TS (the stale timer keeps counting from the old start)
-    if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) _ts_in_shot = false;
+    if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) {
+      _ts_in_shot = false;
+      _shot_unl = false;
+    }
     return;
   }
   if (a[0] & 0x80) return;   // still converting (or postponed: battery under 2.9 V, no sun)
@@ -227,6 +323,7 @@ void BQ25798::adc(uint32_t now) {
   }
   _adc_pending = false;
   if (write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) {
+    _shot_unl = _unl_now;   // enforce() of this poll ran first: no load, EN_HIZ still set
     _ts_in_shot = (want_dis0 & 0x04) == 0;
     if (night_ts && _ts_in_shot) {
       _ts_night_any = true;
@@ -266,10 +363,10 @@ void BQ25798::loop(uint32_t now) {
   if (!_found || (int32_t)(now - _next_poll) < 0) return;
   _next_poll = now + BQ_POLL_MS;
   _polls++;
-  uint8_t st[7];
-  if (!read(BQ_REG_STAT0, st, sizeof(st))) return;
-  memcpy(_status, st, sizeof(st));
+  _now = now;
+  if (!readStatus()) return;
   if (_applied) enforce();
+  else { _unl_last = _unl_now; _unl_now = false; }
   adc(now);
   uint8_t state = chargeState();
   if (state == 7 && _prev_state != 7) _full = true;   // charge done: the cell is full
@@ -319,7 +416,19 @@ int16_t BQ25798::ntcTemp(uint16_t ts_pm) {
   return (int16_t)(c < 0 ? c - 0.5f : c + 0.5f);
 }
 
+// The line in full (trim 0); when it does not fit: without the settings that are in `charger` anyway
+// (ntc, shipfet, cut-off: trim 1), then without the die temperature (trim 2), then without the cell
+// temperature (trim 3). The reasons for no charging and the warnings (JP2, FAULT, reset) stay.
 int BQ25798::formatStatus(char* buf, int len) const {
+  int n = 0;
+  for (uint8_t trim = 0; trim <= 3; trim++) {
+    n = formatLine(buf, len, trim);
+    if (n < len - 1) break;   // fits (n == len - 1 may have been cut)
+  }
+  return n;
+}
+
+int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   int n = 0;
   buf[0] = 0;
   if (!_found) return addf(buf, len, 0, "no BQ25798 at 0x6B");
@@ -333,12 +442,22 @@ int BQ25798::formatStatus(char* buf, int len) const {
   n = addf(buf, len, n, " %s", _ce_on ? stateName(chargeState()) : chargeHeld() ? "HELD: JP2 lifepo4" : "CE-off");
   if (_s.vindpm_mv) n = addf(buf, len, n, ", vin %u.%uV", _s.vindpm_mv / 1000, _s.vindpm_mv % 1000 / 100);
   else n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
-  if (_r.valid) n = addf(buf, len, n, ", die %dC", _r.tdie_dc / 10);
-  if (_r.valid && _r.tcell_dc != BQ_TCELL_NONE) n = addf(buf, len, n, ", cell %dC", _r.tcell_dc / 10);
-  else if (_r.valid && ntcOpen()) n = addf(buf, len, n, ", NTC open?");
+  if (vbusPresent()) {
+    // the panel is there: why it may not charge (MPPT off: the input limit the chip is holding)
+    if (!_s.vindpm_mv && (!mpptOn() || _hiz_seen || !powerGood()) && _vindpm_reg) n = addf(buf, len, n, ", vin %u.%uV", (unsigned)_vindpm_reg / 10, (unsigned)_vindpm_reg % 10);
+    if (_poorsrc_count && (uint32_t)(_now - _poorsrc_at) < BQ_POORSRC_KEEP_MS) {
+      n = addf(buf, len, n, ", poor src x%u %um", (unsigned)(_poorsrc_count > 999 ? 999 : _poorsrc_count),
+               (unsigned)((_now - _poorsrc_at) / 60000UL));
+    }
+    if (_hiz_seen) n = addf(buf, len, n, ", hiz");
+    if (!powerGood()) n = addf(buf, len, n, ", no PG");
+  }
+  if (_r.valid && trim < 2) n = addf(buf, len, n, ", die %dC", _r.tdie_dc / 10);
+  if (_r.valid && _r.tcell_dc != BQ_TCELL_NONE && trim < 3) n = addf(buf, len, n, ", cell %dC", _r.tcell_dc / 10);
+  else if (_r.valid && ntcOpen() && trim < 3) n = addf(buf, len, n, ", NTC open?");
   n = addf(buf, len, n, ", %s %u.%02uV %umA", _s.chem == BQ_CHEM_LIFEPO4 ? "lifepo4" : "liion",
            vregFor(_s.chem) / 1000, vregFor(_s.chem) % 1000 / 10, _s.ichg_ma);
-  n = addf(buf, len, n, ", ntc %s, shipfet %s, cut %umV", _s.ntc ? "on" : "off", _s.shipfet ? "on" : "off", _s.cutoff_mv);
+  if (trim < 1) n = addf(buf, len, n, ", ntc %s, shipfet %s, cut %umV", _s.ntc ? "on" : "off", _s.shipfet ? "on" : "off", _s.cutoff_mv);
   if (_jumper == 0 && _s.chem == BQ_CHEM_LIFEPO4) n = addf(buf, len, n, ", JP2 1-2!");
   if (_status[5] || (_status[6] & 0xF4)) n = addf(buf, len, n, ", FAULT %02X/%02X", _status[5], _status[6]);
   if (_reconfigs) n = addf(buf, len, n, ", reset x%u", _reconfigs);

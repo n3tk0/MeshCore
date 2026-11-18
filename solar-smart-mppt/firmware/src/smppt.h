@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 2
+#define FW_VERSION_MINOR 3
 
 // Battery chemistry. JP4: open = Li-ion, 1-2 = LiFePO4, 2-3 = LTO 2S.
 enum { CHEM_LIION = 0, CHEM_LFP = 1, CHEM_LTO2S = 2, CHEM_COUNT = 3, CHEM_BY_JUMPER = 0xFF };
@@ -76,6 +76,10 @@ typedef struct {
 // Status 2 (register 0x13 on 0x42), the first status word is full
 #define ST2_HEATING      0x0001   // heater gate is driven (duty > 0)
 #define ST2_V03          0x0002   // build for v0.3 boards (make J5=pa10): no heater
+// why the panel may not charge (firmware 0.3), only while VBUS is present
+#define ST2_HIZ          0x0004   // EN_HIZ was set by the chip at the last look (poor source, input fault)
+#define ST2_NO_PG        0x0008   // power good = 0
+#define ST2_POOR_SRC     0x0010   // a poor source was seen in the last 30 minutes (R_POORSRC)
 
 // Live values, written by the main loop, read by the I2C target
 typedef struct {
@@ -96,6 +100,8 @@ typedef struct {
   uint8_t  bq_chg_stat;           // REG1C bits 7:5
   uint8_t  bq_fault0, bq_fault1;  // REG20, REG21
   uint16_t last_error;            // ERR_* of the last command
+  uint16_t poorsrc_count;         // poor source detections since start (REG22 POORSRC_FLAG), saturates
+  uint16_t poorsrc_age_min;       // minutes since the last one, 0xFFFF = none
 } live_t;
 
 int chem_cells(uint8_t chem);
