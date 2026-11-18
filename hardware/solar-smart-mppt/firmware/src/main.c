@@ -251,6 +251,9 @@ int main(void) {
 #else
       L.status2 = ho.duty ? ST2_HEATING : 0;
 #endif
+      L.status2 |= bq_why(&bq);
+      L.poorsrc_count = bq.poorsrc_count;
+      L.poorsrc_age_min = bq_poorsrc_age_min(&bq);
       L.soc_x100 = soc;
       L.remaining_mah = gauge_remaining_mah(&gauge);
       L.status = st;

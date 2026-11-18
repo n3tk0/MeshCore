@@ -81,6 +81,8 @@ uint16_t regs_read(uint8_t addr7, uint8_t reg) {
     case R_BAT_TEMP:  return (uint16_t)L->bat_temp_x10;
     case R_HEAT_PCT:  return L->heat_pct;
     case R_STATUS2:   return L->status2;
+    case R_POORSRC:   return L->poorsrc_count;
+    case R_POORSRC_AGE: return L->poorsrc_age_min;
     case R_CHEM_SET:  return R.set.chem;
     case R_MPPT:      return R.set.mppt_code;
     case R_NTC:       return R.set.ntc_mode;

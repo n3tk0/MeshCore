@@ -17,6 +17,11 @@
 //   - the CE jumper is read once at the first start, before the pin is driven: JP2 at 2-3 (LiFePO4)
 //     with the chemistry still Li-ion (the default, or a mistake) keeps charging off until
 //     `charger chem lifepo4`;
+//   - MPPT mode (`charger vin mppt`) with a weak panel: the chip sets VINDPM = VBUS0 - 0.7 V at plug-in
+//     (3.6 V at the clamp), which loads the panel under VPOORSRC: poor source, EN_HIZ = 1, PG = 0, and
+//     MPPT (enabled only with PG) never runs. While the converter is not loading the panel (HIZ / no PG /
+//     poor source) the VBUS ADC is the panel's open-circuit voltage: VINDPM is set to 80 % of it (rounded
+//     down to 100 mV, 3.6 .. 22 V) BEFORE EN_HIZ is cleared, at every drop-out, until MPPT takes over;
 //   - one-shot ADC every 10 s: battery and panel voltage / current, SYS, die temperature (continuous
 //     instead, should the results ever read as zeros after a one-shot);
 //   - an empty battery with no sun for 5 min: shutdown mode (the ship FET cuts the battery; only
@@ -37,6 +42,11 @@
 #define BQ_ICHG_MAX            2000
 #define BQ_VINDPM_MIN          3600
 #define BQ_VINDPM_MAX          22000
+#define BQ_VOC_PCT             80              // auto VINDPM: % of the panel's open-circuit voltage
+#define BQ_VOC_MIN_MV          3000            // a VBUS result under this is not an open-circuit reading
+#define BQ_HIZ_HOLD_POLLS      2               // EN_HIZ is kept this many polls to get a no-load VBUS result ...
+#define BQ_HIZ_HOLD_PERIOD     6               // ... in every this many polls of a poor-source loop
+#define BQ_POORSRC_KEEP_MS     (30 * 60000UL)  // `charger` shows a poor source seen this long ago
 #define BQ_CUTOFF_MIN          2900
 
 // registers
@@ -56,10 +66,13 @@
 #define BQ_REG_STAT3           0x1E
 #define BQ_REG_FAULT0          0x20
 #define BQ_REG_FAULT1          0x21
+#define BQ_REG_FLAG0           0x22   // POORSRC_FLAG bit 4 (reading clears the flags)
+#define BQ_STATUS_LEN          8      // 0x1B..0x22 read in one go
 #define BQ_REG_ADC_CTRL        0x2E
 #define BQ_REG_ADC_DIS0        0x2F
 #define BQ_REG_ADC_DIS1        0x30
 #define BQ_REG_IBUS_ADC        0x31   // ... 0x42: IBUS IBAT VBUS VAC1 VAC2 VBAT VSYS TS TDIE, 16 bit each
+#define BQ_REG_VBUS_ADC        0x35
 #define BQ_REG_PART            0x48
 
 #define BQ_CONFIG_LEN          0x19   // 0x00..0x18 read back in one go
@@ -131,7 +144,7 @@ class BQ25798 {
   bool     _ts_night_any;
   uint32_t _ts_night_at, _tcell_at;   // the last night conversion with TS, the last TS result
   bool     _found, _applied, _ce_on, _adc_pending, _adc_continuous, _full, _shutdown_sent, _low_timing, _configured;
-  uint8_t  _status[7];   // 0x1B..0x21
+  uint8_t  _status[BQ_STATUS_LEN];   // 0x1B..0x22 (the last one: REG22 flags as read, cleared by the read)
   uint8_t  _mppt_reg;    // REG15 as last read
   uint8_t  _prev_state;  // charge state at the last poll
   int8_t   _jumper;      // readCeJumper() at the first begin(); -1 = unknown
@@ -140,12 +153,29 @@ class BQ25798 {
   uint16_t _reconfigs;   // times the setup was found back at reset values
   uint32_t _errors;      // failed register transfers
   uint32_t _polls, _adc_count;
+  uint32_t _now;               // the last loop() time
+  // poor source (REG22 POORSRC_FLAG is read-to-clear: counted at every read of the status)
+  uint16_t _poorsrc_count;
+  uint32_t _poorsrc_at;
+  // auto VINDPM in MPPT mode
+  bool     _shot_unl;          // the running one-shot started while the converter did not load the panel
+  bool     _unl_now, _unl_last;// the converter did not load the panel at this / the last enforce()
+  bool     _voc_valid;         // _voc_mv: a VBUS result taken without load, not used yet
+  uint16_t _voc_mv;
+  uint8_t  _hiz_hold;          // polls of this drop-out so far (EN_HIZ is held in the first ones)
+  bool     _hiz_seen;          // EN_HIZ was set at the last enforce() (before it was cleared)
+  uint8_t  _vindpm_reg;        // REG05 as last read / written
+  uint16_t _auto_vin_mv;       // the last VINDPM set from Voc (0 = none yet)
+  uint16_t _auto_vin_count;
 
   bool read(uint8_t reg, uint8_t* buf, uint8_t n);
   bool write8(uint8_t reg, uint8_t v);
   bool write16(uint8_t reg, uint16_t v);
   void setCE(bool on);
+  bool readStatus();
+  void harvestVoc(bool unloaded, bool mppt_running);
   void enforce();
+  int formatLine(char* buf, int len, uint8_t trim) const;
   void adc(uint32_t now);
   bool readAdc(uint32_t now);
   void lowBattery(uint32_t now);
@@ -190,6 +220,11 @@ public:
   uint32_t polls() const { return _polls; }          // loop() runs that talked to the chip
   uint32_t adcCount() const { return _adc_count; }   // ADC results read
   bool shutdownSent() const { return _shutdown_sent; }
+  uint16_t poorSourceCount() const { return _poorsrc_count; }   // poor-source detections seen since boot
+  uint16_t autoVindpm() const { return _auto_vin_mv; }          // last VINDPM set from Voc, mV (0 = none)
+  uint16_t autoVindpmCount() const { return _auto_vin_count; }
+  // VINDPM (REG05) for a panel open-circuit voltage: 80 %, rounded down to 100 mV, 3600..22000
+  static uint16_t vindpmFromVoc(uint16_t voc_mv);
   static const char* stateName(uint8_t st);
   // TS in 0.1 % of REGN -> 0.1 °C; BQ_TCELL_NONE for an open (no NTC, > 84 %) or shorted (< 5 %) NTC
   static int16_t ntcTemp(uint16_t ts_pm);
@@ -206,6 +241,8 @@ public:
   bool regRead(uint8_t reg, uint8_t* v) { return _found && read(reg, v, 1); }
   bool regWrite(uint8_t reg, uint8_t v) { return _found && write8(reg, v); }
 
-  // one line: "sun 17.9V 0.31A, batt 3.95V +1.05A fast, mppt, die 41C, liion 4.20V 1000mA"
+  // one line: "sun 17.9V 0.31A, batt 3.95V +1.05A fast, mppt, die 41C, liion 4.20V 1000mA";
+  // with the panel there but no charging, the reason follows "mppt off": ", vin 3.6V" (REG05), ", poor src x3 2m"
+  // (detections, minutes since the last), ", hiz", ", no PG". At most len-1 characters (the CLI gives 155).
   int formatStatus(char* buf, int len) const;
 };
