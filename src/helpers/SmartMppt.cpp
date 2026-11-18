@@ -222,6 +222,12 @@ void expertReg(TwoWire& w, uint8_t bq, const char* val, char* reply, size_t max)
   uint16_t entry = (uint16_t)(bq << 8 | v);
   if (at >= 0) { setAndSave(w, R_EXPERT0 + at, entry, reply, max); return; }
   if (n >= EXPERT_MAX) { snprintf(reply, max, "Err - %u registers set already", EXPERT_MAX); return; }
+  // the board's rule, checked here too: older MSPM0 firmware checks the slot only with the count and
+  // would keep a refused entry in RAM (settings 'unsaved')
+  if (bq < 0x03 || bq > 0x18 || bq == 0x0A || bq == 0x11) {
+    snprintf(reply, max, "Err - REG%02X is not allowed (0x03..0x18 without 0x0A, 0x11)", bq);
+    return;
+  }
   // write the entry first (checked immediately for non-zero slots), then the count (also checks reg 0x00)
   if (!writeReg(w, R_EXPERT0 + n, entry) || !readReg(w, R_RESULT, r)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
   if (r == 0) {
