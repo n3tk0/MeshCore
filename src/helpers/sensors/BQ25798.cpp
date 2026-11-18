@@ -195,7 +195,7 @@ void BQ25798::enforce() {
   // datasheet (7.3.6.3) does not block VINDPM writes while it is on, the chip's own Voc cycle only rewrites
   // VINDPM every VOC_RATE, and once PG = 1 it is simply running again.
   bool mppt_running = (c[BQ_REG_MPPT] & 1) && powerGood() && !hiz;
-  bool unloaded = vbusPresent() && (hiz || !powerGood() || (_status[BQ_REG_FLAG0 - BQ_REG_STAT0] & 0x10));
+  bool unloaded = vbusPresent() && (hiz || !powerGood());   // the latched poor-source flag alone is not "off"
   _hiz_seen = hiz;
   _vindpm_reg = c[BQ_REG_VINDPM];
   bool hold_hiz = false;
@@ -296,7 +296,7 @@ void BQ25798::adc(uint32_t now) {
   bool night_ts = _s.ntc && !vbusPresent() && !_adc_continuous && !(a[0] & 0x80) && _r.valid
                   && _r.vbat_mv > BQ_TS_NIGHT_MIN_MV
                   && (!_ts_night_any || (uint32_t)(now - _ts_night_at) >= BQ_TS_NIGHT_MS);
-  uint8_t want_dis0 = (_s.ntc && vbusPresent()) || night_ts ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
+  uint8_t want_dis0 = (_s.ntc && vbusPresent() && !_hiz_seen) || night_ts ? BQ_ADC_DIS0_TS : BQ_ADC_DIS0_VAL;
   if (a[1] != want_dis0 && !write8(BQ_REG_ADC_DIS0, want_dis0)) want_dis0 = a[1];
   if (a[2] != BQ_ADC_DIS1_VAL) write8(BQ_REG_ADC_DIS1, BQ_ADC_DIS1_VAL);
   if (_adc_continuous) {

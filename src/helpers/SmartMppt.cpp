@@ -134,13 +134,13 @@ void status(TwoWire& w, char* reply, size_t max) {
   if ((st2 & ST2_HEATING) && n > 0 && (size_t)n < max) n += snprintf(reply + n, max - n, " heat");
   // with the panel there: why it may not charge, as the direct BQ25798 `charger` line says it
   // (vin = REG05 while MPPT (REG15 bit 0) is off; poor src xN Tm; hiz; no PG). Firmware 0.3 and newer.
-  if (ver >= 0x0003 && (st & 0x0004) && n > 0 && (size_t)n < max) {
+  if (ver >= 0x0003 && ((st & 0x0004) || (st2 & (ST2_HIZ | ST2_NO_PG | ST2_POOR_SRC))) && n > 0 && (size_t)n < max) {
     uint16_t cnt = 0, age = 0xFFFF, r05 = 0, r15 = 1;
     readReg(w, R_POORSRC, cnt);
     readReg(w, R_POORSRC_AGE, age);
     readReg(w, (uint8_t)(R_BQ_FIRST + 0x05), r05);
     readReg(w, (uint8_t)(R_BQ_FIRST + 0x15), r15);
-    if (!(r15 & 1) && r05) n += snprintf(reply + n, max - n, " vin %u.%uV", (unsigned)(r05 & 0xFF) / 10, (unsigned)(r05 & 0xFF) % 10);
+    if ((!(r15 & 1) || (st2 & (ST2_HIZ | ST2_NO_PG))) && r05) n += snprintf(reply + n, max - n, " vin %u.%uV", (unsigned)(r05 & 0xFF) / 10, (unsigned)(r05 & 0xFF) % 10);
     if ((st2 & ST2_POOR_SRC) && cnt && age != 0xFFFF && (size_t)n < max) {
       n += snprintf(reply + n, max - n, " poor-src x%u %um", cnt > 999 ? 999u : cnt, age);
     }

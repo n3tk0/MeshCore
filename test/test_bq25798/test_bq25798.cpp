@@ -746,6 +746,27 @@ TEST(BQ25798, LoadedVbusIsNeverTakenForVoc) {
   EXPECT_EQ(g.r[0x05], 40);                          // 80 % of 5.0 V, not of the loaded 4.0 V
 }
 
+TEST(BQ25798, LatchedPoorSourceFlagAloneIsNotUnloaded) {
+  // PG = 1, no HIZ, MPPT refused (VSYSMIN): only the latched poor source flag is set. The converter runs, so
+  // VINDPM stays and the flag is just counted.
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.sun(true);
+  f.r[0x1B] |= 0x08;
+  f.r[0x1E] |= 0x10;
+  f.adcValues(3900, 0, 3500, 100);
+  f.r[0x05] = 0x24;
+  f.r[0x22] = 0x10;
+  bq.apply(settings());
+  f.wlog.clear();
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.firstWrite(0x05), -1);
+  EXPECT_EQ(bq.autoVindpmCount(), 0);
+  EXPECT_GE(bq.poorSourceCount(), 1);
+}
+
 TEST(BQ25798, FixedVindpmKeepsItsPath) {
   DawnBQ f;
   BQ25798 bq(f);

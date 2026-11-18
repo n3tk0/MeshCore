@@ -28,12 +28,14 @@ bool bq_refresh(bq_t *b) {
       b->poorsrc_secs = b->secs;
     }
     bool hiz = tmp[BQ_REG_CTRL0] & 0x04;
-    bool unl = (tmp[BQ_REG_STAT0] & 0x01) && (hiz || !(tmp[BQ_REG_STAT0] & 0x08) || poor);
+    b->hiz_seen = hiz;   // as read: bq_apply clears EN_HIZ in r[] before bq_why looks
+    // the latched poor-source flag alone does not mean the converter is off: only EN_HIZ / no PG do
+    bool unl = (tmp[BQ_REG_STAT0] & 0x01) && (hiz || !(tmp[BQ_REG_STAT0] & 0x08));
     // VBUS is the open-circuit voltage when the converter did not load it for the whole last second:
     // not loading now and at the refresh before, ADC running, and not just restarted by our EN_HIZ clear
     b->voc_mv = bq_u16(b, BQ_REG_VBUS);
     b->voc_ok = unl && b->unl_prev && !b->hiz_cleared && (tmp[BQ_REG_ADC_CTRL] & 0x80) && b->voc_mv >= BQ_VOC_MIN_MV;
-    if (hiz || !unl) b->hiz_cleared = false;   // the chip took the input down again (or it is gone): next result is clean
+    b->hiz_cleared = false;   // only marks the first refresh after our EN_HIZ clear
     b->unl_prev = b->unl = unl;
   } else if (b->errors < 255) b->errors++;
   b->ok = ok;
@@ -54,7 +56,7 @@ uint16_t bq_poorsrc_age_min(const bq_t *b) {
 uint16_t bq_why(const bq_t *b) {
   if (!bq_vbus_present(b)) return 0;
   uint16_t w = 0;
-  if (b->r[BQ_REG_CTRL0] & 0x04) w |= ST2_HIZ;
+  if (b->hiz_seen) w |= ST2_HIZ;
   if (!(b->r[BQ_REG_STAT0] & 0x08)) w |= ST2_NO_PG;
   if (b->poorsrc_count && bq_poorsrc_age_min(b) < BQ_POORSRC_KEEP_MIN) w |= ST2_POOR_SRC;
   return w;
@@ -159,8 +161,9 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_CTRL2, 0x40, 0);
   set_bits(img, BQ_REG_CTRL5, 0x80, bq_sfet(chem) ? 0x80 : 0);
   set_bits(img, BQ_REG_ADC_CTRL, 0x80, 0x80);       // ADC on, continuous
-  // TS channel only with VBUS: on battery alone it keeps REGN on and stops the ADC under 3.2 V
-  set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) ? 0 : 0x04);
+  // TS channel only with VBUS and not while EN_HIZ is seen set: on battery alone (or in the HIZ hold with a
+  // low battery) it keeps REGN on and stops the ADC under 3.2 V
+  set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) && !b->hiz_seen ? 0 : 0x04);
   // EN_CHG ours; EN_ICO off (MPPT runs instead); EN_HIZ always 0: a read that caught HIZ set (input
   // fault, VOC check) must never be written back and leave the charger in HIZ
   set_bits(img, BQ_REG_CTRL0, 0x34, charge_enable ? 0x20 : 0x00);
