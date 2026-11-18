@@ -648,6 +648,44 @@ TEST(BQ25798, WeakPanelAtDawnGetsVindpmFromVocBeforeHizIsCleared) {
   EXPECT_EQ(strstr(buf, ", vin"), nullptr) << buf;   // the input limit is shown only while MPPT is off
 }
 
+TEST(BQ25798, LatchedEnMpptWithHizStillGetsVindpmFromVoc) {
+  // the chip clears EN_MPPT only when VBUS goes under VBUS_PRESENT: a poor-source HIZ above it leaves it set
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  f.r[0x15] = BQ_MPPT_BASE | 1;
+  bq.apply(settings());
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, ", vin 3.6V"), nullptr) << buf;   // MPPT "on" but not running: the limit is shown
+  EXPECT_NE(strstr(buf, ", hiz"), nullptr) << buf;
+  f.wlog.clear();
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.r[0x05], 48);
+  EXPECT_EQ(bq.autoVindpm(), 4800);
+  EXPECT_TRUE(bq.powerGood());
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
+  EXPECT_EQ(f.poor_events, 0);
+  EXPECT_EQ(f.r[0x15] & 1, 1);                       // running again, as the chip has it
+  int v = f.firstWrite(0x05);
+  ASSERT_GE(v, 0);
+  for (size_t i = 0; i < f.wlog.size(); i++) {
+    if (f.wlog[i].first == 0x0F && !(f.wlog[i].second & 0x04)) { EXPECT_GT((int)i, v); break; }
+  }
+  // MPPT really running (EN_MPPT, PG, no HIZ): hands off
+  f.r[0x05] = 60;
+  runFor(bq, t, 30000);
+  EXPECT_EQ(f.r[0x05], 60);
+  EXPECT_EQ(bq.autoVindpmCount(), 1);
+  // latched EN_MPPT, no HIZ but no PG: also recovered
+  f.voc = 7000;
+  f.r[0x1B] &= ~0x08;
+  runFor(bq, t, 30000);
+  EXPECT_EQ(f.r[0x05], 56);
+}
+
 TEST(BQ25798, VindpmIsSetAgainAtEachDropOut) {
   DawnBQ f;
   BQ25798 bq(f);

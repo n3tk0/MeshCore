@@ -117,12 +117,17 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set16(img, BQ_REG_ICHG, 0x01FF, (uint16_t)(s->ichg_ma / 10));
   set16(img, BQ_REG_IINDPM, 0x01FF, (uint16_t)(s->iin_ma / 10));
   bool mppt_mode = s->vindpm_mv == 0;
-  bool mppt_running = b->r[BQ_REG_MPPT] & 1;
+  // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
+  // poor-source HIZ with VBUS still up leaves it set. Running = EN_MPPT with PG and no EN_HIZ; otherwise the
+  // recovery below runs (VINDPM, then EN_HIZ). EN_MPPT stays as it is: the datasheet (7.3.6.3) does not block
+  // VINDPM writes while it is on, and it simply runs again once PG = 1.
+  bool mppt_en = b->r[BQ_REG_MPPT] & 1;
+  bool mppt_running = mppt_en && (b->r[BQ_REG_STAT0] & 0x08) && !(b->r[BQ_REG_CTRL0] & 0x04);
   if (!mppt_mode) set_bits(img, BQ_REG_VINDPM, 0xFF, (uint8_t)(s->vindpm_mv / 100));
   // EN_MPPT only with the panel qualified (PG) and the battery over VSYSMIN: the chip drops it when VBUS goes
   // and refuses it under VSYSMIN; without them it is left as the chip has it (the VINDPM below takes over)
   bool can = bq_vbus_present(b) && (b->r[BQ_REG_STAT0] & 0x08) && !(b->r[BQ_REG_STAT3] & 0x10);
-  set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (mppt_mode && (can || mppt_running) ? 1 : 0)));
+  set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (mppt_mode && (can || mppt_en) ? 1 : 0)));
   // MPPT mode, MPPT not running, panel there but not loaded (EN_HIZ / no PG / poor source): the chip's own
   // VINDPM (VBUS0 - 0.7 V, 3.6 V at the clamp) pulls a weak panel under VPOORSRC again and again. Take 80 %
   // of the open-circuit voltage instead; REG05 goes before REG0F in the write loop below, so it is in place

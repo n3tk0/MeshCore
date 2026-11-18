@@ -189,7 +189,12 @@ void BQ25798::enforce() {
   // weak panel under VPOORSRC again and again, so set 80 % of Voc before EN_HIZ is cleared below.
   bool hiz = c[BQ_REG_CTRL0] & 0x04;
   bool mppt_mode = _s.vindpm_mv == 0;
-  bool mppt_running = c[BQ_REG_MPPT] & 1;
+  // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
+  // poor-source HIZ with VBUS still up leaves it set. Running = EN_MPPT with PG and no EN_HIZ. A latched
+  // EN_MPPT with HIZ / no PG takes the recovery below: VINDPM, then EN_HIZ. EN_MPPT is left set: the
+  // datasheet (7.3.6.3) does not block VINDPM writes while it is on, the chip's own Voc cycle only rewrites
+  // VINDPM every VOC_RATE, and once PG = 1 it is simply running again.
+  bool mppt_running = (c[BQ_REG_MPPT] & 1) && powerGood() && !hiz;
   bool unloaded = vbusPresent() && (hiz || !powerGood() || (_status[BQ_REG_FLAG0 - BQ_REG_STAT0] & 0x10));
   _hiz_seen = hiz;
   _vindpm_reg = c[BQ_REG_VINDPM];
@@ -439,7 +444,7 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   else n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
   if (vbusPresent()) {
     // the panel is there: why it may not charge (MPPT off: the input limit the chip is holding)
-    if (!_s.vindpm_mv && !mpptOn() && _vindpm_reg) n = addf(buf, len, n, ", vin %u.%uV", (unsigned)_vindpm_reg / 10, (unsigned)_vindpm_reg % 10);
+    if (!_s.vindpm_mv && (!mpptOn() || _hiz_seen || !powerGood()) && _vindpm_reg) n = addf(buf, len, n, ", vin %u.%uV", (unsigned)_vindpm_reg / 10, (unsigned)_vindpm_reg % 10);
     if (_poorsrc_count && (uint32_t)(_now - _poorsrc_at) < BQ_POORSRC_KEEP_MS) {
       n = addf(buf, len, n, ", poor src x%u %um", (unsigned)(_poorsrc_count > 999 ? 999 : _poorsrc_count),
                (unsigned)((_now - _poorsrc_at) / 60000UL));
