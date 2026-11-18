@@ -1,8 +1,8 @@
 ** Drc report for xiao-solar-lite.kicad_pcb **
-** Created on 2026-11-18T00:05:50 **
+** Created on 2026-11-18T05:07:20 **
 ** Report includes: Errors, Warnings **
 
-** Found 85 DRC violations **
+** Found 71 DRC violations **
 [starved_thermal]: Thermal relief connection to zone incomplete (layer F.Cu; zone min spoke count 2; actual 1)
     Local override; error
     @(102.9500 mm, 130.2000 mm): Zone 'teardrop' [CE_PULL] on F.Cu, priority 3
@@ -58,48 +58,6 @@
 [text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.6000 mm)
     Rule: board setup constraints silk text height; warning
     @(109.7346 mm, 120.0022 mm): PCB text 'xiao-solar-lite v0.5' on F.Silkscreen
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 102.8800 mm): Footprint text of U3 (D0)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 105.4200 mm): Footprint text of U3 (D1)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 107.9600 mm): Footprint text of U3 (D2)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 110.5000 mm): Footprint text of U3 (D3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 113.0400 mm): Footprint text of U3 (D4)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 115.5800 mm): Footprint text of U3 (D5)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.4000 mm, 118.1200 mm): Footprint text of U3 (D6)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 102.8800 mm): Footprint text of U3 (5V)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 105.4200 mm): Footprint text of U3 (GND)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 107.9600 mm): Footprint text of U3 (3V3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 110.5000 mm): Footprint text of U3 (D10)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 113.0400 mm): Footprint text of U3 (D9)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 115.5800 mm): Footprint text of U3 (D8)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.5000 mm, 118.1200 mm): Footprint text of U3 (D7)
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(111.8000 mm, 129.7500 mm): Footprint C3

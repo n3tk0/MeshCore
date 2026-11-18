@@ -285,7 +285,52 @@ def build():
     text("xiao-solar-lite v0.5", 11.5, 21.85, 0.6)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
+    silk_fixups(board)
     return board
+
+# Silkscreen touch-ups after dfm.place_silk (fixed spots; also run on a routed board by tools/silk_fix.py)
+SILK_STROKE = 0.15            # JLC: stroke >= 0.15 mm
+SILK_REF_MOVES = {            # reference -> (x, y, angle): out of the way of the new jumper labels
+    "C10": (4.9, 26.7, 0), "JP3": (9.0, 42.0, 0), "J4": (18.4, 62.6, 0),
+}
+SILK_TEXTS = (                # (text, x, y, size, angle)
+    # JP2 (CE pull): pad 1 = GND side = Li-ion (bridged 1-2 by default), pad 3 = 3V3 side = LiFePO4
+    ("CHEM", 0.8, 29.9, 0.8, 90), ("Li", 2.05, 28.2, 0.8, 0), ("LFP", 4.65, 28.2, 0.8, 0),
+    # JP3 (ship FET Q2 bypass): close only for LiFePO4
+    ("LFP:short", 3.1, 44.2, 0.8, 0),
+)
+
+def silk_fixups(board):
+    """J5 pin names under the pins, the JP2 / JP3 labels, 0.15 mm strokes, 0.8 mm U3 pin names."""
+    fm = pcbnew.FromMM
+    P = lambda x, y: pcbnew.VECTOR2I(fm(OX + x), fm(100.0 + y))
+    x1 = pcbnew.ToMM(charger._pad(board, "J5", "1").GetPosition().x) - OX
+    names = ("SCL", "SDA", "3V3", "GND")
+    for d in board.GetDrawings():
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS and d.GetText() in names:
+            d.SetPosition(P(x1 + 2.54 * names.index(d.GetText()), JY2 + 1.5))
+    for fp in board.GetFootprints():
+        if fp.GetReference() in SILK_REF_MOVES:
+            x, y, a = SILK_REF_MOVES[fp.GetReference()]
+            r = fp.Reference(); r.SetVisible(True); r.SetTextAngleDegrees(a); r.SetPosition(P(x, y))
+    for s_, x, y, size, ang in SILK_TEXTS:
+        t = pcbnew.PCB_TEXT(board)
+        t.SetText(s_); t.SetPosition(P(x, y)); t.SetLayer(pcbnew.F_SilkS)
+        t.SetTextSize(pcbnew.VECTOR2I(fm(size), fm(size))); t.SetTextAngleDegrees(ang)
+        board.Add(t)
+    for fp in board.GetFootprints():
+        if fp.GetReference() == "U3":
+            for g in fp.GraphicalItems():
+                if g.GetClass() == "PCB_TEXT" and g.GetLayer() == pcbnew.F_SilkS:
+                    g.SetTextSize(pcbnew.VECTOR2I(fm(0.8), fm(0.8)))
+    for fp in board.GetFootprints():
+        items = [fp.Reference()] + [g for g in fp.GraphicalItems() if g.GetClass() == "PCB_TEXT"]
+        for g in items:
+            if g.GetLayer() == pcbnew.F_SilkS:
+                g.SetTextThickness(fm(SILK_STROKE))
+    for d in board.GetDrawings():
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS:
+            d.SetTextThickness(fm(SILK_STROKE))
 
 def write_project():
     def cls(name, tw, cl, vd, vdr):

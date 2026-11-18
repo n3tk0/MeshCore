@@ -60,6 +60,11 @@ v0.5 (2026-11-13):
   J5 x 6.24 to 18.76, y 60.44 to 66.19; J4 x 19.20 to 24.95, y 58.85 to 66.29. They are 0.44 mm apart, inside the
   board, and free of SMD parts. The two upper pins sit 3 mm from D1 and R30 (the length grew by 1.3 mm for that).
 - Panel: 4 boards on 100 × 76.3 mm (the longer board adds 1.3 mm to the 75 mm height).
+- **Silkscreen:** JP2 is labelled `CHEM` (left of the jumper), `Li` over pad 1 (GND side, bridged 1-2 by default)
+  and `LFP` over pad 3 (3V3 side); JP3 is labelled `LFP:short` (close only for LiFePO4). The I2C pin names sit under
+  the J5 pins, all silk strokes are 0.15 mm and the U3 pin names 0.8 mm. These labels are added by
+  `silk_fixups()` in `tools/gen_pcb.py`; on an already routed board `python3 tools/run.py silk_fix` applies them
+  (once) without touching copper.
 - Hand patches on the routed board that `gen_pcb.py` does not reproduce (re-apply them after `route` / `finish`):
   the locked REGN stub on B.Cu (10.55, 32.3) to (8.5, 32.3) is cut to end at 9.12 and split at 9.53 so that it joins
   the router's tracks, and the locked SCL stub on F.Cu (8.0, 34.1) to (6.4, 35.7) is shortened to end at (7.105, 34.995),
