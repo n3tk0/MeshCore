@@ -505,6 +505,20 @@ static void test_bq_dawn(void) {
   CHECK(chip[BQ_REG_VINDPM] == 56);
   CHECK(b.auto_vin_count >= 2);
 
+  // EN_MPPT latched (the chip clears it only when VBUS goes under VBUS_PRESENT) with HIZ / no PG: same recovery
+  dawn_start(&b, &s, 6000);
+  chip[BQ_REG_MPPT] |= 1;
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 48 && b.auto_vin_count == 1 && dawn_poor == 0 && (chip[BQ_REG_STAT0] & 0x08));
+  CHECK(dawn_vindpm_at_hiz_clear == 48 && (chip[BQ_REG_MPPT] & 1));
+  chip[BQ_REG_VINDPM] = 60;                                           // running (EN_MPPT, PG, no HIZ): hands off
+  for (int i = 0; i < 5; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 60 && b.auto_vin_count == 1);
+  dawn_voc = 7000;
+  chip[BQ_REG_STAT0] &= (uint8_t)~0x08;                               // no PG, no HIZ, EN_MPPT still set
+  for (int i = 0; i < 12; i++) dawn_second(&b, &s);
+  CHECK(chip[BQ_REG_VINDPM] == 56);
+
   // a loaded reading is never Voc: PG = 1, no HIZ, MPPT refused (VBAT < VSYSMIN)
   dawn_start(&b, &s, 6000);
   chip[BQ_REG_STAT0] = 0x09; chip[BQ_REG_CTRL0] = 0x02; chip[BQ_REG_STAT3] = 0x10; chip[BQ_REG_FLAG0] = 0;
