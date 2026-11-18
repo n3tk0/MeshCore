@@ -111,17 +111,13 @@ void BQ25798::enforce() {
 
   uint16_t want_vreg = vregFor(_s.chem) / 10;
   uint16_t vreg = ((c[BQ_REG_VREG] << 8) | c[BQ_REG_VREG + 1]) & 0x7FF;
+  if (chargeHeld() && _ce_on) setCE(false);
   if (vreg != want_vreg) {
     setCE(false);
     if (write16(BQ_REG_VREG, want_vreg)) {
       uint8_t b[2];
       if (read(BQ_REG_VREG, b, 2)) vreg = ((b[0] << 8) | b[1]) & 0x7FF;
     }
-  }
-  if (chargeHeld()) {
-    if (_ce_on) setCE(false);
-  } else if (vreg == want_vreg && !_ce_on) {
-    setCE(true);
   }
 
   // VSYSMIN under a LiFePO4 cell's plateau: MPPT does not run while VBAT < VSYSMIN (power-on: 3.5 V)
@@ -139,8 +135,8 @@ void BQ25798::enforce() {
     write16(BQ_REG_IINDPM, BQ_IINDPM_MA / 10);
   }
 
-  // EN_CHG on, EN_ICO off (only one of ICO / VINDPM detection / MPPT may run)
-  uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x10) | 0x20;
+  // EN_CHG on, EN_ICO and EN_HIZ off (only one of ICO / VINDPM detection / MPPT may run)
+  uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x14) | 0x20;
   if (c0 != c[BQ_REG_CTRL0]) write8(BQ_REG_CTRL0, c0);
 
   // SFET_PRESENT as the board is built; EN_IBAT: the discharge current is measured on battery alone too
@@ -165,6 +161,8 @@ void BQ25798::enforce() {
 
   uint8_t n1 = (c[BQ_REG_NTC1] & ~0x01) | (_s.ntc ? 0 : 1);
   if (n1 != c[BQ_REG_NTC1]) write8(BQ_REG_NTC1, n1);
+
+  if (!chargeHeld() && vreg == want_vreg && !_ce_on) setCE(true);
 
   _configured = true;
 }

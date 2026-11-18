@@ -2458,7 +2458,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     s.cutoff_mv = (uint16_t)mv;
   } else {
-    strcpy(reply, "Err - charger [chem|ichg|vin|ntc|shipfet|cutoff|ship]");
+    strcpy(reply, "Err - charger [chem|ichg|vin|ntc|shipfet|cutoff|ship|reg]");
     return;
   }
   if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {

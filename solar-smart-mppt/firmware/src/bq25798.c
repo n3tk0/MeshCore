@@ -14,6 +14,8 @@ uint16_t bq_ts_x10(const bq_t *b) {
   return (uint16_t)((uint32_t)bq_u16(b, BQ_REG_TS) * 1000u / 1024u);
 }
 
+bool bq_vbus_present(const bq_t *b) { return b->ok && (b->r[BQ_REG_STAT0] & 0x01); }
+
 bool bq_refresh(bq_t *b) {
   uint8_t tmp[BQ_NREGS];
   // two blocks keep each transfer short
@@ -57,7 +59,7 @@ static bool is_pair_hi(uint8_t reg) { return reg == BQ_REG_VREG || reg == BQ_REG
 
 bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   if (!b->ok) return false;
-  b->ntc_present = bq_ts_x10(b) < BQ_TS_OPEN_X10;
+  if (bq_u16(b, BQ_REG_TS) != 0) b->ntc_present = bq_ts_x10(b) < BQ_TS_OPEN_X10;
   bool ts_ignore = s->ntc_mode == NTC_OFF || (s->ntc_mode == NTC_AUTO && !b->ntc_present);
 
   // wanted image: the chip as read, then the stored expert writes, then our own fields on top
@@ -76,11 +78,16 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (s->vindpm_mv ? 0 : 1)));
   set_bits(img, BQ_REG_NTC1, 0x01, ts_ignore ? 1 : 0);
   set_bits(img, BQ_REG_CTRL1, 0x07, 5);             // watchdog 40 s
-  set_bits(img, BQ_REG_CTRL2, 0x06, 0);             // never ship/shutdown from here
+  // never ship/shutdown from here; no D+/D- detection (not connected: it could drop IINDPM to 500 mA)
+  set_bits(img, BQ_REG_CTRL2, 0x46, 0);
+  // SFET_PRESENT: without it SDRV_CTRL (ship mode, which the BMS needs without sun) is locked at 0.
+  set_bits(img, BQ_REG_CTRL5, 0x80, 0x80);          // Q2 fitted, else SDRV_CTRL (ship) is locked
   set_bits(img, BQ_REG_ADC_CTRL, 0x80, 0x80);       // ADC on, continuous
-  // EN_CHG ours; EN_HIZ always 0: a read that caught HIZ set (input fault, VOC check) must never be
-  // written back and leave the charger in HIZ
-  set_bits(img, BQ_REG_CTRL0, 0x24, charge_enable ? 0x20 : 0x00);
+  // TS channel only with VBUS: on battery alone it keeps REGN on and stops the ADC under ~3.2 V
+  set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) ? 0 : 0x04);
+  // EN_CHG ours; EN_ICO off (MPPT runs instead); EN_HIZ always 0: a read that caught HIZ set (input
+  // fault, VOC check) must never be written back and leave the charger in HIZ
+  set_bits(img, BQ_REG_CTRL0, 0x34, charge_enable ? 0x20 : 0x00);
 
   bool ok = true;
   for (uint8_t reg = 0; ok && reg < BQ_NREGS; reg++) {
@@ -103,6 +110,7 @@ bool bq_kick_watchdog(bq_t *b) {
 }
 
 bool bq_ship(bq_t *b) {
-  // SDRV_CTRL = 10 (ship), SDRV_DLY = 1 (no 10 s delay)
-  return wr8(b, BQ_REG_CTRL2, (uint8_t)((b->r[BQ_REG_CTRL2] & ~0x07) | 0x05));
+  // SDRV_CTRL = 10 (ship), SDRV_DLY = 1 (no 10 s delay); keep r[] so bq_apply() does not undo it
+  uint8_t v = (uint8_t)((b->r[BQ_REG_CTRL2] & ~0x07) | 0x05);
+  return b->bus->write(BQ_REG_CTRL2, &v, 1);
 }

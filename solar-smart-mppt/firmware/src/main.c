@@ -62,7 +62,7 @@ static void go_ship(uint32_t now) {
   ship_tried_ms = now;
   save_gauge();
   hal_charge(false);
-  if (bq_ship(&bq)) hal_delay_ms(100);
+  if (bq_ship(&bq)) hal_delay_ms(500);
 }
 
 static uint16_t run_cmd(uint8_t cmd, const settings_t *s) {
@@ -158,7 +158,7 @@ int main(void) {
       analog_set_short(s.isc_ma, s.shunt_uohm, last_sh_n_mv);
 
       bq_refresh(&bq);
-      bool sun = bq.ok && bq_u16(&bq, BQ_REG_VBUS) > 3500;
+      bool sun = bq_vbus_present(&bq) && bq_u16(&bq, BQ_REG_VBUS) > 3500;
 
       bms_in_t in = {
         .vpack_mv = a.vbat_mv,
@@ -173,14 +173,14 @@ int main(void) {
       bms_out_t o;
       bms_step(&bms, &s, chem_active, &in, &o);
       if (o.empty) gauge_empty(&gauge);
-      if (o.ship) go_ship(now);
 
       hal_od_off(o.od_off || analog_short_pending());   // a trip since 'sc' was read stays off
       hal_oc_off(o.oc_off);
       hal_j7(o.j7_on);
       hal_bal(o.bal1, o.bal2);
-      bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok);   // always: ADC, NTC, limits
-      hal_charge(o.charge_ok && applied);   // ~CE low only with our settings in the chip
+      bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok && !o.ship);   // always: ADC, NTC, limits
+      hal_charge(o.charge_ok && !o.ship && applied);   // ~CE low only with our settings in the chip
+      if (o.ship) go_ship(now);
       if ((uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
 
       uint8_t chg_stat = (uint8_t)(bq.r[BQ_REG_STAT1] >> 5);

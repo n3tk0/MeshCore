@@ -213,6 +213,7 @@ void expertReg(TwoWire& w, uint8_t bq, const char* val, char* reply, size_t max)
     for (uint16_t i = at; i < n; i++) if (!writeReg(w, R_EXPERT0 + i, e[i])) { snprintf(reply, max, "Err - write"); return; }
     if (!writeReg(w, R_EXPERT_N, n) || !readReg(w, R_RESULT, r)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
     if (r) { snprintf(reply, max, "Err - %s", errText(r)); return; }
+    writeReg(w, R_EXPERT0 + n, 0);   // clear the freed slot so RAM matches flash
     runCmd(w, CMDS[0], reply, max);
     return;
   }
@@ -221,9 +222,13 @@ void expertReg(TwoWire& w, uint8_t bq, const char* val, char* reply, size_t max)
   uint16_t entry = (uint16_t)(bq << 8 | v);
   if (at >= 0) { setAndSave(w, R_EXPERT0 + at, entry, reply, max); return; }
   if (n >= EXPERT_MAX) { snprintf(reply, max, "Err - %u registers set already", EXPERT_MAX); return; }
-  // the entry first (not checked while past the count), then the count, which checks it
-  if (!writeReg(w, R_EXPERT0 + n, entry)) { snprintf(reply, max, "Err - write"); return; }
-  setAndSave(w, R_EXPERT_N, n + 1, reply, max);
+  // write the entry first (checked immediately for non-zero slots), then the count (also checks reg 0x00)
+  if (!writeReg(w, R_EXPERT0 + n, entry) || !readReg(w, R_RESULT, r)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
+  if (r == 0) {
+    setAndSave(w, R_EXPERT_N, n + 1, reply, max);
+  } else {
+    snprintf(reply, max, "Err - %s", errText(r));
+  }
   if (strncmp(reply, "Err - out of range", 18) == 0) {
     snprintf(reply, max, "Err - REG%02X is not allowed (0x03..0x18 without 0x0A, 0x11)", bq);
   }
@@ -266,13 +271,13 @@ void smpptCharger(TwoWire& w, const char* sub, const char* val, char* reply, siz
     regtxt[len] = 0;
     long bq = wholeNumber(regtxt);
     if (bq < 0 || bq > 0x48) { snprintf(reply, max, "Err - charger reg 0x00..0x48 [value|auto]"); return; }
-    if (!sp) {
+    if (sp) while (*sp == ' ') sp++;
+    if (!sp || !*sp) {
       uint16_t v;
       if (!readReg(w, (uint8_t)(R_BQ_FIRST + bq), v)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
       snprintf(reply, max, "> REG%02lX = 0x%02X (as the board read it, every 1 s)", bq, v & 0xFF);
       return;
     }
-    while (*sp == ' ') sp++;
     expertReg(w, (uint8_t)bq, sp, reply, max);
   } else {
     snprintf(reply, max, "Err - charger [chem|ichg|vin|ntc|cutoff|ship|reg]");
