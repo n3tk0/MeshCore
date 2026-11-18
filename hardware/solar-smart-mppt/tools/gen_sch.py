@@ -62,7 +62,7 @@ box("MSPM0L1306_FUNC", "U",
           ("15", "PA19/SWDIO", "bidirectional"), ("16", "PA20/SWCLK", "input"),
           ("21", "PA25/OPA0_IN0+", "input"), ("14", "PA18/OPA1_IN0+", "input"),
           ("22", "PA26", "output"), ("17", "PA21/A5", "input"), ("8", "PA9", "input"),
-          ("18", "PA22 (INT)", "input")],
+          ("18", "PA22", "input")],
     right=[("9", "PA10", "output"), ("10", "PA11 (HEAT)", "output"),
            ("12", "PA16/I2C1_SDA", "bidirectional"), ("11", "PA15/I2C1_SCL", "bidirectional"),
            ("1", "PA1/I2C0_SCL", "bidirectional"), ("24", "PA0/I2C0_SDA", "bidirectional"), ("19", "PA23", "input"),
@@ -113,7 +113,7 @@ TP("TP4", "PMID", 104, 120.08, rot=0)
 bq = {"1": "STAT", "2": "VBUS", "3": "VBUS", "4": "BTST1", "5": "REGN", "6": None, "7": None,
       "8": "VBUS", "9": "VBUS", "10": "GND", "11": "GND", "12": "QON", "13": "CE", "14": "SCL_I",
       "15": "SDA_I", "16": "TS", "17": "REGN", "18": "BATP", "19": "BTST2", "20": "PROG",
-      "21": "INT_BQ", "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
+      "21": None, "22": "BAT", "23": "BAT", "24": "SDRV", "25": "SYS", "26": "SW2", "27": "GND",
       "28": "SW1", "29": "PMID"}
 P("U1", "custom:BQ25798RQMR_FUNC", "BQ25798RQMR", 140, 125, bq,
   "xiao_solar:QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR", "C2876593")
@@ -155,11 +155,9 @@ P("J3", "Connector_Generic:Conn_01x02", "NTC 10k (103AT)", 209.08, 160, {"1": "T
 RAIL("TS", [(204.0, 150.0), (204.0, 160.0)])
 R("R1", "4.7k 1%", 164, 152, "PROG", "GND", "C23162")
 RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
-# BQ I2C (internal bus, MSPM0 is the master) + INT, pull-ups to 3V3M
+# BQ I2C (internal bus, MSPM0 is the master), pull-ups to 3V3M (BQ25798 INT is not connected: dropped by the owner in v0.4)
 TP("TP9", "SCL_I", 168, 112.46, rot=0)
 TP("TP10", "SDA_I", 176, 115.00, rot=0)
-# BQ25798 ~INT has no copper path to PA22 on this board (see README, open items): test pad for a wire to R47.2 / U4.18
-TP("TP18", "INT_BQ", 184, 115.00, rot=0)
 
 T(20, 174, "SS54: защита от обратна полярност и връщане към панела. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
 T(20, 177.5, "PROG = 1S винаги (R1 4.7k): с 2S PROG BQ тръгва с VSYSMIN ~7 V. За LTO 2S MSPM0 записва VREG 5.6 V и чак тогава пуска CE.", 1.27)
@@ -272,7 +270,7 @@ T(330, 279, "Шунт: + заряд, - разряд; R21-R24 изместват 
 BLOCK(370, 22, "5. MSPM0L1306: BQ25798 master (I2C1), INA260 емулатор 0x41 (I2C0 -> J5), BMS, LED")
 P("U4", "custom:MSPM0L1306_FUNC", "MSPM0L1306SRGER", 470, 100,
   {"3": "3V3M", "23": "VCORE", "2": "NRST", "15": "SWDIO", "16": "SWCLK",
-   "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": "ADC_VBM", "19": "ADC_CHEM", "18": "INT",
+   "21": "SH_P", "14": "SH_N", "20": "ADC_VBAT", "17": "ADC_VBM", "19": "ADC_CHEM", "18": None,
    "9": "OC_G", "10": "HEAT", "12": "SDA_I", "11": "SCL_I", "1": "SCL_E", "24": "SDA_E",
    "6": "BAL2", "5": "BAL1", "7": "REG_CTL", "22": "OD_CTL", "13": "CE", "8": "LED",
    "4": "GND", "25": "GND"},
@@ -284,8 +282,6 @@ CS("C28", "100n", 420, 70, "3V3M", "GND", C100N, C0603)
 CS("C29", "10u/25V", 430, 70, "3V3M", "GND", C10U)
 RS("R13", "4.7k", 520, 60, "3V3M", "SDA_I", "C23162")
 RS("R14", "4.7k", 530, 60, "3V3M", "SCL_I", "C23162")
-# BQ25798 ~INT (open drain, low = event) on PA22: 10k pull-up to 3V3M
-RS("R47", "10k", 545, 60, "3V3M", "INT", R10K)
 # chemistry jumper read digitally (internal pull-up, then pull-down): open = Li-ion (follows
 # the pull), 1-2 = LiFePO4 (always 0), 2-3 = LTO 2S (always 1)
 P("JP4", "Jumper:SolderJumper_3_Open", "CHEM: - Li-ion / 1-2 LiFePO4 / 2-3 LTO", 420, 158,
@@ -304,7 +300,7 @@ TP("TP13", "GND", 400, 105, rot=180)
 TP("TP16", "SWCLK", 400, 110, rot=180)
 TP("TP17", "NRST", 400, 115, rot=180)
 T(370, 176, "J5 pin 3 (3V3E) е захранването на репийтъра: тук не се ползва, pull-up резисторите са на репийтъра.", 1.27)
-T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA0/PA1 (SDA/SCL, open-drain, 5 V толерантни, ROM BSL I2C: хостът може да програмира през J5), ~CE PA17, OC_G PA10, LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA22 = ~INT на BQ25798 (R47 10k към 3V3M, изходът на OPA0 остава изключен), PA11 = нагревател (R45 към гейта на Q12).", 1.27)
+T(370, 179.5, "SWD: TP12 3V3M, TP13 GND, TP11 SWDIO, TP16 SWCLK в ред (стъпка 2.54), TP17 NRST отделно. J5 = I2C0 на PA0/PA1 (SDA/SCL, open-drain, 5 V толерантни, ROM BSL I2C: хостът може да програмира през J5), ~CE PA17, OC_G PA10, LED PA9, J7 EN PA4, BAL1 PA2, BAL2 PA3, OD PA26, CHEM PA23, VBAT PA24/A3, VBM PA21/A5. PA22 не се използва (изход на OPA0, BQ25798 INT не е свързан), PA11 = нагревател (R45 към гейта на Q12).", 1.27)
 
 # ---- 6. TPS63070 buck-boost -> J7 (3.3 / 5.0 V) -----------------------------------------
 BLOCK(20, 300, "6. J7 U: TPS63070 buck-boost 3.3 V / 5.0 V (JP6), вкл. с JP5: - изкл. / 1-2 винаги / 2-3 от MSPM0")

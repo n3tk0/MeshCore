@@ -72,7 +72,7 @@ PLACE.update({
     "R43": (5.6, 13.0, 0), "R44": (6.0, 14.3, 0), "C20": (2.4, 14.2, 90),
     # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
     # (above it are the inductor and the VOUT caps); VREG test point next to J7
-    "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (24.0, 5.8, 0), "TP18": (11.33, 40.1, 0),
+    "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (24.0, 5.8, 0),
     # LEDs under the hole, next to the I2C header
     "D6": (9.6, 7.4, 90), "R16": (9.6, 10.1, 90), "D7": (11.6, 7.4, 90), "R17": (11.6, 10.1, 90),
     # solar input on the left edge next to the charger's VBUS copper: J1, SS54 (D1), TVS (D3)
@@ -113,11 +113,10 @@ PLACE.update({
     "JP5": (26.68, 22.4, 0), "JP6": (22.6, 22.4, 0),
 })
 # v0.4 (second round): battery heater J8 in the top row between J5 and J7 (J7 +0.3 mm to the right, H1 moves under J7), its low-side FET Q12
-# and gate parts R45 / R46 under it, R47 = INT pull-up next to the MCU; R23 / R24 are 470k 0603 now
+# and gate parts R45 / R46 under it; R23 / R24 are 470k 0603 now
 PLACE.update({
     "J8": (19.38, 1.5, 90), "H1": (27.6, 6.4, 0),
     "Q12": (19.0, 6.9, 180), "R45": (22.0, 6.6, 270), "R46": (23.4, 7.9, 90),
-    "R47": (11.3, 57.0, 90),
 })
 # v0.4 round 3 (owner review): JST XH housings (F.Fab outlines, XH_HOUSINGS) on all THT connectors. Top row J6 | J5 | J7 with 0.5 mm
 # between the housings and 0.0 overhang (pins at y = 0.5, edge at -1.85); H1 (M2) just under the row between J5 and J7;
@@ -135,15 +134,6 @@ PLACE.update({
     "D3": (6.5, 23.5, -90), "R6": (9.35, 21.8, 0), "C2": (9.55, 25.2, 90), "D4": (12.05, 21.8, 180), "C1": (11.95, 25.2, 90),
     "TP4": (14.6, 24.85, 0),
 })
-def mini_tp(fp):
-    """TP18 (BQ25798 INT) squeezes between R1, C17 and C18: 0.6 mm pad, courtyard and silk circle moved to F.Fab, reference hidden."""
-    fp.Reference().SetVisible(False)
-    for pad in fp.Pads():
-        pad.SetSize(pcbnew.VECTOR2I(mm(0.6), mm(0.6)))
-    for g in [g for g in fp.GraphicalItems() if g.GetLayer() in (pcbnew.F_CrtYd, pcbnew.F_SilkS)]:
-        g.SetLayer(pcbnew.F_Fab)
-
-
 B_SIDE = {"TP11", "TP12", "TP13", "TP16", "TP17"}
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -278,8 +268,6 @@ def build():
         fp.Reference().SetTextThickness(mm(0.15))
         fp.Value().SetVisible(False)
         labels.thicken_silk(fp)   # JLC: silk lines >= 0.15 mm
-        if ref == "TP18":
-            mini_tp(fp)
         for f in fp.GetFields():
             if f.GetName() != "Reference":
                 f.SetVisible(False)
@@ -499,12 +487,11 @@ def add_top_routes(board):
         v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
         v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
     board.FindFootprintByReference("R46").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
-# BQ25798 INT (U1.21) cannot reach PA22 (U4.18): both pins sit in pockets walled by the I2C / SWD / sense lanes. U1.21 leaves
-# as net INT_BQ to the 0.6 mm test pad TP18 (a wire to R47.2 / U4.18 joins them); the PROG lane at U1.20 steps aside to give it room.
+# BQ25798 INT (U1.21) is not connected (owner decision, v0.4 round 5: R47 and TP18 dropped); the PROG lane at U1.20 keeps the
+# detour it got for the old INT lane.
 # HEAT (U4.10 -> R45.1) is routed by hand: B.Cu / F.Cu hops with vias (layer, points), plus one GND via that keeps the F.Cu GND
 # strip left of the lane connected.
 INT_HEAT_ROUTES = [
-    ("INT_BQ", "F.Cu", [(11.42, 34.75), (11.42, 36.0), (11.2, 36.22), (11.2, 40.1)], 0.2),
     ("PROG", "F.Cu", [(11.02, 34.75), (11.02, 35.25), (10.62, 35.65), (10.62, 38.38), (10.4, 38.38)], 0.2),
     ("HEAT", "F.Cu", [(13.25, 51.35), (13.25, 48.9)], 0.25),
     ("HEAT", "B.Cu", [(13.25, 48.9), (5.5, 41.15), (5.5, 21.05), (12.6, 13.95)], 0.25),
@@ -558,7 +545,7 @@ def add_hand_routes(board):
                 continue
             t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*o["a"])); t.SetEnd(pt(*o["b"])); t.SetWidth(mm(o["w"]))
             t.SetLayer(pcbnew.F_Cu if o["layer"] == "F" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
-# v0.4 round 3: copper that differs from the v0.4 round 2 board (heater moved to the bottom, new HEAT / INT_BQ lanes, top row
+# v0.4 round 3: copper that differs from the v0.4 round 2 board (heater moved to the bottom, new HEAT lanes, top row
 # re-laid), as exported from the reference .kicad_pcb: "remove" = exact tracks / vias of the old routing, "add" = the new ones
 V04_DELTA = os.path.join(HERE, "v04_delta.json")
 def add_v04_delta(board):
