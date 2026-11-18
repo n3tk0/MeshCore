@@ -941,6 +941,7 @@ BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
 
 void EnvironmentSensorManager::sampleBatteryGauge() {
   #if ENV_INCLUDE_INA219
+  if (_bq_found) return;   // getBatteryGauge() returns &bq_gauge when a BQ25798 is present
   static uint32_t next_sample = 0;
   if (!_ina219_found || (int32_t)(millis() - next_sample) < 0) return;
   next_sample = millis() + 10000;

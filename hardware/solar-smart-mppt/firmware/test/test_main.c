@@ -47,6 +47,8 @@ static void test_settings(void) {
   CHECK(settings_check(&s, CHEM_LIION) == ERR_RANGE);
   s.expert[0] = 0x1500 | 0x09;                         // MPPT timing bits: allowed
   CHECK(settings_check(&s, CHEM_LIION) == ERR_OK);
+  s.expert_n = 0; s.expert[0] = 0x01FF;                  // disallowed even past expert_n
+  CHECK(settings_check(&s, CHEM_LIION) == ERR_RANGE);
 
   // jumper moved from Li-ion to LiFePO4: voltages follow the jumper, currents and capacity stay
   settings_defaults(&s, CHEM_LIION);
@@ -255,12 +257,15 @@ static void test_bms(void) {
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(!o.od_off);
 
-  // under-voltage without sun: ship mode
+  // under-voltage without sun: ship mode at the UV debounce, discharge FET stays on so the MCU keeps power until ship
   bms_init(&b);
   in.vpack_mv = 2950; in.sun = false;
-  bool ship = false;
-  for (int i = 0; i < 2 * BMS_DEBOUNCE; i++) { bms_step(&b, &s, CHEM_LIION, &in, &o); ship |= o.ship; }
-  CHECK(ship);
+  for (int i = 0; i < BMS_DEBOUNCE - 1; i++) {
+    bms_step(&b, &s, CHEM_LIION, &in, &o);
+    CHECK(!o.ship && !o.od_off);
+  }
+  bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(o.ship && !o.od_off && o.empty && (o.status & ST_UV));
 
   // short with sun: FET off, retry after the pause; without sun: ship at once
   bms_init(&b);
@@ -343,14 +348,23 @@ static void test_bq(void) {
   CHECK((chip[BQ_REG_NTC1] & 1) == 1);                            // no NTC: TS ignored
   CHECK(chip[BQ_REG_CTRL0] == 0x02);                              // not charging yet, EN_TERM kept
   CHECK((chip[BQ_REG_CTRL1] & 7) == 5 && (chip[BQ_REG_ADC_CTRL] & 0x80));
+  CHECK((chip[BQ_REG_CTRL5] & 0x80) == 0x80);                     // SFET_PRESENT on so ship mode works
+  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0x04);                  // no VBUS: TS ADC off
   CHECK((chip[BQ_REG_VSYSMIN] & 0x3F) == 2);                      // 3000 mV
   // nothing to do the second time
   chip_writes = 0;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && chip_writes == 0);
   CHECK(bq_apply(&b, &s, CHEM_LIION, true) && chip[BQ_REG_CTRL0] == 0x22);
-  // chip reset (watchdog): everything is written again
+  // VBUS present turns TS ADC back on; EN_HIZ and AUTO_INDET_EN are always cleared
+  chip[BQ_REG_STAT0] = 0x01;
+  chip[BQ_REG_CTRL2] |= 0x40;
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0 && (chip[BQ_REG_CTRL2] & 0x40) == 0);
+  // chip reset (watchdog): everything is written again; TS=0 at night does not falsely claim an NTC
   memset(chip, 0, 0x30);
+  chip[BQ_REG_TS] = 0; chip[BQ_REG_TS + 1] = 0;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && bq_u16(&b, BQ_REG_VREG) == 420);
+  CHECK(!b.ntc_present);
   // EN_HIZ read back as 1 (caught during a VOC check or a fault) is never written back
   chip[BQ_REG_CTRL0] |= 0x04;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && chip[BQ_REG_CTRL0] == 0x22);
@@ -362,6 +376,8 @@ static void test_bq(void) {
   CHECK(!bq_refresh(&b) && !bq_apply(&b, &s, CHEM_LIION, true) && b.errors == 1);
   chip_fail = false;
   CHECK(bq_ship(&b) && (chip[BQ_REG_CTRL2] & 7) == 5);
+  // bq_apply before the next bq_refresh does not undo a pending ship command
+  CHECK(bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 7) == 5);
 }
 
 int main(void) {

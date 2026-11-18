@@ -93,10 +93,6 @@ jobs:
             hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
             hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
             hardware/solar-smart-mppt/firmware/build/smppt.elf
-            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
-            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
-            hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
-            hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/solar-smart-mppt-fw-v')

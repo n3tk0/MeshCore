@@ -144,13 +144,35 @@ TEST(BQ25798, LiFePO4NeverChargesTowards42V) {
   // a power-on reset while running (battery and panel both gone a moment): VREG back at 4.2 V
   f.ce_log.clear();
   f.por();
+  f.r[0x0F] |= 0x04;                    // EN_HIZ must be cleared by enforce()
   bq.loop(20000);
   ASSERT_GE(f.ce_log.size(), 2u);
   EXPECT_FALSE(f.ce_log[0]);
   EXPECT_TRUE(f.ce_log.back());
   EXPECT_EQ(f.get16(0x01), 360);
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
   EXPECT_EQ(f.r[0x10] & 0x07, 0);
   EXPECT_EQ(bq.reconfigs(), 1);
+}
+
+TEST(BQ25798, CeEnablesAfterCurrentAndVsysminAreWritten) {
+  struct TraceBQ : public FakeBQ {
+    std::vector<uint8_t> ce_write_counts;
+    void setChargeEnable(bool on) override {
+      FakeBQ::setChargeEnable(on);
+      if (on) ce_write_counts.push_back((uint8_t)writes.size());
+    }
+  } f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  BQ25798Settings s = settings(BQ_CHEM_LIFEPO4);
+  s.ichg_ma = 400;
+  f.writes.clear();
+  bq.apply(s);
+  ASSERT_EQ(f.ce_write_counts.size(), 1u);
+  EXPECT_EQ(f.ce_write_counts[0], f.writes.size());   // all config registers written before ~CE goes low
+  EXPECT_EQ(f.get16(0x03), 40);
+  EXPECT_EQ(f.r[0x00] & 0x3F, 2);
 }
 
 TEST(BQ25798, VregThatWillNotTakeKeepsChargingOff) {
@@ -549,8 +571,7 @@ TEST(BQ25798, StatusLineFits) {
   BQ25798Settings st = settings(BQ_CHEM_LIFEPO4);
   st.ntc = 1;
   bq.apply(st);
-  f.put16(0x3F, 900);                   // -10 °C or so
-  f.put16(0x3F, 800);
+  f.put16(0x3F, 800);                   // -10 °C or so
   f.adcValues(3300, 1500, 17950, 450);
   f.sun(true);
   f.r[0x20] = 0x40;

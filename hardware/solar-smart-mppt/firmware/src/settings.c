@@ -69,7 +69,8 @@ int settings_check(const settings_t *s, uint8_t chem) {
   if (!in(s->shunt_uohm, 15000, 25000)) return ERR_RANGE;
   if (s->ina_sign > 1) return ERR_RANGE;
   if (s->expert_n > EXPERT_MAX) return ERR_RANGE;
-  for (int i = 0; i < s->expert_n; i++) {
+  for (int i = 0; i < EXPERT_MAX; i++) {
+    if (i >= s->expert_n && s->expert[i] == 0) continue;
     uint8_t reg = s->expert[i] >> 8;
     // VSYSMIN, the charge voltage, the cell count (REG0A 7:6) and ship mode stay ours: a wrong byte there is unsafe
     if (reg > 0x18 || reg == 0x00 || reg == 0x01 || reg == 0x02 || reg == 0x0A || reg == 0x11) return ERR_RANGE;
