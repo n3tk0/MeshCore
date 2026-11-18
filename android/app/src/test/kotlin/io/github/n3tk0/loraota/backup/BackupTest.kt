@@ -83,4 +83,19 @@ class BackupTest {
             assertArrayEquals(jca, PasswordBox.pbkdf2Sha256(pw, salt, 1000, 32))
         }
     }
+
+    @Test
+    fun aBadIterationCountIsABadFileNotAWrongPassword() {
+        val withPw = PasswordBox.export(backup, "secret")
+        for (iter in listOf(0, -5, 2_000_000_000)) {
+            val o = JSONObject(withPw)
+            o.getJSONObject("enc").put("iter", iter)
+            try {
+                PasswordBox.import(o.toString(), "secret")
+                throw AssertionError("iter $iter accepted")
+            } catch (e: IllegalArgumentException) {
+                // the import screen shows 'not a backup file' for this, not 'wrong password'
+            }
+        }
+    }
 }

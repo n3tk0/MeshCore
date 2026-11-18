@@ -24,6 +24,7 @@ class WrongPassword : Exception("wrong password")
  */
 object PasswordBox {
     private const val ITERATIONS = 120_000
+    private const val MAX_ITERATIONS = 10_000_000
     private val b64 = Base64.getEncoder()
     private val unb64 = Base64.getDecoder()
 
@@ -36,6 +37,9 @@ object PasswordBox {
      * make the same files.
      */
     fun pbkdf2Sha256(password: String, salt: ByteArray, iterations: Int, length: Int): ByteArray {
+        // a broken or made-up file: refused (a bad-file error, not 'wrong password'), not hours of work
+        require(iterations in 1..MAX_ITERATIONS) { "bad iteration count $iterations" }
+        require(length in 1..1024) { "bad key length $length" }
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(password.toByteArray(Charsets.UTF_8).let { if (it.isEmpty()) ByteArray(1) else it }, "HmacSHA256"))
         val out = ByteArray(length)
