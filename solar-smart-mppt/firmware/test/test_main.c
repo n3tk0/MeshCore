@@ -552,6 +552,31 @@ static void test_bq_dawn(void) {
     dawn_second(&b, &s);
   }
   CHECK(dawn_poor == 8 && b.auto_vin_count == 0);   // held 4 s of 12 (2 of every 6), cleared (and failed again) the other 8
+
+  // bq_why keeps ST2_HIZ although bq_apply cleared EN_HIZ in r[] in the same pass
+  dawn_start(&b, &s, 6000);
+  CHECK(bq_refresh(&b) && b.hiz_seen);
+  CHECK(bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK((bq_why(&b) & (ST2_HIZ | ST2_NO_PG)) == (ST2_HIZ | ST2_NO_PG));   // from what the chip had at the refresh
+
+  // the latched poor-source flag alone (PG, no HIZ) does not mean the converter is off, and the TS ADC channel
+  dawn_start(&b, &s, 6000);
+  chip[BQ_REG_STAT0] = 0x09; chip[BQ_REG_CTRL0] = 0x02; chip[BQ_REG_FLAG0] = 0x10;
+  CHECK(bq_refresh(&b));
+  CHECK(!b.unl && !b.hiz_seen && b.poorsrc_count == 1);               // counted, not "unloaded"
+  CHECK(bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK(!(chip[BQ_REG_ADC_DIS0] & 0x04));                             // VBUS, no HIZ: TS on
+
+  // hiz_cleared marks only the first refresh after our EN_HIZ clear, even while the panel stays unloaded
+  dawn_start(&b, &s, 6000);
+  dawn_stubborn = true;
+  chip[BQ_REG_CTRL0] = 0x02; chip[BQ_REG_STAT0] = 0x01;               // no PG, no HIZ
+  b.hiz_cleared = true;
+  CHECK(bq_refresh(&b) && b.unl && !b.hiz_cleared);
+  chip[BQ_REG_CTRL0] |= 4;                                            // EN_HIZ seen: TS channel off during the hold
+  CHECK(bq_refresh(&b) && b.hiz_seen);
+  CHECK(bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK(chip[BQ_REG_ADC_DIS0] & 0x04);
 }
 
 static void test_heater(void) {

@@ -62,6 +62,7 @@ typedef struct {
   uint32_t secs;              // bq_refresh() calls, one a second
   uint32_t poorsrc_secs;      // secs at the last one
   bool unl;                   // at the last refresh: VBUS there, converter not loading it (EN_HIZ / no PG / poor source)
+  bool hiz_seen;              // EN_HIZ as read at the last refresh (before bq_apply clears it in r[])
   bool unl_prev;              // ... and at the refresh before
   bool hiz_cleared;           // we cleared EN_HIZ and the chip has not set it again yet: the converter ran
   bool voc_ok;                // VBUS (voc_mv) was read with the converter off for a whole second: open-circuit voltage
