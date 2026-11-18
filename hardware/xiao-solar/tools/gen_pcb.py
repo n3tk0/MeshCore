@@ -593,7 +593,99 @@ def build():
         r.SetPosition(pt(38.0, PLACE[ref][1])); r.SetTextAngleDegrees(0)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
+    silk_fixups(board)
     return board
+
+# Silkscreen touch-ups after dfm.place_silk (fixed spots; also run on the routed board by tools/silk_fix.py).
+# Positions are board mm (KiCad coordinates minus 100 on both axes), not design coordinates.
+SILK_STROKE = 0.15            # JLC: stroke >= 0.15 mm
+SILK_OLD_TEXTS = ("SCL SDA 3V3 GND", "LFP")   # replaced by the per-pin / per-jumper labels below
+SILK_REF_MOVES = {            # reference -> (x, y, angle)
+    "JP2": (35.5, 34.3, 0),   # shown again, below the jumper
+    "C13": (25.0, 44.59, 0),  # away from the SYS label of TP5
+}
+SILK_HIDE_REFS = ("TP2",)     # its name is the QON label now
+SILK_TEXT_MOVES = {}          # board text starting with ... -> (x, y)
+SILK_PLUS = {"J6": (-2.1, 0.0)}   # '+' of J6 sits left of pin 1 (dfm.place_silk had put it between the pins)
+SILK_TEXTS = (                # (text, x, y, size, angle, justify)
+    # JP2 (CHEM, CE pull): closed = LiFePO4, open = Li-ion; vertical, right of the jumper
+    ("LFP:short", 37.3, 32.1, 0.8, 90, "c"),
+    # JP3 (ship FET Q2 bypass): close only for LiFePO4; below the jumper
+    ("LFP:short", 31.2, 54.7, 0.8, 0, "l"),
+)
+J5_NAME_Y = 3.75              # J5 pin names, centred under their pads
+TP_LABELS = {                 # test point -> (dx, dy, justify): the net name, 0.8 mm, next to the pad
+    "TP2": (0.85, 0.0, "l"), "TP4": (-0.9, 0.0, "r"), "TP5": (-0.9, 0.0, "r"), "TP6": (0.0, -1.4, "c"),
+    "TP7": (0.0, 1.5, "c"), "TP8": (0.0, 1.5, "c"), "TP9": (0.0, 1.5, "c"), "TP10": (0.0, 1.5, "c"),
+    # TP3 (VBUS): no room, it is boxed in by C2, C3, C10 and the charger pads
+}
+
+def silk_fixups(board):
+    """J5 pin names, JP2 / JP3 labels, test point names, 0.15 mm strokes, 0.8 mm U3 / U4 pin names.
+    Silkscreen only, nothing else on the board is touched; running it twice gives the same result."""
+    fm = pcbnew.FromMM
+    P = lambda x, y: pcbnew.VECTOR2I(fm(OX + x), fm(100.0 + y))
+    pad_xy = lambda ref, n: (pcbnew.ToMM(_pad(board, ref, n).GetPosition().x) - OX,
+                             pcbnew.ToMM(_pad(board, ref, n).GetPosition().y) - 100.0)
+    J = {"c": pcbnew.GR_TEXT_H_ALIGN_CENTER, "l": pcbnew.GR_TEXT_H_ALIGN_LEFT, "r": pcbnew.GR_TEXT_H_ALIGN_RIGHT}
+    def text(s, x, y, size=0.8, angle=0, just="c"):
+        t = pcbnew.PCB_TEXT(board)
+        t.SetText(s); t.SetPosition(P(x, y)); t.SetLayer(pcbnew.F_SilkS)
+        t.SetTextSize(pcbnew.VECTOR2I(fm(size), fm(size))); t.SetTextAngleDegrees(angle)
+        t.SetTextThickness(fm(SILK_STROKE)); t.SetHorizJustify(J[just])
+        board.Add(t)
+    # new labels: J5 pin names (the net of each pad), the test point names, the jumper labels
+    j5 = [(pad_xy("J5", str(i))[0], pad_xy("J5", str(i))[1], _pad(board, "J5", str(i)).GetNetname()) for i in range(1, 5)]
+    assert [n for _, _, n in j5] == ["SCL", "SDA", "3V3", "GND"], j5
+    new = [(n, x, J5_NAME_Y, 0.8, 0, "c") for x, _, n in j5]
+    for ref, (dx, dy, just) in TP_LABELS.items():
+        x, y = pad_xy(ref, "1")
+        new.append((_pad(board, ref, "1").GetNetname(), x + dx, y + dy, 0.8, 0, just))
+    new += SILK_TEXTS
+    plus_at = {ref: pad_xy(ref, "1") for ref in SILK_PLUS}   # (pcbnew's lookups fail after a Remove)
+    # the old labels, and the ones of an earlier run (same text at the same spot), go at the end:
+    # pcbnew's wrappers break after a Remove
+    drawings = list(board.GetDrawings())
+    gone = []
+    for d in drawings:
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS:
+            c = d.GetPosition()
+            if d.GetText() in SILK_OLD_TEXTS or any(
+                    d.GetText() == n[0] and abs(pcbnew.ToMM(c.x) - OX - n[1]) < 0.05
+                    and abs(pcbnew.ToMM(c.y) - 100.0 - n[2]) < 0.05 for n in new):
+                gone.append(d)
+    for n in new:
+        text(*n)
+    for d in drawings:
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS:
+            for k, (x, y) in SILK_TEXT_MOVES.items():
+                if d.GetText().startswith(k):
+                    d.SetPosition(P(x, y))
+            if d.GetText() == "+":
+                for ref, (dx, dy) in SILK_PLUS.items():
+                    x, y = plus_at[ref]
+                    c = d.GetPosition()
+                    if abs(pcbnew.ToMM(c.x) - OX - x) < 4 and abs(pcbnew.ToMM(c.y) - 100.0 - y) < 4:
+                        d.SetPosition(P(x + dx, y + dy))
+    for fp in board.GetFootprints():
+        r = fp.Reference()
+        if fp.GetReference() in SILK_REF_MOVES:
+            x, y, a = SILK_REF_MOVES[fp.GetReference()]
+            r.SetVisible(True); r.SetTextAngleDegrees(a); r.SetPosition(P(x, y))
+        if fp.GetReference() in SILK_HIDE_REFS:
+            r.SetVisible(False)
+        if fp.GetReference() in ("U3", "U4"):
+            for g in fp.GraphicalItems():
+                if g.GetClass() == "PCB_TEXT" and g.GetLayer() == pcbnew.F_SilkS:
+                    g.SetTextSize(pcbnew.VECTOR2I(fm(0.8), fm(0.8)))
+        for g in [r] + [g for g in fp.GraphicalItems() if g.GetClass() == "PCB_TEXT"]:
+            if g.GetLayer() == pcbnew.F_SilkS:
+                g.SetTextThickness(fm(SILK_STROKE))
+    for d in drawings:
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS:
+            d.SetTextThickness(fm(SILK_STROKE))
+    for d in gone:
+        board.Remove(d)
 
 def write_project():
     """Net classes live in the .kicad_pro in KiCad 7."""

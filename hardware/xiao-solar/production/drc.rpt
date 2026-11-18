@@ -1,8 +1,20 @@
 ** Drc report for xiao-solar.kicad_pcb **
-** Created on 2026-11-18T07:50:03 **
+** Created on 2026-11-18T08:04:41 **
 ** Report includes: Errors, Warnings **
 
-** Found 154 DRC violations **
+** Found 126 DRC violations **
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(142.9480 mm, 140.7790 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
+    @(143.5476 mm, 140.0894 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(124.9351 mm, 151.0071 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
+    @(124.5649 mm, 152.3428 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(128.6022 mm, 150.2029 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
+    @(129.1083 mm, 150.9340 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(113.6151 mm, 133.7546 mm): Zone 'teardrop' [3V3M] on B.Cu, priority 3
@@ -37,12 +49,12 @@
     @(124.1500 mm, 137.0300 mm): Zone 'teardrop' [SDA_I] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(119.1305 mm, 133.4127 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(118.9420 mm, 132.8480 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
     @(125.1460 mm, 138.0220 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(124.7140 mm, 136.3280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(119.1305 mm, 133.4127 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(118.9420 mm, 132.8480 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(130.2408 mm, 131.8704 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
@@ -129,10 +141,6 @@
     @(123.5444 mm, 152.7091 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(128.6022 mm, 150.2029 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
-    @(129.1083 mm, 150.9340 mm): Zone 'teardrop' [BATP] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
     @(143.9060 mm, 141.6320 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
     @(143.4935 mm, 140.4194 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
@@ -143,102 +151,10 @@
     Local override; error
     @(139.8740 mm, 135.8280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(140.3060 mm, 136.7720 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(142.9480 mm, 140.7790 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
-    @(143.5476 mm, 140.0894 mm): Zone 'teardrop' [SH_P] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(124.9351 mm, 151.0071 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
-    @(124.5649 mm, 152.3428 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
 [silk_overlap]: Silkscreen clearance
     Rule: board setup constraints silk; warning
     @(146.4200 mm, 106.8000 mm): Circle of U4 on F.Silkscreen
     @(146.5000 mm, 103.5000 mm): Circle of H2 on F.Silkscreen
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(103.5800 mm, 111.8000 mm): Footprint text of U3 (5V)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(103.5800 mm, 121.9000 mm): Footprint text of U3 (D0)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.1200 mm, 111.8000 mm): Footprint text of U3 (GND)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(106.1200 mm, 121.9000 mm): Footprint text of U3 (D1)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(108.6600 mm, 111.8000 mm): Footprint text of U3 (3V3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(108.6600 mm, 121.9000 mm): Footprint text of U3 (D2)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(111.2000 mm, 111.8000 mm): Footprint text of U3 (D10)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(111.2000 mm, 121.9000 mm): Footprint text of U3 (D3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(113.7400 mm, 111.8000 mm): Footprint text of U3 (D9)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(113.7400 mm, 121.9000 mm): Footprint text of U3 (D4)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.2800 mm, 111.8000 mm): Footprint text of U3 (D8)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(116.2800 mm, 121.9000 mm): Footprint text of U3 (D5)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(118.8200 mm, 111.8000 mm): Footprint text of U3 (D7)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(118.8200 mm, 121.9000 mm): Footprint text of U3 (D6)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(131.1800 mm, 111.7000 mm): Footprint text of U4 (D6)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(131.1800 mm, 121.8000 mm): Footprint text of U4 (D7)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(133.7200 mm, 111.7000 mm): Footprint text of U4 (D5)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(133.7200 mm, 121.8000 mm): Footprint text of U4 (D8)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(136.2600 mm, 111.7000 mm): Footprint text of U4 (D4)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(136.2600 mm, 121.8000 mm): Footprint text of U4 (D9)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(138.8000 mm, 111.7000 mm): Footprint text of U4 (D3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(138.8000 mm, 121.8000 mm): Footprint text of U4 (D10)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(141.3400 mm, 111.7000 mm): Footprint text of U4 (D2)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(141.3400 mm, 121.8000 mm): Footprint text of U4 (3V3)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(143.8800 mm, 111.7000 mm): Footprint text of U4 (D1)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(143.8800 mm, 121.8000 mm): Footprint text of U4 (GND)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(146.4200 mm, 111.7000 mm): Footprint text of U4 (D0)
-[text_height]: Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.7000 mm)
-    Rule: board setup constraints silk text height; warning
-    @(146.4200 mm, 121.8000 mm): Footprint text of U4 (5V)
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
     @(125.0000 mm, 108.8000 mm): Footprint R30
