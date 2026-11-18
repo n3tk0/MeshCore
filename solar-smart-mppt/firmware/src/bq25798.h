@@ -42,6 +42,7 @@ typedef struct {
   uint8_t r[BQ_NREGS];        // last read of every register
   bool ok;                    // last refresh worked
   bool ntc_present;
+  bool ship_sent;             // ship mode written: bq_apply leaves SDRV_CTRL alone until the sun is back
   uint8_t errors;             // bus errors in a row
 } bq_t;
 

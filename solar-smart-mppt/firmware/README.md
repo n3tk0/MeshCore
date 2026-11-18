@@ -145,9 +145,14 @@ battery gauge expects), VOLTAGE (0x02, 1.25 mV/bit, pack), POWER (0x03, 10 mW/bi
   The first pass after a start is also a decision pass, so a cold battery in the sun is heated within a second.
 - **Under-voltage:** with sun the discharge FET goes off and charging goes on. Without sun the MCU would
   lose its own supply (it sits behind the FET, R19 turns it back on, and it would start over), so the
-  BQ25798 goes to **ship mode** instead; it wakes when the panel gives power. The gauge is saved first.
+  BQ25798 goes to **ship mode** instead, in the same step the under-voltage is confirmed (3 s), while the
+  discharge FET stays on and J7 goes off; it wakes when the panel gives power. The gauge is saved first.
+  Until the sun is back the firmware never writes SDRV_CTRL back to 0 and keeps ~CE high, in case its
+  own supply holds for a while after the command. With JP3 closed (LiFePO4) ship mode cannot cut the
+  pack, so the board stays on with J7 off.
 - **Short / over-current:** COMP0 turns the discharge FET off in its interrupt. With sun it tries again
-  after 60 s; without sun it goes to ship mode.
+  after 60 s; without sun ship mode is asked for in the same step, before the FET goes off in software.
+  A COMP0 pass between the 1 s steps counts nothing (no debounce or pause step).
 - **Gauge:** counts mA·s every second, sets 100 % when the BQ25798 says "charge done", learns the
   capacity from full to the cut-off, counts cycles. Without a capacity the % comes from a voltage table
   (status bit 14). Saved every hour and before ship mode / reboot (hourly saves: one sector erase about

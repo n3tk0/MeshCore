@@ -152,10 +152,10 @@ int main(void) {
       __disable_irq(); R.result = res; R.pending_cmd = CMD_NONE; __enable_irq();
     }
 
-    bool tick = first || sc || (uint32_t)(now - last_s) >= 1000u;
-    if (tick) {
+    bool second = first || (uint32_t)(now - last_s) >= 1000u;
+    if (second || sc) {            // every second, and at once for a COMP0 trip
       uint32_t dt = first ? 0 : now - last_s;
-      if (tick) last_s = now;
+      last_s = now;
       first = false;
 
       settings_t s;
@@ -166,7 +166,7 @@ int main(void) {
       static int32_t ib;           // mA, + = charging
       static bool adc_ok;
       static bms_out_t o;          // the BMS output holds between its steps
-      if (tick) {
+      {
         adc_ok = analog_read(&a);
         last_shunt_uv = a.shunt_uv;
         last_sh_n_mv = a.sh_n_mv;
@@ -185,14 +185,14 @@ int main(void) {
         .ibat_ma = (int16_t)ib,
         .sun = sun,
         .short_tripped = sc,
+        .second = second,
         .bq_fault = bq.ok && (bq.r[BQ_REG_FAULT0] | bq.r[BQ_REG_FAULT1]) != 0,
         .bq_i2c_err = bq.errors >= 3,
       };
-      if (tick) {
-        bms_step(&bms, &s, chem_active, &in, &o);
-        if (o.empty) gauge_empty(&gauge);
-        if (o.ship) go_ship(now);
-      }
+      if (sun) bq.ship_sent = false;   // VBUS ends ship mode anyway
+      bms_step(&bms, &s, chem_active, &in, &o);
+      if (o.empty) gauge_empty(&gauge);
+      if (o.ship) go_ship(now);
 
       // heater: panel power only, battery NTC through the BQ25798 TS ADC; any doubt = off
       heater_in_t hi = {
@@ -212,15 +212,15 @@ int main(void) {
       hal_j7(o.j7_on);
       hal_bal(o.bal1, o.bal2);
       bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok);   // always: ADC, NTC, limits
-      hal_charge(o.charge_ok && applied);   // ~CE low only with our settings in the chip
-      if (tick && (uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
+      hal_charge(o.charge_ok && applied && !bq.ship_sent);   // ~CE low only with our settings in the chip
+      if ((uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
 
       uint8_t chg_stat = (uint8_t)(bq.r[BQ_REG_STAT1] >> 5);
       bool done = bq.ok && chg_stat == BQ_CHG_DONE;
       if (done && !was_done) gauge_full(&gauge, &s);   // once, on the way into "charge done"
       if (bq.ok) was_done = done;
-      if (tick && adc_ok) gauge_step(&gauge, &s, (int16_t)ib, dt);
-      if (tick && (uint32_t)(now - last_save) >= 3600000u) { last_save = now; save_gauge(); }
+      if (adc_ok) gauge_step(&gauge, &s, (int16_t)ib, dt);
+      if ((uint32_t)(now - last_save) >= 3600000u) { last_save = now; save_gauge(); }
 
       bool from_v;
       uint16_t soc = gauge_soc(&gauge, &s, chem_active, a.vbat_mv, &from_v);

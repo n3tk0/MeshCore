@@ -3,9 +3,12 @@
 // The MCU is fed from the pack side behind the discharge FET, so "discharge FET off" without sun
 // would power the MCU down, R19 would turn the FET back on and it would start over. So:
 //  - under-voltage with sun: discharge FET off, charging goes on; back on above od_on;
-//  - under-voltage without sun: BQ25798 ship mode (everything off until the panel gives power);
-//  - short (COMP0 interrupt) or software over-current: FET off, retry after a pause with sun,
-//    ship mode without sun.
+//  - under-voltage without sun: BQ25798 ship mode at once (the under-voltage is already debounced);
+//    the discharge FET stays ON, J7 goes off (FET off here would kill our own supply before the
+//    ship command, and the restart loop would never send it);
+//  - short (COMP0 interrupt) or software over-current: FET off, retry after a pause with sun;
+//    without sun ship mode is asked for in the same step, before the FET goes off.
+// May also be called between seconds for a COMP0 trip (second = false): nothing is counted then.
 #pragma once
 #include "smppt.h"
 
@@ -14,6 +17,7 @@ typedef struct {
   int16_t  ibat_ma;          // + = charging
   bool     sun;              // VBUS present
   bool     short_tripped;    // COMP0 fired since the last call
+  bool     second;           // a new 1 s step: debounce counters and the retry pause advance only then
   bool     bq_fault, bq_i2c_err;
 } bms_in_t;
 
