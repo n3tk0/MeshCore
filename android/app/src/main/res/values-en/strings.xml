@@ -21,6 +21,7 @@
     <string name="msg_stopped">Stopped. The repeater keeps its old firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth is off.</string>
     <string name="msg_location_off">Turn on Location in the phone settings: on Android 7-11 a Bluetooth scan finds nothing without it.</string>
+    <string name="msg_no_location_permission">The app may not use Location (on Android 7-11 a Bluetooth scan needs it). Allow it in the phone settings: Apps → LoRa OTA → Permissions.</string>
     <string name="msg_connect_failed">Could not connect to the companion.</string>
     <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
     <string name="msg_releases_failed">Releases did not load: %1$s</string>

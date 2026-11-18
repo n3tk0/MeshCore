@@ -22,6 +22,7 @@
     <string name="msg_stopped">Спряно. Repeater-ът остава на стария firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth е изключен.</string>
     <string name="msg_location_off">Включи Местоположение (локация) в настройките на телефона: на Android 7-11 Bluetooth търсенето без него не намира нищо.</string>
+    <string name="msg_no_location_permission">Приложението няма разрешение за „Местоположение“ (на Android 7-11 Bluetooth търсенето го изисква). Разреши го в настройките на телефона: Приложения → LoRa OTA → Разрешения.</string>
     <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
     <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
     <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
