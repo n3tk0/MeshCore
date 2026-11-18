@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         applicationId = "io.github.n3tk0.loraota"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -50,6 +50,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // java.time / java.util.Base64 on Android 7 (API 24-25)
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -74,6 +76,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("no.nordicsemi.android:dfu:2.9.0")   // Bluetooth DFU of nRF52 boards (2.10+ needs compileSdk 36)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")   // the real one: the Android stubs return nothing in unit tests

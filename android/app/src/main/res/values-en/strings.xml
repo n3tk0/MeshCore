@@ -20,6 +20,8 @@
     <string name="msg_disconnected">Lost the companion.</string>
     <string name="msg_stopped">Stopped. The repeater keeps its old firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth is off.</string>
+    <string name="msg_location_off">Turn on Location in the phone settings: on Android 7-11 a Bluetooth scan finds nothing without it.</string>
+    <string name="msg_no_location_permission">The app may not use Location (on Android 7-11 a Bluetooth scan needs it). Allow it in the phone settings: Apps → LoRa OTA → Permissions.</string>
     <string name="msg_connect_failed">Could not connect to the companion.</string>
     <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
     <string name="msg_releases_failed">Releases did not load: %1$s</string>
@@ -441,7 +443,7 @@
     <string name="q_open">Update several repeaters</string>
     <string name="q_title">Update several</string>
     <string name="q_hint_short">Updates the picked repeaters over LoRa one after another, to the same release.</string>
-    <string name="q_hint">Updates the picked repeaters over LoRa one after another, to the same release: each gets the file for its board. It logs in with the kept password, makes a backup, then updates. Only those with no hop can be updated; the nearest go first. It keeps to the airtime limit (10% an hour), so it can take hours. If it stops (Stop, the app closed, the companion gone), it goes on from there. A repeater whose new file must be copied over the old one is skipped: update that one by hand.</string>
+    <string name="q_hint" formatted="false">Updates the picked repeaters over LoRa one after another, to the same release: each gets the file for its board. It logs in with the kept password, makes a backup, then updates. Only those with no hop can be updated; the nearest go first. It keeps to the airtime limit (10% an hour), so it can take hours. If it stops (Stop, the app closed, the companion gone), it goes on from there. A repeater whose new file must be copied over the old one is skipped: update that one by hand.</string>
     <string name="q_pick_release">Release</string>
     <string name="q_no_releases">No releases with LoRa OTA files (no internet?).</string>
     <string name="q_pick_repeaters">Repeaters</string>

@@ -66,6 +66,7 @@ class OtaService : Service() {
         private var active = false   // no progress after stop: it would leave a notification behind
 
         private fun channel(ctx: Context) {
+            if (Build.VERSION.SDK_INT < 26) return   // Android 7: no channels, the notification carries its own settings
             val nm = ctx.getSystemService(NotificationManager::class.java)
             if (nm.getNotificationChannel(CHANNEL) == null) {
                 nm.createNotificationChannel(NotificationChannel(CHANNEL,
@@ -84,6 +85,7 @@ class OtaService : Service() {
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setProgress(total, sent, total == 0)
                 .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)   // Android 7: no channel importance
                 .setOnlyAlertOnce(true)
                 .setContentIntent(open)
                 .build()

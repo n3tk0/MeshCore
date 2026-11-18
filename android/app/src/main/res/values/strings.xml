@@ -21,6 +21,8 @@
     <string name="msg_disconnected">Връзката с companion-а прекъсна.</string>
     <string name="msg_stopped">Спряно. Repeater-ът остава на стария firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth е изключен.</string>
+    <string name="msg_location_off">Включи Местоположение (локация) в настройките на телефона: на Android 7-11 Bluetooth търсенето без него не намира нищо.</string>
+    <string name="msg_no_location_permission">Приложението няма разрешение за „Местоположение“ (на Android 7-11 Bluetooth търсенето го изисква). Разреши го в настройките на телефона: Приложения → LoRa OTA → Разрешения.</string>
     <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
     <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
     <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
@@ -442,7 +444,7 @@
     <string name="q_open">Обнови няколко repeater-а</string>
     <string name="q_title">Обновяване на няколко</string>
     <string name="q_hint_short">Обновява избраните repeater-и по LoRa един след друг, до едно и също издание.</string>
-    <string name="q_hint">Обновява избраните repeater-и по LoRa един след друг, до едно и също издание: всеки получава файла за своя борд. Влиза с пазената парола, прави backup, после обновява. Само тези без hop може да се обновят; най-близките са първи. Спазва ограничението за ефир (10% на час), затова може да отнеме часове. Ако спре (Стоп, затворено приложение, изгубен companion), продължава оттам. Repeater, на който новият файл трябва да се копира на мястото на стария, се пропуска: него обнови сам.</string>
+    <string name="q_hint" formatted="false">Обновява избраните repeater-и по LoRa един след друг, до едно и също издание: всеки получава файла за своя борд. Влиза с пазената парола, прави backup, после обновява. Само тези без hop може да се обновят; най-близките са първи. Спазва ограничението за ефир (10% на час), затова може да отнеме часове. Ако спре (Стоп, затворено приложение, изгубен companion), продължава оттам. Repeater, на който новият файл трябва да се копира на мястото на стария, се пропуска: него обнови сам.</string>
     <string name="q_pick_release">Издание</string>
     <string name="q_no_releases">Няма издания с LoRa OTA файлове (няма интернет?).</string>
     <string name="q_pick_repeaters">Repeater-и</string>
