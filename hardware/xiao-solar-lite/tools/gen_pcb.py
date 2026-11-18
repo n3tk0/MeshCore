@@ -29,7 +29,9 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "xiao-solar-lite"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 25.0, 65.0
+JY1 = 61.3                    # SOLAR / BAT upper pin; the I2C row and the lower pins are 2.54 mm below
+JY2 = JY1 + 2.54
+W, H = 25.0, 66.3             # H = JY2 + 2.45 mm (JST XH body beyond the lower pin)
 # v0.5: every SMD pad >= 3 mm (copper to copper) from every THT pad and no part inside the XIAO / Wio
 # stack (U3 courtyard). The charger cluster moved down by DY (D4 courtyard clear of U3), the bottom group
 # (input diodes, BMS) by DB, the connector row to H - 3 (DB + DJ). The extra 2 mm of width are a strip
@@ -65,7 +67,7 @@ PLACE.update({
     "U2": (16.0, 50.8 + DB, 0), "Q3": (16.0, 55.0 + DB, 0),
     "R9": (11.5, 50.2 + DB, 0), "C19": (11.5, 52.4 + DB, 0), "R10": (11.5, 54.6 + DB, 180),
     # connectors along the bottom edge (pin 1 left)
-    "J1": (2.1, 59.0 + DB + DJ, 90), "J5": (8.69, 59.0 + DB + DJ, 90), "J4": (20.36, 59.0 + DB + DJ, 90),
+    "J1": (2.4, JY1, 0), "J5": (8.69, JY2, 90), "J4": (22.6, JY1, 0),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -77,7 +79,7 @@ TEST_POINTS = {
 FIDUCIALS = [
     (0.8, 20.0, 12.0, 38.0, 3.5, 26.5),
     (0.8, 44.0, 8.0, 52.0, 2.0, 46.0),
-    (17.5, 49.0, 20.2, 60.0, 19.0, 57.0),
+    (17.5, 49.0, 20.2, 57.8, 19.0, 56.0),
 ]
 B_CLEAR = []
 # B.Cu stays whole GND under U1, L1 and the BTST caps only (charger frame, mm): with the whole
@@ -195,6 +197,10 @@ def build():
     def run(pts_, net_, w_, lay=pcbnew.F_Cu):
         for a_, b_ in zip(pts_, pts_[1:]):
             charger._track(board, pt(*a_), pt(*b_), net_, w_, lay)
+    # BATP Kelvin sense (R8 to charger pin 18): a straight run up column x = 9.0 mm, hand routed because
+    # the router boxes R8 in with the BAT / BATT+ tracks to JP3 when the connectors move
+    r8b, u118 = ppos("R8", "2"), ppos("U1", "18")
+    run([r8b, (r8b[0], 39.17), (10.28, 37.89), (10.28, 36.09), (u118[0], 35.98), u118], net("BATP"), 0.25)
     run([(20.0, SYSY), q5d], sysn, 0.8)
     run([(20.2, SYSY), (20.2, q6e[1]), q6e], sysn, 0.25)
     run([q5s, (XT, q5s[1]), (XT, u14[1]), u14], vout, 0.8)
@@ -268,15 +274,13 @@ def build():
         t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.12))
         t.SetTextAngleDegrees(angle)
         board.Add(t)
-    # one label per pin, under the pin
-    for ref, names in (("J1", ("SOLAR",)), ("J4", ("BAT",)), ("J5", ("SCL", "SDA", "3V3", "GND"))):
-        p1 = charger._pad(board, ref, "1").GetPosition()
-        x1 = pcbnew.ToMM(p1.x) - OX
-        if len(names) == 1:
-            text(names[0], x1 + 1.27, H - 0.9)
-        else:
-            for i, s in enumerate(names):
-                text(s, x1 + 2.54 * i, H - 0.9)
+    # J5: one label per pin, under the pin; J1 / J4: the name turned 90 degrees beside the pins
+    # (towards the middle of the board, between the pins)
+    x1 = pcbnew.ToMM(charger._pad(board, "J5", "1").GetPosition().x) - OX
+    for i, s_ in enumerate(("SCL", "SDA", "3V3", "GND")):
+        text(s_, x1 + 2.54 * i, JY2 + 1.55)
+    text("SOLAR", 4.3, JY1 + 1.27, 0.8, 90)
+    text("BAT", 20.7, JY1 + 1.27, 0.8, 90)
     text("NTC", 2.1, 37.3 + DY)
     text("xiao-solar-lite v0.5", 11.5, 21.85, 0.6)
     hidden = dfm.place_silk(board)

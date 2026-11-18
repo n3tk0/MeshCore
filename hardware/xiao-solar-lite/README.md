@@ -4,7 +4,7 @@ The power part of [`../xiao-solar`](../xiao-solar) as the third layer of the sta
 XIAO nRF52840 + Wio-SX1262 sandwich: this board at the bottom, Wio in the middle, XIAO on top
 (USB and buttons stay reachable). Solar input, BQ25798 MPPT buck-boost charger, optional NTC,
 ship FET, and DW01A + HJ8205 battery protection (BMS).
-25 × 65 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
+25 × 66.3 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
 
 The stack sits over the 14 XIAO holes at the USB end; since v0.5 nothing at all is under it (no SMD part inside the U3 outline, only tracks and vias): the
 charger, the ideal diode and the BMS sit below the stack, 3 mm or more away from the header pins. Long pin headers go through all three boards.
@@ -46,23 +46,26 @@ v0.5 (2026-11-13):
   mirror lines are hand-routed 0.25 mm tracks on F.Cu, no vias.
 - **All SMD pads are at least 3.0 mm (copper to copper) from every pin of the headers** (U3, J1, J3, J4, J5),
   as JLC's DFM asked on the main board, and **nothing is under the XIAO / Wio stack** (no courtyard overlaps
-  U3). The board is now **25 × 65 mm** (was 23 × 62): the extra 2 mm of width hold the ideal diode column,
+  U3). The board is now **25 × 65 mm** (was 23 × 62; later 66.3 mm for the connector row, see below): the extra 2 mm of width hold the ideal diode column,
   R11 / R12 (I2C pull-ups, right of the charger top) and the VOUT track; the stack sits against the left edge
   (U3 pins at x = 3.9 and 19.1 mm). The charger cluster moved down 0.7 mm, the bottom group (input diodes,
   BMS) 0.9 mm, the connector row to 3 mm from the bottom edge, R2 / R3 1.0 mm to the right and JP3 turned
   by 180 degrees.
 - C9 is the basic C307331 (100n/50V 0402).
-- **Connector row (bottom edge, y = 62.0 mm):** J1 SOLAR on the left (pins at x = 2.10 and 4.64 mm), J5 I2C in the
-  middle (SCL SDA 3V3 GND at x = 8.69, 11.23, 13.77, 16.31 mm) and J4 BAT on the right (BATT+ at x = 20.36,
-  BATT- at x = 22.90 mm, 2.10 mm from the right edge). The groups are about 4 mm apart (centre to centre,
-  2.35 mm of free space between the pads), so a JST-style connector fits in place of each header; the 2.54 mm
-  header footprints and their vertical orientation are unchanged.
+- **Connector row for JST XH 2.5 mm plugs (soldered into the 2.54 mm holes), board 25 × 66.3 mm** (was 65 mm):
+  J1 SOLAR and J4 BAT are turned vertical (pins one above the other) at the edges, J5 I2C stays a horizontal row in
+  the middle. J1: pins at x = 2.40, y = 61.30 (SOLAR_IN +) and 63.84 (GND). J4: x = 22.60, y = 61.30 (BATT+) and
+  63.84 (BATT-). J5: x = 8.69, 11.23, 13.77, 16.31 at y = 63.84 (SCL SDA 3V3 GND). An XH body is modelled as 2.45 mm
+  beyond the outer pins along the row and 2.35 / 3.40 mm across it: J1 body x 0.05 to 5.80, y 58.85 to 66.29;
+  J5 x 6.24 to 18.76, y 60.44 to 66.19; J4 x 19.20 to 24.95, y 58.85 to 66.29. They are 0.44 mm apart, inside the
+  board, and free of SMD parts. The two upper pins sit 3 mm from D1 and R30 (the length grew by 1.3 mm for that).
+- Panel: 4 boards on 100 × 76.3 mm (the longer board adds 1.3 mm to the 75 mm height).
 - Hand patches on the routed board that `gen_pcb.py` does not reproduce (re-apply them after `route` / `finish`):
-  the locked REGN stub on B.Cu (10.55, 32.3) to (8.5, 32.3) is cut to end at 9.12 and split at 9.43 so that
-  it joins the router's tracks without a `track_dangling`, and BATT- got a second 0.8 / 0.4 via at
-  (13.98, 54.5) with a locked 0.6 mm B.Cu link to the via at (14.34, 53.73) (two vias per layer change).
-  Re-running `route` / `finish` can also leave one GND island or open pad that needs a via (see the
-  gndfix / patch_route docs).
+  the locked REGN stub on B.Cu (10.55, 32.3) to (8.5, 32.3) is cut to end at 9.12 and split at 9.53 so that it joins
+  the router's tracks, and the locked SCL stub on F.Cu (8.0, 34.1) to (6.4, 35.7) is shortened to end at (7.105, 34.995),
+  both to remove `track_dangling` warnings. BATP (R8 to charger pin 18) is hand routed in `gen_pcb.py`
+  (not a patch). Re-running `route` / `finish` can also leave one GND island or open pad that needs a via (see the
+  gndfix / patch_route docs); Freerouting is not repeatable, so a rerun may need several tries.
 
 ## Connections
 | Where | Pins | Notes |
@@ -95,7 +98,7 @@ SMBJ24A and HJ8205 are preferred extended parts (no fee), everything else is bas
 C9 100n/50V 0402 is the basic C307331). Parts cost about $4.5 per board (not recalculated for v0.5). Headers are
 hand-soldered (`production/bom-hand.csv`).
 
-Panel: `panel/` holds 4 boards on 100×75 mm (V-cut, 5 mm rails with tooling holes and fiducials),
+Panel: `panel/` holds 4 boards on 100×76.3 mm (V-cut, 5 mm rails with tooling holes and fiducials),
 made by `python3 tools/run.py panel` (KiKit; Gerber/BOM/CPL in `panel/production/`). Order it as
 "Panel by Customer" with V-cut. Copper keeps 0.4 mm from every edge, as JLC wants next to a V-cut.
 
