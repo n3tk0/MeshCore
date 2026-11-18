@@ -33,7 +33,6 @@ static const DL_I2C_ClockConfig i2c_clk = {
 };
 
 #if !SMPPT_J5_PA10
-static volatile bool int_flag;
 static bool heat_pwm;           // PA11 is on the timer, not a GPIO
 #endif
 
@@ -73,12 +72,6 @@ void hal_init(void) {
   DL_GPIO_disableOutput(GPIOA, PIN_LED);     // Hi-Z = both LEDs off
 #if !SMPPT_J5_PA10
   out_pin(PIN_HEAT_IOMUX, PIN_HEAT, false);  // heater off
-  // BQ25798 INT: input, the board has the pull-up; falling edge wakes the main loop
-  DL_GPIO_initDigitalInputFeatures(PIN_INT_IOMUX, DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-      DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
-  DL_GPIO_setUpperPinsPolarity(GPIOA, DL_GPIO_PIN_22_EDGE_FALL);
-  DL_GPIO_clearInterruptStatus(GPIOA, PIN_INT);
-  DL_GPIO_enableInterrupt(GPIOA, PIN_INT);
 #endif
 
   // I2C1 controller, 100 kHz from 4 MHz: SCL = clk / (10 * (TPR + 1))
@@ -145,19 +138,6 @@ void hal_heater(uint8_t pct) {
     DL_GPIO_initPeripheralOutputFunction(PIN_HEAT_IOMUX, PIN_HEAT_PWM);
     heat_pwm = true;
   }
-}
-
-void hal_int_isr(void) {
-  if (DL_GPIO_getEnabledInterruptStatus(GPIOA, PIN_INT)) {
-    DL_GPIO_clearInterruptStatus(GPIOA, PIN_INT);
-    int_flag = true;
-  }
-}
-
-bool hal_int_taken(void) {
-  bool f = int_flag;
-  int_flag = false;
-  return f;
 }
 #endif
 

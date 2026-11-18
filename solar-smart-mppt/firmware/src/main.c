@@ -153,18 +153,7 @@ int main(void) {
     }
 
     bool tick = first || sc || (uint32_t)(now - last_s) >= 1000u;
-    bool early = false;
-#if !SMPPT_J5_PA10
-    // BQ25798 INT (v0.4): a light pass at once, at most every 100 ms (BQ, charge state, heater). The ADC,
-    // BMS and gauge keep their one-second step. Without INT edges nothing changes.
-    static bool int_pending;
-    static uint32_t last_int;
-    if (hal_int_taken()) int_pending = true;
-    if (int_pending && !tick && (uint32_t)(now - last_int) >= 100u) early = true;
-    if (tick || early) { int_pending = false; last_int = now; }
-#endif
-
-    if (tick || early) {
+    if (tick) {
       uint32_t dt = first ? 0 : now - last_s;
       if (tick) last_s = now;
       first = false;

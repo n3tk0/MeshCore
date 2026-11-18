@@ -75,7 +75,7 @@ typedef struct {
 
 // Status 2 (register 0x13 on 0x42), the first status word is full
 #define ST2_HEATING      0x0001   // heater gate is driven (duty > 0)
-#define ST2_V03          0x0002   // build for v0.3 boards (make J5=pa10): no heater, no INT
+#define ST2_V03          0x0002   // build for v0.3 boards (make J5=pa10): no heater
 
 // Live values, written by the main loop, read by the I2C target
 typedef struct {

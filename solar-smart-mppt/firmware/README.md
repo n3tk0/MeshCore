@@ -10,11 +10,11 @@ What the MCU does:
 - charge counter through the 20 mΩ shunt (learns the capacity from a full charge down to the cut-off),
 - shows itself to the repeater as an **INA260 on 0x41** (MeshCore reads it with no change),
 - has its own register map on **0x42** for status and settings; settings are kept in flash,
-- v0.4 boards: battery **heater** (PA11, only with sun, from the battery NTC) and the BQ25798 **INT** pin (PA22),
-  which makes the main loop look at the charger at once.
+- v0.4 boards: battery **heater** (PA11, only with sun, from the battery NTC). The BQ25798 INT pin is not
+  wired (dropped on 2026-11-18: no room to route it); the charger is read every second.
 
-Board versions: the default build is for **v0.4** (J5 on PA0/PA1, heater, INT). `make J5=pa10` is for the
-**v0.3** boards made before 2026-11-13: J5 on PA10/PA11, OC_G on PA0, **no heater and no INT** (PA11 is
+Board versions: the default build is for **v0.4** (J5 on PA0/PA1, heater). `make J5=pa10` is for the
+**v0.3** boards made before 2026-11-13: J5 on PA10/PA11, OC_G on PA0, **no heater** (PA11 is
 J5 SCL there and is never driven; the heater registers exist but have no effect, status2 bit 1 is set).
 
 ## Build
@@ -44,7 +44,7 @@ the wrong one drives the charge FET gate from an I2C pin (and the v0.4 image wou
 
 | File | What |
 |---|---|
-| `src/main.c` | main loop: LED every 10 ms; every second ADC, BQ, BMS, gauge, heater, live registers (and a light pass on BQ INT); commands |
+| `src/main.c` | main loop: LED every 10 ms; every second ADC, BQ, BMS, gauge, heater, live registers; commands |
 | `src/settings.c` | defaults per chemistry, limits, the flash store (two 1 KB sectors at 0xF000, A/B, CRC) |
 | `src/regs.c` | register maps 0x41 / 0x42 and the I2C framing |
 | `src/bq25798.c` | BQ25798 driver (through a bus interface, so it is host tested) |
@@ -58,7 +58,7 @@ the wrong one drives the charge FET gate from an I2C pin (and the v0.4 image wou
 
 | Pin | MCU | Function |
 |---|---|---|
-| 18 | PA22 (PINCM23, GPIO function 1) | BQ25798 INT, open drain, active low, 10k pull-up to 3V3M; input with a falling-edge interrupt. Also the OPA0 output pin: the OPA0 output switch is disabled (`outputPinState`), the pin is a plain input |
+| 18 | PA22 | not connected (OPA0 output pin, its output switch stays disabled) |
 | 10 | PA11 (PINCM12, GPIO function 1, TIMG4_CCP1 = function 5) | heater MOSFET gate, high = on, 100k pull-down on the board; GPIO for 0 / 100 %, TIMG4 PWM (1 kHz) in between. Not touched with `J5=pa10` (J5 SCL there) |
 
 All other pins are as in `src/board.h`.
@@ -110,7 +110,7 @@ Status bits: 0 charging, 1 full, 2 sun, 3 no NTC, 4 discharge FET off, 5 charge 
 7 under-voltage, 8 over-voltage, 9 over-current, 10 balancing, 11 J7 on, 12 BQ fault, 13 BQ I2C error,
 14 % from voltage, 15 settings not saved.
 
-Status 2 (0x13): bit 0 heating (gate driven), bit 1 v0.3 build (no heater, no INT). The first status word is full,
+Status 2 (0x13): bit 0 heating (gate driven), bit 1 v0.3 build (no heater). The first status word is full,
 so the heater has its own word.
 
 ## INA260 on 0x41
@@ -143,11 +143,6 @@ battery gauge expects), VOLTAGE (0x02, 1.25 mV/bit, pack), POWER (0x03, 10 mW/bi
   also low while the MCU is reset (pull-down). There is no MCU watchdog yet: if the main loop hangs with the
   heater on, the last output stays.
   The first pass after a start is also a decision pass, so a cold battery in the sun is heated within a second.
-- **BQ25798 INT (v0.4):** PA22 is an input (10k pull-up to 3V3M on the board, falling edge interrupt; the OPA0
-  output switch stays off). An INT pulse starts a light pass in the main loop at once (at most every 100 ms):
-  BQ registers, sun, charge state, faults, heater, the BQ settings check. The ADC, BMS (its debounce and
-  retry counters count seconds), gauge and watchdog kick keep their one-second step. If INT never fires,
-  everything runs on the one-second tick as before.
 - **Under-voltage:** with sun the discharge FET goes off and charging goes on. Without sun the MCU would
   lose its own supply (it sits behind the FET, R19 turns it back on, and it would start over), so the
   BQ25798 goes to **ship mode** instead; it wakes when the panel gives power. The gauge is saved first.
@@ -176,7 +171,7 @@ and R23/R24 to 3V3M.
 
 ## Known limits
 
-- Heater PWM, INT edge interrupt and the TS temperature table are not tried on hardware. If the PWM duty comes out
+- Heater PWM and the TS temperature table are not tried on hardware. If the PWM duty comes out
   inverted (100 - duty), swap the compare value in `hal_heater` (`src/hal.c`).
 - The ROM bootloader is reachable over J5 (PA0/PA1); SWD stays as the fallback.
 - The OPAs run without chopping (COMP0 sees their output); the offset is taken out with ZERO.

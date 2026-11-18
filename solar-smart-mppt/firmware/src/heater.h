@@ -1,4 +1,4 @@
-// Battery heater, pure logic (host tested). Called every second (and on every INT event) with fresh readings.
+// Battery heater, pure logic (host tested). Called every second with fresh readings.
 //
 // The heater (MOSFET on PA11, fed from SYS) only runs while the panel gives power. A weak panel makes the
 // BQ25798 top SYS up from the battery: when the battery discharges by more than HEAT_DSG_MA the heater goes
