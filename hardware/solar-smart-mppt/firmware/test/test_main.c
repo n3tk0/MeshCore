@@ -240,7 +240,7 @@ static void test_bms(void) {
   bms_t b;
   bms_init(&b);
   bms_out_t o;
-  bms_in_t in = { .vpack_mv = 3800, .ibat_ma = -100, .sun = true };
+  bms_in_t in = { .vpack_mv = 3800, .ibat_ma = -100, .sun = true, .second = true };
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(!o.od_off && !o.oc_off && o.charge_ok && o.j7_on && !o.ship);
 
@@ -259,17 +259,34 @@ static void test_bms(void) {
   // under-voltage without sun: ship mode
   bms_init(&b);
   in.vpack_mv = 2950; in.sun = false;
-  bool ship = false;
-  for (int i = 0; i < 2 * BMS_DEBOUNCE; i++) { bms_step(&b, &s, CHEM_LIION, &in, &o); ship |= o.ship; }
-  CHECK(ship);
+  // the FET must stay on (it feeds the MCU) and ship comes in the same step the under-voltage does
+  for (int i = 0; i < BMS_DEBOUNCE - 1; i++) { bms_step(&b, &s, CHEM_LIION, &in, &o); CHECK(!o.ship && !o.od_off); }
+  bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(o.ship && !o.od_off && !o.j7_on && (o.status & ST_UV));
+  bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(o.ship && !o.od_off && !o.j7_on);
+  // the sun comes back while still low: FET off, no ship
+  in.sun = true;
+  bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(o.od_off && !o.ship);
+  in.sun = false;
+
+  // a COMP0 step between seconds counts nothing
+  bms_init(&b);
+  in.vpack_mv = 2950; in.sun = true; in.second = false;
+  for (int i = 0; i < 2 * BMS_DEBOUNCE; i++) bms_step(&b, &s, CHEM_LIION, &in, &o);
+  CHECK(!o.od_off);
+  in.second = true;
 
   // short with sun: FET off, retry after the pause; without sun: ship at once
   bms_init(&b);
   in.vpack_mv = 3800; in.sun = true; in.short_tripped = true;
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(o.od_off && (o.status & ST_SHORT) && !o.ship);
-  in.short_tripped = false;
-  for (int i = 0; i < BMS_RETRY_S - 2; i++) bms_step(&b, &s, CHEM_LIION, &in, &o);
+  in.short_tripped = false; in.second = false;
+  bms_step(&b, &s, CHEM_LIION, &in, &o);   // extra COMP0-driven pass: the pause does not move
+  in.second = true;
+  for (int i = 0; i < BMS_RETRY_S - 1; i++) bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(o.od_off);
   bms_step(&b, &s, CHEM_LIION, &in, &o);
   CHECK(!o.od_off);
@@ -363,6 +380,17 @@ static void test_bq(void) {
   CHECK(!bq_refresh(&b) && !bq_apply(&b, &s, CHEM_LIION, true) && b.errors == 1);
   chip_fail = false;
   CHECK(bq_ship(&b) && (chip[BQ_REG_CTRL2] & 7) == 5);
+  // still powered after the ship command: bq_apply must not undo it
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 7) == 5);
+  b.ship_sent = false;                                            // the sun is back
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 6) == 0);
+  // after a chip reset the ADC is off and TS reads 0: no NTC must not turn into "NTC present"
+  memset(chip, 0, sizeof(chip));
+  bq_t c;
+  bq_init(&c, &CBUS);
+  CHECK(bq_refresh(&c) && bq_apply(&c, &s, CHEM_LIION, false) && !c.ntc_present && (chip[BQ_REG_NTC1] & 1) == 1);
+  chip[BQ_REG_TS] = 0x03; chip[BQ_REG_TS + 1] = 0x6C;             // ADC running now: still no NTC
+  CHECK(bq_refresh(&c) && bq_apply(&c, &s, CHEM_LIION, false) && !c.ntc_present);
 }
 
 static void test_heater(void) {

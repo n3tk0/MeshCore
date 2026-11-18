@@ -172,7 +172,8 @@ void regs_write(uint8_t addr7, uint8_t reg, uint16_t v) {
 // The I2C ISR calls these. A read may be prefetched by one byte (the TX FIFO holds the next byte
 // before the host asks for it), so the pointer is set from the bytes really sent at the end.
 
-static uint8_t cur_addr, ptr_reg, read_base;
+static uint8_t cur_addr, ptr_regs[2], read_base;   // own register pointer for 0x41 and 0x42
+#define ptr_reg ptr_regs[cur_addr == ADDR_SMPPT]
 static bool have_ptr, msb_pending, reading;
 static uint8_t msb;
 static uint16_t tx_word;

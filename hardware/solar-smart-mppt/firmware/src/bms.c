@@ -6,9 +6,9 @@ void bms_init(bms_t *b) {
   b->j7_on = false;
 }
 
-static bool count(uint8_t *c, bool cond) {
+static bool count(uint8_t *c, bool cond, bool step) {
   if (!cond) { *c = 0; return false; }
-  if (*c < 255) (*c)++;
+  if (step && *c < 255) (*c)++;
   return *c >= BMS_DEBOUNCE;
 }
 
@@ -22,11 +22,11 @@ void bms_step(bms_t *b, const settings_t *s, uint8_t chem, const bms_in_t *in, b
   // ---- short circuit / over-current: FET off, pause, retry (with sun) ----
   if (in->short_tripped) { b->shorted = true; b->retry_s = BMS_RETRY_S; }
   int32_t idsg = -(int32_t)in->ibat_ma;
-  if (s->idsg_max_ma && count(&b->oc_count, idsg > s->idsg_max_ma)) {
+  if (s->idsg_max_ma && count(&b->oc_count, idsg > s->idsg_max_ma, in->second)) {
     b->overcurrent = true;
     b->retry_s = BMS_RETRY_S;
   }
-  if ((b->shorted || b->overcurrent) && b->retry_s) {
+  if ((b->shorted || b->overcurrent) && b->retry_s && in->second && !in->short_tripped) {
     if (--b->retry_s == 0) { b->shorted = false; b->overcurrent = false; b->oc_count = 0; }
   }
   bool trip = b->shorted || b->overcurrent;
@@ -34,22 +34,23 @@ void bms_step(bms_t *b, const settings_t *s, uint8_t chem, const bms_in_t *in, b
   // ---- under-voltage (pack, and each cell for 2S) ----
   uint16_t od_off_cell = (uint16_t)(s->od_off_mv / cells);
   bool low = in->vpack_mv < s->od_off_mv || (cells == 2 && vcell_min < od_off_cell);
-  if (count(&b->uv_count, low)) {
+  if (count(&b->uv_count, low, in->second)) {
     if (!b->uv) o->empty = true;
     b->uv = true;
   }
   if (b->uv && in->vpack_mv >= s->od_on_mv && (cells == 1 || vcell_min >= od_off_cell + 100)) b->uv = false;
 
   // ---- over-voltage: charge FET off and no charging ----
-  if (count(&b->ov_count, vcell_max > vchg_cell + 50)) b->ov = true;
+  if (count(&b->ov_count, vcell_max > vchg_cell + 50, in->second)) b->ov = true;
   if (b->ov && vcell_max < vchg_cell - 100) b->ov = false;
 
   // ---- ship mode: no sun and (under-voltage, or a trip that cut our own supply) ----
   bool want_ship = !in->sun && (b->uv || trip || in->vpack_mv < s->ship_mv);
-  if (count(&b->ship_count, want_ship)) o->ship = true;
-  if (in->short_tripped && !in->sun) o->ship = true;   // don't wait: the FET is already off
+  // under-voltage and trips are debounced already: ship in this step, before the FET goes off
+  if (count(&b->ship_count, want_ship, in->second) || (!in->sun && (b->uv || trip))) o->ship = true;
 
-  b->od_off = b->uv || trip;
+  // without sun the FET stays on at under-voltage: it feeds us, ship mode cuts everything instead
+  b->od_off = (b->uv && in->sun) || trip;
   b->oc_off = b->ov;
   o->od_off = b->od_off;
   o->oc_off = b->oc_off;
@@ -57,8 +58,8 @@ void bms_step(bms_t *b, const settings_t *s, uint8_t chem, const bms_in_t *in, b
 
   // ---- J7 with hysteresis (JP5 2-3) ----
   if (b->j7_on && in->vpack_mv < s->j7_off_mv) b->j7_on = false;
-  else if (!b->j7_on && in->vpack_mv > s->j7_on_mv && !b->od_off) b->j7_on = true;
-  if (b->od_off) b->j7_on = false;
+  else if (!b->j7_on && in->vpack_mv > s->j7_on_mv && !b->od_off && !b->uv) b->j7_on = true;
+  if (b->od_off || b->uv) b->j7_on = false;
   o->j7_on = b->j7_on;
 
   // ---- LTO 2S balancing: bleed the higher cell ----

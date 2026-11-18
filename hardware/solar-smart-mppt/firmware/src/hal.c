@@ -112,7 +112,6 @@ void hal_init(void) {
   DL_TimerG_setCaptureCompareValue(TIMG4, HEAT_PWM_STEPS, DL_TIMER_CC_1_INDEX);
   DL_TimerG_setCCPDirection(TIMG4, DL_TIMER_CC1_OUTPUT);
   DL_TimerG_enableClock(TIMG4);
-  NVIC_EnableIRQ(GPIOA_INT_IRQn);   // same group vector as COMP0 (analog.c)
 #endif
 }
 

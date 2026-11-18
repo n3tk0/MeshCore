@@ -57,7 +57,8 @@ static bool is_pair_hi(uint8_t reg) { return reg == BQ_REG_VREG || reg == BQ_REG
 
 bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   if (!b->ok) return false;
-  b->ntc_present = bq_ts_x10(b) < BQ_TS_OPEN_X10;
+  // TS reads 0 while the ADC is off (after a chip reset): judge the NTC only with the ADC running
+  if (b->r[BQ_REG_ADC_CTRL] & 0x80) b->ntc_present = bq_ts_x10(b) < BQ_TS_OPEN_X10;
   bool ts_ignore = s->ntc_mode == NTC_OFF || (s->ntc_mode == NTC_AUTO && !b->ntc_present);
 
   // wanted image: the chip as read, then the stored expert writes, then our own fields on top
@@ -76,7 +77,7 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_MPPT, 0xE1, (uint8_t)(s->mppt_code << 5 | (s->vindpm_mv ? 0 : 1)));
   set_bits(img, BQ_REG_NTC1, 0x01, ts_ignore ? 1 : 0);
   set_bits(img, BQ_REG_CTRL1, 0x07, 5);             // watchdog 40 s
-  set_bits(img, BQ_REG_CTRL2, 0x06, 0);             // never ship/shutdown from here
+  if (!b->ship_sent) set_bits(img, BQ_REG_CTRL2, 0x06, 0);   // never ship/shutdown from here
   set_bits(img, BQ_REG_ADC_CTRL, 0x80, 0x80);       // ADC on, continuous
   // EN_CHG ours; EN_HIZ always 0: a read that caught HIZ set (input fault, VOC check) must never be
   // written back and leave the charger in HIZ
@@ -104,5 +105,7 @@ bool bq_kick_watchdog(bq_t *b) {
 
 bool bq_ship(bq_t *b) {
   // SDRV_CTRL = 10 (ship), SDRV_DLY = 1 (no 10 s delay)
-  return wr8(b, BQ_REG_CTRL2, (uint8_t)((b->r[BQ_REG_CTRL2] & ~0x07) | 0x05));
+  if (!wr8(b, BQ_REG_CTRL2, (uint8_t)((b->r[BQ_REG_CTRL2] & ~0x07) | 0x05))) return false;
+  b->ship_sent = true;   // our supply may hold for a while: don't write it back to 00 meanwhile
+  return true;
 }
