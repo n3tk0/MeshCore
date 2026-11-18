@@ -29,14 +29,14 @@ mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "xiao-solar-lite"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-JY1 = 61.3                    # SOLAR / BAT upper pin; the I2C row and the lower pins are 2.54 mm below
+JY1 = 65.3                    # SOLAR / BAT upper pin; the I2C row and the lower pins are 2.54 mm below
 JY2 = JY1 + 2.54
-W, H = 25.0, 66.3             # H = JY2 + 2.45 mm (JST XH body beyond the lower pin)
+W, H = 25.0, 70.3             # H = JY2 + 2.45 mm (JST XH body beyond the lower pin)
 # v0.5: every SMD pad >= 3 mm (copper to copper) from every THT pad and no part inside the XIAO / Wio
 # stack (U3 courtyard). The charger cluster moved down by DY (D4 courtyard clear of U3), the bottom group
 # (input diodes, BMS) by DB, the connector row to H - 3 (DB + DJ). The extra 2 mm of width are a strip
 # on the right of the cluster: the ideal diode column Q5-Q7 / R30 / R31 / C20 and the VOUT run to U3 pin 14.
-DY, DB, DJ = 0.7, 0.9, 2.1
+DY, DB, DJ = 0.7, 4.9, 2.1   # DB: 0.9 + 4.0 mm for JP4 / JP5 / R32 between J3 and D3
 SYSY = 41.75 + DY          # y of the SYS copper stub between C12 / C13
 
 # Charger cluster (../xiao-solar/tools/charger.py) turned by 270 degrees so its long side
@@ -61,6 +61,9 @@ PLACE.update({
     "R3": (PLACE["R3"][0] + 1.0, PLACE["R3"][1], PLACE["R3"][2]),
     # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
     "JP3": (7.1, 43.2 + DY, 270),
+    # stand-alone helpers on the left edge between J3 and D3 (top side, 3 mm from the J3 pins):
+    # JP4 (D0 to CE, closed), R32 (10k, fake NTC) with JP5 (open) to GND
+    "JP4": (3.2, 47.8, 0), "R32": (2.2, 50.6, 0), "JP5": (5.8, 50.6, 0),
     # input diode and TVS on the bottom-left above J1
     "D3": (4.8, 50.5 + DB, 180), "D1": (4.5, 54.8 + DB, 180),
     # DW01A + HJ8205 BMS on the bottom-right between Q2 and J4
@@ -78,8 +81,8 @@ TEST_POINTS = {
 }
 FIDUCIALS = [
     (0.8, 20.0, 12.0, 38.0, 3.5, 26.5),
-    (0.8, 44.0, 8.0, 52.0, 2.0, 46.0),
-    (17.5, 49.0, 20.2, 57.8, 19.0, 56.0),
+    (12.8, 61.6, 16.2, 63.4, 14.5, 62.6),
+    (17.5, 53.0, 20.2, 61.8, 19.0, 60.0),
 ]
 B_CLEAR = []
 # B.Cu stays whole GND under U1, L1 and the BTST caps only (charger frame, mm): with the whole
@@ -174,12 +177,10 @@ def build():
         ("DW_CS", pcbnew.F_Cu, [(16.0, 51.95 + DB), (16.0, 52.75 + DB), (18.0, 52.95 + DB)], 0.22),
         ("DW_CS", pcbnew.B_Cu, [(18.0, 52.95 + DB), (14.85, 56.1 + DB), (13.5, 56.1 + DB)], 0.25),
         ("DW_CS", pcbnew.F_Cu, [(13.5, 56.1 + DB), (12.325, 54.925 + DB), (12.325, 54.6 + DB)], 0.25),
-        ("CE", pcbnew.B_Cu, [(4.30, 33.0 + DY), (3.6, 32.3 + DY), (3.6, 25.0), (1.6, 23.0), (1.6, 16.0)], 0.25),
-        ("CE", pcbnew.F_Cu, [(1.6, 16.0), (1.6, 3.88), (2.6, 2.88), (3.88, 2.88)], 0.25),
     ):
         for a_, b_ in zip(pts_, pts_[1:]):
             charger._track(board, pt(*a_), pt(*b_), net(n_), w_, lay)
-    for n_, vx, vy in (("DW_CS", 18.0, 52.95 + DB), ("DW_CS", 13.5, 56.1 + DB), ("CE", 4.30, 33.0 + DY), ("CE", 1.6, 16.0)):
+    for n_, vx, vy in (("DW_CS", 18.0, 52.95 + DB), ("DW_CS", 13.5, 56.1 + DB)):
         charger._via(board, pt(vx, vy), net(n_))
     # Ideal diode (column x = 22.2 right of the SYS caps). Hand routed: SYS 0.8 mm from the SYS stub to
     # the drain of Q5 (and a thin tap down to Q6), VOUT 0.8 mm from the source of Q5 up the right edge
@@ -252,6 +253,12 @@ def build():
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(z)
     base.place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
+    # GND test point: solid connection to the pour (thermal spokes were starved by the neighbouring tracks)
+    for fp_ in board.GetFootprints():
+        if fp_.GetReference().startswith("TP"):
+            for pad_ in fp_.Pads():
+                if pad_.GetNetname() == "GND":
+                    pad_.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
     dfm.add_fiducials(board, FIDUCIALS, base.load_fp)
     # no tracks or vias within 1.4 mm of a fiducial (its 2 mm mask opening), Freerouting included
     for fp_ in board.GetFootprints():
@@ -296,8 +303,10 @@ SILK_REF_MOVES = {            # reference -> (x, y, angle): out of the way of th
 SILK_TEXTS = (                # (text, x, y, size, angle)
     # JP2 (CE pull): pad 1 = GND side = Li-ion (bridged 1-2 by default), pad 3 = 3V3 side = LiFePO4
     ("CHEM", 0.8, 29.9, 0.8, 90), ("Li", 2.05, 28.2, 0.8, 0), ("LFP", 4.65, 28.2, 0.8, 0),
-    # JP3 (ship FET Q2 bypass): close only for LiFePO4
-    ("LFP:short", 3.1, 44.2, 0.8, 0),
+    # JP3 (ship FET Q2 bypass): close for LiFePO4 or stand-alone (SA = without our firmware)
+    ("LFP/SA:short", 3.95, 46.05, 0.8, 0),
+    # JP4 (XIAO D0 to CE, closed): cut for stand-alone; JP5 (fake NTC, open): close when no NTC is fitted
+    ("cut", 6.0, 47.8, 0.8, 0), ("noNTC:short", 4.4, 52.5, 0.8, 0),
 )
 
 def silk_fixups(board):

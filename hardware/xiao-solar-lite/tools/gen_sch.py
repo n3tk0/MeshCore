@@ -110,6 +110,13 @@ R("R3", "30k 1%", 196, 160, "TS", "GND", "C22984")
 RAIL("TS", [(196.0, 150.0), (196.0, 156.19)])
 P("J3", "Connector_Generic:Conn_01x02", "NTC 10k (103AT)", 209.08, 160, {"1": "TS", "2": "GND"}, CONN2)
 RAIL("TS", [(204.0, 150.0), (204.0, 160.0)])
+# Fake NTC: 10k 0402 (= 10k NTC at 25 C) from TS to GND through the open jumper JP5 (close it when no NTC is fitted)
+P("R32", "Device:R", "10k 1%", 216, 153.81, {"1": "TS", "2": "NTC_FAKE"}, "Resistor_SMD:R_0402_1005Metric", "C25744")
+RAIL("TS", [(204.0, 150.0), (216.0, 150.0)])
+P("JP5", "Jumper:SolderJumper_2_Open", "fake NTC: close if no NTC", 230, 160.0,
+  {"1": "NTC_FAKE", "2": "GND"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm")
+RAIL("NTC_FAKE", [(216.0, 157.62), (216.0, 160.0), (224.92, 160.0)])
+RAIL("GND", [(235.08, 160.0), (240.0, 160.0)])
 
 R("R1", "4.7k 1%", 164, 152, "PROG", "GND", "C23162")
 RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
@@ -143,13 +150,17 @@ C("C20", "10u/25V", 296, 64, "VOUT", "GND", C10U)
 
 # U3 (XIAO + Wio stack) in Top-View orientation (D0..D6 left, 5V..D7 right)
 P("U3", "custom:XIAO_nRF52840", "XIAO + Wio stack", 342, 62.62,
-  {"1": "CE", "2": None, "3": None, "4": None, "5": None, "6": None, "7": "SCL",
+  {"1": "XIAO_D0", "2": None, "3": None, "4": None, "5": None, "6": None, "7": "SCL",
    "14": "VOUT", "13": "GND", "12": "3V3", "11": None, "10": None, "9": None, "8": "SDA"},
   "xiao_solar:XIAO_14P_2.54_21x17.8mm")
 # Connect VOUT directly from Q5/C20 over the top of U3 into U3 pin 14 (5V at 353.43, 55.0)
 RAIL("VOUT", [(305.0, 55.0), (305.0, 42.0), (358.0, 42.0), (358.0, 55.0), (353.43, 55.0)])
 # Connect CE directly from U1.~CE (118.0, 125.16) over the top lane (y=36.0) into U3.D0 (330.57, 55.0)
-RAIL("CE", [(118.0, 125.16), (118.0, 36.0), (326.0, 36.0), (326.0, 55.0), (330.57, 55.0)])
+# JP4 (closed by default) in series: cut it for stand-alone use (no XIAO firmware), R4 then holds CE low.
+RAIL("CE", [(118.0, 125.16), (118.0, 36.0), (224.92, 36.0)])
+P("JP4", "Jumper:SolderJumper_2_Bridged", "XIAO D0 - CE: cut for stand-alone", 230, 36.0,
+  {"1": "XIAO_D0", "2": "CE"}, "Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm", rot=180)
+RAIL("XIAO_D0", [(235.08, 36.0), (326.0, 36.0), (326.0, 55.0), (330.57, 55.0)])
 RAIL("GND", [(353.43, 57.54), (363.0, 57.54), (363.0, 48.0), (368.0, 48.0)])
 RAIL("3V3", [(353.43, 60.08), (386.0, 60.08)])
 TP("TP8", "3V3", 386, 60.08, rot=0)
@@ -186,7 +197,7 @@ TP("TP6", "BAT", 232, 210.0, rot=0)
 P("Q2", "Transistor_FET:BSS138", "AO3400A (ship FET)", 265, 207.46,
   {"1": "SDRV", "2": "BAT", "3": "BATT+"}, SOT23, "C20917", rot=270)
 RAIL("SDRV", [(155.24, 117.54), (236.0, 117.54), (236.0, 198.0), (265.0, 198.0), (265.0, 202.38)])
-P("JP3", "Jumper:SolderJumper_2_Open", "no ship FET (LiFePO4)", 265, 191.0,
+P("JP3", "Jumper:SolderJumper_2_Open", "no ship FET (LiFePO4 or stand-alone)", 265, 191.0,
   {"1": "BAT", "2": "BATT+"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm")
 RAIL("BAT", [(255.0, 210.0), (255.0, 191.0), (259.92, 191.0)])
 RAIL("BATT+", [(270.08, 191.0), (275.0, 191.0), (275.0, 210.0)])

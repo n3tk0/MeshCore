@@ -4,7 +4,7 @@ The power part of [`../xiao-solar`](../xiao-solar) as the third layer of the sta
 XIAO nRF52840 + Wio-SX1262 sandwich: this board at the bottom, Wio in the middle, XIAO on top
 (USB and buttons stay reachable). Solar input, BQ25798 MPPT buck-boost charger, optional NTC,
 ship FET, and DW01A + HJ8205 battery protection (BMS).
-25 × 66.3 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
+25 × 70.3 mm, 2 layers, all SMD parts on the top side (JLC assembly), no mounting holes.
 
 The stack sits over the 14 XIAO holes at the USB end; since v0.5 nothing at all is under it (no SMD part inside the U3 outline, only tracks and vias): the
 charger, the ideal diode and the BMS sit below the stack, 3 mm or more away from the header pins. Long pin headers go through all three boards.
@@ -59,32 +59,58 @@ v0.5 (2026-11-13):
   beyond the outer pins along the row and 2.35 / 3.40 mm across it: J1 body x 0.05 to 5.80, y 58.85 to 66.29;
   J5 x 6.24 to 18.76, y 60.44 to 66.19; J4 x 19.20 to 24.95, y 58.85 to 66.29. They are 0.44 mm apart, inside the
   board, and free of SMD parts. The two upper pins sit 3 mm from D1 and R30 (the length grew by 1.3 mm for that).
-- Panel: 4 boards on 100 × 76.3 mm (the longer board adds 1.3 mm to the 75 mm height).
+- Panel: 4 boards on 100 × 76.3 mm (the longer board adds 1.3 mm to the 75 mm height; see the stand-alone update below for the current 100 × 80.3 mm).
 - **Silkscreen:** JP2 is labelled `CHEM` (left of the jumper), `Li` over pad 1 (GND side, bridged 1-2 by default)
   and `LFP` over pad 3 (3V3 side); JP3 is labelled `LFP:short` (close only for LiFePO4). The I2C pin names sit under
   the J5 pins, all silk strokes are 0.15 mm and the U3 pin names 0.8 mm. These labels are added by
   `silk_fixups()` in `tools/gen_pcb.py`; on an already routed board `python3 tools/run.py silk_fix` applies them
   (once) without touching copper.
+- **Stand-alone use (v0.5 update, board 25 × 70.3 mm, panel 100 × 80.3 mm)**: the board can run without our firmware.
+  `JP4` (closed by default) is a 2-pad solder jumper in series between XIAO D0 (net `XIAO_D0`) and the BQ25798 CE net;
+  cutting it leaves CE on `JP2` / `R4` only. `R32` (10k 0402, C25744, assembled) and `JP5` (open) form a fake NTC from TS to GND.
+  JP3's label is now `LFP/SA:short` (SA = stand-alone). The three parts sit on the left edge between J3 and D3 (JP4 at
+  x = 3.2, y = 47.8; R32 at 2.2, 50.6; JP5 at 5.8, 50.6, top side, 3 mm or more from the J3 pins), so the bottom group
+  (D3, D1, BMS) moved 4 mm down (DB = 4.9) and the connector row with it: J1 pins at x = 2.40, y = 65.30 / 67.84, J4 at
+  x = 22.60, y = 65.30 / 67.84, J5 at y = 67.84 (the XH body outlines are the ones above, shifted 4 mm down). JP4 / JP5 are not
+  in the JLC BOM/CPL (solder them closed or cut them by hand). Labels: `cut` (JP4), `noNTC:short` (JP5). See
+  "Stand-alone" below.
 - Hand patches on the routed board that `gen_pcb.py` does not reproduce (re-apply them after `route` / `finish`):
   the locked REGN stub on B.Cu (10.55, 32.3) to (8.5, 32.3) is cut to end at 9.12 and split at 9.53 so that it joins
   the router's tracks, and the locked SCL stub on F.Cu (8.0, 34.1) to (6.4, 35.7) is shortened to end at (7.105, 34.995),
-  both to remove `track_dangling` warnings. BATP (R8 to charger pin 18) is hand routed in `gen_pcb.py`
+  both to remove `track_dangling` warnings (in the 70.3 mm run only the REGN stub needed it: it now ends at 9.51).
+  Also by hand in the 70.3 mm run: the `NTC_FAKE` track R32 to JP5 pad 1 (a straight 0.25 mm track at y = 50.6, the router had
+  looped around JP5), a solid GND connection of the `TP7` pad, and an extra `finish` rerun to clear GND islands. BATP (R8 to charger pin 18) is hand routed in `gen_pcb.py`
   (not a patch). Re-running `route` / `finish` can also leave one GND island or open pad that needs a via (see the
   gndfix / patch_route docs); Freerouting is not repeatable, so a rerun may need several tries.
+
+## Stand-alone (без нашия фърмуер)
+Use the board without our XIAO firmware (no I2C traffic, XIAO running something else or absent):
+1. **Cut JP4** (XIAO D0 to CE), so the XIAO cannot drive CE. With JP2 on 1-2 (default, Li-ion) R4 (100k) pulls CE low and the charger runs on its own.
+2. **Close JP3** (no ship FET; the BQ25798 is not told about Q2 without firmware).
+3. **NTC:** fit the 10k NTC on J3, or **close JP5** (fake 10k from TS to GND through R32). Without one, TS reads "cold" and charging stops.
+
+What is lost without our firmware: MPPT (EN_MPPT), battery voltage reporting in MeshCore, the low-battery cutoff, ship mode, and LiFePO4 charging
+(VREG 3.6 V is set over I2C; stand-alone charges to the 4.2 V default, so only use Li-ion). Not tested.
+
+**VINDPM / panel choice.** Without I2C the BQ25798 stays in its default mode and sets VINDPM by itself when the input is plugged in, from the
+no-load panel voltage: VBUS0 − 1.4 V (VBUS0 ≥ 7 V) or VBUS0 − 0.7 V (below 7 V) (TI SLUSDV2, 7.3.4.4). It is measured once when the panel wakes up and not
+tracked afterwards. That fits 6 V panels (about 80 % of Voc) and 9 V panels (about 87 %) well; an 18 V panel ends up at about 93 % of Voc, which costs
+20-30 % of the power. So prefer 6 V or 9 V panels in stand-alone use.
 
 ## Connections
 | Where | Pins | Notes |
 |---|---|---|
-| XIAO stack (`U3`) | D0 = CE, D6 = SCL, D7 = SDA, 3V3, GND, 5V | 5V gets SYS (3.5–4.4 V) through the Q5/Q6/Q7 ideal diode (AO3401A + PNP mirror), so the XIAO USB cannot feed SYS. Other pins pass through. **No battery on the XIAO itself.** |
+| XIAO stack (`U3`) | D0 = `XIAO_D0`, to CE through JP4, D6 = SCL, D7 = SDA, 3V3, GND, 5V | 5V gets SYS (3.5–4.4 V) through the Q5/Q6/Q7 ideal diode (AO3401A + PNP mirror), so the XIAO USB cannot feed SYS. Other pins pass through. **No battery on the XIAO itself.** |
 | J1 SOLAR | + / − | 5–22 V panel (Voc up to 25 V), SS54 against reverse polarity, SMBJ24A TVS |
 | J3 NTC | TS / GND | Optional 10k NTC (103AT, B = 3435); leave open if unused (`TS_IGNORE` on by default) |
 | J4 BAT | + / − | 1S cell (protected by onboard DW01A + HJ8205 BMS and ship FET Q2) |
 | J5 I2C | SCL SDA 3V3 GND | external I2C sensors (4.7k pull-ups on board, 3V3 from the XIAO) |
 
 ## Charger settings
-- **CE / JP2:** CE is XIAO D0. 1-2 (default) = Li-ion, charges on its own with the BQ defaults
+- **CE / JP4 / JP2:** CE is XIAO D0 through the closed jumper JP4. 1-2 (default) = Li-ion, charges on its own with the BQ defaults
   (4.2 V, 1 A) even while the XIAO is off; 2-3 = LiFePO4, the pull-up to 3V3 holds charging off until firmware has
   set VREG 3.6 V and pulls CE low.
+- **Fake NTC (R32 + JP5):** 10k from TS to GND through JP5, open by default; close JP5 when no NTC is fitted (TS then sits like a 10k NTC at 25 °C).
 - **TS / NTC (J3):** R2/R3 (5.1k/30k) for a 10k NTC (103AT, B = 3435) on J3 (~0–60 °C window).
   Without NTC, TS sits at ~85 % of REGN ("cold"), so firmware enables `TS_IGNORE` by default.
 - **Charge current:** up to 2 A (firmware sets ICHG; 2.2 µH 4 A molded inductor). PROG 4.7k = 750 kHz, 1S.
@@ -98,12 +124,12 @@ v0.5 (2026-11-13):
   SFET_PRESENT (only with Q2) and VREG again.
 
 ## JLC
-26 BOM lines, 3 extended parts with a $3 fee (BQ25798, MWSA0402S inductor, DW01A);
+27 BOM lines, 3 extended parts with a $3 fee (BQ25798, MWSA0402S inductor, DW01A);
 SMBJ24A and HJ8205 are preferred extended parts (no fee), everything else is basic (since 2026-11-13
 C9 100n/50V 0402 is the basic C307331). Parts cost about $4.5 per board (not recalculated for v0.5). Headers are
 hand-soldered (`production/bom-hand.csv`).
 
-Panel: `panel/` holds 4 boards on 100×76.3 mm (V-cut, 5 mm rails with tooling holes and fiducials),
+Panel: `panel/` holds 4 boards on 100×80.3 mm (V-cut, 5 mm rails with tooling holes and fiducials),
 made by `python3 tools/run.py panel` (KiKit; Gerber/BOM/CPL in `panel/production/`). Order it as
 "Panel by Customer" with V-cut. Copper keeps 0.4 mm from every edge, as JLC wants next to a V-cut.
 
