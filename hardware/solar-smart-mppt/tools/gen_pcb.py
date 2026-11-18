@@ -392,12 +392,14 @@ def write_project():
 SYS_RUN = ((17.05, 38.15), tps(5.8, 9.0))   # kept out from under the TPS63070 (its small signals)
 # the long ATtiny signals (across the charger or the BMS) go in first the same way, locked;
 # Freerouting closes them badly or not at all on this narrow board
-PRE_ROUTES = [("SYS", ("Q5", "3"), tps(5.8, 9.0)), ("SYS", ("R30", "1"), ("C33", "1")),
+# optional 4th item = track width (default 0.25 / 0.2): the SYS run from the ideal diode Q5.3 to the TPS63070 VIN copper carries the
+# whole J6 / J7 load (up to 3 A), 0.8 mm (round 6; it was 0.25 mm in rounds 1-5)
+PRE_ROUTES = [("SYS", ("Q5", "3"), tps(5.8, 9.0), 0.8), ("SYS", ("R30", "1"), ("C33", "1")),
               # MSPM0: the fan-out itself is MCU_STUBS (below); these finish the far ends
               ("OC_G", ("U4", "9"), ("Q3", "4")),
               ("OD_CTL", (16.6, 58.2), ("Q6", "1")), ("BAL1", (21.8, 52.85), ("Q7", "1")),
               ("CE", (9.0, 51.3), ("U1", "13")), ("REGN", ("C10", "1"), (10.55, 31.6)),
-              ("VREG", ("TP14", "1"), ("C36", "1")),
+              # (VREG TP14 -> pour: the 0.8 mm lane in v04_delta.json, no pre-route here; round 6)
               ("BAL2", ("R39", "1"), ("Q10", "1")),
               ("SYS", ("C21", "1"), ("U5", "2")),
               ("SDA_I", ("U4", "12"), ("R13", "2")), ("SCL_I", ("U4", "11"), ("R14", "2")),
@@ -457,24 +459,16 @@ def add_mcu_stubs(board):
         if name == "GND":   # in the EP of U4: tented from below so no solder runs out
             v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
         board.Add(v)
-# battery heater power copper (locked, board mm): SYS feeder from the SYS copper of the TPS63070 up to J8 pin 1
-# (0.8 mm, F.Cu only, right of C32), drain of Q12 to J8 pin 2 (0.8 mm), gate net of Q12 / R45 / R46, two GND vias
-# beside the Q12 source. Designed for ~2.5 A: >= 0.8 mm wide, no layer change.
-HEATER_ROUTES = [
-    ("SYS", [(16.75, 14.0), (16.75, 3.2), (19.38, 3.2), (19.38, 1.5)], 0.8),
-    ("HEAT_D", [(18.062, 6.9), (18.06, 4.3), (21.92, 4.3), (21.92, 1.5)], 0.8),
-    ("HEAT_G", [(19.938, 7.85), (22.0, 7.85)], 0.25),
-    ("HEAT_G", [(22.0, 7.85), (22.56, 8.41), (23.4, 8.41)], 0.25),
-]
-HEATER_GND_VIAS = [(21.0, 5.3), (21.0, 6.6)]
-# top row after J8: the I2C lanes keep left of the SYS feeder (SDA on B.Cu at x = 15.0 / 15.5 around the C32 / C33 GND
-# tie vias, SCL on F.Cu over it and a via to B.Cu at (15.7, 5.2)); TP14 sits 3 mm from J7 / J8 and feeds J7.1 and the sense line
+# battery heater power copper: the round-2 routes of this block (SYS feeder / HEAT_D / HEAT_G / two GND vias in the top row) were
+# deleted by the v0.4 round 3 / 4 re-layout; the heater copper is now in tools/v04_delta.json (SYS feeder to J8.1 0.8 mm, HEAT_D
+# 0.8 mm, HEAT_G, gate lane); the pour setting of the Q12 source is in add_top_routes().
+# top row (round 2 coordinates, only what survives add_v04_delta()): the I2C lanes SDA_E / SCL_E keep left of the J8 feeder
+# (SDA on B.Cu at x = 15.0 / 15.5 around the C32 / C33 GND tie vias, SCL on F.Cu over it and a via to B.Cu at (15.7, 5.2)). The
+# J7 VREG feed (J7.1 -> TP14 -> VREG pour right of C38, 0.8 mm) and the first SDA_E leg are in v04_delta.json since round 3 / 6.
 TOP_ROUTES = [
-    ("SDA_E", "B.Cu", [(10.64, 2.9), (15.0, 2.9), (15.0, 8.5), (15.5, 9.0), (15.5, 19.3), (16.0, 19.8), (16.0, 20.8)], 0.2, True),
+    ("SDA_E", "B.Cu", [(15.0, 2.9), (15.0, 8.5), (15.5, 9.0), (15.5, 19.3), (16.0, 19.8), (16.0, 20.8)], 0.2, True),
     ("SCL_E", "F.Cu", [(14.2, 3.7), (15.7, 5.2)], 0.2, True),
     ("SCL_E", "B.Cu", [(15.7, 5.2), (17.4, 6.9)], 0.2, True),
-    ("VREG", "F.Cu", [(24.0, 5.8), (25.6, 4.2), (25.6, 1.5)], 0.6, False),
-    ("VREG", "F.Cu", [(24.0, 5.8), (25.0, 6.8), (25.0, 8.4), (26.1, 9.5)], 0.25, True),
 ]
 TOP_VIAS = [("SCL_E", (15.7, 5.2))]
 def add_top_routes(board):
@@ -487,22 +481,15 @@ def add_top_routes(board):
         v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
         v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
     board.FindFootprintByReference("R46").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+    board.FindFootprintByReference("Q12").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)   # 2.5 A source: solid to the pour
 # BQ25798 INT (U1.21) is not connected (owner decision, v0.4 round 5: R47 and TP18 dropped); the PROG lane at U1.20 keeps the
 # detour it got for the old INT lane.
 # HEAT (U4.10 -> R45.1) is routed by hand: B.Cu / F.Cu hops with vias (layer, points), plus one GND via that keeps the F.Cu GND
 # strip left of the lane connected.
-INT_HEAT_ROUTES = [
+INT_HEAT_ROUTES = [   # round 2 HEAT lane (U4.10 -> J8 area) is gone (v04_delta.json has the round 4 lane); only the PROG detour stays
     ("PROG", "F.Cu", [(11.02, 34.75), (11.02, 35.25), (10.62, 35.65), (10.62, 38.38), (10.4, 38.38)], 0.2),
-    ("HEAT", "F.Cu", [(13.25, 51.35), (13.25, 48.9)], 0.25),
-    ("HEAT", "B.Cu", [(13.25, 48.9), (5.5, 41.15), (5.5, 21.05), (12.6, 13.95)], 0.25),
-    ("HEAT", "F.Cu", [(12.6, 13.95), (12.6, 10.55)], 0.25),
-    ("HEAT", "B.Cu", [(12.6, 10.55), (13.15, 10.0), (13.15, 6.2), (10.05, 3.1)], 0.25),
-    ("HEAT", "F.Cu", [(10.05, 3.1), (15.85, 3.1)], 0.25),
-    ("HEAT", "B.Cu", [(15.85, 3.1), (20.7, 3.1), (22.55, 4.95)], 0.25),
-    ("HEAT", "F.Cu", [(22.55, 4.95), (22.15, 5.35), (22.15, 5.5)], 0.25),
 ]
-INT_HEAT_VIAS = [("HEAT", (13.25, 48.9)), ("HEAT", (12.6, 13.95)), ("HEAT", (12.6, 10.55)), ("HEAT", (10.05, 3.1)),
-                 ("HEAT", (15.85, 3.1)), ("HEAT", (22.55, 4.95)), ("GND", (5.6, 42.2))]
+INT_HEAT_VIAS = [("HEAT", (13.25, 48.9)), ("GND", (5.6, 42.2))]   # HEAT via at the start of the lane (delta lane starts there), GND tie
 def add_int_heat_routes(board):
     for name, layer, pts, w in INT_HEAT_ROUTES:
         n = board.FindNet(name)
@@ -512,17 +499,24 @@ def add_int_heat_routes(board):
     for name, at in INT_HEAT_VIAS:
         v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
         v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
-def add_heater_power(board):
-    for name, pts, w in HEATER_ROUTES:
+# solar input J1 -> SS54 (D1) -> TVS (D3) -> the charger's VBUS copper (F.Cu, locked, board mm), as laid out in round 4 and widened in
+# round 6: every segment 0.8 mm (0.75 mm between D3.2 and C2.2, where 0.8 mm would be 0.125 mm from the pads). Before round 6 the
+# generator routed this with patch2 (VBUS D1.1 -> D3.1 -> (9.8, 28.5), SOLAR_IN J1.1 -> D1.2) and v04_delta.json swapped single
+# segments; a re-run laid both sets. Now only this list exists (no solar copper left in v04_delta.json).
+SOLAR_ROUTES = [
+    ("SOLAR_IN", [(1.7, 22.1), (2.3, 21.5), (2.3, 20.9), (2.3, 17.7), (2.3, 17.2)], 0.8),   # J1.1 -> D1.2
+    ("VBUS", [(6.3, 17.2), (6.0, 17.2), (5.5, 17.7)], 0.8),                               # D1.1 stub
+    ("VBUS", [(6.2, 18.2), (6.5, 20.5)], 0.8),                                            # D1.1 -> D3.1
+    ("VBUS", [(7.2, 21.7), (8.1, 22.8)], 0.8),                                            # D3.1 -> past D3.2 / C2.2
+    ("VBUS", [(8.1, 22.8), (8.1, 24.5)], 0.75),
+    ("VBUS", [(8.1, 24.5), (9.4, 25.6), (9.4, 26.3)], 0.8),                               # into the VBUS pour at C2.1
+]
+def add_solar_routes(board):
+    for name, pts, w in SOLAR_ROUTES:
         n = board.FindNet(name)
         for p0, p1 in zip(pts, pts[1:]):
             t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
             t.SetLayer(pcbnew.F_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
-    for at in HEATER_GND_VIAS:
-        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
-        v.SetNet(board.FindNet("GND")); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
-    board.FindFootprintByReference("Q12").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)   # 2.5 A source: solid to the pour
-
 # hand routes kept from v0.2 (TPS63070 control pins with the R31 move, VSEL / FB2 B.Cu hops,
 # the C31 / C35 GND vias, REGN / TS at the BQ25798): fixed wiring, board mm
 HAND_ROUTES = os.path.join(HERE, "hand_routes.json")
@@ -609,26 +603,20 @@ if __name__ == "__main__":
         return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
     print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0),
                            keepout=[tps(6.8, 11.2) + tps(14.0, 19.0)], keepout_b=KB))
-    # solar input: SS54 cathode -> TVS -> the charger's VBUS copper, short and on F.Cu
-    for a_, b_ in ((("D1", "1"), ("D3", "1")), (("D3", "1"), (9.8, 28.5))):
-        print(patch2.route_net(b, "VBUS", (pad_mm(*a_), pad_mm(*b_)), width=0.8, lock=True,
-                               via_w=0.8, layer_cost=(1.0, 8.0)))
-    print(patch2.route_net(b, "SOLAR_IN", (pad_mm("J1", "1"), pad_mm("D1", "2")), width=0.8, lock=True,
-                           via_w=0.8, layer_cost=(1.0, 8.0)))
+    add_solar_routes(b)
     add_hand_routes(b)
-    add_heater_power(b)
     add_top_routes(b)
     add_int_heat_routes(b)
     add_v04_delta(b)
     xh_housings(b)
     add_mcu_stubs(b)
-    for net_, a_, b_ in PRE_ROUTES:
+    for net_, a_, b_, *w_ in PRE_ROUTES:
         try:
             fine = net_ in FINE or (net_ == "SYS" and a_[0] == "R30")
             mcu = "U4" in (a_[0], b_[0]) or isinstance(a_[0], float) or net_ == "BAL2" or (net_ == "SYS" and a_[0] == "C21")
             print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True,
                                    layer_cost=(1.0, 1.0) if mcu else (1.0, 1.5) if fine else (1.3, 1.0),
-                                   width=0.2 if fine or mcu else 0.25,
+                                   width=w_[0] if w_ else 0.2 if fine or mcu else 0.25,
                                    clear=0.15 if mcu else 0.145 if fine else 0.2,
                                    keepout_b=KB))
         except RuntimeError as e:
