@@ -10,10 +10,9 @@ import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
+import javax.crypto.Mac
 import javax.crypto.SecretKey
-import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 class WrongPassword : Exception("wrong password")
@@ -28,10 +27,38 @@ object PasswordBox {
     private val b64 = Base64.getEncoder()
     private val unb64 = Base64.getDecoder()
 
-    private fun key(password: String, salt: ByteArray): SecretKeySpec {
-        val f = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val k = f.generateSecret(PBEKeySpec(password.toCharArray(), salt, ITERATIONS, 256)).encoded
-        return SecretKeySpec(k, "AES")
+    private fun key(password: String, salt: ByteArray, iterations: Int = ITERATIONS) =
+        SecretKeySpec(pbkdf2Sha256(password, salt, iterations, 32), "AES")
+
+    /**
+     * PBKDF2-HMAC-SHA256 (RFC 8018), password as UTF-8: the same bytes as the JCA "PBKDF2WithHmacSHA256",
+     * which Android has only from 8.0 (API 26); HmacSHA256 is on every version, so Android 7 can open and
+     * make the same files.
+     */
+    fun pbkdf2Sha256(password: String, salt: ByteArray, iterations: Int, length: Int): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(password.toByteArray(Charsets.UTF_8).let { if (it.isEmpty()) ByteArray(1) else it }, "HmacSHA256"))
+        val out = ByteArray(length)
+        val u = ByteArray(32)
+        val t = ByteArray(32)
+        var block = 1
+        var pos = 0
+        while (pos < length) {
+            mac.update(salt)
+            mac.update(byteArrayOf((block ushr 24).toByte(), (block ushr 16).toByte(), (block ushr 8).toByte(), block.toByte()))
+            mac.doFinal(u, 0)
+            u.copyInto(t)
+            repeat(iterations - 1) {
+                mac.update(u)
+                mac.doFinal(u, 0)
+                for (i in 0 until 32) t[i] = (t[i].toInt() xor u[i].toInt()).toByte()
+            }
+            val n = minOf(32, length - pos)
+            t.copyInto(out, pos, 0, n)
+            pos += n
+            block++
+        }
+        return out
     }
 
     fun seal(data: ByteArray, password: String): JSONObject {
@@ -48,10 +75,8 @@ object PasswordBox {
     fun open(o: JSONObject, password: String): ByteArray {
         val salt = unb64.decode(o.getString("salt"))
         val iv = unb64.decode(o.getString("iv"))
-        val f = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val k = f.generateSecret(PBEKeySpec(password.toCharArray(), salt, o.optInt("iter", ITERATIONS), 256)).encoded
         val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.DECRYPT_MODE, SecretKeySpec(k, "AES"), GCMParameterSpec(128, iv))
+        c.init(Cipher.DECRYPT_MODE, key(password, salt, o.optInt("iter", ITERATIONS)), GCMParameterSpec(128, iv))
         return try {
             c.doFinal(unb64.decode(o.getString("data")))
         } catch (e: javax.crypto.AEADBadTagException) {

@@ -67,4 +67,20 @@ class BackupTest {
         assertNull(rows[2].current)
         assertEquals(listOf("contact/01"), BackupDiff.diff(backup.items, emptyList()).filter { it.item.group == BackupItem.GROUP_CONTACT }.map { it.item.ref })
     }
+
+    @Test
+    fun pbkdf2MatchesJcaAndTheKnownVector() {
+        // RFC 7914 section 11: P="passwd", S="salt", c=1, dkLen=64
+        val v = PasswordBox.pbkdf2Sha256("passwd", "salt".toByteArray(), 1, 64)
+        assertEquals("55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc" +
+            "49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783",
+            v.joinToString("") { "%02x".format(it) })
+        // the same bytes as the JCA one (Android 8+, desktop Java), so old backups still open
+        val salt = ByteArray(16) { (it * 7).toByte() }
+        for (pw in listOf("secret", "парола", "a")) {
+            val jca = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(javax.crypto.spec.PBEKeySpec(pw.toCharArray(), salt, 1000, 256)).encoded
+            assertArrayEquals(jca, PasswordBox.pbkdf2Sha256(pw, salt, 1000, 32))
+        }
+    }
 }
