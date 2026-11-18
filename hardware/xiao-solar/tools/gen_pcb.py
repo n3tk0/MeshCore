@@ -88,7 +88,9 @@ PLACE.update({
     "C21": (15.0, 35.5, 90), "C22": (41.3, 31.3, 0),
     "U6": (_m(27.2, 45.6)[0], _m(27.2, 45.6)[1], 0),
     "C27": _m(23.55, 45.35) + (180,), "C29": _m(23.55, 44.3) + (180,), "R13": _m(23.55, 43.3) + (0,),
-    "C28": _m(24.9, 40.9) + (180,),
+    # C28 (VCORE): >= 3.0 mm from the Xiao header pins (U3.7), so it sits above the HEAT / SH_P lanes, right of the
+    # VCORE run from U6 pin 23 (pad 1 left)
+    "C28": _m(28.3, 40.35) + (0,),
     "R14": _m(29.62, 48.95) + (180,), "R15": _m(29.62, 50.9) + (180,), "R4": _m(31.3, 48.75) + (90,),
     "R25": (30.5, 32.7, 180), "C30": (30.5, 33.9, 0), "R26": (30.5, 35.4, 0),
     "JP2": (35.5, 34.0, 90),
@@ -112,6 +114,8 @@ PLACE.update({
     # J6) under Q4
     "Q4": (41.9, 54.0, 0), "R27": (38.4, 53.3, 0), "R28": (38.4, 55.0, 0),
     "D6": (41.2, 56.9, 180), "R29": (41.2, 58.6, 180),
+    # freewheel Schottky across J6 (anode Q4 drain, cathode SYS): >= 3 mm from the J6 pins and the H4 hole
+    "D7": (41.4, 50.8, 0),
 })
 B_SIDE = {"TP11", "TP12", "TP13", "TP14", "TP15"}
 # four holes 2.8 mm (M2/M2.5), 6 mm clear for the head, 3.5 mm from the edges
@@ -219,8 +223,8 @@ MCU_LOCAL = [
     ("3V3M", [(24.03, 45.35), (24.1, 46.3)], 0.25),
     ("3V3M", [(23.07, 43.3), (23.07, 42.4)], 0.25),
     ("GND", [(25.21, 45.85), (26.2, 45.85)]),
-    ("VCORE", [(26.45, 43.61), (26.45, 41.25), (26.1, 40.9), (25.675, 40.9)]),
-    ("GND", [(24.125, 39.85), (24.125, 40.9)], 0.3),          # C28 GND pad to its via
+    ("VCORE", [(26.45, 43.61), (26.45, 40.35), (27.525, 40.35)]),
+    ("GND", [(29.075, 40.35), (29.075, 39.25)], 0.3),         # C28 GND pad (right) to its via above
     ("HEAT", [(26.95, 43.61), (26.95, 41.2), (30.2, 41.2)]),
     ("SH_P", [(27.45, 43.61), (27.45, 41.9), (31.0, 41.9)]),
     ("ADC_VBAT", [(27.95, 43.61), (27.95, 42.6), (30.2, 42.6)]),
@@ -246,12 +250,12 @@ MCU_LOCAL = [
     ("SDA", [(25.8, 42.35), (25.2, 41.75), (25.2, 41.15)], 0.2, "B"),
     ("SCL", [(25.21, 44.35), (24.9, 44.35), (24.9, 42.15), (24.5, 41.75), (22.4, 41.75)]),
 ]
-MCU_LOCAL_VIAS = [("3V3M", (24.1, 46.3)), ("3V3M", (23.07, 42.4)), ("HEAT", (30.2, 41.2)), ("SH_P", (31.0, 41.9)),
+MCU_LOCAL_VIAS = [("GND", (29.075, 39.25)), ("3V3M", (24.1, 46.3)), ("3V3M", (23.07, 42.4)), ("HEAT", (30.2, 41.2)), ("SH_P", (31.0, 41.9)),
                   ("ADC_VBAT", (30.2, 42.6)), ("ADC_CHEM", (31.0, 43.2)), ("SWCLK", (30.4, 44.85)),
                   ("SWDIO", (31.2, 45.85)), ("SH_N", (31.6, 46.85)),
                   ("CE", (30.4, 48.1)), ("SDA_I", (29.11, 49.9)), ("SCL_I", (29.11, 51.7)),
                   ("NRST", (24.06, 42.5)), ("3V3M", (30.13, 49.9)), ("GND", (23.4, 46.6)),
-                  ("SDA", (25.8, 42.35)), ("GND", (24.125, 39.85)),
+                  ("SDA", (25.8, 42.35)),
                   # 4 GND vias in the exposed pad, tented from below
                   ("GND", (26.7, 45.1)), ("GND", (27.7, 45.1)), ("GND", (26.7, 46.1)), ("GND", (27.7, 46.1))]
 _cl, _cv = _m(29.11, 51.7), _m(30.4, 48.1)          # SCL_I and CE vias of the cluster
@@ -277,7 +281,12 @@ MCU_STUBS = [(st[0], [_m(*q) for q in st[1]]) + tuple(st[2:]) for st in MCU_LOCA
     # BAT from the charger's BAT copper down to JP3 (bypass of the ship FET), as v0.4
     ("BAT", [(26.25, 50.64), (25.6, 51.3), (25.6, 51.78), (28.47, 54.65), (32.8, 54.65)], 0.6),
 ]
+# D7 (freewheel diode): anode straight down to the Q4 drain, cathode along y = 47.4 (board) to the start of the
+# SYS run at J6 pin 1 (45.8, 47.4)
+MCU_STUBS += [("HEAT_D", [(43.05, 50.8), (43.05, 54.0)], 1.0),
+              ("SYS", [(39.75, 50.8), (39.75, 49.3), (45.8, 49.3)], 1.0)]
 MCU_VIAS = [(n, _m(*q)) for n, q in MCU_LOCAL_VIAS] + [
+    ("GND", (15.8, 2.75)),   # GND island left of J5 pin 4 (starved thermal)
     ("SCL_I", (25.2, 52.95)), ("SCL_I", (24.3, 54.2)), ("SCL_I", (18.95, 55.75)),
     ("SDA_I", (18.95, 54.8)), ("CE", (16.2, 57.98)), ("BATP", (18.9, 51.56)), ("BATP", (28.85, 52.0))]
 
@@ -561,7 +570,7 @@ def build():
             label(txt, pcbnew.VECTOR2I((p1.x + p2.x) // 2, p1.y - mm(2.0)), 0)
     t = pcbnew.PCB_TEXT(board)
     t.SetText("xiao-solar v0.5\nn3tk0/MeshCore")
-    t.SetPosition(pt(40.0, 48.8)); t.SetLayer(pcbnew.F_SilkS)
+    t.SetPosition(pt(37.6, 46.5)); t.SetLayer(pcbnew.F_SilkS)   # clear of D7
     t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.12))
     board.Add(t)
     # SWD row on the bottom (seen from below, right to left: 3V3M NRST SWDIO SWCLK GND): a

@@ -1,16 +1,8 @@
 ** Drc report for xiao-solar.kicad_pcb **
-** Created on 2026-11-13T07:37:39 **
+** Created on 2026-11-18T07:50:03 **
 ** Report includes: Errors, Warnings **
 
-** Found 155 DRC violations **
-[starved_thermal]: Thermal relief connection to zone incomplete (layer F.Cu; 1 spokes connected to isolated island)
-    Local override; error
-    @(100.3000 mm, 100.3000 mm): Zone [GND] on F.Cu, priority 0
-    @(117.1200 mm, 101.6000 mm): PTH pad 4 [GND] of J5
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
-    @(137.5600 mm, 150.4200 mm): Zone 'teardrop' [HEAT] on F.Cu, priority 3
-    @(137.9266 mm, 151.2780 mm): Zone 'teardrop' [HEAT] on F.Cu, priority 3
+** Found 154 DRC violations **
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(113.6151 mm, 133.7546 mm): Zone 'teardrop' [3V3M] on B.Cu, priority 3
@@ -45,12 +37,12 @@
     @(124.1500 mm, 137.0300 mm): Zone 'teardrop' [SDA_I] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
-    @(125.1460 mm, 138.0220 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-    @(124.7140 mm, 136.3280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
-[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
-    Local override; error
     @(119.1305 mm, 133.4127 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
     @(118.9420 mm, 132.8480 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
+    @(125.1460 mm, 138.0220 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
+    @(124.7140 mm, 136.3280 mm): Zone 'teardrop' [3V3M] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
     @(130.2408 mm, 131.8704 mm): Zone 'teardrop' [ADC_VBAT] on F.Cu, priority 3
@@ -105,6 +97,10 @@
     @(139.4375 mm, 151.7533 mm): Zone 'teardrop' [HEAT_G] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
     Local override; error
+    @(137.5600 mm, 150.4200 mm): Zone 'teardrop' [HEAT] on F.Cu, priority 3
+    @(137.9266 mm, 151.2780 mm): Zone 'teardrop' [HEAT] on F.Cu, priority 3
+[zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
+    Local override; error
     @(111.4830 mm, 152.1097 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
     @(111.2500 mm, 152.9900 mm): Zone 'teardrop' [REGN] on F.Cu, priority 3
 [zones_intersect]: Copper zones intersect (intersecting zones must have distinct priorities)
@@ -155,10 +151,6 @@
     Local override; error
     @(124.9351 mm, 151.0071 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
     @(124.5649 mm, 152.3428 mm): Zone 'teardrop' [SCL_I] on F.Cu, priority 3
-[silk_overlap]: Silkscreen clearance
-    Rule: board setup constraints silk; warning
-    @(122.0000 mm, 127.7250 mm): Reference field of U6
-    @(122.4750 mm, 128.1500 mm): Reference field of C28
 [silk_overlap]: Silkscreen clearance
     Rule: board setup constraints silk; warning
     @(146.4200 mm, 106.8000 mm): Circle of U4 on F.Silkscreen
@@ -388,6 +380,9 @@
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(115.0000 mm, 133.6000 mm): Footprint C21
+[lib_footprint_issues]: The current configuration does not include the footprint library 'Diode_SMD'
+    Local override; warning
+    @(141.4000 mm, 148.9000 mm): Footprint D7
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Resistor_SMD'
     Local override; warning
     @(129.6000 mm, 151.1000 mm): Footprint R8
@@ -408,7 +403,7 @@
     @(111.8000 mm, 150.4000 mm): Footprint TP3
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
-    @(119.7000 mm, 128.1500 mm): Footprint C28
+    @(123.1000 mm, 127.6000 mm): Footprint C28
 [lib_footprint_issues]: The current configuration does not include the footprint library 'Capacitor_SMD'
     Local override; warning
     @(112.4000 mm, 133.6000 mm): Footprint C26

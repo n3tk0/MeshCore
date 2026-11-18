@@ -358,7 +358,7 @@ RAIL("TS", [(204.0, 150.0), (204.0, 160.0)])
 R("R1", "4.7k 1%", 164, 152, "PROG", "GND", "C23162")
 RAIL("PROG", [(155.24, 137.86), (164.0, 137.86), (164.0, 148.19)])
 
-T(20, 174, "SS54 = OR на двата входа + защита от обратна полярност. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
+T(20, 174, "SS54 = защита от обратна полярност на входа. D3 (SMBJ24A) пази VBUS до 25 V.", 1.27)
 T(20, 177.5, "~CE: R4 към 3V3M = без заряд, докато MSPM0 не го свали (PA17). BQ25798 е на собствена I2C шина (SCL_I/SDA_I) към MSPM0. TP2 (QON) към GND = wake.", 1.27)
 
 # ---- 3. SYS Rail -> discrete ideal diode Q5/Q6/Q7 -> XIAO nRF52840 + Wio-SX1262 ---
@@ -496,7 +496,7 @@ RAIL("DW_CS", [(348.89, 233.08), (354.0, 233.08), (354.0, 246.19)])
 TP("TP7", "GND", 202, 210.0, rot=0)
 RAIL("GND", [(202.0, 210.0), (202.0, 215.08)])
 T(20, 252, "Q2 (AO3400A): S към BAT, D към батерията; в shutdown спира разреждането. За LiFePO4: затвори JP3 (без Q2).", 1.27)
-T(20, 255.5, "BMS (DW01A + HJ8205) в минуса на батерията (BATT- -> BATT_S -> RS1 -> GND): защита от презареждане (4.3V), преразреждане (2.4V) и късо.", 1.27)
+T(20, 255.5, "BMS (DW01A + HJ8205) в минуса на батерията (BATT- -> BATT_S -> RS1 || RS2 -> GND): защита от презареждане (4.3V), преразреждане (2.4V) и късо.", 1.27)
 T(20, 259, "LiFePO4: прагът 4.3V на DW01A е над 3.65V, т.е. от презареждане пази само VREG=3.6V на BQ25798; DW01A остава за 2.4V и късо/свръхток (~3A).", 1.27)
 
 # ---- 4. MSPM0L1306 supervisor: BQ25798 master, INA260 0x41 on the Xiao bus, shunt, heater ----
@@ -528,7 +528,7 @@ R4x("R15", "4.7k", 550, 60, "3V3M", "SCL_I", "C25900")
 P("JP2", "Jumper:SolderJumper_2_Open", "CHEM: open Li-ion / closed LiFePO4", 560, 140,
   {"1": "ADC_CHEM", "2": "GND"}, "Jumper:SolderJumper-2_P1.3mm_Open_RoundedPad1.0x1.5mm", rot=90)
 # shunt in BATT- (+ = charging): Kelvin taps, 330k bias to 3V3M (~97 mV) keeps both OPA inputs above 0 V down to ~2 A discharge at 50 mOhm
-# two basic 100 mOhm 1206 in parallel = 50 mOhm / 0.5 W (no extended fee); Kelvin taps on RS1
+# two basic 100 mOhm 1206 in parallel = 50 mOhm / 0.5 W (no extended fee); Kelvin taps on RS2
 P("RS1", "Device:R", "100m 1%", 440, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
 P("RS2", "Device:R", "100m 1%", 425, 220, {"1": "BATT_S", "2": "GND"}, "Resistor_SMD:R_1206_3216Metric", "C25334")
 R4x("R21", "10k", 470, 205, "BATT_S", "SH_P", "C25744", rot=270)
@@ -560,10 +560,13 @@ R("R28", "100k", 520, 300, "HEAT_G", "GND", "C25803")
 R("R29", "1k", 575, 285, "SYS", "LED_HEAT", "C21190", rot=90)
 P("D6", "Device:LED", "red (heater on)", 575, 300, {"1": "HEAT_D", "2": "LED_HEAT"},
   "LED_SMD:LED_0805_2012Metric", "C84256", rot=90)
+# freewheel diode across the heater (resistive or inductive load): anode on the Q4 drain, cathode on SYS
+P("D7", "Device:D_Schottky", "B5819W", 600, 292, {"2": "HEAT_D", "1": "SYS"}, "Diode_SMD:D_SOD-123", "C8598")
 T(430, 312, "Студена батерия: MSPM0 спира заряда, BQ25798 продължава MPPT към SYS,", 1.27)
 T(430, 315.5, "нагревателят взима излишъка от панела. MSPM0 намалява PWM, щом през", 1.27)
-T(430, 319, "шунта RS1 потече разряд. Рестарт / без MSPM0: R28 държи Q4 изключен.", 1.27)
+T(430, 319, "шунта RS1 || RS2 потече разряд. Рестарт / без MSPM0: R28 държи Q4 изключен.", 1.27)
 T(430, 322.5, "D6 (червен) + R29 1k успоредно на нагревателя: свети, докато Q4 е включен.", 1.27)
+T(430, 326, "D7 (B5819W): обратен диод през J6 (HEAT_D -> SYS) за индуктивен или резистивен нагревател.", 1.27)
 
 # ERC power flags placed directly on their rail wires (so no detached PWR_FLAG box is needed!)
 for i, (net, fx, fy) in enumerate([
