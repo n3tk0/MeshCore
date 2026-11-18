@@ -142,7 +142,7 @@ def gnd_passes(board):
     fill = lambda: pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     g = route.gen_pcb
     fill()
-    dfm.stitch(board, route.free_point, g.OX, g.OY, g.W, g.H)
+    dfm.stitch(board, route.free_point, g.OX, g.OY + getattr(g, "TOP", 0.0), g.W, g.H - getattr(g, "TOP", 0.0))
     fill()
     dfm.cap_vias(board, route.free_point)
     dfm.signal_return_vias(board, route.free_point, route.signal_nets(board))

@@ -283,7 +283,11 @@ def preroute(board, frame):
     a12 = p12.GetPosition()
     _path(board, [a12, frame.off(a12, 0, 2.3), frame.off(a12, -1.2, 3.1), tp2.GetPosition()], p12.GetNet(), 0.2)
     a13 = p13.GetPosition()
-    _path(board, [a13, frame.off(a13, 0, 5.1), r4.GetPosition()], p13.GetNet(), 0.2)
+    rp = r4.GetPosition()
+    if abs(rp.x - a13.x) + abs(rp.y - a13.y) < mm(12):   # R4 in the cluster (lite)
+        _path(board, [a13, frame.off(a13, 0, 5.1), rp], p13.GetNet(), 0.2)
+    else:   # main v0.5: R4 is at the MSPM0, the stub ends below the cluster for the router
+        _path(board, [a13, frame.off(a13, 0, 5.1)], p13.GetNet(), 0.2)
     # SCL (14) / SDA (15) fan out down-right, clear of CE and the TS corner pad
     for num, pts_ in (("14", [(0, 1.12), (1.6, 2.72)]), ("15", [(0, 0.72), (1.2, 1.92)])):
         pad = U(num)
