@@ -16,6 +16,9 @@ void hal_j7(bool on);
 void hal_bal(bool b1, bool b2);
 void hal_led(uint8_t led);      // LED_*
 uint8_t hal_read_chem_jumper(void);
+#if !SMPPT_J5_PA10
+void hal_heater(uint8_t pct);   // heater gate: 0 off, 100 on, between = 1 kHz PWM (TIMG4)
+#endif
 
 extern const bq_bus_t hal_bq_bus;
 extern const flash_ops_t hal_flash;

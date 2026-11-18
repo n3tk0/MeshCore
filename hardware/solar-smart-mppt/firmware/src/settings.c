@@ -14,7 +14,7 @@ static const chem_table_t CHEM[CHEM_COUNT] = {
   //  vchg  min   max   od_off od_on ship  j7_off j7_on  pack_min pack_max
   { 4200, 4000, 4250, 3000, 3300, 2900, 3300, 3500, 2500, 4250 },   // Li-ion 1S
   { 3600, 3400, 3650, 2700, 3000, 2600, 3000, 3150, 2500, 3650 },   // LiFePO4 1S
-  { 5600, 4800, 5600, 3600, 4000, 3400, 4400, 4700, 3000, 5600 },   // LTO 2S (2.8 V/cell max)
+  { 5600, 4800, 5600, 3600, 4000, 3400, 4000, 4400, 3000, 5600 },   // LTO 2S (2.8 V/cell max); J7 to 2.0 V/cell
 };
 
 void settings_defaults(settings_t *s, uint8_t chem) {
@@ -36,13 +36,16 @@ void settings_defaults(settings_t *s, uint8_t chem) {
   s->j7_off_mv = c->j7_off;
   s->j7_on_mv = c->j7_on;
   s->idsg_max_ma = 0;
-  s->isc_ma = 1500;          // v0.3 shunt bias (~33 mV) reads discharge only up to ~1.6 A
+  s->isc_ma = 1500;          // v0.3 shunt bias (~33 mV) reads discharge only up to ~1.6 A; v0.4 (~69 mV) to ~3.4 A
   s->bal_delta_mv = 30;
   s->bal_start_mv = 2500;    // per cell, LTO
   s->zero_uv = 0;
   s->shunt_uohm = 20000;
   s->ina_sign = INA_SIGN_DISCHARGE_POSITIVE;
   s->expert_n = 0;
+  s->heat_on_x10 = 20;       // +2 degC
+  s->heat_off_x10 = 50;      // +5 degC
+  s->heat_duty_pct = 100;
 }
 
 static bool in(uint32_t v, uint32_t lo, uint32_t hi) { return v >= lo && v <= hi; }
@@ -68,6 +71,9 @@ int settings_check(const settings_t *s, uint8_t chem) {
   if (!in(s->bal_delta_mv, 10, 500) || !in(s->bal_start_mv, 1500, 2800)) return ERR_RANGE;
   if (!in(s->shunt_uohm, 15000, 25000)) return ERR_RANGE;
   if (s->ina_sign > 1) return ERR_RANGE;
+  if (s->heat_on_x10 < -300 || s->heat_on_x10 > 400) return ERR_RANGE;      // -30 .. +40 degC
+  if (s->heat_off_x10 < s->heat_on_x10 + 10 || s->heat_off_x10 > 500) return ERR_RANGE;   // at least 1 degC apart, up to +50
+  if (s->heat_duty_pct > 100) return ERR_RANGE;
   if (s->expert_n > EXPERT_MAX) return ERR_RANGE;
   for (int i = 0; i < EXPERT_MAX; i++) {
     if (i >= s->expert_n && s->expert[i] == 0) continue;
@@ -93,6 +99,9 @@ bool settings_resolve_chem(settings_t *s, uint8_t jumper, uint8_t *active) {
     s->zero_uv = keep.zero_uv;
     s->shunt_uohm = keep.shunt_uohm;
     s->ina_sign = keep.ina_sign;
+    s->heat_on_x10 = keep.heat_on_x10;
+    s->heat_off_x10 = keep.heat_off_x10;
+    s->heat_duty_pct = keep.heat_duty_pct;
     *active = jumper;
     return true;
   }

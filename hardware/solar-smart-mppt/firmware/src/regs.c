@@ -22,6 +22,9 @@ static uint16_t *set_field(settings_t *s, uint8_t reg) {
     case R_BAL_START:  return &s->bal_start_mv;
     case R_ZERO_UV:    return (uint16_t *)&s->zero_uv;
     case R_SHUNT_UOHM: return &s->shunt_uohm;
+    case R_HEAT_ON:    return (uint16_t *)&s->heat_on_x10;
+    case R_HEAT_OFF:   return (uint16_t *)&s->heat_off_x10;
+    case R_HEAT_DUTY:  return &s->heat_duty_pct;
     default:
       if (reg >= R_EXPERT0 && reg < R_EXPERT0 + EXPERT_MAX) return &s->expert[reg - R_EXPERT0];
       return 0;
@@ -75,6 +78,9 @@ uint16_t regs_read(uint8_t addr7, uint8_t reg) {
     case R_BQ_FAULT:  return (uint16_t)(L->bq_fault0 << 8 | L->bq_fault1);
     case R_CAP_LEARNT: return R.gauge.capacity_learnt_mah;
     case R_CYCLES:    return R.gauge.cycles_x10;
+    case R_BAT_TEMP:  return (uint16_t)L->bat_temp_x10;
+    case R_HEAT_PCT:  return L->heat_pct;
+    case R_STATUS2:   return L->status2;
     case R_CHEM_SET:  return R.set.chem;
     case R_MPPT:      return R.set.mppt_code;
     case R_NTC:       return R.set.ntc_mode;
@@ -166,7 +172,8 @@ void regs_write(uint8_t addr7, uint8_t reg, uint16_t v) {
 // The I2C ISR calls these. A read may be prefetched by one byte (the TX FIFO holds the next byte
 // before the host asks for it), so the pointer is set from the bytes really sent at the end.
 
-static uint8_t cur_addr, ptr_reg, read_base;
+static uint8_t cur_addr, ptr_regs[2], read_base;   // own register pointer for 0x41 and 0x42
+#define ptr_reg ptr_regs[cur_addr == ADDR_SMPPT]
 static bool have_ptr, msb_pending, reading;
 static uint8_t msb;
 static uint16_t tx_word;

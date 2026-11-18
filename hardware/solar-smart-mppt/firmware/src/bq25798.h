@@ -45,6 +45,7 @@ typedef struct {
   uint8_t r[BQ_NREGS];        // last read of every register
   bool ok;                    // last refresh worked
   bool ntc_present;
+  bool ship_sent;             // ship mode written: bq_apply leaves SDRV_CTRL alone until the sun is back
   uint8_t errors;             // bus errors in a row
 } bq_t;
 
@@ -61,4 +62,5 @@ uint16_t bq_u16(const bq_t *b, uint8_t reg);
 int16_t bq_i16(const bq_t *b, uint8_t reg);
 uint16_t bq_ts_x10(const bq_t *b);    // TS in 0.1 % of REGN
 bool bq_vbus_present(const bq_t *b);  // VBUS_PRESENT_STAT as last read (not the ADC, which stops at night)
+bool bq_sfet(uint8_t chem);           // SFET_PRESENT (ship mode) for this chemistry
 uint16_t bq_vsysmin_mv(uint8_t chem);

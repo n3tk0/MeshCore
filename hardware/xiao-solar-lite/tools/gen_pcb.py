@@ -19,36 +19,55 @@ SHARED = os.path.abspath(os.path.join(ROOT, "..", "xiao-solar", "tools"))
 if SHARED not in sys.path:
     sys.path.append(SHARED)
 _spec.loader.exec_module(base)
+# The main board's pcb generator moved its origin (TOP) and stretches y (ys()); this board uses
+# plain coordinates from (100, 100), so neutralise that in the shared module.
+base.OY, base.TOP, base.ys = 100.0, 0.0, (lambda y: y)
+base.place_test_points.__defaults__ = (base.OX, 100.0)
 import charger  # noqa: E402
 import dfm  # noqa: E402
 mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
 
 PROJECT = "xiao-solar-lite"
 PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
-W, H = 23.0, 62.0
+JY1 = 61.3                    # SOLAR / BAT upper pin; the I2C row and the lower pins are 2.54 mm below
+JY2 = JY1 + 2.54
+W, H = 25.0, 66.3             # H = JY2 + 2.45 mm (JST XH body beyond the lower pin)
+# v0.5: every SMD pad >= 3 mm (copper to copper) from every THT pad and no part inside the XIAO / Wio
+# stack (U3 courtyard). The charger cluster moved down by DY (D4 courtyard clear of U3), the bottom group
+# (input diodes, BMS) by DB, the connector row to H - 3 (DB + DJ). The extra 2 mm of width are a strip
+# on the right of the cluster: the ideal diode column Q5-Q7 / R30 / R31 / C20 and the VOUT run to U3 pin 14.
+DY, DB, DJ = 0.7, 0.9, 2.1
+SYSY = 41.75 + DY          # y of the SYS copper stub between C12 / C13
 
 # Charger cluster (../xiao-solar/tools/charger.py) turned by 270 degrees so its long side
 # runs down the board: inductor to the right, CE/I2C pins to the left, PMID end under the
 # stack, SYS/BAT end towards the connectors.
-CHARGER_FRAME = charger.Frame(11.0, 32.8, 270)
+CHARGER_FRAME = charger.Frame(11.0, 32.8 + DY, 270)
 PLACE = charger.place(CHARGER_FRAME, set(charger.PLACE))
 PLACE.update({
-    # XIAO + Wio stack on top, USB end at the board edge; only flat parts under it
-    "U3": (11.5, 10.5, 0), "R11": (11.5, 13.5, 0), "R12": (11.5, 15.5, 0),
-    # ideal diode right of the SYS caps, VIN (pin 1, bottom left) fed from the SYS copper
-    # between C12 and C13; parts 1 mm or more from the edge
-    "D5": (21.15, 40.8, 90), "C20": (21.0, 46.6, 270),
+    # XIAO + Wio stack on top, USB end at the board edge; nothing else under it
+    "U3": (11.5, 10.5, 0),
+    # I2C pull-ups right of the cluster top (the SDA pin of U3 is right above)
+    "R11": (22.0, 23.3, 0), "R12": (22.0, 25.1, 0),
+    # discrete ideal diode (as on the xiao-solar main board) in the strip right of the SYS caps, one
+    # column x = 22.2: C20 (VOUT) above Q5 (AO3401A, drain up at the SYS copper stub, gate and source
+    # down), R31, then Q7 and Q6 (mirror), R30 at the bottom; VOUT leaves on a 0.8 mm run at the edge
+    "C20": (22.2, 39.2, 90), "Q5": (22.2, SYSY + 1.1, 90), "R31": (22.2, SYSY + 3.95, 0),
+    "Q7": (22.2, SYSY + 6.9, 90), "Q6": (22.2, SYSY + 11.0, 270), "R30": (22.2, SYSY + 14.45, 0),
     # optional NTC header on the left edge right beside the R2/R3 TS divider
-    "J3": (2.1, 39.2, 0),
+    "J3": (2.1, 39.2 + DY, 0),
+    # R2 / R3 (TS divider) 1.0 mm right of the cluster's place: >= 3 mm from the J3 pins
+    "R2": (PLACE["R2"][0] + 1.0, PLACE["R2"][1], PLACE["R2"][2]),
+    "R3": (PLACE["R3"][0] + 1.0, PLACE["R3"][1], PLACE["R3"][2]),
     # JP3 bridges the ship FET Q2 (closed = no ship FET, for LiFePO4)
-    "JP3": (7.1, 43.2, 90),
+    "JP3": (7.1, 43.2 + DY, 270),
     # input diode and TVS on the bottom-left above J1
-    "D3": (4.8, 50.5, 180), "D1": (4.5, 54.8, 180),
+    "D3": (4.8, 50.5 + DB, 180), "D1": (4.5, 54.8 + DB, 180),
     # DW01A + HJ8205 BMS on the bottom-right between Q2 and J4
-    "U2": (16.0, 50.8, 0), "Q3": (16.0, 55.0, 0),
-    "R9": (11.5, 50.2, 0), "C19": (11.5, 52.4, 0), "R10": (11.5, 54.6, 180),
+    "U2": (16.0, 50.8 + DB, 0), "Q3": (16.0, 55.0 + DB, 0),
+    "R9": (11.5, 50.2 + DB, 0), "C19": (11.5, 52.4 + DB, 0), "R10": (11.5, 54.6 + DB, 180),
     # connectors along the bottom edge (pin 1 left)
-    "J1": (2.1, 59.0, 90), "J5": (7.4, 59.0, 90), "J4": (17.9, 59.0, 90),
+    "J1": (2.4, JY1, 0), "J5": (8.69, JY2, 90), "J4": (22.6, JY1, 0),
 })
 # Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
 TEST_POINTS = {
@@ -59,8 +78,8 @@ TEST_POINTS = {
 }
 FIDUCIALS = [
     (0.8, 20.0, 12.0, 38.0, 3.5, 26.5),
-    (15.0, 48.0, 22.2, 58.0, 20.8, 53.0),
-    (0.8, 40.0, 22.2, 58.0, 20.8, 56.5),
+    (0.8, 44.0, 8.0, 52.0, 2.0, 46.0),
+    (17.5, 49.0, 20.2, 57.8, 19.0, 56.0),
 ]
 B_CLEAR = []
 # B.Cu stays whole GND under U1, L1 and the BTST caps only (charger frame, mm): with the whole
@@ -138,8 +157,8 @@ def build():
     # VBUS from the input diodes up into the VBUS copper: one wide B.Cu run, two vias at
     # each end (the autorouter made three single-via layer changes of it)
     vbus = net("VBUS")
-    top, bot = [pt(8.75, 30.0), pt(8.75, 30.8)], [pt(8.75, 49.2), pt(8.75, 50.1)]
-    run = top + [pt(6.7, 30.8), pt(6.7, 49.2)] + bot
+    top, bot = [pt(8.75, 30.0 + DY), pt(8.75, 30.8 + DY)], [pt(8.75, 49.2 + DB), pt(8.75, 50.1 + DB)]
+    run = top + [pt(6.7, 30.8 + DY), pt(6.7, 49.2 + DB)] + bot
     for a_, b_ in zip(run, run[1:]):
         charger._track(board, a_, b_, vbus, 0.8, pcbnew.B_Cu)
     d3 = charger._pad(board, "D3", "1").GetPosition()
@@ -151,17 +170,46 @@ def build():
     charger._track(board, d3, d1, vbus, 0.8)
     # BMS DW_OC / DW_CS and CE up to U3 pin 1
     for n_, lay, pts_, w_ in (
-        ("DW_OC", pcbnew.F_Cu, [(16.95, 51.95), (16.95, 52.3), (19.0, 52.3), (19.0, 53.85), (16.95, 53.85)], 0.22),
-        ("DW_CS", pcbnew.F_Cu, [(16.0, 51.95), (16.0, 52.75), (18.0, 52.95)], 0.22),
-        ("DW_CS", pcbnew.B_Cu, [(18.0, 52.95), (14.85, 56.1), (13.5, 56.1)], 0.25),
-        ("DW_CS", pcbnew.F_Cu, [(13.5, 56.1), (12.325, 54.925), (12.325, 54.6)], 0.25),
-        ("CE", pcbnew.B_Cu, [(4.30, 33.0), (3.6, 32.3), (3.6, 25.0), (1.6, 23.0), (1.6, 16.0)], 0.25),
+        ("DW_OC", pcbnew.F_Cu, [(16.95, 51.95 + DB), (16.95, 52.3 + DB), (19.0, 52.3 + DB), (19.0, 53.85 + DB), (16.95, 53.85 + DB)], 0.22),
+        ("DW_CS", pcbnew.F_Cu, [(16.0, 51.95 + DB), (16.0, 52.75 + DB), (18.0, 52.95 + DB)], 0.22),
+        ("DW_CS", pcbnew.B_Cu, [(18.0, 52.95 + DB), (14.85, 56.1 + DB), (13.5, 56.1 + DB)], 0.25),
+        ("DW_CS", pcbnew.F_Cu, [(13.5, 56.1 + DB), (12.325, 54.925 + DB), (12.325, 54.6 + DB)], 0.25),
+        ("CE", pcbnew.B_Cu, [(4.30, 33.0 + DY), (3.6, 32.3 + DY), (3.6, 25.0), (1.6, 23.0), (1.6, 16.0)], 0.25),
         ("CE", pcbnew.F_Cu, [(1.6, 16.0), (1.6, 3.88), (2.6, 2.88), (3.88, 2.88)], 0.25),
     ):
         for a_, b_ in zip(pts_, pts_[1:]):
             charger._track(board, pt(*a_), pt(*b_), net(n_), w_, lay)
-    for n_, vx, vy in (("DW_CS", 18.0, 52.95), ("DW_CS", 13.5, 56.1), ("CE", 4.30, 33.0), ("CE", 1.6, 16.0)):
+    for n_, vx, vy in (("DW_CS", 18.0, 52.95 + DB), ("DW_CS", 13.5, 56.1 + DB), ("CE", 4.30, 33.0 + DY), ("CE", 1.6, 16.0)):
         charger._via(board, pt(vx, vy), net(n_))
+    # Ideal diode (column x = 22.2 right of the SYS caps). Hand routed: SYS 0.8 mm from the SYS stub to
+    # the drain of Q5 (and a thin tap down to Q6), VOUT 0.8 mm from the source of Q5 up the right edge
+    # to U3 pin 14 (and short taps to C20 / Q7), the mirror lines are 0.25 mm tracks.
+    def ppos(ref, num):
+        p_ = charger._pad(board, ref, num).GetPosition()
+        return pcbnew.ToMM(p_.x) - OX, pcbnew.ToMM(p_.y) - 100.0
+    sysn, vout, org, orb = net("SYS"), net("VOUT"), net("OR_G"), net("OR_B")
+    q5d, q5s, q5g = ppos("Q5", "3"), ppos("Q5", "2"), ppos("Q5", "1")
+    q7b, q7e, q7c = ppos("Q7", "1"), ppos("Q7", "2"), ppos("Q7", "3")
+    q6b, q6e, q6c = ppos("Q6", "1"), ppos("Q6", "2"), ppos("Q6", "3")
+    r31a, r30a, c20p = ppos("R31", "1"), ppos("R30", "1"), ppos("C20", "1")
+    u14 = ppos("U3", "14")
+    XT = 24.1                                   # VOUT run along the right edge
+    def run(pts_, net_, w_, lay=pcbnew.F_Cu):
+        for a_, b_ in zip(pts_, pts_[1:]):
+            charger._track(board, pt(*a_), pt(*b_), net_, w_, lay)
+    # BATP Kelvin sense (R8 to charger pin 18): a straight run up column x = 9.0 mm, hand routed because
+    # the router boxes R8 in with the BAT / BATT+ tracks to JP3 when the connectors move
+    r8b, u118 = ppos("R8", "2"), ppos("U1", "18")
+    run([r8b, (r8b[0], 39.17), (10.28, 37.89), (10.28, 36.09), (u118[0], 35.98), u118], net("BATP"), 0.25)
+    run([(20.0, SYSY), q5d], sysn, 0.8)
+    run([(20.2, SYSY), (20.2, q6e[1]), q6e], sysn, 0.25)
+    run([q5s, (XT, q5s[1]), (XT, u14[1]), u14], vout, 0.8)
+    run([(XT, q5s[1]), (XT, q7e[1]), q7e], vout, 0.4)
+    run([c20p, (XT, c20p[1])], vout, 0.4)
+    run([q5g, r31a, (r31a[0], q7c[1] - 0.8), q7c], org, 0.25)
+    y_mid = (q7b[1] + q6b[1]) / 2.0
+    run([q7b, (q7b[0], y_mid), (q6b[0], y_mid), q6b], orb, 0.25)
+    run([q6b, (q6b[0] + 0.6, q6b[1]), (q6b[0] + 0.6, q6c[1]), q6c, (r30a[0], q6c[1] + 0.6), r30a], orb, 0.25)
     corners = [(0, 0), (W, 0), (W, H), (0, H)]
     for i in range(4):
         s = pcbnew.PCB_SHAPE(board)
@@ -182,14 +230,14 @@ def build():
             ol.Append(mm(OX + x), mm(OY + y))
         board.Add(ka)
     charger.add_zones(board, CHARGER_FRAME)
-    # SYS copper out between the C12/C13 GND pads to D5
+    # SYS copper out between the C12/C13 GND pads to the ideal diode
     z = pcbnew.ZONE(board)
     z.SetLayer(pcbnew.F_Cu); z.SetNet(net("SYS")); z.SetAssignedPriority(1)
     z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
     z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
     z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
     ol = z.Outline(); ol.NewOutline()
-    for (x, y) in [(17.0, 41.3), (20.65, 41.3), (20.65, 42.2), (17.0, 42.2)]:
+    for (x, y) in [(17.0, SYSY - 0.45), (20.65, SYSY - 0.45), (20.65, SYSY + 0.45), (17.0, SYSY + 0.45)]:
         ol.Append(mm(OX + x), mm(OY + y))
     board.Add(z)
     for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
@@ -205,6 +253,19 @@ def build():
         board.Add(z)
     base.place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
     dfm.add_fiducials(board, FIDUCIALS, base.load_fp)
+    # no tracks or vias within 1.4 mm of a fiducial (its 2 mm mask opening), Freerouting included
+    for fp_ in board.GetFootprints():
+        if fp_.GetReference().startswith("FID"):
+            c_ = fp_.GetPosition()
+            ka = pcbnew.ZONE(board)
+            ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
+            ka.SetDoNotAllowTracks(True); ka.SetDoNotAllowVias(False); ka.SetDoNotAllowPads(False)
+            ka.SetDoNotAllowFootprints(False)
+            ka.SetLayerSet(pcbnew.LSET.AllCuMask())
+            ol = ka.Outline(); ol.NewOutline()
+            for dx_, dy_ in ((-1.4, -1.4), (1.4, -1.4), (1.4, 1.4), (-1.4, 1.4)):
+                ol.Append(c_.x + mm(dx_), c_.y + mm(dy_))
+            board.Add(ka)
     base.plus_marks(board, ["J1", "J4"], dx=0.0, dy=-1.6)
     charger.pin1_dot(board, CHARGER_FRAME)
     def text(s, x, y, size=0.8, angle=0):
@@ -213,20 +274,63 @@ def build():
         t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.12))
         t.SetTextAngleDegrees(angle)
         board.Add(t)
-    # one label per pin, under the pin
-    for ref, names in (("J1", ("SOLAR",)), ("J4", ("BAT",)), ("J5", ("SCL", "SDA", "3V3", "GND"))):
-        p1 = charger._pad(board, ref, "1").GetPosition()
-        x1 = pcbnew.ToMM(p1.x) - OX
-        if len(names) == 1:
-            text(names[0], x1 + 1.27, H - 0.9)
-        else:
-            for i, s in enumerate(names):
-                text(s, x1 + 2.54 * i, H - 0.9)
-    text("NTC", 2.1, 37.3)
-    text("xiao-solar-lite v0.4", 11.5, 19.5)
+    # J5: one label per pin, under the pin; J1 / J4: the name turned 90 degrees beside the pins
+    # (towards the middle of the board, between the pins)
+    x1 = pcbnew.ToMM(charger._pad(board, "J5", "1").GetPosition().x) - OX
+    for i, s_ in enumerate(("SCL", "SDA", "3V3", "GND")):
+        text(s_, x1 + 2.54 * i, JY2 + 1.55)
+    text("SOLAR", 4.3, JY1 + 1.27, 0.8, 90)
+    text("BAT", 20.7, JY1 + 1.27, 0.8, 90)
+    text("NTC", 2.1, 37.3 + DY)
+    text("xiao-solar-lite v0.5", 11.5, 21.85, 0.6)
     hidden = dfm.place_silk(board)
     print("silk: hidden refs", " ".join(hidden) or "none")
+    silk_fixups(board)
     return board
+
+# Silkscreen touch-ups after dfm.place_silk (fixed spots; also run on a routed board by tools/silk_fix.py)
+SILK_STROKE = 0.15            # JLC: stroke >= 0.15 mm
+SILK_REF_MOVES = {            # reference -> (x, y, angle): out of the way of the new jumper labels
+    "C10": (4.9, 26.7, 0), "JP3": (9.0, 42.0, 0), "J4": (18.4, 62.6, 0),
+}
+SILK_TEXTS = (                # (text, x, y, size, angle)
+    # JP2 (CE pull): pad 1 = GND side = Li-ion (bridged 1-2 by default), pad 3 = 3V3 side = LiFePO4
+    ("CHEM", 0.8, 29.9, 0.8, 90), ("Li", 2.05, 28.2, 0.8, 0), ("LFP", 4.65, 28.2, 0.8, 0),
+    # JP3 (ship FET Q2 bypass): close only for LiFePO4
+    ("LFP:short", 3.1, 44.2, 0.8, 0),
+)
+
+def silk_fixups(board):
+    """J5 pin names under the pins, the JP2 / JP3 labels, 0.15 mm strokes, 0.8 mm U3 pin names."""
+    fm = pcbnew.FromMM
+    P = lambda x, y: pcbnew.VECTOR2I(fm(OX + x), fm(100.0 + y))
+    x1 = pcbnew.ToMM(charger._pad(board, "J5", "1").GetPosition().x) - OX
+    names = ("SCL", "SDA", "3V3", "GND")
+    for d in board.GetDrawings():
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS and d.GetText() in names:
+            d.SetPosition(P(x1 + 2.54 * names.index(d.GetText()), JY2 + 1.5))
+    for fp in board.GetFootprints():
+        if fp.GetReference() in SILK_REF_MOVES:
+            x, y, a = SILK_REF_MOVES[fp.GetReference()]
+            r = fp.Reference(); r.SetVisible(True); r.SetTextAngleDegrees(a); r.SetPosition(P(x, y))
+    for s_, x, y, size, ang in SILK_TEXTS:
+        t = pcbnew.PCB_TEXT(board)
+        t.SetText(s_); t.SetPosition(P(x, y)); t.SetLayer(pcbnew.F_SilkS)
+        t.SetTextSize(pcbnew.VECTOR2I(fm(size), fm(size))); t.SetTextAngleDegrees(ang)
+        board.Add(t)
+    for fp in board.GetFootprints():
+        if fp.GetReference() == "U3":
+            for g in fp.GraphicalItems():
+                if g.GetClass() == "PCB_TEXT" and g.GetLayer() == pcbnew.F_SilkS:
+                    g.SetTextSize(pcbnew.VECTOR2I(fm(0.8), fm(0.8)))
+    for fp in board.GetFootprints():
+        items = [fp.Reference()] + [g for g in fp.GraphicalItems() if g.GetClass() == "PCB_TEXT"]
+        for g in items:
+            if g.GetLayer() == pcbnew.F_SilkS:
+                g.SetTextThickness(fm(SILK_STROKE))
+    for d in board.GetDrawings():
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() == pcbnew.F_SilkS:
+            d.SetTextThickness(fm(SILK_STROKE))
 
 def write_project():
     def cls(name, tw, cl, vd, vdr):

@@ -1,0 +1,642 @@
+#!/usr/bin/env python3
+"""Builds solar-smart-mppt.kicad_pcb (30 x 77 mm): placement, outline, net classes, GND pours.
+Top: header row J6 SYS OUT | J5 I2C | J8 HEAT | J7 regulated out, ideal diode (Q5 + Q9/Q11) under J6, TPS63070 and its
+jumpers under J7, LEDs. Solar input (J1, SS54, TVS) on the left edge next to the charger.
+Then the charger part of xiao-solar-lite (charger cluster of ../xiao-solar/tools/charger.py,
+turned), the MSPM0L1306 band and at the bottom the BMS it drives, the fuse and J4.
+
+Run: python3 tools/gen_pcb.py, then python3 tools/run.py route (see README)
+"""
+import importlib.util, json, os, sys
+import pcbnew
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import gen_sch  # noqa: E402
+_spec = importlib.util.spec_from_file_location(
+    "xs_gen_pcb", os.path.join(ROOT, "..", "xiao-solar", "tools", "gen_pcb.py"))
+base = importlib.util.module_from_spec(_spec)
+SHARED = os.path.abspath(os.path.join(ROOT, "..", "xiao-solar", "tools"))
+if SHARED not in sys.path:
+    sys.path.append(SHARED)
+_spec.loader.exec_module(base)
+import charger  # noqa: E402
+import dfm  # noqa: E402
+import labels  # noqa: E402
+mm, pt, OX, OY = base.mm, base.pt, base.OX, base.OY
+
+PROJECT = "solar-smart-mppt"
+PCB = os.path.join(ROOT, PROJECT + ".kicad_pcb")
+W, H = 30.0, 77.5   # 30 mm: three boards across a 100 mm panel
+YT = 1.85           # v0.4 round 3: the board starts at y = -YT (JST XH housings of the top row end at the edge), 30 x 79.35 mm
+DY = 0.0    # the xiao-solar-lite charger part sits where it is on lite, under the new top part
+DA = 32.0   # MCU band (v0.2 coordinates of its test point regions)
+DB = 13.0   # BMS, fuse and the bottom connectors: under the MCU band (QFN-24: 5 mm shorter than v0.2)
+base.FPLIB_LOCAL = os.path.join(ROOT, "lib", "xiao_solar.pretty")
+
+CHARGER_FRAME = charger.Frame(11.0, 32.8 + DY, 270)
+PLACE = charger.place(CHARGER_FRAME, set(charger.PLACE))
+LITE = {
+    "J3": (2.1, 39.2, 0), "JP3": (7.1, 43.2, 90),
+}
+PLACE.update({k: (x, y + DY, r) for k, (x, y, r) in LITE.items()})
+# C9 (PMID HF cap) is 0603 now (basic 50 V part): its GND pad stays on the pin 27 GND line
+# (the PMID pad grows towards pin 29), C16 steps 0.25 mm out so the courtyards clear
+# and 0.2 mm away from the pins (its wider pads would sit 0.03 mm from the STAT pad and 0.08 mm
+# from SW1/SW2); see fix_charger_routes() for the PMID track
+PLACE["C9"] = (PLACE["C9"][0] + 0.2, PLACE["C9"][1] - 0.29, PLACE["C9"][2])
+PLACE["C16"] = (PLACE["C16"][0] + 0.5, PLACE["C16"][1], PLACE["C16"][2])
+# TPS63070 block (layout after the TI example) sits under J7: v0.1 coordinates + this shift
+TDX, TDY = 9.4, 3.9
+def tps(x, y):
+    return (x + TDX, y + TDY)
+_TPS = {
+    "U6": (10.6, 11.4, 0), "L2": (10.6, 7.4, 0),
+    "C31": (8.0, 11.7, 270), "C32": (5.95, 8.0, 90), "C33": (5.95, 11.7, 270),
+    "C35": (13.75, 11.55, 270), "C36": (14.6, 7.4, 90), "C37": (16.6, 7.4, 90), "C38": (18.6, 7.4, 90),
+    "C34": (10.85, 13.8, 270), "R33": (15.0, 14.1, 0), "R34": (15.0, 15.7, 0), "R35": (18.1, 14.1, 0),
+    "R30": (4.65, 14.9, 270), "R32": (12.7, 14.3, 90),
+}
+PLACE.update({k: tps(x, y) + (r,) for k, (x, y, r) in _TPS.items()})
+PLACE.update({
+    # one header row on top: J6 SYS OUT (+ -), M2 hole, J5 host I2C (SCL SDA NC GND), J7 U (+ -):
+    # the regulated and the unregulated output on the two sides of the I2C header
+    "J6": (1.9, 1.5, 90), "J5": (8.1, 1.5, 90), "H1": (27.6, 6.4, 0), "J7": (25.6, 1.5, 90),
+    # Q5 / Q9 / Q11 / C20 / D1 / U5 (HT7533, rotated 270) keep their pads >= 1.5 mm from the left V-cut edge
+    # ideal diode under J6: Q5 source straight up to J6 pin 1, its PNP mirror Q9 + Q11 (two MMBT3906 side by side) + R43/R44 under it
+    # EN pull-down next to JP5 (left of C31 it would box the C31 GND pad in)
+    "R31": (26.9, 20.6, 0),
+    "Q5": (3.2, 6.7, 0), "Q9": (3.2, 10.3, 0), "Q11": (7.2, 10.3, 0),
+    "R43": (5.6, 13.0, 0), "R44": (6.0, 14.3, 0), "C20": (2.4, 14.2, 90),
+    # EN / VSEL jumpers of J7 in its column, right under the TPS63070 next to its EN/VSEL pins
+    # (above it are the inductor and the VOUT caps); VREG test point next to J7
+    "JP5": (27.0, 22.4, 0), "JP6": (22.8, 22.4, 0), "TP14": (24.0, 5.8, 0),
+    # LEDs under the hole, next to the I2C header
+    "D6": (9.6, 7.4, 90), "R16": (9.6, 10.1, 90), "D7": (11.6, 7.4, 90), "R17": (11.6, 10.1, 90),
+    # solar input on the left edge next to the charger's VBUS copper: J1, SS54 (D1), TVS (D3)
+    "D1": (4.8, 17.7, 180), "J1": (1.85, 21.3, 0), "D3": (5.4, 25.0, 270),
+    # MSPM0L1306 (VQFN-24) turned 180, pins grouped by direction (see MCU_STUBS): CE, LED,
+    # J7 EN, OC_G up; SH_N, SWD, VBM left; CHEM, VBAT, SH_P, OD, VCORE, SDA_E / SCL_E (J5 I2C) down / right; BAL2/BAL1, VDD, NRST right
+    "U4": (13.5, 53.6, 180),
+    # C28 / C29 between BAL1 (over them) and NRST (under C28); C39 right of the VCORE pin
+    "C28": (17.6, 53.85, 0), "C29": (20.0, 54.6, 90), "C39": (15.6, 57.3, 0),
+    "R42": (18.0, 55.9, 0), "C40": (18.0, 56.9, 0),
+    "R13": (10.2, 49.4, 0), "R14": (10.2, 50.4, 0),
+    # shunt filter next to the shunt RS1: C24 across SH_P / SH_N, Kelvin R21 / R22, bias R23 / R24;
+    # VBAT and VBM dividers and JP4 under the MCU, HT7533 left
+    "C24": (13.25, 67.2, 270), "R24": (10.85, 68.2, 90), "R23": (14.6, 65.4, 270), "R22": (11.9, 68.2, 90), "R21": (14.6, 67.6, 90), "NT1": (12.6, 69.9, 0),
+    "R25": (9.2, 65.7, 90), "R26": (10.4, 65.7, 270), "C26": (11.6, 65.7, 270),
+    "R27": (7.2, 60.6, 90), "R28": (8.4, 60.6, 270), "C27": (9.6, 60.6, 270), "JP4": (9.6, 62.9, 0),
+    "U5": (3.6, 61.3, 270), "C21": (2.1, 56.3, 90), "C22": (5.4, 56.3, 0),
+    # SWD pads on the bottom side (B.Cu, B_SIDE), one row at 2.54 mm under the MCU band:
+    # 3V3M, GND, SWDIO, SWCLK, NRST (a 5-pin header or pogo pins from below)
+    "TP12": (2.2, 59.2, 0), "TP13": (4.74, 59.2, 0), "TP11": (7.28, 59.2, 0),
+    "TP16": (9.82, 59.2, 0), "TP17": (12.36, 59.2, 0),
+    # BMS bottom right: Q3 in BATT-, shunt, its Kelvin taps, OD driver
+    "Q3": (23.60, 56.2 + DB, 0), "RS1": (15.00, 57.6 + DB, 180), 
+    "Q6": (18.50, 51.4 + DB, 0), "R18": (14.6, 48.8 + DB, 0), "R19": (22.30, 52.9 + DB, 90), "R20": (26.00, 55.4 + DB, 90),
+    # 2S balancing in the free strip right of the SYS caps and the MCU (Q8 next to R41)
+    "R37": (24.20, 40.2 + DY, 90), "R41": (24.20, 45.0 + DY, 90), "Q7": (25.20, 49.4 + DB, 0), "Q10": (26.2, 52.7, 0),
+    "R38": (24.30, 52.6 + DB, 90), "R39": (23.2, 51.4, 0), "Q8": (25.4, 49.1, 180), "R40": (28.0, 49.1, 270),
+    # J4 BATT+ BM BATT- along the bottom edge (pin 1 left), its fuse F1 next to BATT+, M2 hole
+    "J4": (22.4, 62.0 + DB, 90), "F1": (16.5, 75.0, 0), "H2": (4.0, 61.5 + DB, 0),
+})
+# v0.4 DFM: every SMD pad >= 3.0 mm from the THT pads of J1 J3 J4 J5 J6 J7 and >= 1.5 mm from all four edges
+# (V-cut of the panel); H1 between J5 and J7, a third M2 hole H3 under JP5 / JP6
+PLACE.update({
+    "H3": (27.0, 30.0, 0), "J1": (1.25, 22.5, 0), "D3": (6.2, 23.5, -90), "R6": (9.1, 21.8, 0),
+    "J3": (2.1, 43.5, 0), "C21": (2.25, 56.3, 90),
+    "R35": (27.28, 18.0, 0), "R33": (24.3, 18.0, 0),
+    "C36": (23.84, 11.3, 90), "C37": (25.81, 11.3, 90), "C38": (27.78, 11.3, 90),
+    "JP5": (26.68, 22.4, 0), "JP6": (22.6, 22.4, 0),
+})
+# v0.4 (second round): battery heater J8 in the top row between J5 and J7 (J7 +0.3 mm to the right, H1 moves under J7), its low-side FET Q12
+# and gate parts R45 / R46 under it; R23 / R24 are 470k 0603 now
+PLACE.update({
+    "J8": (19.38, 1.5, 90), "H1": (27.6, 6.4, 0),
+    "Q12": (19.0, 6.9, 180), "R45": (22.0, 6.6, 270), "R46": (23.4, 7.9, 90),
+})
+# v0.4 round 3 (owner review): JST XH housings (F.Fab outlines, XH_HOUSINGS) on all THT connectors. Top row J6 | J5 | J7 with 0.5 mm
+# between the housings and 0.0 overhang (pins at y = 0.5, edge at -1.85); H1 (M2) just under the row between J5 and J7;
+# the heater J8 sits at the bottom next to J4 (Q12 / R45 / R46 above it); J1 pin 1.5 mm from the V-cut (housing overhangs 0.85 mm)
+PLACE.update({
+    "J6": (3.33, 0.5, 90), "J5": (11.19, 0.5, 90), "J7": (24.13, 0.5, 90), "H1": (21.45, 6.4, 0), "TP14": (25.0, 6.0, 0),
+    "J8": (7.8, 75.0, 90), "H2": (2.8, 74.5, 0), "Q12": (6.3, 70.0, 0), "R45": (5.3, 67.7, 0), "R46": (7.3, 67.35, 0),
+    "TP7": (2.0, 67.0, 0), "J1": (1.5, 22.5, 0), "J3": (2.3, 43.5, 0),
+})
+# v0.4 round 4 (owner review): the heater J8 moves from the bottom edge to the right edge next to H3 (pins x = 28.5, housing toward
+# the board, 0.85 mm overhang like J1) with Q12 / R45 / R46 under it; R37 +0.4 mm left for the 3 mm rule and the J8 housing; D3 and its
+# neighbours R6 / C2 / D4 / C1 shift right (D3 +0.3) so every SMD pad is >= 3.0 mm from J1's pads, TP4 down 1.85 mm
+PLACE.update({
+    "J8": (28.5, 34.53, 0), "Q12": (27.2, 42.7, 90), "R45": (26.25, 45.8, 90), "R46": (27.55, 45.8, 90), "R37": (23.8, 40.2, 90),
+    "D3": (6.5, 23.5, -90), "R6": (9.35, 21.8, 0), "C2": (9.55, 25.2, 90), "D4": (12.05, 21.8, 180), "C1": (11.95, 25.2, 90),
+    "TP4": (14.6, 24.85, 0),
+})
+B_SIDE = {"TP11", "TP12", "TP13", "TP16", "TP17"}
+# Bring-up test points: net -> (region x0, y0, x1, y1, preferred x, y)
+TEST_POINTS = {
+    "VBUS": (8.0, 25.0 + DY, 13.0, 32.0 + DY, 9.5, 27.0 + DY), "PMID": (13.0, 21.0 + DY, 17.6, 33.0 + DY, 15.0, 23.0 + DY),
+    "SYS": (13.0, 33.0 + DY, 17.6, 49.0 + DY, 15.0, 47.5 + DY), "BAT": (10.0, 35.0 + DY, 13.5, 47.0 + DY, 11.8, 45.5 + DY),
+    "GND": (0.8, 48.5, 22.2, 70.0, 2.2, 67.0), "3V3M": (0.8, 48.5, 22.2, 61.0, 19.6, 51.4),
+    "SCL_I": (0.8, 47.5, 22.2, 61.0, 7.6, 49.0), "SDA_I": (0.8, 47.5, 22.2, 61.0, 7.6, 51.0),
+    "VREG": (21.8, 5.3, 23.8, 7.6, 22.8, 6.3),
+}
+FIDUCIALS = [
+    (0.8, 27.5 + DY, 6.3, 30.5 + DY, 2.5, 29.0 + DY),
+    (9.0, 12.0, 13.4, 20.0, 11.2, 17.5),
+    (0.8, 47.0 + DB, 22.2, 60.0 + DB, 19.5, 67.5),
+]
+# B.Cu stays plain GND (no autorouted B.Cu tracks) where long B.Cu runs would otherwise
+# cut a GND pocket loose: under the BQ25798 GND via, and left of the ATtiny
+# and the whole TPS63070 block: solid GND under the switcher, nothing else crosses it on B.Cu
+TPS_KEEP = (13.2, 8.6, 29.6, 16.8)   # down to just under the IC: its control pins may use B.Cu
+B_CLEAR = [(6.9, 31.2, 9.6, 37.2), TPS_KEEP]
+CHARGER_B_CLEAR = (-4.5, -10.4, 4.5, 1.0)
+
+NETCLASSES = {
+    "Power": (0.6, 0.15, 0.8, 0.4, ["BATT+", "BATT_J", "BATT-", "BATT_S", "FS_D", "SOLAR_IN", "VOUT", "VBUS", "SYS",
+                                    "BAT", "PMID", "VREG"]),
+    "PowerQFN": (0.25, 0.13, 0.8, 0.4, ["SW1", "SW2", "SWA", "SWB"]),
+    "Supply": (0.3, 0.13, 0.6, 0.3, ["3V3M", "GND"]),
+}
+
+# TPS63070 power copper on F.Cu (TI layout guide 11.1): SW nodes as short wide copper to
+# the inductor, VIN and VOUT copper over the pins and the HF caps; PGND (10) and GND (4)
+# meet under the package and drop to two vias (one ground node at the IC).
+TPS_ZONES = {
+    "SWA": [(8.0, 6.15), (9.5, 6.15), (9.5, 8.65), (10.25, 9.4), (10.25, 11.0), (9.95, 11.0),
+            (9.95, 9.6), (9.3, 8.95), (8.0, 8.95)],
+    "SWB": [(13.2, 6.15), (11.7, 6.15), (11.7, 8.65), (10.95, 9.4), (10.95, 11.0), (11.25, 11.0),
+            (11.25, 9.6), (11.9, 8.95), (13.2, 8.95)],
+    "SYS": [(5.3, 8.4), (6.9, 8.4), (6.9, 9.6), (8.95, 9.6), (9.5, 10.1), (9.5, 11.1), (5.3, 11.1)],
+    "VREG": [(11.62, 11.12), (14.4, 11.12), (14.4, 9.3), (19.9, 9.3), (19.9, 7.8), (14.2, 7.8),
+             (13.6, 9.15), (11.62, 9.55)],
+}
+TPS_GND = [((10.6, 11.45), (11.35, 11.45)), ((11.35, 11.45), (11.35, 12.2)), ((11.35, 12.2), (11.35, 12.7)), ((11.35, 12.7), (11.8, 13.15)),
+           ((11.8, 13.15), (11.8, 14.0)), ((10.85, 14.28), (11.8, 14.0))]
+TPS_GND_VIAS = [(11.8, 13.15), (11.8, 14.0)]
+
+def tps_copper(board, net):
+    for name, poly in TPS_ZONES.items():
+        poly = [tps(x, y) for x, y in poly]
+        z = pcbnew.ZONE(board)
+        z.SetLayer(pcbnew.F_Cu); z.SetNet(net(name)); z.SetAssignedPriority(2)
+        z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
+        z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+        ol = z.Outline(); ol.NewOutline()
+        for x, y in poly:
+            ol.Append(mm(OX + x), mm(OY + y))
+        board.Add(z)
+    g = net("GND")
+    for a_, b_ in TPS_GND:
+        charger._track(board, pt(*tps(*a_)), pt(*tps(*b_)), g, 0.3)
+    for v in TPS_GND_VIAS:
+        charger._via(board, pt(*tps(*v)), g)
+    # VAUX (3) straight down into its cap
+    charger._track(board, pt(*tps(10.85, 12.36)), pt(*tps(10.85, 13.32)), net("VAUX"), 0.25)
+    for fp in board.GetFootprints():
+        if fp.GetReference() in ("U6", "L2", "C31", "C32", "C33", "C35", "C36", "C37", "C38", "C34"):
+            fp.SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+
+def fix_charger_routes(board):
+    """The shared charger pre-routes assume the 0402 C9: PMID from pin 29 goes straight out first,
+    clear of the STAT pad, then into the 0603 pad; the REGN B.Cu stub ends where the hand route
+    turns down (x 9.5)."""
+    tr = [t for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"]
+    p29 = charger._pad(board, "U1", "29").GetPosition()
+    c9 = charger._pad(board, "C9", "1").GetPosition()
+    for t in tr:
+        ends = {(t.GetStart().x, t.GetStart().y), (t.GetEnd().x, t.GetEnd().y)}
+        if t.GetNetname() == "PMID" and ends == {(p29.x, p29.y), (c9.x, c9.y)}:
+            board.Remove(t)
+            mid = pcbnew.VECTOR2I(c9.x - mm(0.35), p29.y)
+            charger._path(board, [p29, mid, c9], charger._pad(board, "U1", "29").GetNet(), 0.22)
+        if t.GetNetname() == "REGN" and t.GetLayer() == pcbnew.B_Cu:
+            a, b_ = (pcbnew.ToMM(v) - o for v, o in ((t.GetStart().x, OX), (t.GetEnd().x, OX)))
+            if abs(min(a, b_) - 8.5) < 0.01 and abs(t.GetStart().y - t.GetEnd().y) < 10:
+                if a < b_:
+                    t.SetStart(pt(9.5, pcbnew.ToMM(t.GetStart().y) - OY))
+                else:
+                    t.SetEnd(pt(9.5, pcbnew.ToMM(t.GetEnd().y) - OY))
+
+def build():
+    board = pcbnew.BOARD()
+    ds = board.GetDesignSettings()
+    ds.SetCopperLayerCount(2)
+    ds.m_TrackMinWidth = mm(0.15)
+    ds.m_ViasMinSize = mm(0.6)
+    ds.m_MinThroughDrill = mm(0.3)
+    ds.m_MinClearance = mm(0.127)
+    ds.m_HoleClearance = mm(0.25)
+    ds.m_CopperEdgeClearance = mm(0.4)   # V-cut panels: JLC wants copper >= 0.4 mm from the cut
+    nc = ds.m_NetSettings.m_DefaultNetClass
+    nc.SetTrackWidth(mm(0.25)); nc.SetClearance(mm(0.13)); nc.SetViaDiameter(mm(0.6)); nc.SetViaDrill(mm(0.3))
+    nets = {}
+    def net(name):
+        if name not in nets:
+            n = pcbnew.NETINFO_ITEM(board, name)
+            board.Add(n)
+            nets[name] = n
+        return nets[name]
+    missing = []
+    tps = {}
+    for p in gen_sch.parts:
+        ref = p["ref"]
+        if ref.startswith("#"):
+            continue
+        if ref not in PLACE and not ref.startswith("TP"):
+            missing.append(ref)
+            continue
+        fp = base.load_fp(p["fp"])
+        fp.SetReference(ref); fp.SetValue(p["value"]); fp.SetFPIDAsString(p["fp"])
+        x, y, rot = PLACE.get(ref, (0, 0, 0))
+        fp.SetPosition(pt(x, y)); fp.SetOrientationDegrees(rot)
+        if p["lcsc"]:
+            fp.SetField("LCSC", p["lcsc"]) if hasattr(fp, "SetField") else None
+        if fp.HasProperty("LCSC Part"):
+            fp.SetProperty("LCSC Part", p["lcsc"] or "")
+        if not p["lcsc"]:
+            fp.SetAttributes(fp.GetAttributes() | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
+        for pad in fp.Pads():
+            n = p["nets"].get(pad.GetNumber())
+            if n:
+                pad.SetNet(net(n))
+        fp.Reference().SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8)))
+        fp.Reference().SetTextThickness(mm(0.15))
+        fp.Value().SetVisible(False)
+        labels.thicken_silk(fp)   # JLC: silk lines >= 0.15 mm
+        for f in fp.GetFields():
+            if f.GetName() != "Reference":
+                f.SetVisible(False)
+        if ref in B_SIDE:
+            fp.Reference().SetVisible(False)   # the B.Cu silk labels name them
+        if ref.startswith("TP") and ref not in PLACE:
+            fp.Reference().SetVisible(False)
+            tps[ref] = (fp, p["nets"]["1"])
+            continue
+        if ref in ("J1", "J3", "J4", "J5", "J6", "J7", "J8"):
+            # the header outlines touch the edge or each other; the labels say it
+            for g in list(fp.GraphicalItems()):
+                if g.GetLayer() == pcbnew.F_SilkS and isinstance(g, pcbnew.PCB_SHAPE):
+                    g.SetLayer(pcbnew.F_Fab)
+        board.Add(fp)
+    if missing:
+        raise SystemExit("not placed: " + " ".join(missing))
+    charger.preroute(board, CHARGER_FRAME)
+    fix_charger_routes(board)
+    corners = [(0, -YT), (W, -YT), (W, H), (0, H)]
+    for i in range(4):
+        s = pcbnew.PCB_SHAPE(board)
+        s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        s.SetStart(pt(*corners[i])); s.SetEnd(pt(*corners[(i + 1) % 4]))
+        s.SetLayer(pcbnew.Edge_Cuts); s.SetWidth(mm(0.1))
+        board.Add(s)
+    # 0.4 mm strip along the edges: Freerouting only keeps its track clearance to the outline
+    e = 0.4
+    for (x0, y0, x1, y1) in ((0, -YT, W, -YT + e), (0, H - e, W, H), (0, -YT, e, H), (W - e, -YT, W, H)):
+        ka = pcbnew.ZONE(board)
+        ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
+        ka.SetDoNotAllowTracks(True); ka.SetDoNotAllowVias(True); ka.SetDoNotAllowPads(False)
+        ka.SetDoNotAllowFootprints(False)
+        ka.SetLayerSet(pcbnew.LSET.AllCuMask())
+        ol = ka.Outline(); ol.NewOutline()
+        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
+            ol.Append(mm(OX + x), mm(OY + y))
+        board.Add(ka)
+    charger.add_zones(board, CHARGER_FRAME)
+    tps_copper(board, net)
+    for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+        z = pcbnew.ZONE(board)
+        z.SetLayer(layer); z.SetNet(net("GND"))
+        z.SetLocalClearance(mm(0.2)); z.SetMinThickness(mm(0.2))
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+        z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+        z.SetThermalReliefGap(mm(0.3)); z.SetThermalReliefSpokeWidth(mm(0.4))
+        ol = z.Outline(); ol.NewOutline()
+        for (x, y) in [(0.3, 0.3 - YT), (W - 0.3, 0.3 - YT), (W - 0.3, H - 0.3), (0.3, H - 0.3)]:
+            ol.Append(mm(OX + x), mm(OY + y))
+        board.Add(z)
+    base.place_test_points(board, tps, CHARGER_FRAME, TEST_POINTS)
+    for ref in sorted(B_SIDE):
+        fp = board.FindFootprintByReference(ref)
+        fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+    dfm.add_fiducials(board, FIDUCIALS, base.load_fp)
+    # the fiducials want 0.65 mm clearance (pad local rule) that Freerouting does not see:
+    # a small no-track/no-via area on F.Cu around each one
+    for fp in board.GetFootprints():
+        if fp.GetReference().startswith("FID"):
+            c = fp.GetPosition()
+            ka = pcbnew.ZONE(board)
+            ka.SetIsRuleArea(True); ka.SetDoNotAllowCopperPour(False)
+            ka.SetDoNotAllowTracks(True); ka.SetDoNotAllowVias(True); ka.SetDoNotAllowPads(False)
+            ka.SetDoNotAllowFootprints(False)
+            ka.SetLayer(pcbnew.F_Cu)
+            ol = ka.Outline(); ol.NewOutline()
+            r = mm(1.35)
+            for dx, dy in ((-r, -r), (r, -r), (r, r), (-r, r)):
+                ol.Append(c.x + dx, c.y + dy)
+            board.Add(ka)
+    charger.pin1_dot(board, CHARGER_FRAME)
+    def text(s, x, y, size=0.8, angle=0, layer=pcbnew.F_SilkS):
+        t = pcbnew.PCB_TEXT(board)
+        t.SetText(s); t.SetPosition(pt(x, y)); t.SetLayer(layer)
+        if layer == pcbnew.B_SilkS:
+            t.SetMirrored(True)
+        t.SetTextSize(pcbnew.VECTOR2I(mm(size), mm(size))); t.SetTextThickness(mm(0.15))
+        t.SetTextAngleDegrees(angle)
+        board.Add(t)
+    # swd labels (bottom side)
+    jp = lambda ref, num: pcbnew.ToMM(charger._pad(board, ref, num).GetPosition().x) - OX
+    for ref, s_ in (("TP11", "IO"), ("TP16", "CLK"), ("TP12", "3V3"), ("TP13", "GND"), ("TP17", "RST")):
+        text(s_, jp(ref, "1"), PLACE[ref][1] + 1.3, 0.8, layer=pcbnew.B_SilkS)
+    text("SWD", 7.28, PLACE["TP11"][1] - 1.3, 0.8, layer=pcbnew.B_SilkS)
+    # labels next to the pads (+/- of the power connectors, jumper settings); dfm.place_silk keeps them in place
+    def padxy(ref, num):
+        p = charger._pad(board, ref, num).GetPosition()
+        return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
+    placed, made = labels.add_labels(board, padxy, mm, pt)
+    t = pcbnew.PCB_TEXT(board)
+    t.SetText("solar-smart-mppt v0.4"); t.SetPosition(pt(*labels.VERSION_AT)); t.SetLayer(pcbnew.F_SilkS)
+    t.SetTextSize(pcbnew.VECTOR2I(mm(0.8), mm(0.8))); t.SetTextThickness(mm(0.15)); t.SetTextAngleDegrees(0)
+    board.Add(t); made.append(t)
+    for r_ in ("JP3", "JP4", "JP5", "JP6"):
+        board.FindFootprintByReference(r_).Reference().SetVisible(False)
+    hidden = labels.place_refs(board, dfm, made, thick=0.15)
+    print("silk: hidden refs", " ".join(hidden) or "none")
+    return board
+
+def write_project():
+    def cls(name, tw, cl, vd, vdr):
+        return {"name": name, "track_width": tw, "clearance": cl, "via_diameter": vd, "via_drill": vdr,
+                "microvia_diameter": 0.3, "microvia_drill": 0.1, "diff_pair_width": 0.2,
+                "diff_pair_gap": 0.25, "diff_pair_via_gap": 0.25, "wire_width": 6, "bus_width": 12,
+                "line_style": 0, "pcb_color": "rgba(0, 0, 0, 0.000)", "schematic_color": "rgba(0, 0, 0, 0.000)"}
+    classes = [cls("Default", 0.25, 0.13, 0.6, 0.3)]
+    patterns = []
+    for name, (tw, cl, vd, vdr, nets) in NETCLASSES.items():
+        classes.append(cls(name, tw, cl, vd, vdr))
+        patterns += [{"netclass": name, "pattern": n} for n in nets]
+    pro = {"meta": {"filename": PROJECT + ".kicad_pro", "version": 1},
+           "board": {"design_settings": {"rules": {"min_clearance": 0.127, "min_track_width": 0.15,
+                                                     "min_via_diameter": 0.6, "min_through_hole_diameter": 0.3,
+                                                     "min_copper_edge_clearance": 0.3, "min_hole_clearance": 0.25}}},
+           "net_settings": {"classes": classes, "meta": {"version": 3}, "netclass_patterns": patterns},
+           "schematic": {}, "sheets": [[gen_sch.ROOT_UUID, ""]]}
+    open(os.path.join(ROOT, PROJECT + ".kicad_pro"), "w", encoding="utf-8").write(json.dumps(pro, indent=2) + "\n")
+
+# SYS from the charger's SYS copper up to the TPS63070 VIN copper: routed before the
+# autorouter (which leaves it open) as one locked wide run, board mm
+SYS_RUN = ((17.05, 38.15), tps(5.8, 9.0))   # kept out from under the TPS63070 (its small signals)
+# the long ATtiny signals (across the charger or the BMS) go in first the same way, locked;
+# Freerouting closes them badly or not at all on this narrow board
+# optional 4th item = track width (default 0.25 / 0.2): the SYS run from the ideal diode Q5.3 to the TPS63070 VIN copper carries the
+# whole J6 / J7 load (up to 3 A), 0.8 mm (round 6; it was 0.25 mm in rounds 1-5)
+PRE_ROUTES = [("SYS", ("Q5", "3"), tps(5.8, 9.0), 0.8), ("SYS", ("R30", "1"), ("C33", "1")),
+              # MSPM0: the fan-out itself is MCU_STUBS (below); these finish the far ends
+              ("OC_G", ("U4", "9"), ("Q3", "4")),
+              ("OD_CTL", (16.6, 58.2), ("Q6", "1")), ("BAL1", (21.8, 52.85), ("Q7", "1")),
+              ("CE", (9.0, 51.3), ("U1", "13")), ("REGN", ("C10", "1"), (10.55, 31.6)),
+              # (VREG TP14 -> pour: the 0.8 mm lane in v04_delta.json, no pre-route here; round 6)
+              ("BAL2", ("R39", "1"), ("Q10", "1")),
+              ("SYS", ("C21", "1"), ("U5", "2")),
+              ("SDA_I", ("U4", "12"), ("R13", "2")), ("SCL_I", ("U4", "11"), ("R14", "2")),
+              # J5 host I2C on PA0 (SDA, pin 24) / PA1 (SCL, pin 1): from the vias of their MCU_STUBS
+              ("SDA_E", (15.45, 56.2), ("J5", "2")), ("SCL_E", (15.9, 55.55), ("J5", "1")),
+              ("LED", ("U4", "8"), ("D7", "1")), ("REG_CTL", ("U4", "7"), ("JP5", "3")),
+              ("VREG", ("R33", "1"), ("C35", "1"))]
+# MSPM0 fan-out by hand (0.2 mm, F.Cu, locked), board mm. Left side nested (the upper pin goes
+# out further): CE up, SH_N to a via (B.Cu down to the shunt filter), SWDIO / SWCLK to the
+# TP row, VBM to its divider under the TP row. Bottom: CHEM, VBAT and SH_P straight down to
+# JP4, the VBAT divider and C24; OD_CTL under C39; VCORE to C39; PA0 / PA1 (J5 SDA / SCL) to vias. Right: BAL2 /
+# BAL1 over C28 / C29 to the balancer strip, 3V3M to C28, NRST under C28 to R42.
+MCU_STUBS = [
+    ("CE", [(11.51, 52.35), (9.0, 52.35), (9.0, 51.3)]),
+    ("SH_N", [(11.51, 52.85), (8.2, 52.85)]),
+    ("SWDIO", [(11.51, 53.35), (9.0, 53.35), (9.0, 57.4), (8.0, 57.4)]),
+    ("SWDIO", [(8.0, 57.4), (7.28, 58.12), (7.28, 59.2)], "B"),
+    ("SWCLK", [(11.51, 53.85), (9.5, 53.85), (9.5, 58.3)]),
+    ("SWCLK", [(9.5, 58.3), (9.82, 58.62), (9.82, 59.2)], "B"),
+    ("ADC_VBM", [(11.51, 54.35), (10.3, 54.35), (10.3, 59.7), (9.88, 60.12), (7.2, 60.12)]),
+    ("ADC_CHEM", [(12.25, 55.59), (12.25, 61.7), (9.6, 61.7), (9.6, 62.9)]),
+    ("ADC_VBAT", [(12.75, 55.59), (12.75, 65.22), (9.2, 65.22)]),
+    ("SH_P", [(13.25, 55.59), (13.25, 66.72), (14.6, 66.72)]),
+    ("SH_P", [(14.6, 65.88), (14.6, 67.12)]),
+    ("SH_N", [(13.25, 68.5), (13.25, 67.68), (10.85, 67.68)]),
+    # SH_N on B.Cu from its via at the left side of U4 down under SH_P (a pair from y 62)
+    ("SH_N", [(8.2, 52.85), (11.1, 55.75), (11.1, 60.2), (13.25, 62.35), (13.25, 68.5)], "B"),
+    ("SH_K", [(11.9, 68.68), (11.9, 69.7), (12.1, 69.9)]),
+    ("GND", [(10.4, 66.18), (11.6, 66.18)]),
+    ("GND", [(18.08, 53.85), (20.0, 53.85)]),
+    ("OD_CTL", [(13.75, 55.59), (13.75, 58.2), (16.6, 58.2)]),
+    ("VCORE", [(14.25, 55.59), (14.25, 56.7), (14.82, 57.27), (14.82, 57.3)]),
+    # PA0 (SDA_E) down and PA1 (SCL_E) right, each to a via; then B.Cu up to J5 (PRE_ROUTES)
+    ("SDA_E", [(14.75, 55.59), (14.75, 56.0), (15.45, 56.2)]),
+    ("SCL_E", [(15.49, 54.85), (15.9, 54.85), (15.9, 55.55)]),
+    ("GND", [(15.49, 53.35), (14.6, 53.35)]),
+    ("3V3M", [(15.49, 53.85), (17.12, 53.85)]),
+    ("NRST", [(15.49, 54.35), (16.3, 54.35), (16.9, 54.95), (18.51, 54.95), (18.51, 55.9)]),
+    ("BAL1", [(15.49, 52.85), (21.8, 52.85)]),
+    ("BAL2", [(15.49, 52.35), (22.72, 52.35), (22.72, 51.4)]),
+]
+# + 4 GND vias in the exposed pad of U4 (its only way to the B.Cu ground plane)
+MCU_VIAS = [("SH_N", (8.2, 52.85)), ("SH_N", (13.25, 68.5)), ("SDA_E", (15.45, 56.2)), ("SCL_E", (15.9, 55.55)),
+            ("SWDIO", (8.0, 57.4)), ("SWCLK", (9.5, 58.3)),
+            ("GND", (12.8, 53.1)), ("GND", (13.7, 53.1)), ("GND", (12.8, 54.1)), ("GND", (13.7, 54.1))]
+def add_mcu_stubs(board):
+    for st in MCU_STUBS:
+        name, pts = st[0], st[1]
+        layer = pcbnew.B_Cu if len(st) > 2 and st[2] == "B" else pcbnew.F_Cu
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(0.2))
+            t.SetLayer(layer); t.SetNet(n); t.SetLocked(True); board.Add(t)
+    for name, at in MCU_VIAS:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
+        v.SetNet(board.FindNet(name)); v.SetLocked(True)
+        if name == "GND":   # in the EP of U4: tented from below so no solder runs out
+            v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
+        board.Add(v)
+# battery heater power copper: the round-2 routes of this block (SYS feeder / HEAT_D / HEAT_G / two GND vias in the top row) were
+# deleted by the v0.4 round 3 / 4 re-layout; the heater copper is now in tools/v04_delta.json (SYS feeder to J8.1 0.8 mm, HEAT_D
+# 0.8 mm, HEAT_G, gate lane); the pour setting of the Q12 source is in add_top_routes().
+# top row (round 2 coordinates, only what survives add_v04_delta()): the I2C lanes SDA_E / SCL_E keep left of the J8 feeder
+# (SDA on B.Cu at x = 15.0 / 15.5 around the C32 / C33 GND tie vias, SCL on F.Cu over it and a via to B.Cu at (15.7, 5.2)). The
+# J7 VREG feed (J7.1 -> TP14 -> VREG pour right of C38, 0.8 mm) and the first SDA_E leg are in v04_delta.json since round 3 / 6.
+TOP_ROUTES = [
+    ("SDA_E", "B.Cu", [(15.0, 2.9), (15.0, 8.5), (15.5, 9.0), (15.5, 19.3), (16.0, 19.8), (16.0, 20.8)], 0.2, True),
+    ("SCL_E", "F.Cu", [(14.2, 3.7), (15.7, 5.2)], 0.2, True),
+    ("SCL_E", "B.Cu", [(15.7, 5.2), (17.4, 6.9)], 0.2, True),
+]
+TOP_VIAS = [("SCL_E", (15.7, 5.2))]
+def add_top_routes(board):
+    for name, layer, pts, w, lock in TOP_ROUTES:
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
+            t.SetLayer(pcbnew.F_Cu if layer == "F.Cu" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(lock); board.Add(t)
+    for name, at in TOP_VIAS:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
+        v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+    board.FindFootprintByReference("R46").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+    board.FindFootprintByReference("Q12").SetZoneConnection(pcbnew.ZONE_CONNECTION_FULL)   # 2.5 A source: solid to the pour
+# BQ25798 INT (U1.21) is not connected (owner decision, v0.4 round 5: R47 and TP18 dropped); the PROG lane at U1.20 keeps the
+# detour it got for the old INT lane.
+# HEAT (U4.10 -> R45.1) is routed by hand: B.Cu / F.Cu hops with vias (layer, points), plus one GND via that keeps the F.Cu GND
+# strip left of the lane connected.
+INT_HEAT_ROUTES = [   # round 2 HEAT lane (U4.10 -> J8 area) is gone (v04_delta.json has the round 4 lane); only the PROG detour stays
+    ("PROG", "F.Cu", [(11.02, 34.75), (11.02, 35.25), (10.62, 35.65), (10.62, 38.38), (10.4, 38.38)], 0.2),
+]
+INT_HEAT_VIAS = [("HEAT", (13.25, 48.9)), ("GND", (5.6, 42.2))]   # HEAT via at the start of the lane (delta lane starts there), GND tie
+def add_int_heat_routes(board):
+    for name, layer, pts, w in INT_HEAT_ROUTES:
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
+            t.SetLayer(pcbnew.F_Cu if layer == "F.Cu" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+    for name, at in INT_HEAT_VIAS:
+        v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*at)); v.SetWidth(mm(0.6)); v.SetDrill(mm(0.3))
+        v.SetNet(board.FindNet(name)); v.SetLocked(True); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+# solar input J1 -> SS54 (D1) -> TVS (D3) -> the charger's VBUS copper (F.Cu, locked, board mm), as laid out in round 4 and widened in
+# round 6: every segment 0.8 mm (0.75 mm between D3.2 and C2.2, where 0.8 mm would be 0.125 mm from the pads). Before round 6 the
+# generator routed this with patch2 (VBUS D1.1 -> D3.1 -> (9.8, 28.5), SOLAR_IN J1.1 -> D1.2) and v04_delta.json swapped single
+# segments; a re-run laid both sets. Now only this list exists (no solar copper left in v04_delta.json).
+SOLAR_ROUTES = [
+    ("SOLAR_IN", [(1.7, 22.1), (2.3, 21.5), (2.3, 20.9), (2.3, 17.7), (2.3, 17.2)], 0.8),   # J1.1 -> D1.2
+    ("VBUS", [(6.3, 17.2), (6.0, 17.2), (5.5, 17.7)], 0.8),                               # D1.1 stub
+    ("VBUS", [(6.2, 18.2), (6.5, 20.5)], 0.8),                                            # D1.1 -> D3.1
+    ("VBUS", [(7.2, 21.7), (8.1, 22.8)], 0.8),                                            # D3.1 -> past D3.2 / C2.2
+    ("VBUS", [(8.1, 22.8), (8.1, 24.5)], 0.75),
+    ("VBUS", [(8.1, 24.5), (9.4, 25.6), (9.4, 26.3)], 0.8),                               # into the VBUS pour at C2.1
+]
+def add_solar_routes(board):
+    for name, pts, w in SOLAR_ROUTES:
+        n = board.FindNet(name)
+        for p0, p1 in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*p0)); t.SetEnd(pt(*p1)); t.SetWidth(mm(w))
+            t.SetLayer(pcbnew.F_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+# hand routes kept from v0.2 (TPS63070 control pins with the R31 move, VSEL / FB2 B.Cu hops,
+# the C31 / C35 GND vias, REGN / TS at the BQ25798): fixed wiring, board mm
+HAND_ROUTES = os.path.join(HERE, "hand_routes.json")
+def add_hand_routes(board):
+    for o in json.load(open(HAND_ROUTES)):
+        n = board.FindNet(o["net"])
+        if "via" in o:
+            at = pt(*o["via"])
+            if any(x.GetClass() == "PCB_VIA" and (x.GetPosition().x, x.GetPosition().y) == (at.x, at.y)
+                   for x in board.GetTracks()):
+                continue
+            v = pcbnew.PCB_VIA(board); v.SetPosition(pt(*o["via"])); v.SetWidth(mm(o["w"]))
+            v.SetDrill(mm(0.4 if o["w"] >= 0.8 else 0.3)); v.SetNet(n); v.SetLocked(True); board.Add(v)
+        else:
+            a_, b_ = pt(*o["a"]), pt(*o["b"])
+            want = {(a_.x, a_.y), (b_.x, b_.y)}
+            if any(x.GetClass() == "PCB_TRACK" and x.GetNetname() == o["net"]
+                   and {(x.GetStart().x, x.GetStart().y), (x.GetEnd().x, x.GetEnd().y)} == want
+                   for x in board.GetTracks()):
+                continue
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(*o["a"])); t.SetEnd(pt(*o["b"])); t.SetWidth(mm(o["w"]))
+            t.SetLayer(pcbnew.F_Cu if o["layer"] == "F" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(True); board.Add(t)
+# v0.4 round 3: copper that differs from the v0.4 round 2 board (heater moved to the bottom, new HEAT lanes, top row
+# re-laid), as exported from the reference .kicad_pcb: "remove" = exact tracks / vias of the old routing, "add" = the new ones
+V04_DELTA = os.path.join(HERE, "v04_delta.json")
+def add_v04_delta(board):
+    d = json.load(open(V04_DELTA))
+    def key(t):
+        if t.GetClass() == "PCB_VIA":
+            return ("v", t.GetNetname(), round(pcbnew.ToMM(t.GetX()) - OX, 3), round(pcbnew.ToMM(t.GetY()) - OY, 3))
+        a, b_ = sorted([(round(pcbnew.ToMM(t.GetStart().x) - OX, 3), round(pcbnew.ToMM(t.GetStart().y) - OY, 3)),
+                        (round(pcbnew.ToMM(t.GetEnd().x) - OX, 3), round(pcbnew.ToMM(t.GetEnd().y) - OY, 3))])
+        return ("t", t.GetNetname(), t.GetLayerName()[0], a[0], a[1], b_[0], b_[1])
+    gone = {tuple(k[:4]) if k[0] == "v" else tuple(k[:7]) for k in d["remove"]}
+    for t in list(board.GetTracks()):
+        if key(t) in gone:
+            board.Remove(t)
+    for k in d["add"]:
+        n = board.FindNet(k[1])
+        if k[0] == "v":
+            v = pcbnew.PCB_VIA(board); v.SetPosition(pt(k[2], k[3])); v.SetWidth(mm(k[4])); v.SetDrill(mm(k[5]))
+            v.SetNet(n); v.SetLocked(k[-1]); v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu); board.Add(v)
+        else:
+            t = pcbnew.PCB_TRACK(board); t.SetStart(pt(k[3], k[4])); t.SetEnd(pt(k[5], k[6])); t.SetWidth(mm(k[7]))
+            t.SetLayer(pcbnew.F_Cu if k[2] == "F" else pcbnew.B_Cu); t.SetNet(n); t.SetLocked(k[-1]); board.Add(t)
+
+# JST XH housings (F.Fab): width (pins - 1) * 2.5 + 4.9 along the pin line, 5.75 deep, 2.35 mm from the pin line to the nearer
+# board edge side and 3.4 mm to the other (the 2.35 side faces the board edge: top row, left edge, bottom row)
+def xh_housings(board):
+    out = {}
+    for ref in ("J1", "J3", "J4", "J5", "J6", "J7", "J8"):
+        fp = board.FindFootprintByReference(ref)
+        pads = [(pcbnew.ToMM(p.GetX()) - OX, pcbnew.ToMM(p.GetY()) - OY) for p in fp.Pads()]
+        xs, ys = [q[0] for q in pads], [q[1] for q in pads]
+        L = (len(pads) - 1) * 2.5 + 4.9
+        if max(xs) - min(xs) < 0.1:      # pins in a column at the left or right edge
+            cy = (min(ys) + max(ys)) / 2
+            box_ = (xs[0] - 2.35, cy - L / 2, xs[0] + 3.4, cy + L / 2) if xs[0] < W / 2 else (xs[0] - 3.4, cy - L / 2, xs[0] + 2.35, cy + L / 2)
+        else:
+            cx = (min(xs) + max(xs)) / 2
+            box_ = (cx - L / 2, ys[0] - 2.35, cx + L / 2, ys[0] + 3.4) if ys[0] < H / 2 else (cx - L / 2, ys[0] - 3.4, cx + L / 2, ys[0] + 2.35)
+        x0, y0, x1, y1 = box_
+        for a_, b_ in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+            s_ = pcbnew.PCB_SHAPE(board); s_.SetShape(pcbnew.SHAPE_T_SEGMENT); s_.SetStart(pt(*a_)); s_.SetEnd(pt(*b_))
+            s_.SetLayer(pcbnew.F_Fab); s_.SetWidth(mm(0.1)); board.Add(s_)
+        out[ref] = box_
+    return out
+GND_TIES = {"R32", "C31", "C35", "R3", "JP4"}
+FINE = {"REG_EN", "VSEL", "FB", "FB2", "LOGIC_HI", "REGN", "TS"}
+
+if __name__ == "__main__":
+    write_project()
+    b = build()
+    b.Save(PCB)
+    import patch2
+    b = pcbnew.LoadBoard(PCB)
+    # the pre-routes keep B.Cu free where Freerouting has to (B_CLEAR + the charger core)
+    import route
+    KB = [(x0 - OX, y0 - OY, x1 - OX, y1 - OY) for x0, y0, x1, y1 in route.b_clear(b)]
+    def pad_mm(ref, num):
+        if isinstance(ref, float):
+            return (ref, num)
+        p = charger._pad(b, ref, num).GetPosition()
+        return (pcbnew.ToMM(p.x) - OX, pcbnew.ToMM(p.y) - OY)
+    print(patch2.route_net(b, "SYS", SYS_RUN, width=0.8, lock=True, via_w=0.8, layer_cost=(1.6, 1.0),
+                           keepout=[tps(6.8, 11.2) + tps(14.0, 19.0)], keepout_b=KB))
+    add_solar_routes(b)
+    add_hand_routes(b)
+    add_top_routes(b)
+    add_int_heat_routes(b)
+    add_v04_delta(b)
+    xh_housings(b)
+    add_mcu_stubs(b)
+    for net_, a_, b_, *w_ in PRE_ROUTES:
+        try:
+            fine = net_ in FINE or (net_ == "SYS" and a_[0] == "R30")
+            mcu = "U4" in (a_[0], b_[0]) or isinstance(a_[0], float) or net_ == "BAL2" or (net_ == "SYS" and a_[0] == "C21")
+            print(patch2.route_net(b, net_, (pad_mm(*a_), pad_mm(*b_)), lock=True,
+                                   layer_cost=(1.0, 1.0) if mcu else (1.0, 1.5) if fine else (1.3, 1.0),
+                                   width=w_[0] if w_ else 0.2 if fine or mcu else 0.25,
+                                   clear=0.15 if mcu else 0.145 if fine else 0.2,
+                                   keepout_b=KB))
+        except RuntimeError as e:
+            print(e)
+    # GND pads of the small parts get their own tie via now, while there is room: after
+    # routing, the pour leaves them as islands between the tracks (tools/gndfix.py notes)
+    ref_pt = (27.0, 30.0)   # plain B.Cu GND (right strip next to the charger)
+    for fp in list(b.GetFootprints()):
+        ref = fp.GetReference()
+        for p in fp.Pads():
+            if p.GetNetname() != "GND" or p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+                continue
+            x, y = pad_mm(ref, p.GetNumber())
+            if ref[0] not in "RCUQ" and ref not in GND_TIES:
+                continue
+            try:
+                patch2.route_net(b, "GND", ((x, y), ref_pt), width=0.3, lock=True, heur=False,
+                                 start_layers=(0,), window=2.0, via_in_small_cy=True, target_layers=(1,), start_pad_only=True)
+            except RuntimeError as e:
+                print("GND tie %s.%s: %s" % (ref, p.GetNumber(), e))
+    b.Save(PCB)
+    write_project()
+    print("wrote", PCB)

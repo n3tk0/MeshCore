@@ -46,8 +46,11 @@ def panelize(n, out):
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     board.BuildConnectivity()
     board.Save(out)
-    bb = pcbnew.LoadBoard(out).GetBoardEdgesBoundingBox()
-    size = (pcbnew.ToMM(bb.GetWidth()) - 0.1, pcbnew.ToMM(bb.GetHeight()) - 0.1)
+    board = pcbnew.LoadBoard(out)
+    bb = board.GetBoardEdgesBoundingBox()
+    # the bounding box includes half the outline width on each side (KiKit draws 0.3 mm lines)
+    lw = max(pcbnew.ToMM(d.GetWidth()) for d in board.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts)
+    size = (round(pcbnew.ToMM(bb.GetWidth()) - lw, 2), round(pcbnew.ToMM(bb.GetHeight()) - lw, 2))
     print("panel %d x %s: %.1f x %.1f mm" % (n, gen_pcb.PROJECT, size[0], size[1]))
     return size
 
@@ -67,7 +70,7 @@ def fab(pcb, n):
             zf.write(os.path.join(gerb, f), f)
     # every copy keeps the board's references on the silk; JLC needs unique designators in
     # the BOM and CPL, so copy k (left to right) gets "_k"
-    fix = {p["ref"]: export.ROT_FIX.get(p["fp"].split(":")[-1], 0)
+    fix = {p["ref"]: export.ROT_LCSC.get(p["lcsc"], export.ROT_FIX.get(p["fp"].split(":")[-1], 0))
            for p in gen_sch.parts if p["lcsc"] and not p["dnp"]}
     tmp = os.path.join(prod, "pos.csv")
     export.run("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",
