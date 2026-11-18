@@ -13,13 +13,16 @@
 #define BQ_REG_IINDPM    0x06   // 16 bit, 10 mA
 #define BQ_REG_CTRL0     0x0F   // EN_CHG bit 5, EN_HIZ bit 2, EN_TERM bit 1
 #define BQ_REG_CTRL1     0x10   // WD_RST bit 3, WATCHDOG 2:0
-#define BQ_REG_CTRL2     0x11   // SDRV_CTRL 2:1, SDRV_DLY bit 0
+#define BQ_REG_CTRL2     0x11   // AUTO_INDET_EN bit 6, SDRV_CTRL 2:1, SDRV_DLY bit 0
+#define BQ_REG_CTRL5     0x14   // SFET_PRESENT bit 7 (SDRV_CTRL is locked at 0 without it)
 #define BQ_REG_MPPT      0x15   // VOC_PCT 7:5, VOC_DLY 4:3, VOC_RATE 2:1, EN_MPPT 0
 #define BQ_REG_NTC1      0x18   // TS_IGNORE bit 0
+#define BQ_REG_STAT0     0x1B   // VBUS_PRESENT_STAT bit 0
 #define BQ_REG_STAT1     0x1C   // CHG_STAT 7:5
 #define BQ_REG_FAULT0    0x20
 #define BQ_REG_FAULT1    0x21
 #define BQ_REG_ADC_CTRL  0x2E   // ADC_EN bit 7
+#define BQ_REG_ADC_DIS0  0x2F   // TS_ADC_DIS bit 2
 #define BQ_REG_IBUS      0x31
 #define BQ_REG_IBAT      0x33
 #define BQ_REG_VBUS      0x35
@@ -58,4 +61,6 @@ bool bq_ship(bq_t *b);
 uint16_t bq_u16(const bq_t *b, uint8_t reg);
 int16_t bq_i16(const bq_t *b, uint8_t reg);
 uint16_t bq_ts_x10(const bq_t *b);    // TS in 0.1 % of REGN
+bool bq_vbus_present(const bq_t *b);  // VBUS_PRESENT_STAT as last read (not the ADC, which stops at night)
+bool bq_sfet(uint8_t chem);           // SFET_PRESENT (ship mode) for this chemistry
 uint16_t bq_vsysmin_mv(uint8_t chem);

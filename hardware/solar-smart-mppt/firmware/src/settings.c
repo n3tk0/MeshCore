@@ -75,7 +75,8 @@ int settings_check(const settings_t *s, uint8_t chem) {
   if (s->heat_off_x10 < s->heat_on_x10 + 10 || s->heat_off_x10 > 500) return ERR_RANGE;   // at least 1 degC apart, up to +50
   if (s->heat_duty_pct > 100) return ERR_RANGE;
   if (s->expert_n > EXPERT_MAX) return ERR_RANGE;
-  for (int i = 0; i < s->expert_n; i++) {
+  for (int i = 0; i < EXPERT_MAX; i++) {
+    if (i >= s->expert_n && s->expert[i] == 0) continue;
     uint8_t reg = s->expert[i] >> 8;
     // VSYSMIN, the charge voltage, the cell count (REG0A 7:6) and ship mode stay ours: a wrong byte there is unsafe
     if (reg > 0x18 || reg == 0x00 || reg == 0x01 || reg == 0x02 || reg == 0x0A || reg == 0x11) return ERR_RANGE;

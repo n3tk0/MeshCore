@@ -120,6 +120,7 @@ on:
           - wio_wm1110_repeater
           - Xiao_C3_repeater
           - Xiao_nrf52_repeater
+          - Xiao_nrf52_solar_lite_repeater
           - Xiao_rp2040_repeater
           - Xiao_S3_repeater
           - Xiao_S3_WIO_repeater

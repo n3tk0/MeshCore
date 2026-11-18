@@ -4,6 +4,8 @@
 #include "sensors/LocationProvider.h"
 #include "BatteryGauge.h"
 
+class BQ25798;
+
 #define TELEM_PERM_BASE         0x01   // 'base' permission includes battery
 #define TELEM_PERM_LOCATION     0x02
 #define TELEM_PERM_ENVIRONMENT  0x04   // permission to access environment sensors
@@ -29,6 +31,10 @@ public:
   virtual uint16_t getBatteryMilliVolts() { return 0; }
   // counts the battery's charge when a sensor measures its current (INA219); NULL: none does
   virtual BatteryGauge* getBatteryGauge() { return NULL; }
+  // a charger chip on I2C (BQ25798 on xiao-solar-lite); NULL: none
+  virtual BQ25798* getCharger() { return NULL; }
+  // 1 / 0: a charger chip sees a panel or adapter (or not); -1: no such chip, ask the board
+  virtual int externalPower() { return -1; }
   // the gauge's 'today' follows this clock when it is set (else days since boot)
   void setDayClock(uint32_t (*now)()) { day_clock = now; }
 protected:

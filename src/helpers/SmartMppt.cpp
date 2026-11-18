@@ -194,3 +194,117 @@ void smpptCommand(TwoWire& w, const char* args, char* reply, size_t max) {
   }
   snprintf(reply, max, "Err - smppt [status|get|set|save|cmd|bq|names]");
 }
+
+bool smpptPresent(TwoWire& w) {
+  uint16_t id;
+  return readReg(w, R_ID, id) && id == 0x534D;
+}
+
+namespace {
+// a whole number, nothing else after it (-1 if not)
+long wholeNumber(const char* s) {
+  if (*s < '0' || *s > '9') return -1;
+  char* end;
+  long v = strtol(s, &end, 0);
+  return *end == 0 ? v : -1;
+}
+
+// one setting, then SAVE so it survives a reset of the board
+void setAndSave(TwoWire& w, uint8_t reg, uint16_t v, char* reply, size_t max) {
+  uint16_t r;
+  if (!writeReg(w, reg, v) || !readReg(w, R_RESULT, r)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
+  if (r != 0) { snprintf(reply, max, "Err - %s", errText(r)); return; }
+  runCmd(w, CMDS[0], reply, max);   // "save"
+}
+
+// BQ register n as an expert entry: added, changed, or (val "auto") taken out
+void expertReg(TwoWire& w, uint8_t bq, const char* val, char* reply, size_t max) {
+  uint16_t n, e[EXPERT_MAX];
+  if (!readReg(w, R_EXPERT_N, n) || n > EXPERT_MAX) { snprintf(reply, max, "Err - no board on 0x42"); return; }
+  for (uint16_t i = 0; i < n; i++) if (!readReg(w, R_EXPERT0 + i, e[i])) { snprintf(reply, max, "Err - read"); return; }
+  int at = -1;
+  for (uint16_t i = 0; i < n; i++) if ((e[i] >> 8) == bq) at = i;
+  uint16_t r = 0;
+  if (strcmp(val, "auto") == 0) {
+    if (at < 0) { snprintf(reply, max, "OK - REG%02X was not set", bq); return; }
+    for (uint16_t i = at; i + 1 < n; i++) e[i] = e[i + 1];
+    n--;
+    for (uint16_t i = at; i < n; i++) if (!writeReg(w, R_EXPERT0 + i, e[i])) { snprintf(reply, max, "Err - write"); return; }
+    if (!writeReg(w, R_EXPERT_N, n) || !readReg(w, R_RESULT, r)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
+    if (r) { snprintf(reply, max, "Err - %s", errText(r)); return; }
+    writeReg(w, R_EXPERT0 + n, 0);   // clear the freed slot so RAM matches flash
+    runCmd(w, CMDS[0], reply, max);
+    return;
+  }
+  long v = wholeNumber(val);
+  if (v < 0 || v > 0xFF) { snprintf(reply, max, "Err - charger reg 0xNN [0..255|auto]"); return; }
+  uint16_t entry = (uint16_t)(bq << 8 | v);
+  if (at >= 0) { setAndSave(w, R_EXPERT0 + at, entry, reply, max); return; }
+  if (n >= EXPERT_MAX) { snprintf(reply, max, "Err - %u registers set already", EXPERT_MAX); return; }
+  // the board's rule, checked here too: older MSPM0 firmware checks the slot only with the count and
+  // would keep a refused entry in RAM (settings 'unsaved')
+  if (bq < 0x03 || bq > 0x18 || bq == 0x0A || bq == 0x11) {
+    snprintf(reply, max, "Err - REG%02X is not allowed (0x03..0x18 without 0x0A, 0x11)", bq);
+    return;
+  }
+  // write the entry first (checked immediately for non-zero slots), then the count (also checks reg 0x00)
+  if (!writeReg(w, R_EXPERT0 + n, entry) || !readReg(w, R_RESULT, r)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
+  if (r == 0) {
+    setAndSave(w, R_EXPERT_N, n + 1, reply, max);
+  } else {
+    snprintf(reply, max, "Err - %s", errText(r));
+  }
+  if (strncmp(reply, "Err - out of range", 18) == 0) {
+    snprintf(reply, max, "Err - REG%02X is not allowed (0x03..0x18 without 0x0A, 0x11)", bq);
+  }
+}
+}  // namespace
+
+void smpptCharger(TwoWire& w, const char* sub, const char* val, char* reply, size_t max) {
+  if (*sub == 0) { status(w, reply, max); return; }
+  if (strcmp(sub, "chem") == 0) {
+    int c = strcmp(val, "liion") == 0 ? CHEM_LIION : strcmp(val, "lifepo4") == 0 ? CHEM_LFP
+          : strcmp(val, "lto") == 0 ? CHEM_LTO2S : strcmp(val, "auto") == 0 ? CHEM_BY_JUMPER : -1;
+    if (c < 0) { snprintf(reply, max, "Err - charger chem liion|lifepo4|lto|auto (auto = jumper)"); return; }
+    setAndSave(w, R_CHEM_SET, (uint16_t)c, reply, max);
+  } else if (strcmp(sub, "ichg") == 0) {
+    long ma = wholeNumber(val);
+    if (ma < 50 || ma > 3000) { snprintf(reply, max, "Err - charger ichg 50..3000 (mA)"); return; }
+    setAndSave(w, R_ICHG, (uint16_t)ma, reply, max);
+  } else if (strcmp(sub, "vin") == 0) {
+    long mv = strcmp(val, "mppt") == 0 ? 0 : wholeNumber(val);
+    if (mv != 0 && (mv < 3600 || mv > 22000)) { snprintf(reply, max, "Err - charger vin mppt|3600..22000 (mV)"); return; }
+    setAndSave(w, R_VINDPM, (uint16_t)mv, reply, max);
+  } else if (strcmp(sub, "ntc") == 0) {
+    int m = strcmp(val, "on") == 0 ? NTC_ON : strcmp(val, "off") == 0 ? NTC_OFF : strcmp(val, "auto") == 0 ? NTC_AUTO : -1;
+    if (m < 0) { snprintf(reply, max, "Err - charger ntc on|off|auto"); return; }
+    setAndSave(w, R_NTC, (uint16_t)m, reply, max);
+  } else if (strcmp(sub, "cutoff") == 0) {
+    long mv = wholeNumber(val);
+    if (mv <= 0) { snprintf(reply, max, "Err - charger cutoff <mV> (the board always cuts off)"); return; }
+    setAndSave(w, R_OD_OFF, (uint16_t)mv, reply, max);   // discharge FET off under this
+  } else if (strcmp(sub, "shipfet") == 0) {
+    snprintf(reply, max, "Err - no ship FET setting on this board");
+  } else if (strcmp(sub, "ship") == 0) {
+    runCmd(w, CMDS[6], reply, max);   // "ship"
+  } else if (strcmp(sub, "reg") == 0) {
+    const char* sp = strchr(val, ' ');
+    char regtxt[8];
+    size_t len = sp ? (size_t)(sp - val) : strlen(val);
+    if (len == 0 || len >= sizeof(regtxt)) { snprintf(reply, max, "Err - charger reg 0xNN [value|auto]"); return; }
+    memcpy(regtxt, val, len);
+    regtxt[len] = 0;
+    long bq = wholeNumber(regtxt);
+    if (bq < 0 || bq > 0x48) { snprintf(reply, max, "Err - charger reg 0x00..0x48 [value|auto]"); return; }
+    if (sp) while (*sp == ' ') sp++;
+    if (!sp || !*sp) {
+      uint16_t v;
+      if (!readReg(w, (uint8_t)(R_BQ_FIRST + bq), v)) { snprintf(reply, max, "Err - no board on 0x42"); return; }
+      snprintf(reply, max, "> REG%02lX = 0x%02X (as the board read it, every 1 s)", bq, v & 0xFF);
+      return;
+    }
+    expertReg(w, (uint8_t)bq, sp, reply, max);
+  } else {
+    snprintf(reply, max, "Err - charger [chem|ichg|vin|ntc|cutoff|ship|reg]");
+  }
+}

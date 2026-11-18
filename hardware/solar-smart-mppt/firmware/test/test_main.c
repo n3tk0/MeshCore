@@ -362,6 +362,8 @@ static void test_bq(void) {
   CHECK(chip[BQ_REG_CTRL0] == 0x02);                              // not charging yet, EN_TERM kept
   CHECK((chip[BQ_REG_CTRL1] & 7) == 5 && (chip[BQ_REG_ADC_CTRL] & 0x80));
   CHECK((chip[BQ_REG_VSYSMIN] & 0x3F) == 2);                      // 3000 mV
+  CHECK((chip[BQ_REG_CTRL5] & 0x80) == 0x80);                     // SFET_PRESENT (Li-ion): ship mode works
+  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0x04);                  // no VBUS: TS ADC off
   // nothing to do the second time
   chip_writes = 0;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && chip_writes == 0);
@@ -372,9 +374,20 @@ static void test_bq(void) {
   // EN_HIZ read back as 1 (caught during a VOC check or a fault) is never written back
   chip[BQ_REG_CTRL0] |= 0x04;
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && chip[BQ_REG_CTRL0] == 0x22);
-  // NTC present
+  // VBUS: TS ADC on; AUTO_INDET_EN and EN_ICO always cleared
+  chip[BQ_REG_STAT0] = 0x01;
+  chip[BQ_REG_CTRL2] |= 0x40;
+  chip[BQ_REG_CTRL0] |= 0x10;
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true));
+  CHECK((chip[BQ_REG_ADC_DIS0] & 0x04) == 0 && (chip[BQ_REG_CTRL2] & 0x40) == 0 && chip[BQ_REG_CTRL0] == 0x22);
+  // NTC present (judged once TS converts)
   chip[BQ_REG_TS] = 0x02; chip[BQ_REG_TS + 1] = 0x60;             // 59 %
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && (chip[BQ_REG_NTC1] & 1) == 0 && b.ntc_present);
+  // night: TS off again, and a TS of 0 is not taken as an NTC either way
+  chip[BQ_REG_STAT0] = 0;
+  chip[BQ_REG_TS] = 0; chip[BQ_REG_TS + 1] = 0;
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, true) && (chip[BQ_REG_ADC_DIS0] & 0x04) && b.ntc_present);
+  chip[BQ_REG_TS] = 0x02; chip[BQ_REG_TS + 1] = 0x60;
   // bus error
   chip_fail = true;
   CHECK(!bq_refresh(&b) && !bq_apply(&b, &s, CHEM_LIION, true) && b.errors == 1);
@@ -384,6 +397,12 @@ static void test_bq(void) {
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 7) == 5);
   b.ship_sent = false;                                            // the sun is back
   CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL2] & 6) == 0);
+  // LiFePO4: no SFET_PRESENT (the BQ would stop at 3.2 V on battery), so no ship command either
+  settings_t lfp;
+  settings_defaults(&lfp, CHEM_LFP);
+  CHECK(bq_refresh(&b) && bq_apply(&b, &lfp, CHEM_LFP, false) && (chip[BQ_REG_CTRL5] & 0x80) == 0);
+  CHECK(bq_refresh(&b) && !bq_ship(&b) && !b.ship_sent && (chip[BQ_REG_CTRL2] & 6) == 0);
+  CHECK(bq_refresh(&b) && bq_apply(&b, &s, CHEM_LIION, false) && (chip[BQ_REG_CTRL5] & 0x80));
   // after a chip reset the ADC is off and TS reads 0: no NTC must not turn into "NTC present"
   memset(chip, 0, sizeof(chip));
   bq_t c;

@@ -67,6 +67,7 @@ static bool ship_tried;
 // BQ25798 ship mode: everything goes dark until the panel gives power again. If the chip does not
 // take it (no I2C, or VBUS just present), carry on and try again in 10 minutes, no reboot.
 static void go_ship(uint32_t now) {
+  if (!(bq.r[BQ_REG_CTRL5] & 0x80)) return;   // no ship FET (LiFePO4): the BQ cuts at 2.4 V itself
   if (ship_tried && (uint32_t)(now - ship_tried_ms) < 600000u) return;
   ship_tried = true;
   ship_tried_ms = now;
@@ -176,7 +177,8 @@ int main(void) {
       }
 
       bq_refresh(&bq);
-      bool sun = bq.ok && bq_u16(&bq, BQ_REG_VBUS) > 3500;
+      // VBUS_PRESENT_STAT, not the ADC alone: the ADC can stop at night and keep its last VBUS
+      bool sun = bq_vbus_present(&bq) && bq_u16(&bq, BQ_REG_VBUS) > 3500;
 
       bms_in_t in = {
         .vpack_mv = a.vbat_mv,
