@@ -67,6 +67,8 @@
 #define BQ_SCAN_PERIOD_MS      3600000UL       // then once an hour
 #define BQ_SCAN_RETRY_MS       600000UL        // after a scan that was thrown away
 #define BQ_SCAN_DRIFT_PCT      20              // first step re-measured at the end: more change = clouds
+#define BQ_SCAN_MIN_VINDPM     3900            // steps with a lower VINDPM are skipped (VPOORSRC region: HIZ / PG loss)
+#define BQ_SCAN_MIN_STEPS      3               // fewer steps left: no scan
 #define BQ_SCAN_MIN_MW         100             // under this the panel gives nothing to compare
 // scan state machine
 #define BQ_SC_IDLE             0
@@ -86,6 +88,7 @@
 #define BQ_SCF_DARK            7               // too little power to compare
 #define BQ_SCF_RESET           8               // the chip was reset
 #define BQ_SCF_NOCOND          9               // the conditions were not met at the start
+#define BQ_SCF_LOWV            10              // fewer than 3 steps with VINDPM >= BQ_SCAN_MIN_VINDPM: panel too low
 
 // registers
 #define BQ_REG_VSYSMIN         0x00
@@ -211,6 +214,7 @@ class BQ25798 {
   uint16_t _auto_vin_count;
   // MPPT scan: state machine (BQ_SC_*), see scanTick()
   uint8_t  _sc_state, _sc_idx, _sc_tries;
+  uint8_t  _sc_lo, _sc_table_lo;    // first step measured (lower ones skipped: VINDPM too low); of the last accepted scan
   bool     _sc_forced, _sc_hiz_set, _sc_mppt_was;
   uint32_t _sc_at;                  // the next tick
   uint16_t _sc_voc;                 // mV
