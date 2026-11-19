@@ -36,6 +36,15 @@ W, H = 25.0, 70.3             # H = JY2 + 2.45 mm (JST XH body beyond the lower 
 # stack (U3 courtyard). The charger cluster moved down by DY (D4 courtyard clear of U3), the bottom group
 # (input diodes, BMS) by DB, the connector row to H - 3 (DB + DJ). The extra 2 mm of width are a strip
 # on the right of the cluster: the ideal diode column Q5-Q7 / R30 / R31 / C20 and the VOUT run to U3 pin 14.
+# Panel tabs (x, y, side, width) in mm from the board's top-left corner, used by tools/panel.py. Long
+# sides: the VOUT run keeps 0.5 mm from the right edge from top to bottom, so the tabs sit where the
+# left edge is free (y 31) or at its best (y 56.3: no copper within 0.86 mm). The top edge is the XIAO USB
+# side: the tabs sit in the corners at x 1.5-4.5 and 17-20, clear of the USB-C and of the GND vias at
+# x 21.4 / 24. The bottom edge is the connector row: the only gap between J1 and J5 holds the bottom tab.
+# (KiKit builds each tab up to the middle of the gap, so every joint is a pair: right + left.)
+PANEL_TABS = [(25.0, 31.0, "r", 3.0), (25.0, 56.3, "r", 3.0), (0.0, 31.0, "l", 3.0), (0.0, 56.3, "l", 3.0),
+              (3.0, 0.0, "t", 3.0), (18.5, 0.0, "t", 3.0),
+              (5.55, H, "b", 2.6)]
 DY, DB, DJ = 0.7, 4.9, 2.1   # DB: 0.9 + 4.0 mm for JP4 / JP5 / R32 between J3 and D3
 SYSY = 41.75 + DY          # y of the SYS copper stub between C12 / C13
 
@@ -105,7 +114,7 @@ def build():
     ds.m_MinThroughDrill = mm(0.3)
     ds.m_MinClearance = mm(0.127)
     ds.m_HoleClearance = mm(0.25)
-    ds.m_CopperEdgeClearance = mm(0.4)   # V-cut panels: JLC wants copper >= 0.4 mm from the cut
+    ds.m_CopperEdgeClearance = mm(0.4)   # JLC wants copper >= 0.4 mm from the board edge
     nc = ds.m_NetSettings.m_DefaultNetClass
     nc.SetTrackWidth(mm(0.25)); nc.SetClearance(mm(0.13)); nc.SetViaDiameter(mm(0.6)); nc.SetViaDrill(mm(0.3))
     nets = {}

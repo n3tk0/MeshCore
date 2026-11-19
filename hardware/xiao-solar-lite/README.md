@@ -59,13 +59,13 @@ v0.5 (2026-11-13):
   beyond the outer pins along the row and 2.35 / 3.40 mm across it: J1 body x 0.05 to 5.80, y 58.85 to 66.29;
   J5 x 6.24 to 18.76, y 60.44 to 66.19; J4 x 19.20 to 24.95, y 58.85 to 66.29. They are 0.44 mm apart, inside the
   board, and free of SMD parts. The two upper pins sit 3 mm from D1 and R30 (the length grew by 1.3 mm for that).
-- Panel: 4 boards on 100 × 76.3 mm (the longer board adds 1.3 mm to the 75 mm height; see the stand-alone update below for the current 100 × 80.3 mm).
+- Panel: 4 boards on 100 × 76.3 mm (the longer board adds 1.3 mm to the 75 mm height; the current mouse-bite panel is 106 × 84.3 mm, see Panel below).
 - **Silkscreen:** JP2 is labelled `CHEM` (left of the jumper), `Li` over pad 1 (GND side, bridged 1-2 by default)
   and `LFP` over pad 3 (3V3 side); JP3 is labelled `LFP:short` (close only for LiFePO4). The I2C pin names sit under
   the J5 pins, all silk strokes are 0.15 mm and the U3 pin names 0.8 mm. These labels are added by
   `silk_fixups()` in `tools/gen_pcb.py`; on an already routed board `python3 tools/run.py silk_fix` applies them
   (once) without touching copper.
-- **Stand-alone use (v0.5 update, board 25 × 70.3 mm, panel 100 × 80.3 mm)**: the board can run without our firmware.
+- **Stand-alone use (v0.5 update, board 25 × 70.3 mm, panel 106 × 84.3 mm)**: the board can run without our firmware.
   `JP4` (closed by default) is a 2-pad solder jumper in series between XIAO D0 (net `XIAO_D0`) and the BQ25798 CE net;
   cutting it leaves CE on `JP2` / `R4` only. `R32` (10k 0402, C25744, assembled) and `JP5` (open) form a fake NTC from TS to GND.
   JP3's label is now `LFP/SA:short` (SA = stand-alone). The three parts sit on the left edge between J3 and D3 (JP4 at
@@ -133,9 +133,15 @@ SMBJ24A and HJ8205 are preferred extended parts (no fee), everything else is bas
 C9 100n/50V 0402 is the basic C307331). Parts cost about $4.5 per board (not recalculated for v0.5). Headers are
 hand-soldered (`production/bom-hand.csv`).
 
-Panel: `panel/` holds 4 boards on 100×80.3 mm (V-cut, 5 mm rails with tooling holes and fiducials),
-made by `python3 tools/run.py panel` (KiKit; Gerber/BOM/CPL in `panel/production/`). Order it as
-"Panel by Customer" with V-cut. Copper keeps 0.4 mm from every edge, as JLC wants next to a V-cut.
+Panel: `panel/` holds 4 boards on 106 × 84.3 mm (tabs with mouse bites, 2 mm gap between the boards and to
+the 5 mm rails, rails with tooling holes and fiducials), made by `python3 tools/run.py panel` (KiKit; Gerber/BOM/CPL
+in `panel/production/`). JLC Economic PCBA does not do V-cut, so the boards hang on tabs: 2 per joint between
+neighbouring boards (right edge at y 31 and 56.3 mm), 2 on the top edge (x 3 and 18.5 mm, clear of the XIAO USB-C) and
+1 on the bottom edge (x 5.55 mm, the gap between J1 and J5), each with a row of 0.5 mm holes (0.8 mm pitch).
+Order it as "Panel by Customer" without V-cut (Economic PCBA is fine). The VOUT run keeps 0.5 mm from the right edge,
+so the right-side tabs cannot be 1 mm clear of copper; the holes lie in the tab, not in the board. After break-off the
+edges need a light sanding (tab stubs of up to 0.5 mm). The width of 106 mm is above JLC's 100 mm price tier
+(4 × 25 mm + 3 × 2 mm gaps); 3 boards per panel (79 × 84.3 mm) would stay under it.
 
 ## Files and tools
 - `tools/gen_sch.py`: schematic + BOM; reuses the writer and the symbol/footprint library of `../xiao-solar`.
