@@ -1774,6 +1774,47 @@ TEST(IbatCal, ManualErrors) {
   EXPECT_EQ(man(c, -100, -100), IBAT_SET_OK);         // the old 60..149 zone is fine now
 }
 
+TEST(IbatCal, SanityLimitScalesWithCurrent) {
+  IbatCurve c = noCurve();
+  EXPECT_EQ(man(c, 1100, 1000), IBAT_SET_OK);    // 100 mA off, 15 % = 150 mA allowed
+  EXPECT_EQ(man(c, 1150, 1000), IBAT_SET_OK);    // exactly 15 %
+  EXPECT_EQ(man(c, 1160, 1000), IBAT_SET_NONSENSE);
+  EXPECT_EQ(man(c, 2400, 2000), IBAT_SET_NONSENSE);   // 20 %
+  EXPECT_EQ(man(c, 2300, 2000), IBAT_SET_OK);         // 15 %
+  EXPECT_EQ(man(c, 3000, 2900), IBAT_SET_OK);
+  EXPECT_EQ(man(c, 3000, 2600), IBAT_SET_NONSENSE);   // 400 mA > 15 % of 2600 (390)
+  EXPECT_EQ(man(c, 3000, 2700), IBAT_SET_OK);         // 300 mA < 405
+  EXPECT_EQ(man(c, 120, 60), IBAT_SET_NONSENSE);      // low currents: the 50 mA still rules
+  EXPECT_EQ(man(c, 110, 60), IBAT_SET_OK);
+  EXPECT_EQ(man(c, -400, -330), IBAT_SET_NONSENSE);   // 70 mA off, 15 % of 330 = 49.5
+  EXPECT_EQ(man(c, -400, -350), IBAT_SET_OK);         // 50 mA
+}
+
+TEST(IbatCal, ExportPagesOfAFullCurve) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  const int raw[9] = { 6, 12, 22, 55, 110, 220, 540, 1090, 2150 };
+  const int tru[9] = { 5, 10, 20, 50, 100, 200, 500, 1000, 2000 };
+  for (int i = 0; i < 9; i++) {
+    adcStep(bq, f, t, (int16_t)raw[i]);
+    ASSERT_EQ(bq.ibatCalManual(tru[i]), IBAT_SET_OK) << i;
+  }
+  char b1[200], b2[200];
+  ASSERT_GT(bq.formatIbatExport(b1, 155, IBAT_CHG, 1), 0);
+  ASSERT_GT(bq.formatIbatExport(b2, 155, IBAT_CHG, 2), 0);
+  EXPECT_STREQ(b1, "-D BQ25798_IBAT_CHG_CURVE='\"6:5,12:10,22:20,55:50,110:100\"' ..2");
+  EXPECT_STREQ(b2, "-D BQ25798_IBAT_CHG_CURVE2='\"220:200,540:500,1090:1000,2150:2000\"'");
+  IbatCurve d = noCurve();   // the two fragments as default curves give the same curve back
+  EXPECT_EQ(IbatCal::parseCurve("6:5,12:10,22:20,55:50,110:100", IBAT_CHG, d), 5);
+  EXPECT_EQ(IbatCal::parseCurve("220:200,540:500,1090:1000,2150:2000", IBAT_CHG, d), 4);
+  for (int i = 0; i < 9; i++) EXPECT_EQ(IbatCal::apply(noCurve(), d, (int16_t)raw[i]), tru[i]) << i;
+  bq.formatIbatExport(b1, 155, IBAT_DIS, 1);
+  EXPECT_NE(strstr(b1, "no points"), nullptr);
+}
+
 TEST(IbatCal, MonotonicRejection) {
   IbatCurve c = noCurve();
   ASSERT_EQ(man(c, 100, 90), IBAT_SET_OK);       // chg 100

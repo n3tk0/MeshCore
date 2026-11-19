@@ -22,7 +22,7 @@
 // (low point under 60 mA + high point from 150 mA; one point only = gain 1, offset only); with no usable
 // point at all the build offset + gain (BQ25798_IBAT_*_OFFSET_X10 / _GAIN_X1000). Anchoring the line at
 // the end point keeps the result continuous. A point is ignored when it is nonsense (|true - raw| over
-// 50 mA, or true/raw outside 0.5..1.5 from 50 mA) or when it breaks the order (raw magnitude not
+// max(50 mA, 15 % of true), or true/raw outside 0.5..1.5 from 50 mA) or when it breaks the order (raw magnitude not
 // growing with the true one); in a conflict a manual point wins over an auto one, else the lower one
 // stays. Pure logic, no hardware: runs in the native unit tests.
 
@@ -66,6 +66,13 @@
 #endif
 #ifndef BQ25798_IBAT_DIS_CURVE
 #define BQ25798_IBAT_DIS_CURVE   ""
+#endif
+// ... and a second part of it (`charger ibat export <dir> 2`: the points from index 5 up), same format
+#ifndef BQ25798_IBAT_CHG_CURVE2
+#define BQ25798_IBAT_CHG_CURVE2  ""
+#endif
+#ifndef BQ25798_IBAT_DIS_CURVE2
+#define BQ25798_IBAT_DIS_CURVE2  ""
 #endif
 
 #define IBAT_CHG               0        // direction index: raw >= 0
@@ -165,7 +172,9 @@ inline bool fitOk(float gain, float off) {
 inline bool pointSane(int32_t raw, int32_t ref) {
   if (raw <= 0 || ref <= 0) return false;
   int32_t d = ref - raw;
-  if ((d < 0 ? -d : d) > IBAT_OFFSET_MAX_MA * 10) return false;
+  int32_t lim = ref * 15 / 100;   // the allowed difference grows with the current: max(50 mA, 15 % of true)
+  if (lim < IBAT_OFFSET_MAX_MA * 10) lim = IBAT_OFFSET_MAX_MA * 10;
+  if ((d < 0 ? -d : d) > lim) return false;
   if (ref >= IBAT_RATIO_FROM_MA * 10) {   // ratio true/raw in 0.5..1.5 (integers: no division)
     if (ref * 2 < raw || ref > raw * 3 / 2) return false;
   }
@@ -438,6 +447,8 @@ inline void buildDefault(IbatCurve& c) {
   memset(&c, 0, sizeof(c));
   parseCurve(BQ25798_IBAT_CHG_CURVE, IBAT_CHG, c);
   parseCurve(BQ25798_IBAT_DIS_CURVE, IBAT_DIS, c);
+  parseCurve(BQ25798_IBAT_CHG_CURVE2, IBAT_CHG, c);
+  parseCurve(BQ25798_IBAT_DIS_CURVE2, IBAT_DIS, c);
 }
 
 }  // namespace IbatCal

@@ -2479,7 +2479,7 @@ void MyMesh::loadCharger() {
 // charger ibat                  battery current: raw BQ25798 IBAT, corrected, the INA219's; the calibration
 // charger ibat cal <mA>         this raw reading is really <mA> (+ charge, - discharge): a curve point, kept in /ibatcal
 // charger ibat curve [chg|dis] [2]  the points of a direction (default dis; 2 = the second half)
-// charger ibat export chg|dis   the curve as a line for platformio.ini
+// charger ibat export chg|dis [2]  the curve as a line for platformio.ini (2 = the second part, _CURVE2)
 // charger ibat clear [auto]     no calibration (auto: only the learnt points; learning starts again with an INA219)
 // charger reg 0xNN [value]      read / write one BQ25798 register (direct: the managed bits come back
 //                               within 10 s; MSPM0 boards: kept as an expert setting, `auto` drops it)
@@ -2548,9 +2548,9 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
         if (strncmp(p, "chg", 3) == 0) { dir = IBAT_CHG; p += 3; }
         else if (strncmp(p, "dis", 3) == 0) { dir = IBAT_DIS; p += 3; }
         else if (*p == '2') { page = 2; p++; }
-        else if (*p) { strcpy(reply, ex ? "Err - charger ibat export chg|dis" : "Err - charger ibat curve [chg|dis] [2]"); return; }
+        else if (*p) { strcpy(reply, ex ? "Err - charger ibat export chg|dis [2]" : "Err - charger ibat curve [chg|dis] [2]"); return; }
       }
-      if (ex) { if (c->formatIbatExport(reply, 155, dir) < 0) strcpy(reply, "Err - too long for one reply: see charger ibat curve"); }
+      if (ex) { if (c->formatIbatExport(reply, 155, dir, page) < 0) strcpy(reply, "Err - too long for one reply: see charger ibat curve"); }
       else c->formatIbatCurve(reply, 155, dir, page);
       return;
     }
