@@ -43,8 +43,21 @@ if ! keep WITH_OTHER_SENSORS; then
   undef VL53L0X RAK12035
   removed+=("other sensors")
 fi
+# a board whose own charger is found by the I2C scan (BQ25798 on the Xiao solar lite) needs the scan:
+# without it the charger is never started and the battery reads from the (unconnected) ADC pin
+board_charger=""
+if [ -n "$LITE_ENV" ]; then
+  board_charger=$(pio project config --json-output 2>/dev/null | python3 -c '
+import json, sys
+for name, opts in json.load(sys.stdin):
+    if name == "env:" + sys.argv[1] and "ENV_INCLUDE_BQ25798" in json.dumps(opts):
+        print("BQ25798")
+' "$LITE_ENV")
+fi
 # no I2C sensor kept: skip the bus scan as well (a stuck bus can hang the boot on nRF52)
-if ! keep WITH_CLIMATE && ! keep WITH_POWER_METERS && ! keep WITH_OTHER_SENSORS; then
+if [ -n "$board_charger" ]; then
+  echo "I2C scan kept: the board's $board_charger charger is found by it" >&2
+elif ! keep WITH_CLIMATE && ! keep WITH_POWER_METERS && ! keep WITH_OTHER_SENSORS; then
   flags+=("-DDISABLE_ENV_SENSORS")
 fi
 if ! keep WITH_GPS; then
@@ -102,5 +115,5 @@ if [ -n "$LITE_REMOVED" ]; then
   if [ ${#removed[@]} -gt 0 ]; then printf '%s\n' "${removed[@]}" > "$LITE_REMOVED"; fi
 fi
 export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:+$PLATFORMIO_BUILD_FLAGS }${flags[*]}"
-unset flags removed
+unset flags removed board_charger
 unset -f keep drop undef
