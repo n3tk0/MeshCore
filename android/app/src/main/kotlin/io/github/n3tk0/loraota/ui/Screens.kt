@@ -462,6 +462,17 @@ private fun LoraTab(vm: AppViewModel) {
         }
     }
 
+    if (vm.olderPage > 0) Text(stringResource(R.string.searching_older, vm.olderPage), style = MaterialTheme.typography.bodySmall)
+    if (vm.runningNotChecked && vm.oldImage == null && vm.olderPage == 0) {
+        // the search ended early (page cap or a failed fetch): the firmware may still be in an older release
+        InfoCard(stringResource(R.string.unchecked_fw, hex(info.imageSha).take(8)))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.searchAgain() }, enabled = !vm.busy) { Text(stringResource(R.string.unchecked_fw_again)) }
+            OutlinedButton(onClick = { vm.showFlashTab() }, enabled = !vm.busy) { Text(stringResource(R.string.unknown_fw_flash)) }
+            OutlinedButton(onClick = { pickOld.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.unknown_fw_pick)) }
+        }
+    }
+
     val continuing = info.state == OtaProtocol.STATE_PAUSED || vm.resumable
     // a message about the cut-short update already says what to do
     if (continuing && vm.message.isEmpty()) InfoCard(stringResource(R.string.paused_hint))
