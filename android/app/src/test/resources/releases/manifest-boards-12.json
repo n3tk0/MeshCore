@@ -1,0 +1,11 @@
+{
+  "files": [
+    {
+      "env": "Xiao_nrf52_solar_lite_repeater",
+      "version": "claude-project-thread-hfnthp",
+      "dfu": "Xiao_nrf52_solar_lite_repeater-lite-claude-project-thread-hfnthp-91e94f2.zip",
+      "dfu_size": 394583,
+      "dfu_sha256": "e41f8136d2ed42198b1093fc4069828490036987d0c677487d8d452a62397a1e"
+    }
+  ]
+}

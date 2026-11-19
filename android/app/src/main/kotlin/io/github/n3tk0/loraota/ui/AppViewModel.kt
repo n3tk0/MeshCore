@@ -561,13 +561,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- firmware ----
 
+    /** Why the list of releases could not be fetched (the list kept on the phone is shown): null when it was. */
+    var releasesError by mutableStateOf<String?>(null)
+
+    private fun releasesWhy(e: Throwable?): String =
+        if ((e as? io.github.n3tk0.loraota.ota.HttpError)?.rateLimited == true) str(R.string.msg_releases_rate_limit, e.code)
+        else e?.message ?: ""
+
     fun loadReleases() = viewModelScope.launch {
+        Releases.apiToken = tokens.get()
+        releasesError = null
         // finds of earlier searches first: the queue needs them with no running repeater (and no internet) too
         olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo, ctx.filesDir) } }
         releases = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
         if (list.isFailure) {
-            val why = list.exceptionOrNull()?.message ?: ""
+            val why = releasesWhy(list.exceptionOrNull())
+            releasesError = why
             if (releases.isNotEmpty()) {
                 // no internet on site: the list kept last time (an error on screen stays)
                 if (!messageIsError || message.isEmpty()) {
@@ -784,6 +794,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** How many firmware with LoRa OTA are for other boards than the one the repeater runs (hidden from the list); 0 if its board is unknown. */
+    fun otherBoardCount(): Int {
+        val env = oldImage?.env ?: allFirmware.firstOrNull { it.sha256 == oldImage?.sha }?.env ?: return 0
+        return allFirmware.count { it.hasLoraOta && it.env != env }
+    }
+
     /** Releases that fit: the right role, and for a repeater whose chip is known the right file type. */
     fun flashCandidates(): List<FirmwareFile> {
         val platform = info?.platform
@@ -812,6 +828,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadUpstream() = viewModelScope.launch {
+        Releases.apiToken = tokens.get()
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(Releases.UPSTREAM_REPO, ctx.filesDir) } }
         upstream = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(Releases.UPSTREAM_REPO, ctx.filesDir) }
         if (list.isFailure) {
