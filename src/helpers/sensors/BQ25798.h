@@ -368,8 +368,9 @@ public:
   int formatIbat(char* buf, int len) const;
   // `charger ibat curve [chg|dis] [2]`: "dis 5:-6>-5a12 10:-11>-10m ..." (page 1 = the first 5 points, 2 = the rest)
   int formatIbatCurve(char* buf, int len, int dir, int page) const;
-  // `charger ibat export chg|dis`: the line for platformio.ini; -1 when it does not fit
-  int formatIbatExport(char* buf, int len, int dir) const;
+  // `charger ibat export chg|dis [2]`: the line for platformio.ini (page 1 = BQ25798_IBAT_<dir>_CURVE with the points 0..4,
+  // page 2 = BQ25798_IBAT_<dir>_CURVE2 with the rest; both are read at boot); -1 when it does not fit
+  int formatIbatExport(char* buf, int len, int dir, int page = 1) const;
 
   // true once each time a charge ends ("done"): the gauge takes the cell as full
   bool takeFull() { bool f = _full; _full = false; return f; }

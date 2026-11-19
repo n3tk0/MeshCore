@@ -921,20 +921,30 @@ int BQ25798::formatIbatCurve(char* buf, int len, int dir, int page) const {
   return n;
 }
 
-int BQ25798::formatIbatExport(char* buf, int len, int dir) const {
+int BQ25798::formatIbatExport(char* buf, int len, int dir, int page) const {
   buf[0] = 0;
   IbatEff e = IbatCal::build(_cal, _def, dir);
-  if (e.m == 0) return addf(buf, len, 0, "no points for %s", dirName(dir));
-  int n = addf(buf, len, 0, "-D BQ25798_IBAT_%s_CURVE='\"", dir == IBAT_CHG ? "CHG" : "DIS");
+  int from = page == 2 ? 5 : 0, to = page == 2 ? IBAT_NP : 5;
+  int cnt = 0;
+  for (int k = 0; k < e.m; k++) if (e.idx[k] >= from && e.idx[k] < to) cnt++;
+  if (cnt == 0) return addf(buf, len, 0, "no points for %s%s", dirName(dir), page == 2 ? " 2" : "");
+  int n = addf(buf, len, 0, "-D BQ25798_IBAT_%s_CURVE%s='\"", dir == IBAT_CHG ? "CHG" : "DIS", page == 2 ? "2" : "");
   int sgn = dir == IBAT_CHG ? 1 : -1;
+  bool first = true;
   for (int k = 0; k < e.m; k++) {
+    if (e.idx[k] < from || e.idx[k] >= to) continue;
     char tmp[24];
     int w = addx10(tmp, sizeof(tmp), 0, sgn * (int)e.raw[k]);
     tmp[w++] = ':';
     w = addx10(tmp, sizeof(tmp), w, sgn * (int)e.ref[k]);
     if (n + w + 1 + 3 >= len) { buf[0] = 0; return -1; }   // never a cut-off curve
-    n = addf(buf, len, n, "%s%s", k ? "," : "", tmp);
+    n = addf(buf, len, n, "%s%s", first ? "" : ",", tmp);
+    first = false;
   }
   if (n + 3 >= len) { buf[0] = 0; return -1; }
-  return addf(buf, len, n, "\"'");
+  n = addf(buf, len, n, "\"'");
+  if (page == 1) {   // points on page 2 too
+    for (int k = 0; k < e.m; k++) if (e.idx[k] >= 5) { n = addf(buf, len, n, " ..2"); break; }
+  }
+  return n;
 }
