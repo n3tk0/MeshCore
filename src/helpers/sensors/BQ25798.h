@@ -20,7 +20,7 @@
 //   - MPPT mode (`charger vin mppt`) with a weak panel: the chip sets VINDPM = VBUS0 - 0.7 V at plug-in
 //     (3.6 V at the clamp), which loads the panel under VPOORSRC: poor source, EN_HIZ = 1, PG = 0, and
 //     MPPT (enabled only with PG) never runs. While the converter is not loading the panel (HIZ / no PG /
-//     poor source) the VBUS ADC is the panel's open-circuit voltage: VINDPM is set to 80 % of it (rounded
+//     poor source) the VBUS ADC is the panel's open-circuit voltage: VINDPM is set to the VOC_PCT share of it (81 % default, rounded
 //     down to 100 mV, 3.6 .. 22 V) BEFORE EN_HIZ is cleared, at every drop-out, until MPPT takes over;
 //   - one-shot ADC every 10 s: battery and panel voltage / current, SYS, die temperature (continuous
 //     instead, should the results ever read as zeros after a one-shot);
@@ -42,7 +42,7 @@
 #define BQ_ICHG_MAX            2000
 #define BQ_VINDPM_MIN          3600
 #define BQ_VINDPM_MAX          22000
-#define BQ_VOC_PCT             80              // auto VINDPM: % of the panel's open-circuit voltage
+#define BQ_VOC_PCT_DEFAULT     81              // MPPT VOC_PCT (and auto VINDPM) default: 81.25 %; selectable 63|69|75|81|88
 #define BQ_VOC_MIN_MV          3000            // a VBUS result under this is not an open-circuit reading
 #define BQ_HIZ_HOLD_POLLS      2               // EN_HIZ is kept this many polls to get a no-load VBUS result ...
 #define BQ_HIZ_HOLD_PERIOD     6               // ... in every this many polls of a poor-source loop
@@ -79,7 +79,8 @@
 
 // values written
 #define BQ_IINDPM_MA           3000   // the panel limits itself through VINDPM / MPPT
-#define BQ_MPPT_BASE           0x8A   // VOC_PCT 0.8125, VOC_DLY 300 ms, VOC_RATE 2 min (EN_MPPT apart)
+#define BQ_MPPT_DLYRATE        0x0A   // REG15 bits 4:1: VOC_DLY 300 ms, VOC_RATE 2 min (VOC_PCT 7:5, EN_MPPT 0 apart)
+#define BQ_MPPT_BASE           0x8A   // the default: VOC_PCT 0.8125 + BQ_MPPT_DLYRATE (see BQ25798::mpptBase)
 #define BQ_ADC_START           0xD0   // ADC_EN, one shot, 14 bit (12 ms a channel)
 #define BQ_ADC_CONTINUOUS      0x90   // ADC_EN, continuous, 14 bit (fallback, see adc())
 #define BQ_ADC_DIS0_VAL        0x04   // TS off: with it on, the ADC stops under 3.2 V on battery alone
@@ -123,7 +124,10 @@ struct BQ25798Settings {
   uint8_t  ntc;         // 1 = an NTC is on J3 (TS is used), 0 = TS_IGNORE
   uint8_t  shipfet;     // 1 = Q2 fitted (SFET_PRESENT), 0 = JP3 closed
   uint16_t cutoff_mv;   // battery empty: shutdown under this with no sun; 0 = off
+  uint8_t  voc_pct;     // MPPT VOC_PCT: 63, 69, 75, 81 or 88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %); 0 = default (81)
+  uint8_t  reserved;    // 0
 };
+// The /charger file is the struct as is. Files of 10 bytes (before voc_pct) are still read: fromFile().
 #define BQ_SETTINGS_VERSION    1
 
 struct BQ25798Reading {
@@ -213,6 +217,7 @@ public:
   bool chargeHeld() const { return _jumper == 1 && _s.chem != BQ_CHEM_LIFEPO4; }
   bool adcContinuous() const { return _adc_continuous; }
   bool mpptOn() const;
+  uint8_t vocPct() const { return _s.voc_pct; }
   uint8_t faults0() const { return _status[5]; }
   uint8_t faults1() const { return _status[6]; }
   uint16_t reconfigs() const { return _reconfigs; }
@@ -223,8 +228,16 @@ public:
   uint16_t poorSourceCount() const { return _poorsrc_count; }   // poor-source detections seen since boot
   uint16_t autoVindpm() const { return _auto_vin_mv; }          // last VINDPM set from Voc, mV (0 = none)
   uint16_t autoVindpmCount() const { return _auto_vin_count; }
-  // VINDPM (REG05) for a panel open-circuit voltage: 80 %, rounded down to 100 mV, 3600..22000
-  static uint16_t vindpmFromVoc(uint16_t voc_mv);
+  // VINDPM (REG05) for a panel open-circuit voltage: voc_pct (63|69|75|81|88, the VOC_PCT setting) of it,
+  // rounded down to 100 mV, 3600..22000
+  static uint16_t vindpmFromVoc(uint16_t voc_mv, uint8_t voc_pct = BQ_VOC_PCT_DEFAULT);
+  // the VOC_PCT setting: 63|69|75|81|88 -> REG15 bits 7:5 (1..5), -1 for anything else
+  static int vocCode(int pct);
+  // REG15 without EN_MPPT for a setting (VOC_PCT bits 7:5 + the delay / rate bits)
+  static uint8_t mpptBase(uint8_t voc_pct);
+  // the settings from the /charger file's bytes (len as read): false for a short or invalid file;
+  // a 10-byte file from before voc_pct gets the default 81
+  static bool fromFile(const void* data, int len, BQ25798Settings& s);
   static const char* stateName(uint8_t st);
   // TS in 0.1 % of REGN -> 0.1 °C; BQ_TCELL_NONE for an open (no NTC, > 84 %) or shorted (< 5 %) NTC
   static int16_t ntcTemp(uint16_t ts_pm);

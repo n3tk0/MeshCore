@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <algorithm>
 #include <gtest/gtest.h>
 
@@ -611,12 +612,107 @@ struct DawnBQ : public FakeBQ {
 
 TEST(BQ25798, VindpmFromVoc) {
   EXPECT_EQ(BQ25798::vindpmFromVoc(6000), 4800);
-  EXPECT_EQ(BQ25798::vindpmFromVoc(5999), 4700);     // rounded down to 100 mV
+  EXPECT_EQ(BQ25798::vindpmFromVoc(5999), 4800);     // 81.25 %, rounded down to 100 mV
   EXPECT_EQ(BQ25798::vindpmFromVoc(4000), 3600);     // 3.2 V: clamped to the minimum
   EXPECT_EQ(BQ25798::vindpmFromVoc(0), 3600);
-  EXPECT_EQ(BQ25798::vindpmFromVoc(18000), 14400);
+  EXPECT_EQ(BQ25798::vindpmFromVoc(18000), 14600);
   EXPECT_EQ(BQ25798::vindpmFromVoc(40000), 22000);   // clamped to the maximum
   EXPECT_EQ(BQ25798::vindpmFromVoc(65535), 22000);
+}
+
+TEST(BQ25798, VocPctSettingParseAndReject) {
+  EXPECT_EQ(BQ25798::vocCode(63), 1);
+  EXPECT_EQ(BQ25798::vocCode(69), 2);
+  EXPECT_EQ(BQ25798::vocCode(75), 3);
+  EXPECT_EQ(BQ25798::vocCode(81), 4);
+  EXPECT_EQ(BQ25798::vocCode(88), 5);
+  for (int bad : {0, 56, 62, 64, 68, 70, 80, 82, 87, 93, 100, -1}) EXPECT_EQ(BQ25798::vocCode(bad), -1) << bad;
+  BQ25798Settings s = settings();
+  EXPECT_EQ(s.voc_pct, 81);                          // the default
+  for (int ok : {63, 69, 75, 81, 88}) { s.voc_pct = ok; EXPECT_TRUE(BQ25798::valid(s)) << ok; }
+  s.voc_pct = 80;
+  EXPECT_FALSE(BQ25798::valid(s));
+  s.voc_pct = 0;
+  EXPECT_FALSE(BQ25798::valid(s));
+}
+
+TEST(BQ25798, Reg15FollowsVocPct) {
+  EXPECT_EQ(BQ25798::mpptBase(81), BQ_MPPT_BASE);
+  const struct { uint8_t pct, base; } cases[] = { {63, 0x2A}, {69, 0x4A}, {75, 0x6A}, {81, 0x8A}, {88, 0xAA} };
+  for (auto& c : cases) {
+    FakeBQ f;
+    BQ25798 bq(f);
+    uint32_t t = 0;
+    bq.begin(t);
+    BQ25798Settings s = settings();
+    s.voc_pct = c.pct;
+    bq.apply(s);
+    runFor(bq, t, 30000);
+    EXPECT_EQ(f.r[0x15] & 0xFE, c.base) << (int)c.pct;   // VOC_PCT in 7:5, DLY / RATE as before
+    EXPECT_EQ(f.r[0x15] & 0x1F, 0x0A | (f.r[0x15] & 1)) << (int)c.pct;
+    s.voc_pct = 75;                                       // changed later: written again
+    bq.apply(s);
+    runFor(bq, t, 30000);
+    EXPECT_EQ(f.r[0x15] & 0xFE, 0x6A);
+  }
+}
+
+TEST(BQ25798, OldChargerFileDefaultsVocPct) {
+  BQ25798Settings s = settings();
+  s.ichg_ma = 1500;
+  s.voc_pct = 88;
+  const int OLD = 10;                                   // the file before voc_pct
+  ASSERT_EQ((int)offsetof(BQ25798Settings, voc_pct), OLD);
+  BQ25798Settings o;
+  ASSERT_TRUE(BQ25798::fromFile(&s, OLD, o));           // old file: no voc_pct byte
+  EXPECT_EQ(o.ichg_ma, 1500);
+  EXPECT_EQ(o.voc_pct, 81);
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));     // new file
+  EXPECT_EQ(o.voc_pct, 88);
+  EXPECT_FALSE(BQ25798::fromFile(&s, OLD - 1, o));      // short
+  s.voc_pct = 77;
+  EXPECT_FALSE(BQ25798::fromFile(&s, sizeof(s), o));    // damaged
+  EXPECT_EQ(o.voc_pct, 81);
+}
+
+TEST(BQ25798, StatusShowsVocPctOnlyWhenNotDefault) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  runFor(bq, t, 30000);
+  char buf[160];
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "mppt o"), nullptr) << buf;
+  EXPECT_EQ(strstr(buf, "%"), nullptr) << buf;
+  BQ25798Settings s = settings();
+  s.voc_pct = 75;
+  bq.apply(s);
+  runFor(bq, t, 30000);
+  bq.formatStatus(buf, 155);
+  EXPECT_TRUE(strstr(buf, "mppt on 75%") || strstr(buf, "mppt off 75%")) << buf;
+  EXPECT_LT((int)strlen(buf), 155);
+}
+
+TEST(BQ25798, AutoVindpmUsesVocPct) {
+  EXPECT_EQ(BQ25798::vindpmFromVoc(10000, 63), 6200);   // 62.5 %
+  EXPECT_EQ(BQ25798::vindpmFromVoc(10000, 69), 6800);   // 68.75 %
+  EXPECT_EQ(BQ25798::vindpmFromVoc(10000, 75), 7500);
+  EXPECT_EQ(BQ25798::vindpmFromVoc(10000, 81), 8100);
+  EXPECT_EQ(BQ25798::vindpmFromVoc(10000, 88), 8700);   // 87.5 %
+  EXPECT_EQ(BQ25798::vindpmFromVoc(10000), 8100);       // default
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  BQ25798Settings s = settings();
+  s.voc_pct = 75;
+  bq.apply(s);
+  runFor(bq, t, 60000);
+  EXPECT_EQ(f.r[0x05], 45);                             // 75 % of 6.0 V
+  EXPECT_EQ(bq.autoVindpm(), 4500);
 }
 
 TEST(BQ25798, WeakPanelAtDawnGetsVindpmFromVocBeforeHizIsCleared) {
@@ -628,7 +724,7 @@ TEST(BQ25798, WeakPanelAtDawnGetsVindpmFromVocBeforeHizIsCleared) {
   bq.apply(settings());
   f.wlog.clear();
   runFor(bq, t, 60000);
-  EXPECT_EQ(f.r[0x05], 48);                          // 80 % of 6.0 V
+  EXPECT_EQ(f.r[0x05], 48);                          // 81.25 % of 6.0 V (4875, rounded down)
   EXPECT_EQ(bq.autoVindpm(), 4800);
   EXPECT_EQ(bq.autoVindpmCount(), 1);
   EXPECT_TRUE(bq.powerGood());
@@ -743,7 +839,7 @@ TEST(BQ25798, LoadedVbusIsNeverTakenForVoc) {
   g.voc = 5000; g.loaded = 4000;                     // 80 % of 4.0 V would be 3.2 V -> 3600
   bq2.apply(settings());
   runFor(bq2, t, 60000);
-  EXPECT_EQ(g.r[0x05], 40);                          // 80 % of 5.0 V, not of the loaded 4.0 V
+  EXPECT_EQ(g.r[0x05], 40);                          // 81.25 % of 5.0 V, not of the loaded 4.0 V
 }
 
 TEST(BQ25798, LatchedPoorSourceFlagAloneIsNotUnloaded) {
