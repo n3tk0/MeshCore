@@ -161,6 +161,16 @@ static bool writeSmallFile(FILESYSTEM* fs, const char* name, const void* data, i
   return ok;
 }
 
+// bytes read (0 = no file or unreadable); for files that grew over time
+static int readSmallFileLen(FILESYSTEM* fs, const char* name, void* data, int len) {
+  if (!fs->exists(name)) return 0;
+  File f = openForRead(fs, name);
+  if (!f) return 0;
+  int n = f.read((uint8_t*)data, len);
+  f.close();
+  return n < 0 ? 0 : n;
+}
+
 static bool readSmallFile(FILESYSTEM* fs, const char* name, void* data, int len) {
   if (!fs->exists(name)) return false;
   File f = openForRead(fs, name);
@@ -2409,7 +2419,9 @@ void MyMesh::loadCharger() {
   BQ25798* c = sensors.getCharger();
   if (c == NULL) return;
   BQ25798Settings s;
-  if (!readSmallFile(_fs, CHARGER_FILE, &s, sizeof(s)) || !BQ25798::valid(s)) BQ25798::defaults(s);
+  uint8_t raw[sizeof(s)];
+  int len = readSmallFileLen(_fs, CHARGER_FILE, raw, sizeof(raw));
+  if (!BQ25798::fromFile(raw, len, s)) BQ25798::defaults(s);   // an old 10-byte file: voc_pct 81
   gaugeChemistry() = s.chem;
   c->apply(s);
 }
@@ -2510,9 +2522,23 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     if (ma < BQ_ICHG_MIN || ma > BQ_ICHG_MAX) { strcpy(reply, "Err - charger ichg 100..2000 (mA)"); return; }
     s.ichg_ma = (uint16_t)(ma / 10 * 10);
   } else if (strcmp(args, "vin") == 0) {
-    int mv = strcmp(val, "mppt") == 0 ? 0 : parseMilli(val);
-    if (mv != 0 && (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX)) { strcpy(reply, "Err - charger vin mppt|3600..22000 (mV)"); return; }
-    s.vindpm_mv = (uint16_t)(mv / 100 * 100);
+    if (strncmp(val, "mppt", 4) == 0 && (val[4] == 0 || val[4] == ' ')) {
+      const char* p = val + 4;
+      while (*p == ' ') p++;
+      if (*p) {   // charger vin mppt <pct>: VOC_PCT 63|69|75|81|88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %)
+        char* end;
+        long pct = strtol(p, &end, 10);
+        bool none = end == p;
+        if (*end == '%') end++;
+        if (none || *end || BQ25798::vocCode((int)pct) < 0) { strcpy(reply, "Err - charger vin mppt [63|69|75|81|88] (VOC_PCT %)"); return; }
+        s.voc_pct = (uint8_t)pct;
+      }
+      s.vindpm_mv = 0;
+    } else {
+      int mv = parseMilli(val);
+      if (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX) { strcpy(reply, "Err - charger vin mppt [63|69|75|81|88]|3600..22000 (mV)"); return; }
+      s.vindpm_mv = (uint16_t)(mv / 100 * 100);
+    }
   } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
     if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0) { sprintf(reply, "Err - charger %s on|off", args); return; }
     uint8_t on = strcmp(val, "on") == 0;

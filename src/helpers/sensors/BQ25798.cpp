@@ -1,6 +1,7 @@
 #include "BQ25798.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -37,6 +38,7 @@ void BQ25798::defaults(BQ25798Settings& s) {
   s.chem = BQ_CHEM_LIION;
   s.ichg_ma = 1000;
   s.vindpm_mv = 0;    // MPPT
+  s.voc_pct = BQ_VOC_PCT_DEFAULT;
   s.ntc = 0;          // no NTC on J3: TS_IGNORE
   s.shipfet = 1;      // Q2 fitted, JP3 open (as JLC builds the board)
   s.cutoff_mv = defaultCutoff(s.chem);
@@ -46,6 +48,7 @@ bool BQ25798::valid(const BQ25798Settings& s) {
   if (s.version != BQ_SETTINGS_VERSION || s.chem > BQ_CHEM_LIFEPO4) return false;
   if (s.ichg_ma < BQ_ICHG_MIN || s.ichg_ma > BQ_ICHG_MAX) return false;
   if (s.vindpm_mv != 0 && (s.vindpm_mv < BQ_VINDPM_MIN || s.vindpm_mv > BQ_VINDPM_MAX)) return false;
+  if (vocCode(s.voc_pct) < 0 || s.reserved) return false;
   if (s.ntc > 1 || s.shipfet > 1) return false;
   if (s.cutoff_mv != 0 && (s.cutoff_mv < BQ_CUTOFF_MIN || s.cutoff_mv > cutoffMax(s.chem))) return false;
   return true;
@@ -88,8 +91,31 @@ bool BQ25798::readStatus() {
   return true;
 }
 
-uint16_t BQ25798::vindpmFromVoc(uint16_t voc_mv) {
-  uint32_t mv = (uint32_t)voc_mv * BQ_VOC_PCT / 100 / 100 * 100;
+int BQ25798::vocCode(int pct) {
+  return pct == 63 ? 1 : pct == 69 ? 2 : pct == 75 ? 3 : pct == 81 ? 4 : pct == 88 ? 5 : -1;
+}
+
+uint8_t BQ25798::mpptBase(uint8_t voc_pct) {
+  int code = vocCode(voc_pct);
+  return (uint8_t)((code < 0 ? 4 : code) << 5) | BQ_MPPT_DLYRATE;
+}
+
+bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
+  const int OLD_LEN = (int)offsetof(BQ25798Settings, voc_pct);   // the file before voc_pct
+  if (len < OLD_LEN) return false;
+  defaults(s);
+  memcpy(&s, data, len < (int)sizeof(s) ? len : (int)sizeof(s));
+  if (len < (int)sizeof(s)) { s.voc_pct = BQ_VOC_PCT_DEFAULT; s.reserved = 0; }
+  if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
+  if (valid(s)) return true;
+  defaults(s);
+  return false;
+}
+
+uint16_t BQ25798::vindpmFromVoc(uint16_t voc_mv, uint8_t voc_pct) {
+  // exact percentages in 0.01 %: 62.5, 68.75, 75, 81.25, 87.5
+  uint32_t p = voc_pct == 63 ? 6250 : voc_pct == 69 ? 6875 : voc_pct == 75 ? 7500 : voc_pct == 88 ? 8750 : 8125;
+  uint32_t mv = (uint32_t)voc_mv * p / 10000 / 100 * 100;
   return (uint16_t)(mv < BQ_VINDPM_MIN ? BQ_VINDPM_MIN : mv > BQ_VINDPM_MAX ? BQ_VINDPM_MAX : mv);
 }
 
@@ -186,7 +212,7 @@ void BQ25798::enforce() {
 
   // MPPT mode with the panel there but not loaded (EN_HIZ, no PG, poor source) and MPPT not running:
   // VBUS is the open-circuit voltage. The chip's own VINDPM (VBUS0 - 0.7 V, 3.6 V at the clamp) pulls a
-  // weak panel under VPOORSRC again and again, so set 80 % of Voc before EN_HIZ is cleared below.
+  // weak panel under VPOORSRC again and again, so set the VOC_PCT share (81 % by default) of Voc before EN_HIZ is cleared below.
   bool hiz = c[BQ_REG_CTRL0] & 0x04;
   bool mppt_mode = _s.vindpm_mv == 0;
   // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
@@ -203,7 +229,7 @@ void BQ25798::enforce() {
     harvestVoc(unloaded, mppt_running);
     bool set = false;
     if (_voc_valid) {
-      uint16_t vin = vindpmFromVoc(_voc_mv);
+      uint16_t vin = vindpmFromVoc(_voc_mv, _s.voc_pct);
       uint8_t reg = (uint8_t)(vin / 100);
       if (reg == _vindpm_reg || write8(BQ_REG_VINDPM, reg)) {
         if (reg != _vindpm_reg) _auto_vin_count++;
@@ -240,13 +266,15 @@ void BQ25798::enforce() {
   if (_s.vindpm_mv == 0) {
     // the chip clears EN_MPPT when the panel goes (every evening) and refuses it while VBAT < VSYSMIN
     bool can = vbusPresent() && powerGood() && !(_status[BQ_REG_STAT3 - BQ_REG_STAT0] & 0x10);
-    if ((m & 0xFE) != BQ_MPPT_BASE || (can && !(m & 1))) {
-      uint8_t v = BQ_MPPT_BASE | (can ? 1 : (m & 1));
+    uint8_t base = mpptBase(_s.voc_pct);
+    if ((m & 0xFE) != base || (can && !(m & 1))) {
+      uint8_t v = base | (can ? 1 : (m & 1));
       if (write8(BQ_REG_MPPT, v)) m = v;
       if (can) read(BQ_REG_MPPT, &m, 1);   // what the chip took (not taken: tried again in 10 s)
     }
   } else {
-    if (m != BQ_MPPT_BASE && write8(BQ_REG_MPPT, BQ_MPPT_BASE)) m = BQ_MPPT_BASE;
+    uint8_t base = mpptBase(_s.voc_pct);
+    if (m != base && write8(BQ_REG_MPPT, base)) m = base;
     uint8_t want = (uint8_t)(_s.vindpm_mv / 100);
     if (vbusPresent() && c[BQ_REG_VINDPM] != want) write8(BQ_REG_VINDPM, want);   // set again at each plug-in
   }
@@ -441,7 +469,10 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   }
   n = addf(buf, len, n, " %s", _ce_on ? stateName(chargeState()) : chargeHeld() ? "HELD: JP2 lifepo4" : "CE-off");
   if (_s.vindpm_mv) n = addf(buf, len, n, ", vin %u.%uV", _s.vindpm_mv / 1000, _s.vindpm_mv % 1000 / 100);
-  else n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
+  else {
+    n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
+    if (_s.voc_pct != BQ_VOC_PCT_DEFAULT) n = addf(buf, len, n, " %u%%", _s.voc_pct);
+  }
   if (vbusPresent()) {
     // the panel is there: why it may not charge (MPPT off: the input limit the chip is holding)
     if (!_s.vindpm_mv && (!mpptOn() || _hiz_seen || !powerGood()) && _vindpm_reg) n = addf(buf, len, n, ", vin %u.%uV", (unsigned)_vindpm_reg / 10, (unsigned)_vindpm_reg % 10);
