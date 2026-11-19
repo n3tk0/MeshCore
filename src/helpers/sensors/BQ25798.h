@@ -168,7 +168,7 @@ struct BQ25798Settings {
   uint16_t cutoff_mv;   // battery empty: shutdown under this with no sun; 0 = off
   uint8_t  voc_pct;     // MPPT VOC_PCT: 63, 69, 75, 81 or 88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %); 0 = default (81)
   uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: the scan sets voc_pct; 0 (also in older files) = fixed
-  IbatCalData cal;      // IBAT ADC calibration points (see IbatCal.h); all zero (also in older files) = none
+  IbatLegacyCal cal;    // the IBAT calibration of build 934d2da (two points per direction); now only read (imported into the /ibatcal curve), written as zeros
 };
 // The /charger file is the struct as is. Files of 10, 11 and 12 bytes (before voc_pct / mppt_auto / cal)
 // are still read: fromFile().
@@ -239,6 +239,8 @@ class BQ25798 {
   uint8_t  _sc_chosen;              // VOC_PCT label set by the last accepted scan in auto mode (0 = none)
   // IBAT calibration: a reference current (INA219 in the battery line), the auto learning
   IbatLearner _learn;
+  IbatCurve _cal;                   // the stored calibration curve (/ibatcal)
+  IbatCurve _def;                   // the build default curve (BQ25798_IBAT_*_CURVE)
   bool     _ref_ok;
   int16_t  _ref_ma;                 // + = charging
   uint32_t _ref_at;
@@ -347,18 +349,27 @@ public:
   void setBatteryReference(int16_t ma, uint32_t now);
   void clearBatteryReference();   // the sensor is gone / failed: the corrected IBAT ADC counts again
   bool hasBatteryReference() const { return _ref_ok && (int32_t)(_now - _ref_at) < (int32_t)(3 * BQ_POLL_MS); }   // signed: the reference may be a ms newer than the last loop()
-  const IbatCalData& ibatCal() const { return _s.cal; }
-  // `charger ibat cal <mA>`: the current raw IBAT against the true current (+ charge, - discharge).
-  // IBAT_SET_OK, or IBAT_SET_* / -1 (no ADC result yet)
+  const IbatCurve& ibatCurve() const { return _cal; }
+  const IbatCurve& ibatDefaultCurve() const { return _def; }
+  // `charger ibat cal <mA>`: the current raw IBAT against the true current (+ charge, - discharge), into
+  // the point nearest to the true value. IBAT_SET_OK, or IBAT_SET_* / -1 (no ADC result yet)
   int ibatCalManual(int true_ma);
-  void ibatCalClear();            // `charger ibat clear`: no calibration; the next save writes it
-  // the settings (with the calibration) are to be written: a new auto point, at most hourly
+  void ibatCalClear(bool auto_only);   // `charger ibat clear [auto]`: the next save writes it
+  // the curve is to be written to /ibatcal: a new auto point, at most hourly
   bool ibatCalSaveDue(uint32_t now) const { return _learn.saveDue(now); }
-  void ibatCalSaved(uint32_t now) { _learn.synced(_s.cal, now, true); }   // after a write of settings()
-  void ibatCalLoaded() { _learn.synced(_s.cal, 0, false); }               // after apply() of a file
-  // `charger ibat`: "bq -24>-12 ina -12 | CHG_OFFSET_X10=0 CHG_GAIN_X1000=1000 default | DIS_OFFSET_X10=120 DIS_GAIN_X1000=1000 auto La45 H-"
-  // (the names are BQ25798_IBAT_<name> for platformio.ini; mA readings: raw > corrected, the INA219's)
+  void ibatCalSaved(uint32_t now) { _learn.synced(_cal, now, true); }   // after a write of the curve
+  // the /ibatcal bytes (IBAT_FILE_LEN) as they are to be written
+  int ibatCurveToFile(uint8_t* buf) const { return IbatCal::toFile(_cal, buf); }
+  // at boot: the file's bytes (false: none or damaged: the curve stays empty) and, then, the 934d2da
+  // calibration of /charger (imported once, and written to /ibatcal at the next save)
+  bool ibatCurveLoad(const uint8_t* data, int len);
+  void ibatCurveImportLegacy(const IbatLegacyCal& L);
+  // `charger ibat`: "bq -24>-12 ina -12 | chg auto 5p | dis build 2p | CHG_OFFSET_X10=0 CHG_GAIN_X1000=1000 DIS_OFFSET_X10=120 DIS_GAIN_X1000=1000"
   int formatIbat(char* buf, int len) const;
+  // `charger ibat curve [chg|dis] [2]`: "dis 5:-6>-5a12 10:-11>-10m ..." (page 1 = the first 5 points, 2 = the rest)
+  int formatIbatCurve(char* buf, int len, int dir, int page) const;
+  // `charger ibat export chg|dis`: the line for platformio.ini; -1 when it does not fit
+  int formatIbatExport(char* buf, int len, int dir) const;
 
   // true once each time a charge ends ("done"): the gauge takes the cell as full
   bool takeFull() { bool f = _full; _full = false; return f; }
