@@ -50,11 +50,14 @@ jobs:
           set -o pipefail
           /usr/bin/env bash build.sh build-firmware ${{ matrix.target }} 2>&1 | tee /tmp/pio-size.txt
 
+      - name: App Image and OTA Manifest
+        run: |
+          # before the size check: its `pio project metadata` (no build.sh version flags) wipes .pio/build/<env>
+          test -f .pio/build/${{ matrix.target }}/firmware.elf
+          tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" .pio/build/${{ matrix.target }}/firmware.elf
+
       - name: Size Check
         run: tools/check-size.sh --log /tmp/pio-size.txt ${{ matrix.target }}
-
-      - name: App Image and OTA Manifest
-        run: tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" .pio/build/${{ matrix.target }}/firmware.elf
 
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v7
