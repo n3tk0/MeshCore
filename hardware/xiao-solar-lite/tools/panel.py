@@ -28,7 +28,7 @@ TABS = gen_pcb.PANEL_TABS
 ANGLE = {"r": 180, "t": 270, "l": 0, "b": 90}   # KiKit wants the direction pointing into the board
 
 def copies_that_fit():
-    return int(PANEL_MAX // gen_pcb.W)
+    return int((PANEL_MAX + SPACE) // (gen_pcb.W + SPACE))
 
 def annotated_source(out):
     """Copy of the board with a KiKit tab annotation (kikit:Tab footprint) per entry of TABS."""
@@ -111,7 +111,7 @@ def fab(pcb, n):
         w = csv.writer(f)
         w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
         for r in rows:
-            k = int(round((float(r["PosX"]) - first[r["Ref"]]) / gen_pcb.W)) + 1
+            k = int(round((float(r["PosX"]) - first[r["Ref"]]) / (gen_pcb.W + SPACE))) + 1
             d = "%s_%d" % (r["Ref"], k)
             names.setdefault(r["Ref"], []).append(d)
             w.writerow([d, r["PosX"] + "mm", r["PosY"] + "mm", "Top" if r["Side"] == "top" else "Bottom",
