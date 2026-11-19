@@ -13,7 +13,11 @@ import java.net.URL
  */
 data class FirmwareFile(val release: String, val env: String, val version: String, val file: String,
                         val size: Int, val sha256: String, val url: String,
-                        val dfu: String = "", val dfuSize: Int = 0, val dfuSha256: String = "", val dfuUrl: String = "") {
+                        val dfu: String = "", val dfuSize: Int = 0, val dfuSha256: String = "", val dfuUrl: String = "",
+                        /** When the release was published (GitHub, ISO 8601) or the app's build was made; empty if unknown. */
+                        val published: String = "") {
+    /** [published] as epoch milliseconds, 0 when unknown. */
+    val publishedMillis get() = runCatching { java.time.Instant.parse(published).toEpochMilli() }.getOrDefault(0L)
     val hasLoraOta get() = file.isNotEmpty()
     val hasDfu get() = dfu.isNotEmpty()
     val dfuIsZip get() = dfu.endsWith(".zip", ignoreCase = true)
@@ -49,14 +53,76 @@ object Releases {
         }
     }
 
+    private const val PER_PAGE = 50
+    /** How many pages of releases [findOlder] looks through at most (the first one is [list]'s). */
+    const val MAX_PAGES = 10
+
+    /** One page of GitHub's release list: how many releases it had and the firmware they list. */
+    internal class Page(val releases: Int, val files: List<FirmwareFile>)
+
+    private fun page(repo: String, n: Int): Page {
+        val releases = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$n")))
+        return Page(releases.length(), parseReleases(repo, releases) { get(it) })
+    }
+
     /**
-     * Every firmware of the repository's recent releases, newest release first. With a cache folder
-     * the list is kept there (for use with no internet, see [cached]) and kept .bin files no release
-     * lists any more are deleted.
+     * Every firmware of the repository's recent releases (the first 50), newest release first. With a cache
+     * folder the list is kept there (for use with no internet, see [cached]) and kept .bin files no release
+     * lists any more are deleted. Older releases: [findOlder].
      */
     fun list(repo: String = DEFAULT_REPO, cache: File? = null): List<FirmwareFile> {
+        val out = page(repo, 1).files
+        if (cache != null) runCatching {
+            writeAtomic(listFile(cache, repo), toJson(out).toString().toByteArray())
+            cleanUp(cache)
+        }
+        return out
+    }
+
+    /**
+     * The firmware whose app image has [sha] (the SHA-256 the repeater tells), from the releases after the
+     * first 50: kept from an earlier search, else pages 2.. of the release list until it is found, a page is
+     * empty or the last one, or [MAX_PAGES] pages were read. The find is kept in [cache] (for no internet and
+     * for [list], which only knows the first page). Null when there is none; throws when GitHub cannot be reached.
+     */
+    fun findOlder(repo: String, sha: String, cache: File? = null): FirmwareFile? {
+        if (cache != null) olderCached(repo, cache).firstOrNull { it.sha256 == sha }?.let { return it }
+        val found = searchPages(sha) { page(repo, it) } ?: return null
+        if (cache != null) runCatching { addOlder(repo, cache, found) }
+        return found
+    }
+
+    /** The page search of [findOlder], with the page fetch given (so it needs no network to test). */
+    internal fun searchPages(sha: String, fetchPage: (Int) -> Page): FirmwareFile? {
+        for (n in 2..MAX_PAGES) {
+            val p = fetchPage(n)
+            p.files.firstOrNull { it.sha256.isNotEmpty() && it.sha256 == sha }?.let { return it }
+            if (p.releases < PER_PAGE) break   // empty, or the last (short) page
+        }
+        return null
+    }
+
+    private const val MAX_OLDER = 20
+
+    private fun olderFile(cache: File, repo: String) = File(cache, "releases-older-" + repo.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json")
+
+    /** The firmware [findOlder] found before, newest find first. */
+    fun olderCached(repo: String, cache: File): List<FirmwareFile> = runCatching {
+        fromJson(JSONArray(String(olderFile(cache, repo).readBytes())))
+    }.getOrDefault(emptyList())
+
+    @Synchronized
+    private fun addOlder(repo: String, cache: File, f: FirmwareFile) {
+        val list = listOf(f) + olderCached(repo, cache).filter { !(it.env == f.env && it.sha256 == f.sha256) }
+        writeAtomic(olderFile(cache, repo), toJson(list.take(MAX_OLDER)).toString().toByteArray())
+    }
+
+    /** The newest of [candidates] (the same board): by publish time, else the first one (the lists are newest first). */
+    fun recommended(candidates: List<FirmwareFile>): FirmwareFile? = candidates.maxByOrNull { it.publishedMillis }
+
+    /** The firmware of a page of releases; [fetch] gets a URL (the manifest). */
+    internal fun parseReleases(repo: String, releases: JSONArray, fetch: (String) -> ByteArray): List<FirmwareFile> {
         val out = ArrayList<FirmwareFile>()
-        val releases = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=50")))
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
             val assets = rel.getJSONArray("assets")
@@ -71,7 +137,8 @@ object Releases {
                 if (repo == UPSTREAM_REPO && !rel.optBoolean("draft")) out.addAll(fromAssetNames(rel.optString("tag_name"), assets))
                 continue
             }
-            val files = runCatching { JSONObject(String(get(manifest))).getJSONArray("files") }.getOrNull() ?: continue
+            val published = rel.optString("published_at").ifEmpty { rel.optString("created_at") }
+            val files = runCatching { JSONObject(String(fetch(manifest))).getJSONArray("files") }.getOrNull() ?: continue
             for (f in 0 until files.length()) {
                 val e = files.getJSONObject(f)
                 val file = e.optString("file")
@@ -81,12 +148,9 @@ object Releases {
                 if (file.isEmpty() && dfuUrl.isEmpty()) continue
                 out.add(FirmwareFile(rel.optString("tag_name"), e.getString("env"), e.optString("version"),
                     file, e.optInt("size"), e.optString("sha256").lowercase(), url,
-                    if (dfuUrl.isEmpty()) "" else dfu, e.optInt("dfu_size"), e.optString("dfu_sha256").lowercase(), dfuUrl))
+                    if (dfuUrl.isEmpty()) "" else dfu, e.optInt("dfu_size"), e.optString("dfu_sha256").lowercase(), dfuUrl,
+                    published))
             }
-        }
-        if (cache != null) runCatching {
-            writeAtomic(listFile(cache, repo), toJson(out).toString().toByteArray())
-            cleanUp(cache)
         }
         return out
     }
@@ -147,8 +211,10 @@ object Releases {
                 writeAtomic(File(binDir(cache), "$sha.bin"), d)
             }
         }
-        val shas = entries.map { it.env to it.sha256 + it.dfuSha256 }.toSet()
-        val list = entries + builds(cache).filter { (it.env to it.sha256 + it.dfuSha256) !in shas }
+        val now = java.time.Instant.now().toString()
+        val stamped = entries.map { if (it.published.isEmpty()) it.copy(published = now) else it }   // newest build = recommended
+        val shas = stamped.map { it.env to it.sha256 + it.dfuSha256 }.toSet()
+        val list = stamped + builds(cache).filter { (it.env to it.sha256 + it.dfuSha256) !in shas }
         writeAtomic(buildsFile(cache), toJson(list.take(MAX_BUILDS)).toString().toByteArray())
         cleanUp(cache)
     }
@@ -165,7 +231,8 @@ object Releases {
     private fun fromJson(a: JSONArray) = (0 until a.length()).map { a.getJSONObject(it) }.map {
         FirmwareFile(it.getString("release"), it.getString("env"), it.getString("version"), it.getString("file"),
             it.getInt("size"), it.getString("sha256"), it.getString("url"),
-            it.optString("dfu"), it.optInt("dfu_size"), it.optString("dfu_sha256"), it.optString("dfu_url"))
+            it.optString("dfu"), it.optInt("dfu_size"), it.optString("dfu_sha256"), it.optString("dfu_url"),
+            it.optString("published"))
     }
 
     /** The .bin, from the phone when it was downloaded before; checked against its checksum either way. */
@@ -205,7 +272,8 @@ object Releases {
     private fun toJson(files: List<FirmwareFile>) = JSONArray().apply {
         for (f in files) put(JSONObject().put("release", f.release).put("env", f.env).put("version", f.version)
             .put("file", f.file).put("size", f.size).put("sha256", f.sha256).put("url", f.url)
-            .put("dfu", f.dfu).put("dfu_size", f.dfuSize).put("dfu_sha256", f.dfuSha256).put("dfu_url", f.dfuUrl))
+            .put("dfu", f.dfu).put("dfu_size", f.dfuSize).put("dfu_sha256", f.dfuSha256).put("dfu_url", f.dfuUrl)
+            .put("published", f.published))
     }
 }
 

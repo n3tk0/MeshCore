@@ -50,7 +50,10 @@ class BuildFilesTest {
         assertEquals("v1.18.0-abc · Build #7 · lite", f.label)
         val dir = Files.createTempDirectory("build").toFile()
         Releases.addBuild(dir, entries, files)
-        assertEquals(listOf(f), Releases.builds(dir))
+        // the app dates a build when it keeps it (the newest one is the recommended one)
+        val kept = Releases.builds(dir)
+        assertEquals(listOf(f.copy(published = kept[0].published)), kept)
+        assertTrue(kept[0].publishedMillis > 0)
         assertContentEquals(bin, Releases.download(f, dir))
         assertContentEquals(zip, Releases.downloadDfu(f, dir))
         // a later list of releases keeps the build's files

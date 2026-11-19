@@ -114,6 +114,11 @@ struct OtaRadioParams {
 
 typedef bool (*OtaRadioCheck)(void* ctx, const OtaRadioParams& p);   // can this node's radio do it?
 typedef bool (*OtaPowerCheck)(void* ctx);                            // enough power to copy the new image?
+// A place to keep the SHA-256 of the running image over restarts (hashing it again costs seconds of flash reads).
+// load: fill sha[32] for an image of img_size bytes, false when nothing valid is kept for exactly this image.
+// save: keep it. The owner of the callbacks decides what "exactly this image" means (e.g. a build key).
+typedef bool (*OtaShaLoad)(void* ctx, uint32_t img_size, uint8_t* sha);
+typedef void (*OtaShaSave)(void* ctx, uint32_t img_size, const uint8_t* sha);
 
 class LoraOta {
 public:
@@ -141,6 +146,9 @@ private:
   void* _radio_ctx;
   OtaPowerCheck _power_check;
   void* _power_ctx;
+  OtaShaLoad _sha_load;
+  OtaShaSave _sha_save;
+  void* _sha_ctx;
   detools_apply_patch_t _patch;
   SHA256 _out_sha;                    // of the new image as the patch makes it (in place: the start is not kept)
   uint8_t* _head;                     // in place, at commit: the start of the new image made again
@@ -189,6 +197,12 @@ private:
     if (_img_sha_ok) return true;
     _img_size = _target->imageSize();
     if (_img_size == 0) return false;
+    // A kept hash that does not match the image only lets BEGIN accept a delta that then fails the check of
+    // the new image at the end, so a wrong one is harmless; the owner's key keeps it strict anyway.
+    if (_sha_load && _sha_load(_sha_ctx, _img_size, _img_sha)) {
+      _img_sha_ok = true;
+      return true;
+    }
     SHA256 sha;
     uint8_t buf[256];
     for (uint32_t off = 0; off < _img_size; off += sizeof(buf)) {
@@ -198,6 +212,7 @@ private:
     }
     sha.finalize(_img_sha, 32);
     _img_sha_ok = true;
+    if (_sha_save) _sha_save(_sha_ctx, _img_size, _img_sha);
     return true;
   }
 
@@ -432,12 +447,22 @@ public:
                                _timeout_ms(OTA_DEFAULT_TIMEOUT * 1000), _action(ACT_NONE), _on_side(false),
                                _enabled(false), _paused_at(0),
                                _radio_check(NULL), _radio_ctx(NULL), _power_check(NULL), _power_ctx(NULL),
+                               _sha_load(NULL), _sha_save(NULL), _sha_ctx(NULL),
                                _head(NULL), _head_pos(0) {
     memset(_owner, 0, sizeof(_owner));
     memset(&_side, 0, sizeof(_side));
   }
 
   void setIdent(const char* ident) { _ident = ident; }
+  void setShaStore(OtaShaLoad load, OtaShaSave save, void* ctx) { _sha_load = load; _sha_save = save; _sha_ctx = ctx; }
+  // The SHA-256 of the running image and its size (from the kept copy, else hashed now and kept). False when
+  // the image cannot be read.
+  bool getImageSha(uint8_t* sha, uint32_t* size) {
+    if (!computeImageSha()) return false;
+    memcpy(sha, _img_sha, 32);
+    *size = _img_size;
+    return true;
+  }
   // turning it off also drops an update under way (and a reboot into an image already checked)
   void setEnabled(bool on) {
     _enabled = on;
