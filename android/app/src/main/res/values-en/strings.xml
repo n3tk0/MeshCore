@@ -481,4 +481,12 @@
         <item quantity="one">Update %d repeater</item>
         <item quantity="other">Update %d repeaters</item>
     </plurals>
+    <string name="unknown_fw">This firmware is not from GitHub (SHA256 %1$s…). A LoRa OTA delta is not possible without the same .bin.</string>
+    <string name="unknown_fw_commit">This firmware is not from GitHub (SHA256 %1$s…, commit %2$s). A LoRa OTA delta is not possible without the same .bin.</string>
+    <string name="unknown_fw_flash">Full flash (Bluetooth/Wi-Fi)</string>
+    <string name="unknown_fw_pick">Choose the old .bin</string>
+    <string name="searching_older">Searching older releases… page %1$d</string>
+    <string name="unchecked_fw">The firmware was not found in the releases checked (SHA256 %1$s…).</string>
+    <string name="unchecked_fw_again">Search again</string>
+    <string name="recommended">recommended</string>
 </resources>

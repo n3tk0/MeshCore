@@ -451,6 +451,28 @@ private fun LoraTab(vm: AppViewModel) {
         stringResource(R.string.pick_running_short), !vm.busy) { pickOld.launch(arrayOf("*/*")) }
     ReadyRow(vm.newImage != null, stringResource(R.string.ready_new))
 
+    if (vm.runningUnknown && vm.oldImage == null) {
+        // no release and no build has the image the repeater runs: no delta without the same .bin
+        val sha8 = hex(info.imageSha).take(8)
+        val commit = info.commit
+        InfoCard(if (commit != null) stringResource(R.string.unknown_fw_commit, sha8, commit) else stringResource(R.string.unknown_fw, sha8))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.showFlashTab() }, enabled = !vm.busy) { Text(stringResource(R.string.unknown_fw_flash)) }
+            OutlinedButton(onClick = { pickOld.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.unknown_fw_pick)) }
+        }
+    }
+
+    if (vm.olderPage > 0) Text(stringResource(R.string.searching_older, vm.olderPage), style = MaterialTheme.typography.bodySmall)
+    if (vm.runningNotChecked && vm.oldImage == null && vm.olderPage == 0) {
+        // the search ended early (page cap or a failed fetch): the firmware may still be in an older release
+        InfoCard(stringResource(R.string.unchecked_fw, hex(info.imageSha).take(8)))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.searchAgain() }, enabled = !vm.busy) { Text(stringResource(R.string.unchecked_fw_again)) }
+            OutlinedButton(onClick = { vm.showFlashTab() }, enabled = !vm.busy) { Text(stringResource(R.string.unknown_fw_flash)) }
+            OutlinedButton(onClick = { pickOld.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.unknown_fw_pick)) }
+        }
+    }
+
     val continuing = info.state == OtaProtocol.STATE_PAUSED || vm.resumable
     // a message about the cut-short update already says what to do
     if (continuing && vm.message.isEmpty()) InfoCard(stringResource(R.string.paused_hint))
@@ -461,8 +483,9 @@ private fun LoraTab(vm: AppViewModel) {
     when (vm.loraSource) {
         Source.RELEASES -> {
             if (candidates.isEmpty()) Text(stringResource(R.string.no_new_firmware))
+            val best = vm.recommended()
             for (f in candidates) {
-                FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' ')) { vm.pickRelease(f) }
+                FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' '), f == best) { vm.pickRelease(f) }
             }
         }
         Source.BUILD -> BuildPanel(vm)
@@ -600,13 +623,16 @@ private fun SourceRow(selected: Source, enabled: Boolean, onSelect: (Source) -> 
 }
 
 @Composable
-private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, detail: String, onPick: () -> Unit) {
+private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, detail: String, recommended: Boolean = false,
+                        onPick: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
         .fillMaxWidth()
         .clickable(enabled = enabled, onClick = onPick)) {
         RadioButton(selected = selected, onClick = onPick, enabled = enabled)
         Column {
             Text(f.label, style = MaterialTheme.typography.titleMedium)
+            if (recommended) Text(stringResource(R.string.recommended), style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary)
             Text(detail, style = MaterialTheme.typography.bodySmall)
         }
     }

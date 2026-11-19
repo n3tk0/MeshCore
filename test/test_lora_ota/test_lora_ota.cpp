@@ -426,3 +426,61 @@ TEST_F(LoraOtaTest, LowBatteryPausesBeforeTheCopy) {
   EXPECT_EQ(LoraOta::ACT_COMMIT, ota.takeAction());
   EXPECT_EQ(0, memcmp(fixture_new, target.next.data(), sizeof(fixture_new)));
 }
+
+// The hash of the running image can be kept over restarts (the repeater keeps it in a file).
+struct ShaStore {
+  bool have = false;
+  uint32_t size = 0;
+  uint8_t sha[32];
+  int loads = 0, saves = 0;
+  static bool load(void* ctx, uint32_t size, uint8_t* out) {
+    ShaStore* s = (ShaStore*)ctx;
+    s->loads++;
+    if (!s->have || s->size != size) return false;
+    memcpy(out, s->sha, 32);
+    return true;
+  }
+  static void save(void* ctx, uint32_t size, const uint8_t* in) {
+    ShaStore* s = (ShaStore*)ctx;
+    s->saves++;
+    s->have = true;
+    s->size = size;
+    memcpy(s->sha, in, 32);
+  }
+};
+
+TEST_F(LoraOtaTest, ImageShaIsHashedOnceAndKept) {
+  ShaStore store;
+  ota.setShaStore(ShaStore::load, ShaStore::save, &store);
+  uint8_t h[32], want[32];
+  uint32_t size = 0;
+  sha(fixture_old, sizeof(fixture_old), want);
+  ASSERT_TRUE(ota.getImageSha(h, &size));
+  EXPECT_EQ(sizeof(fixture_old), size);
+  EXPECT_EQ(0, memcmp(want, h, 32));
+  EXPECT_EQ(1, store.saves);
+  // after a restart: a new LoraOta takes it from the store and does not hash (a wrong image would show in the hash)
+  RamTarget other;
+  other.image.assign(fixture_old, fixture_old + sizeof(fixture_old));
+  other.image[0] ^= 0xff;   // it would hash differently
+  LoraOta again(&other);
+  again.setShaStore(ShaStore::load, ShaStore::save, &store);
+  uint8_t h2[32];
+  ASSERT_TRUE(again.getImageSha(h2, &size));
+  EXPECT_EQ(0, memcmp(want, h2, 32));
+  EXPECT_EQ(1, store.saves);
+}
+
+TEST_F(LoraOtaTest, KeptShaForAnotherSizeIsNotUsed) {
+  ShaStore store;
+  store.have = true;
+  store.size = sizeof(fixture_old) + 1;
+  memset(store.sha, 0x55, 32);
+  ota.setShaStore(ShaStore::load, ShaStore::save, &store);
+  uint8_t h[32], want[32];
+  uint32_t size;
+  sha(fixture_old, sizeof(fixture_old), want);
+  ASSERT_TRUE(ota.getImageSha(h, &size));
+  EXPECT_EQ(0, memcmp(want, h, 32));
+  EXPECT_EQ(1, store.saves);   // hashed and kept again
+}

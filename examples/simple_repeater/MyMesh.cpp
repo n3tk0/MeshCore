@@ -170,6 +170,51 @@ static bool readSmallFile(FILESYSTEM* fs, const char* name, void* data, int len)
   return ok;
 }
 
+#ifdef WITH_LORA_OTA
+// The SHA-256 of the running image, kept in a file so it is not hashed again after every restart.
+// File: [img_size u32][key length u8][key][sha 32], exactly that long. The key is the commit plus the
+// compile date and time of this file, so any rebuild makes an old file useless (only a change in another
+// file of an incremental build is not seen, and then the image size usually differs anyway).
+#define OTA_SHA_FILE "/ota_sha"
+#define OTA_SHA_TMP  "/ota_sha.tmp"
+#define OTA_SHA_KEY  FIRMWARE_COMMIT " " __DATE__ " " __TIME__
+
+static bool otaShaLoad(void* ctx, uint32_t img_size, uint8_t* sha) {
+  FILESYSTEM* fs = (FILESYSTEM*)ctx;
+  const char* key = OTA_SHA_KEY;
+  const size_t klen = strlen(key);
+  const size_t want = 4 + 1 + klen + 32;
+  uint8_t buf[4 + 1 + 64 + 32 + 1];   // a long key never matches: it is refused below
+  if (klen > 64 || !fs->exists(OTA_SHA_FILE)) return false;
+  File f = openForRead(fs, OTA_SHA_FILE);
+  if (!f) return false;
+  int n = f.read(buf, want + 1);      // one more than expected: a longer file is damaged too
+  f.close();
+  if (n != (int)want) return false;
+  uint32_t size;
+  memcpy(&size, buf, 4);
+  if (size != img_size || buf[4] != klen || memcmp(&buf[5], key, klen) != 0) return false;
+  memcpy(sha, &buf[5 + klen], 32);
+  return true;
+}
+
+static void otaShaSave(void* ctx, uint32_t img_size, const uint8_t* sha) {
+  FILESYSTEM* fs = (FILESYSTEM*)ctx;
+  const char* key = OTA_SHA_KEY;
+  const size_t klen = strlen(key);
+  if (klen > 64) return;
+  uint8_t buf[4 + 1 + 64 + 32];
+  memcpy(buf, &img_size, 4);
+  buf[4] = (uint8_t)klen;
+  memcpy(&buf[5], key, klen);
+  memcpy(&buf[5 + klen], sha, 32);
+  // temp file first and renamed over the old one: a reset in between leaves the old file or none
+  if (!writeSmallFile(fs, OTA_SHA_TMP, buf, 5 + klen + 32)) { fs->remove(OTA_SHA_TMP); return; }
+  fs->remove(OTA_SHA_FILE);
+  fs->rename(OTA_SHA_TMP, OTA_SHA_FILE);
+}
+#endif
+
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
 #if MAX_NEIGHBOURS // check if neighbours enabled
   // find existing neighbour, else use least recently updated
@@ -1181,8 +1226,18 @@ void MyMesh::begin(FILESYSTEM *fs) {
   history_save_at = futureMillis(HISTORY_SAVE_EVERY);
 #endif
 #ifdef WITH_LORA_OTA
-  snprintf(ota_ident, sizeof(ota_ident), "%s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, board.getManufacturerName());
+  // "<version> <date> <commit>|<board>[ <build>]", at most 60 characters (what INFO sends): the board
+  // name is cut first. The app splits it at '|' and reads the commit as the last word of the first part.
+  snprintf(ota_ident, 61, "%s %s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT,
+           board.getManufacturerName());
+#ifdef FIRMWARE_ENV
+  {
+    size_t il = strlen(ota_ident);
+    if (il + 1 + strlen(FIRMWARE_ENV) <= 60) snprintf(&ota_ident[il], 61 - il, " %s", FIRMWARE_ENV);   // only if it all fits
+  }
+#endif
   lora_ota.setIdent(ota_ident);
+  lora_ota.setShaStore(otaShaLoad, otaShaSave, _fs);
   lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
   lora_ota.setRadioCheck([](void*, const OtaRadioParams& p) {
     return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
@@ -1550,6 +1605,18 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     uint8_t st = lora_ota.getState();
     sprintf(reply, "> %s, %s%s, %s", lora_ota.isEnabled() ? "on" : "off", st < 5 ? states[st] : "?",
             ota_target.isUnconfirmed() ? ", new firmware not confirmed yet" : "", ota_ident);
+  } else if (strcmp(command, "ota sha") == 0) {
+    // 2 + 64 hex + " 1234567 bytes" is 80 characters, well inside the 160 of the reply buffer
+    uint8_t sha[32];
+    uint32_t size;
+    if (lora_ota.isActive() || !lora_ota.getImageSha(sha, &size)) {   // hashing takes seconds: not during an update
+      strcpy(reply, "Err - not now");
+    } else {
+      char* p = reply;
+      *p++ = '>'; *p++ = ' ';
+      for (int i = 0; i < 32; i++) p += sprintf(p, "%02x", sha[i]);
+      sprintf(p, " %lu bytes", (unsigned long)size);
+    }
   } else if (strcmp(command, "set ota on") == 0 || strcmp(command, "set ota off") == 0) {
     bool on = command[9] == 'n';
     if (on) {

@@ -89,6 +89,19 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 
 ---
 
+### LoRa OTA: status, switch, running image (repeaters with LoRa OTA)
+**Usage:**
+- `ota status`
+- `set ota on` / `set ota off`
+- `ota sha`
+- `ota rollback`
+
+**Parameters:**
+- `ota sha`: SHA-256 of the running firmware image (64 hex characters) and its size in bytes, e.g. `> 9f86...0a08 412345 bytes`. It is the value the LoRa OTA app compares with the SHA-256 of the `.bin` files in the GitHub releases (`ota-manifest.json`, `SHA256SUMS`) to find the exact firmware to make the delta from. It is kept in the file `/ota_sha` (valid for this build only), so only the first call after a new firmware hashes the image (a few seconds). `Err - not now` while an update is running.
+- `ota status` also shows the ident: `<version> <date> <commit>|<board> <build>`.
+
+---
+
 ### Erase/Factory Reset
 **Usage:**
 - `erase`

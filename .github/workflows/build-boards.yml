@@ -6,7 +6,9 @@ name: Build Firmware for Boards
 #   the group, the picked boards are always built)
 # - light by default: each part is left out unless its box is ticked (mailbox and LoRa OTA stay unless
 #   unticked); files then get "-lite" after the board name and the run summary lists what was left out
-# - the files are attached to the run (Actions > run > Artifacts); with `release` also a GitHub pre-release
+# - the files are attached to the run (Actions > run > Artifacts); with `release` also a GitHub pre-release.
+#   A run that builds a repeater (*_repeater) always publishes the pre-release: the app needs its .bin as the
+#   base of a later LoRa OTA delta, and artifacts expire.
 # nRF52 / ESP32 boards get an .ota.json for the LoRa OTA app (the DFU file it flashes; repeaters also the app image .bin).
 # The lists come from platformio.ini: run `bash tools/gen-board-choices.sh` after new boards arrive.
 
@@ -467,6 +469,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.list.outputs.targets }}
+      has_repeater: ${{ steps.list.outputs.has_repeater }}
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
@@ -509,6 +512,9 @@ jobs:
           fi
           JSON=$(echo "$LIST" | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "targets=$JSON" >> "$GITHUB_OUTPUT"
+          # a run with a repeater is always published (see the release job): its .bin is the base of later deltas
+          if echo "$LIST" | grep -qi '_repeater$'; then HAS_REPEATER=true; else HAS_REPEATER=false; fi
+          echo "has_repeater=$HAS_REPEATER" >> "$GITHUB_OUTPUT"
           echo "Boards: $JSON"
 
       - name: Board Lists Up to Date
@@ -566,7 +572,7 @@ jobs:
         run: |
           ELF=""
           # only repeaters get LoRa OTA (the delta from their app image); every board can be flashed (dfu)
-          case "${{ matrix.target }}" in *_repeater) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
+          case "${{ matrix.target }}" in *_[rR]epeater) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
           tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" $ELF
 
       - name: Summary
@@ -589,9 +595,10 @@ jobs:
         run: exit $(cat /tmp/size-rc 2>/dev/null || echo 0)
 
   release:
-    needs: build
+    needs: [targets, build]
     runs-on: ubuntu-latest
-    if: ${{ inputs.release && !cancelled() }}
+    # a run with a repeater is always published (the delta base must stay available); other runs only on request
+    if: ${{ (inputs.release || needs.targets.outputs.has_repeater == 'true') && !cancelled() }}
     steps:
       - name: Download All Artifacts
         uses: actions/download-artifact@v8
@@ -605,6 +612,13 @@ jobs:
             jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
             rm out/*.ota.json
           fi
+
+      - name: SHA256SUMS
+        run: |
+          # standard `sha256sum` format of every file published here (check with: sha256sum -c SHA256SUMS)
+          cd out
+          sha256sum $(ls -1 | grep -vx SHA256SUMS | sort) > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
