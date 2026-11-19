@@ -30,6 +30,22 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _hiz_hold = 0;
   _vindpm_reg = 0;
   _auto_vin_mv = _auto_vin_count = 0;
+  _sc_state = _sc_idx = _sc_tries = 0;
+  _sc_forced = _sc_hiz_set = _sc_mppt_was = false;
+  _sc_at = 0;
+  _sc_voc = 0;
+  memset(_sc_p, 0, sizeof(_sc_p));
+  memset(_sc_table, 0, sizeof(_sc_table));
+  _sc_okcount = 0;
+  _sc_cond = false;
+  _sc_cond_at = _sc_not_before = 0;
+  _sc_first = true;
+  _sc_have = _sc_ran = false;
+  _sc_fail = 0;
+  _sc_done_at = _sc_ok_at = 0;
+  _sc_best_x10 = 0;
+  _sc_best_mw = _sc_81_mw = 0;
+  _sc_chosen = 0;
 }
 
 void BQ25798::defaults(BQ25798Settings& s) {
@@ -48,7 +64,7 @@ bool BQ25798::valid(const BQ25798Settings& s) {
   if (s.version != BQ_SETTINGS_VERSION || s.chem > BQ_CHEM_LIFEPO4) return false;
   if (s.ichg_ma < BQ_ICHG_MIN || s.ichg_ma > BQ_ICHG_MAX) return false;
   if (s.vindpm_mv != 0 && (s.vindpm_mv < BQ_VINDPM_MIN || s.vindpm_mv > BQ_VINDPM_MAX)) return false;
-  if (vocCode(s.voc_pct) < 0 || s.reserved) return false;
+  if (vocCode(s.voc_pct) < 0 || s.mppt_auto > 1) return false;
   if (s.ntc > 1 || s.shipfet > 1) return false;
   if (s.cutoff_mv != 0 && (s.cutoff_mv < BQ_CUTOFF_MIN || s.cutoff_mv > cutoffMax(s.chem))) return false;
   return true;
@@ -105,7 +121,7 @@ bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
   if (len < OLD_LEN) return false;
   defaults(s);
   memcpy(&s, data, len < (int)sizeof(s) ? len : (int)sizeof(s));
-  if (len < (int)sizeof(s)) { s.voc_pct = BQ_VOC_PCT_DEFAULT; s.reserved = 0; }
+  if (len < (int)sizeof(s)) { s.voc_pct = BQ_VOC_PCT_DEFAULT; s.mppt_auto = 0; }
   if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   if (valid(s)) return true;
   defaults(s);
@@ -132,6 +148,9 @@ bool BQ25798::begin(uint32_t now) {
   _low_timing = _adc_pending = _shutdown_sent = _adc_continuous = false;
   _shot_unl = _unl_now = _unl_last = _voc_valid = false;
   _hiz_hold = 0;
+  _sc_state = 0;   // a scan that was running: enforce() puts HIZ / EN_MPPT back
+  _sc_cond = false;
+  _sc_first = true;
   _now = now;
   _r.valid = false;
   // the watchdog off at once: its 40 s would otherwise run out while the node boots
@@ -144,6 +163,7 @@ bool BQ25798::begin(uint32_t now) {
 void BQ25798::apply(const BQ25798Settings& s) {
   if (!valid(s)) return;
   bool vreg_changes = !_applied || s.chem != _s.chem;
+  if (_sc_state) scanFinish(_now, BQ_SCF_ABORT);   // the scan's restore uses the old settings: first
   _s = s;
   _applied = true;
   if (!_found) return;
@@ -388,7 +408,13 @@ void BQ25798::lowBattery(uint32_t now) {
 }
 
 void BQ25798::loop(uint32_t now) {
-  if (!_found || (int32_t)(now - _next_poll) < 0) return;
+  if (!_found) return;
+  if (_sc_state && (int32_t)(now - _sc_at) >= 0) {
+    _now = now;
+    scanTick(now);
+  }
+  if (_sc_state) return;   // the 10 s poll waits for the scan (~30 s)
+  if ((int32_t)(now - _next_poll) < 0) return;
   _next_poll = now + BQ_POLL_MS;
   _polls++;
   _now = now;
@@ -400,6 +426,7 @@ void BQ25798::loop(uint32_t now) {
   if (state == 7 && _prev_state != 7) _full = true;   // charge done: the cell is full
   _prev_state = state;
   lowBattery(now);
+  if (_applied) scanSchedule(now);
 }
 
 bool BQ25798::mpptOn() const {
@@ -470,8 +497,12 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   n = addf(buf, len, n, " %s", _ce_on ? stateName(chargeState()) : chargeHeld() ? "HELD: JP2 lifepo4" : "CE-off");
   if (_s.vindpm_mv) n = addf(buf, len, n, ", vin %u.%uV", _s.vindpm_mv / 1000, _s.vindpm_mv % 1000 / 100);
   else {
-    n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
-    if (_s.voc_pct != BQ_VOC_PCT_DEFAULT) n = addf(buf, len, n, " %u%%", _s.voc_pct);
+    if (_s.mppt_auto) n = addf(buf, len, n, ", mppt auto %u%%%s", _s.voc_pct, mpptOn() ? "" : " off");
+    else {
+      n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
+      if (_s.voc_pct != BQ_VOC_PCT_DEFAULT) n = addf(buf, len, n, " %u%%", _s.voc_pct);
+    }
+    if (_sc_state) n = addf(buf, len, n, ", scan %u/%u", (unsigned)(_sc_idx > BQ_SCAN_N ? BQ_SCAN_N : _sc_idx) + 1, BQ_SCAN_N + 1);
   }
   if (vbusPresent()) {
     // the panel is there: why it may not charge (MPPT off: the input limit the chip is holding)
@@ -492,5 +523,243 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   if (_jumper == 0 && _s.chem == BQ_CHEM_LIFEPO4) n = addf(buf, len, n, ", JP2 1-2!");
   if (_status[5] || (_status[6] & 0xF4)) n = addf(buf, len, n, ", FAULT %02X/%02X", _status[5], _status[6]);
   if (_reconfigs) n = addf(buf, len, n, ", reset x%u", _reconfigs);
+  return n;
+}
+
+// ---- MPPT scan ----
+//
+// BEGIN: EN_MPPT off, EN_HIZ on (the panel unloaded) -> Voc conversion -> VINDPM = share0 x Voc, EN_HIZ off ->
+// per share: settle, one-shot ADC, P = VBUS x IBUS -> the first share again -> compare, pick, restore.
+// EN_HIZ / EN_MPPT / VINDPM are put back by scanFinish() on every way out; should its writes fail (I2C),
+// the next 10 s poll's enforce() clears EN_HIZ and sets EN_MPPT again, and the chip's own Voc cycle
+// rewrites VINDPM.
+
+uint8_t BQ25798::nearestVocPct(uint16_t share_x10) {
+  static const uint8_t pct[5] = { 63, 69, 75, 81, 88 };
+  static const uint16_t x100[5] = { 6250, 6875, 7500, 8125, 8750 };
+  int s = (int)share_x10 * 10, best = 0, bd = 100000;
+  for (int i = 0; i < 5; i++) {
+    int d = s > x100[i] ? s - x100[i] : x100[i] - s;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return pct[best];
+}
+
+// the panel there, loaded and held (PG), not in HIZ; for the automatic start also fast charge with MPPT on
+bool BQ25798::scanConditions(bool need_fast) const {
+  if (!_found || !_applied || _s.vindpm_mv != 0) return false;
+  if (!vbusPresent() || !powerGood() || _hiz_seen || !_r.valid) return false;
+  if (need_fast && (!_ce_on || chargeState() != 3 || !mpptOn())) return false;
+  return true;
+}
+
+int BQ25798::scanStart() {
+  if (!_found || !_applied || _s.vindpm_mv != 0) return -1;
+  if (_sc_state) return -3;
+  if (!vbusPresent() || !powerGood() || _hiz_seen) return -2;
+  _sc_state = BQ_SC_BEGIN;
+  _sc_forced = true;
+  _sc_at = _now;   // at the next loop()
+  _sc_tries = 0;
+  _sc_idx = 0;
+  return 0;
+}
+
+// at the end of each 10 s poll: start a scan in auto mode when it is time
+void BQ25798::scanSchedule(uint32_t now) {
+  if (!vbusPresent()) _sc_first = true;   // the next sun session scans again after ~2 min
+  if (!scanConditions(true)) {
+    _sc_cond = false;
+    return;
+  }
+  if (!_sc_cond) { _sc_cond = true; _sc_cond_at = now; }
+  if (!_s.mppt_auto || _sc_state) return;
+  if ((uint32_t)(now - _sc_cond_at) < (_sc_first ? BQ_SCAN_FIRST_MS : BQ_SCAN_HOLD_MS)) return;
+  if (!_sc_first && (int32_t)(now - _sc_not_before) < 0) return;
+  _sc_state = BQ_SC_BEGIN;
+  _sc_forced = false;
+  _sc_at = now;
+  _sc_tries = 0;
+  _sc_idx = 0;
+}
+
+bool BQ25798::scanSetVindpm(unsigned idx) {
+  uint32_t mv = (uint32_t)_sc_voc * scanShareX10(idx) / 1000 / 100 * 100;
+  if (mv < BQ_VINDPM_MIN) mv = BQ_VINDPM_MIN;
+  if (mv > BQ_VINDPM_MAX) mv = BQ_VINDPM_MAX;
+  return write8(BQ_REG_VINDPM, (uint8_t)(mv / 100));
+}
+
+int BQ25798::scanAdc(uint32_t* mw, uint16_t* vbus) {
+  uint8_t a;
+  if (!read(BQ_REG_ADC_CTRL, &a, 1)) return -1;
+  if (_adc_continuous ? (a & 0xC0) != 0x80 : (a & 0x80)) return 0;   // converting / not running
+  uint8_t d[6];
+  if (!read(BQ_REG_IBUS_ADC, d, sizeof(d))) return -1;
+  int16_t ibus = (int16_t)((d[0] << 8) | d[1]);
+  uint16_t v = (uint16_t)((d[4] << 8) | d[5]);
+  if (v == 0) return -1;   // zeros: the channel is off
+  *vbus = v;
+  *mw = ibus > 0 ? (uint32_t)v * (uint32_t)ibus / 1000 : 0;
+  return 1;
+}
+
+// the end, whatever the way: the result (fail = 0) and everything put back
+void BQ25798::scanFinish(uint32_t now, uint8_t fail) {
+  uint8_t st = _sc_state;
+  _sc_state = BQ_SC_IDLE;
+  _sc_ran = true;
+  _sc_fail = fail;
+  _sc_done_at = now;
+  if (fail != BQ_SCF_NOCOND) {   // not started after all: the schedule stays as it was
+    _sc_first = false;
+    _sc_not_before = now + (fail ? BQ_SCAN_RETRY_MS : BQ_SCAN_PERIOD_MS);
+  }
+  if (!fail) {
+    unsigned best = 0;
+    for (unsigned i = 0; i < BQ_SCAN_N; i++) {
+      _sc_table[i] = _sc_p[i];
+      if (_sc_p[i] > _sc_p[best]) best = i;
+    }
+    _sc_best_x10 = scanShareX10(best);
+    _sc_best_mw = _sc_p[best];
+    _sc_81_mw = (_sc_p[7] + _sc_p[8]) / 2;   // 80.0 and 82.5 %
+    _sc_have = true;
+    _sc_ok_at = now;
+    _sc_okcount++;
+    if (_s.mppt_auto && _s.vindpm_mv == 0) {
+      _s.voc_pct = nearestVocPct(_sc_best_x10);
+      _sc_chosen = _s.voc_pct;
+    }
+  }
+  _adc_pending = false;   // a conversion of ours is not one of adc()'s
+  _ts_in_shot = false;
+  if (st == BQ_SC_BEGIN || st == BQ_SC_IDLE) return;   // nothing changed on the chip yet
+  // put back: VINDPM for the share in force, EN_HIZ off, EN_MPPT on (what it was)
+  if (_sc_voc >= BQ_VOC_MIN_MV && _s.vindpm_mv == 0) {
+    uint8_t reg = (uint8_t)(vindpmFromVoc(_sc_voc, _s.voc_pct) / 100);
+    if (write8(BQ_REG_VINDPM, reg)) _vindpm_reg = reg;
+  }
+  if (_sc_hiz_set) {
+    uint8_t c0;
+    if (read(BQ_REG_CTRL0, &c0, 1) && write8(BQ_REG_CTRL0, c0 & ~0x04)) _sc_hiz_set = false;
+  }
+  uint8_t v = mpptBase(_s.voc_pct) | (_sc_mppt_was ? 1 : 0);
+  if (write8(BQ_REG_MPPT, v)) {
+    uint8_t m;
+    _mppt_reg = read(BQ_REG_MPPT, &m, 1) ? m : v;
+  }
+  _unl_now = _unl_last = _voc_valid = false;
+  _hiz_hold = 0;
+  _hiz_seen = false;
+  _next_poll = now + 1000;   // enforce() soon: it sees what is left of a failed restore
+}
+
+void BQ25798::scanTick(uint32_t now) {
+  _sc_at = now + 100;
+  uint8_t c[2];
+  if (!readStatus() || !read(BQ_REG_CTRL0, c, sizeof(c))) { scanFinish(now, BQ_SCF_I2C); return; }
+  bool hiz = c[0] & 0x04;
+  if (c[1] & 0x07) { scanFinish(now, BQ_SCF_RESET); return; }   // watchdog bits back: a power-on reset
+  uint8_t st = _sc_state;
+  if (!vbusPresent()) { scanFinish(now, st == BQ_SC_BEGIN ? BQ_SCF_NOCOND : BQ_SCF_SUN); return; }
+  if (st >= BQ_SC_STEP_ADC) {   // the converter loads the panel from here on
+    if (!powerGood() || hiz) { scanFinish(now, BQ_SCF_SUN); return; }
+    if (!_sc_forced && chargeState() != 3) { scanFinish(now, BQ_SCF_STATE); return; }
+  }
+  switch (st) {
+  case BQ_SC_BEGIN: {
+    uint8_t m;
+    if (!read(BQ_REG_MPPT, &m, 1)) { scanFinish(now, BQ_SCF_I2C); return; }
+    bool ok = powerGood() && !hiz && _ce_on && _s.vindpm_mv == 0 && (_sc_forced || (chargeState() == 3 && (m & 1)));
+    if (!ok) { scanFinish(now, BQ_SCF_NOCOND); return; }
+    _sc_mppt_was = m & 1;
+    _sc_voc = 0;
+    _sc_idx = 0;
+    _sc_tries = 0;
+    _sc_state = BQ_SC_VOC;   // from here on scanFinish() puts things back
+    _sc_hiz_set = true;
+    if (!write8(BQ_REG_MPPT, mpptBase(_s.voc_pct)) || !write8(BQ_REG_CTRL0, c[0] | 0x04)) {
+      scanFinish(now, BQ_SCF_I2C);
+      return;
+    }
+    _sc_at = now + BQ_SCAN_HIZ_MS;
+    return;
+  }
+  case BQ_SC_VOC:
+  case BQ_SC_STEP_ADC:
+    if (!_adc_continuous && !write8(BQ_REG_ADC_CTRL, BQ_ADC_START)) { scanFinish(now, BQ_SCF_I2C); return; }
+    _sc_state = st == BQ_SC_VOC ? BQ_SC_VOC_READ : BQ_SC_STEP_READ;
+    _sc_tries = 0;
+    _sc_at = now + BQ_SCAN_ADC_MS;
+    return;
+  case BQ_SC_VOC_READ: {
+    uint32_t mw;
+    uint16_t v;
+    int r = scanAdc(&mw, &v);
+    if (r < 0) { scanFinish(now, BQ_SCF_I2C); return; }
+    if (r == 0) {
+      if (++_sc_tries > 6) scanFinish(now, BQ_SCF_NOVOC);
+      else _sc_at = now + BQ_SCAN_ADC_MS;
+      return;
+    }
+    if (v < BQ_VOC_MIN_MV) { scanFinish(now, BQ_SCF_NOVOC); return; }
+    _sc_voc = v;
+    // VINDPM first, then EN_HIZ off (the weak panel would go under VPOORSRC at the chip's own VINDPM)
+    if (!scanSetVindpm(0) || !write8(BQ_REG_CTRL0, c[0] & ~0x04)) { scanFinish(now, BQ_SCF_I2C); return; }
+    _sc_hiz_set = false;
+    _sc_idx = 0;
+    _sc_state = BQ_SC_STEP_ADC;
+    _sc_at = now + BQ_SCAN_SETTLE_MS;
+    return;
+  }
+  case BQ_SC_STEP_READ: {
+    uint32_t mw;
+    uint16_t v;
+    int r = scanAdc(&mw, &v);
+    if (r < 0) { scanFinish(now, BQ_SCF_I2C); return; }
+    if (r == 0) {
+      if (++_sc_tries > 6) scanFinish(now, BQ_SCF_I2C);
+      else _sc_at = now + BQ_SCAN_ADC_MS;
+      return;
+    }
+    _sc_p[_sc_idx++] = mw;   // [N] is the first share again
+    if (_sc_idx <= BQ_SCAN_N) {
+      if (!scanSetVindpm(_sc_idx < BQ_SCAN_N ? _sc_idx : 0)) { scanFinish(now, BQ_SCF_I2C); return; }
+      _sc_state = BQ_SC_STEP_ADC;
+      _sc_at = now + BQ_SCAN_SETTLE_MS;
+      return;
+    }
+    uint32_t p0 = _sc_p[0], p1 = _sc_p[BQ_SCAN_N];
+    uint32_t hi = p0 > p1 ? p0 : p1, d = p0 > p1 ? p0 - p1 : p1 - p0;
+    uint32_t best = 0;
+    for (unsigned i = 0; i < BQ_SCAN_N; i++) if (_sc_p[i] > best) best = _sc_p[i];
+    if (hi < BQ_SCAN_MIN_MW || best < BQ_SCAN_MIN_MW) scanFinish(now, BQ_SCF_DARK);
+    else if (d * 100 > hi * BQ_SCAN_DRIFT_PCT) scanFinish(now, BQ_SCF_CLOUDS);
+    else scanFinish(now, BQ_SCF_NONE);
+    return;
+  }
+  default:
+    scanFinish(now, BQ_SCF_ABORT);
+    return;
+  }
+}
+
+int BQ25798::formatScan(char* buf, int len) const {
+  static const char* why[10] = { "", "aborted", "clouds", "sun lost", "left fast charge", "I2C", "no Voc",
+                                 "too dark", "chip reset", "not in fast charge" };
+  int n = 0;
+  buf[0] = 0;
+  if (_sc_state) return addf(buf, len, 0, "scan running %u/%u", (unsigned)(_sc_idx > BQ_SCAN_N ? BQ_SCAN_N : _sc_idx) + 1, BQ_SCAN_N + 1);
+  if (!_sc_ran) return addf(buf, len, 0, "no scan yet%s", _s.mppt_auto ? " (auto: 2 min after fast charge starts)" : "");
+  if (_sc_fail) {
+    n = addf(buf, len, n, "scan failed: %s %um ago", why[_sc_fail < 10 ? _sc_fail : 0], (unsigned)((_now - _sc_done_at) / 60000UL));
+    if (_sc_have) n = addf(buf, len, n, "; ");
+  }
+  if (_sc_have) {
+    n = addf(buf, len, n, "scan %um ago: best %u.%u%% %umW, 81%% %umW |", (unsigned)((_now - _sc_ok_at) / 60000UL),
+             _sc_best_x10 / 10, _sc_best_x10 % 10, (unsigned)_sc_best_mw, (unsigned)_sc_81_mw);
+    for (unsigned i = 0; i < BQ_SCAN_N; i++) n = addf(buf, len, n, " %u:%u", scanShareX10(i) / 10, (unsigned)_sc_table[i]);
+  }
   return n;
 }

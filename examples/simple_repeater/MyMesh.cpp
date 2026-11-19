@@ -2442,6 +2442,8 @@ void MyMesh::loadCharger() {
 //                               (MSPM0 boards also: lto, auto = by the jumper)
 // charger ichg <mA>             charge current, 100..2000
 // charger vin mppt|<mV>         MPPT (default) or a fixed input voltage limit for the panel
+// charger vin mppt auto|<pct>   MPPT share: auto = a scan (hourly, in fast charge) picks 63|69|75|81|88
+// charger scan [last]           MPPT scan now (~30 s) / its last result
 // charger ntc on|off            an NTC on J3 (TS used) or not (TS_IGNORE)
 // charger shipfet on|off        Q2 fitted, or JP3 closed (no ship / shutdown mode then)
 // charger cutoff <mV>|off       no sun and the battery under this for 5 min: shutdown until the sun is back
@@ -2475,6 +2477,15 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   }
   if (*args == 0) {
     c->formatStatus(reply, 155);   // the reply may already hold a 3-byte "xx|" tag (see SELFTEST_MAX)
+    return;
+  }
+  if (strcmp(args, "scan") == 0) {   // MPPT scan: start one (any MPPT mode), or `scan last`: the result
+    if (strcmp(val, "last") == 0 || c->scanning()) { c->formatScan(reply, 155); return; }
+    if (*val) { strcpy(reply, "Err - charger scan [last]"); return; }
+    int r = c->scanStart();
+    strcpy(reply, r == 0 ? "OK - scan started, ~30 s; `charger scan last` for the result"
+                : r == -1 ? "Err - scan needs MPPT mode (charger vin mppt)"
+                : "Err - scan needs the panel on: sun, PG, no HIZ");
     return;
   }
   if (strcmp(args, "reg") == 0) {
@@ -2525,18 +2536,21 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     if (strncmp(val, "mppt", 4) == 0 && (val[4] == 0 || val[4] == ' ')) {
       const char* p = val + 4;
       while (*p == ' ') p++;
-      if (*p) {   // charger vin mppt <pct>: VOC_PCT 63|69|75|81|88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %)
+      if (strcmp(p, "auto") == 0) {   // charger vin mppt auto: the scan picks VOC_PCT
+        s.mppt_auto = 1;
+      } else if (*p) {   // charger vin mppt <pct>: VOC_PCT 63|69|75|81|88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %)
         char* end;
         long pct = strtol(p, &end, 10);
         bool none = end == p;
         if (*end == '%') end++;
-        if (none || *end || BQ25798::vocCode((int)pct) < 0) { strcpy(reply, "Err - charger vin mppt [63|69|75|81|88] (VOC_PCT %)"); return; }
+        if (none || *end || BQ25798::vocCode((int)pct) < 0) { strcpy(reply, "Err - charger vin mppt [auto|63|69|75|81|88] (VOC_PCT %)"); return; }
         s.voc_pct = (uint8_t)pct;
+        s.mppt_auto = 0;
       }
       s.vindpm_mv = 0;
     } else {
       int mv = parseMilli(val);
-      if (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX) { strcpy(reply, "Err - charger vin mppt [63|69|75|81|88]|3600..22000 (mV)"); return; }
+      if (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX) { strcpy(reply, "Err - charger vin mppt [auto|63|69|75|81|88]|3600..22000 (mV)"); return; }
       s.vindpm_mv = (uint16_t)(mv / 100 * 100);
     }
   } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
@@ -2551,7 +2565,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     s.cutoff_mv = (uint16_t)mv;
   } else {
-    strcpy(reply, "Err - charger [chem|ichg|vin|ntc|shipfet|cutoff|ship|reg]");
+    strcpy(reply, "Err - charger [chem|ichg|vin|scan|ntc|shipfet|cutoff|ship|reg]");
     return;
   }
   if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {

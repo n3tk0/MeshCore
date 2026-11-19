@@ -22,6 +22,12 @@
 //     MPPT (enabled only with PG) never runs. While the converter is not loading the panel (HIZ / no PG /
 //     poor source) the VBUS ADC is the panel's open-circuit voltage: VINDPM is set to the VOC_PCT share of it (81 % default, rounded
 //     down to 100 mV, 3.6 .. 22 V) BEFORE EN_HIZ is cleared, at every drop-out, until MPPT takes over;
+//   - MPPT scan (`charger vin mppt auto`, `charger scan`): in fast charge with MPPT running, the driver
+//     measures Voc (EN_HIZ for ~1.2 s), switches EN_MPPT off and steps a fixed VINDPM from 62.5 to 90 % of Voc
+//     in 2.5 % steps (~2 s a step, one-shot ADC: VBUS x IBUS), re-measures the first step at the end (power
+//     moved > 20 %: clouds, the scan is thrown away), then sets VOC_PCT to the code nearest to the best
+//     share (auto mode only) and EN_MPPT back on. A small state machine with its own fast tick (due()), the
+//     10 s poll waits during the ~30 s; first scan ~2 min after the conditions are met, then hourly;
 //   - one-shot ADC every 10 s: battery and panel voltage / current, SYS, die temperature (continuous
 //     instead, should the results ever read as zeros after a one-shot);
 //   - an empty battery with no sun for 5 min: shutdown mode (the ship FET cuts the battery; only
@@ -48,6 +54,38 @@
 #define BQ_HIZ_HOLD_PERIOD     6               // ... in every this many polls of a poor-source loop
 #define BQ_POORSRC_KEEP_MS     (30 * 60000UL)  // `charger` shows a poor source seen this long ago
 #define BQ_CUTOFF_MIN          2900
+
+// MPPT scan
+#define BQ_SCAN_N              12              // shares 62.5, 65.0 ... 90.0 % (0.1 % units below)
+#define BQ_SCAN_SHARE0         625
+#define BQ_SCAN_SHARE_STEP     25
+#define BQ_SCAN_SETTLE_MS      1500            // after a VINDPM change, before the ADC
+#define BQ_SCAN_ADC_MS         300             // a one-shot conversion
+#define BQ_SCAN_HIZ_MS         1200            // EN_HIZ before the Voc conversion
+#define BQ_SCAN_FIRST_MS       120000UL        // first scan of a sun session: conditions held this long
+#define BQ_SCAN_HOLD_MS        20000UL         // later scans: conditions held this long
+#define BQ_SCAN_PERIOD_MS      3600000UL       // then once an hour
+#define BQ_SCAN_RETRY_MS       600000UL        // after a scan that was thrown away
+#define BQ_SCAN_DRIFT_PCT      20              // first step re-measured at the end: more change = clouds
+#define BQ_SCAN_MIN_MW         100             // under this the panel gives nothing to compare
+// scan state machine
+#define BQ_SC_IDLE             0
+#define BQ_SC_BEGIN            1               // conditions checked, EN_MPPT off + EN_HIZ on
+#define BQ_SC_VOC              2               // start the Voc conversion
+#define BQ_SC_VOC_READ         3
+#define BQ_SC_STEP_ADC         4               // VINDPM settled: start a conversion
+#define BQ_SC_STEP_READ        5
+// why a scan was thrown away (`charger scan`)
+#define BQ_SCF_NONE            0
+#define BQ_SCF_ABORT           1               // settings changed / driver restarted
+#define BQ_SCF_CLOUDS          2               // first step moved > 20 % between start and end
+#define BQ_SCF_SUN             3               // VBUS / PG gone, or EN_HIZ set again
+#define BQ_SCF_STATE           4               // not in fast charge any more
+#define BQ_SCF_I2C             5
+#define BQ_SCF_NOVOC           6
+#define BQ_SCF_DARK            7               // too little power to compare
+#define BQ_SCF_RESET           8               // the chip was reset
+#define BQ_SCF_NOCOND          9               // the conditions were not met at the start
 
 // registers
 #define BQ_REG_VSYSMIN         0x00
@@ -125,7 +163,7 @@ struct BQ25798Settings {
   uint8_t  shipfet;     // 1 = Q2 fitted (SFET_PRESENT), 0 = JP3 closed
   uint16_t cutoff_mv;   // battery empty: shutdown under this with no sun; 0 = off
   uint8_t  voc_pct;     // MPPT VOC_PCT: 63, 69, 75, 81 or 88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %); 0 = default (81)
-  uint8_t  reserved;    // 0
+  uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: the scan sets voc_pct; 0 (also in older files) = fixed
 };
 // The /charger file is the struct as is. Files of 10 bytes (before voc_pct) are still read: fromFile().
 #define BQ_SETTINGS_VERSION    1
@@ -171,6 +209,26 @@ class BQ25798 {
   uint8_t  _vindpm_reg;        // REG05 as last read / written
   uint16_t _auto_vin_mv;       // the last VINDPM set from Voc (0 = none yet)
   uint16_t _auto_vin_count;
+  // MPPT scan: state machine (BQ_SC_*), see scanTick()
+  uint8_t  _sc_state, _sc_idx, _sc_tries;
+  bool     _sc_forced, _sc_hiz_set, _sc_mppt_was;
+  uint32_t _sc_at;                  // the next tick
+  uint16_t _sc_voc;                 // mV
+  uint32_t _sc_p[BQ_SCAN_N + 1];    // mW per step, [N] = the first step again at the end
+  uint16_t _sc_okcount;             // scans that gave a result
+  // schedule
+  bool     _sc_cond;                // the conditions held at the last poll
+  uint32_t _sc_cond_at, _sc_not_before;
+  bool     _sc_first;               // no scan yet in this sun session
+  // last result
+  uint32_t _sc_table[BQ_SCAN_N];    // mW per share of the last accepted scan
+  bool     _sc_have;
+  uint8_t  _sc_fail;                // BQ_SCF_*: why the last scan was thrown away (0 = it was not)
+  bool     _sc_ran;
+  uint32_t _sc_done_at, _sc_ok_at;  // end of the last scan (accepted or not), of the last accepted one
+  uint16_t _sc_best_x10;            // best share, 0.1 %
+  uint32_t _sc_best_mw, _sc_81_mw;
+  uint8_t  _sc_chosen;              // VOC_PCT label set by the last accepted scan in auto mode (0 = none)
 
   bool read(uint8_t reg, uint8_t* buf, uint8_t n);
   bool write8(uint8_t reg, uint8_t v);
@@ -183,6 +241,12 @@ class BQ25798 {
   void adc(uint32_t now);
   bool readAdc(uint32_t now);
   void lowBattery(uint32_t now);
+  bool scanConditions(bool need_fast) const;
+  void scanSchedule(uint32_t now);
+  void scanTick(uint32_t now);
+  void scanFinish(uint32_t now, uint8_t fail);
+  int scanAdc(uint32_t* mw, uint16_t* vbus);   // 1 ok, 0 not done yet, -1 error
+  bool scanSetVindpm(unsigned idx);
 
 public:
   explicit BQ25798(BQ25798Bus& bus);
@@ -200,7 +264,10 @@ public:
   bool begin(uint32_t now);
   // the settings (loaded from flash or changed by CLI): written at once, then kept
   void apply(const BQ25798Settings& s);
-  bool due(uint32_t now) const { return _found && (int32_t)(now - _next_poll) >= 0; }
+  // the 10 s poll, or the scan's own tick while a scan runs (a few hundred ms apart)
+  bool due(uint32_t now) const {
+    return _found && ((int32_t)(now - _next_poll) >= 0 || (_sc_state && (int32_t)(now - _sc_at) >= 0));
+  }
   void loop(uint32_t now);
 
   bool found() const { return _found; }
@@ -218,6 +285,22 @@ public:
   bool adcContinuous() const { return _adc_continuous; }
   bool mpptOn() const;
   uint8_t vocPct() const { return _s.voc_pct; }
+  bool mpptAuto() const { return _s.mppt_auto; }
+  // MPPT scan. scanStart(): 0 = started (runs from the next loop(), ~30 s; any mppt mode, the result is
+  // kept; with `vin mppt auto` it also sets VOC_PCT), -1 = fixed VINDPM mode, -2 = no panel / PG / EN_HIZ,
+  // -3 = already running
+  int scanStart();
+  bool scanning() const { return _sc_state != 0; }
+  bool scanHasResult() const { return _sc_have; }
+  uint16_t scanCount() const { return _sc_okcount; }
+  uint8_t scanChosen() const { return _sc_chosen; }
+  // the share (0.1 %) scanned at step i, and the power there in mW (last accepted scan)
+  static uint16_t scanShareX10(unsigned i) { return (uint16_t)(BQ_SCAN_SHARE0 + BQ_SCAN_SHARE_STEP * i); }
+  uint32_t scanPowerMw(unsigned i) const { return i < BQ_SCAN_N ? _sc_table[i] : 0; }
+  // the VOC_PCT label (63|69|75|81|88) for the share nearest to share_x10 (0.1 %)
+  static uint8_t nearestVocPct(uint16_t share_x10);
+  // `charger scan` with no scan running: "scan 12m ago: best 75% 1234mW, 81% 1200mW | 62:870 65:900 ..."
+  int formatScan(char* buf, int len) const;
   uint8_t faults0() const { return _status[5]; }
   uint8_t faults1() const { return _status[6]; }
   uint16_t reconfigs() const { return _reconfigs; }

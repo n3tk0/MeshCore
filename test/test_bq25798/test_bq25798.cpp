@@ -1087,3 +1087,446 @@ int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+// ---- MPPT scan ----
+
+// A panel with a P-V curve: P = pmax * (1 - ((share - peak) / 0.45)^2) at VBUS = VINDPM; Voc with EN_HIZ.
+struct PanelBQ : public FakeBQ {
+  uint16_t voc = 10000;
+  double peak = 0.75, pmax_mw = 3000, scale = 1.0;
+  int vindpm_writes = 0, scale_after = -1;   // scale_after: the VINDPM write after which `scale` = scale2
+  double scale2 = 0.5;
+  void measure() {
+    bool hiz = r[0x0F] & 0x04;
+    uint16_t vb = hiz ? voc : (uint16_t)(r[0x05] * 100);
+    double share = (double)vb / voc, d = (share - peak) / 0.45;
+    double p = hiz ? 0 : pmax_mw * scale * (1 - d * d);
+    if (p < 0) p = 0;
+    put16(0x35, vb);
+    put16(0x31, vb ? (uint16_t)(p * 1000 / vb) : 0);
+    put16(0x33, 500);
+    put16(0x3B, 3900);
+    put16(0x3D, 3950);
+    put16(0x41, 80);
+  }
+  bool zero_results = false;
+  bool readRegs(uint8_t reg, uint8_t* buf, uint8_t n) override {
+    if (reg <= 0x35 && reg + n > 0x31 && (r[0x2E] & 0xC0) != 0xC0) measure();   // not a pending one-shot: continuous / done
+    if (reg == 0x2E && (r[0x2E] & 0xC0) == 0xC0) measure();
+    bool ok = FakeBQ::readRegs(reg, buf, n);
+    if (ok && zero_results) for (int i = 0; i < n; i++) if (reg + i >= 0x31 && reg + i <= 0x42) buf[i] = 0;
+    return ok;
+  }
+  bool writeRegs(uint8_t reg, const uint8_t* buf, uint8_t n) override {
+    bool ok = FakeBQ::writeRegs(reg, buf, n);
+    for (uint8_t i = 0; ok && i < n; i++) {
+      uint8_t a = reg + i;
+      if (a == 0x05 && ++vindpm_writes == scale_after) scale = scale2;
+      if (a == 0x0F) { if (buf[i] & 0x04) r[0x1B] &= ~0x08; else if (r[0x1B] & 0x01) r[0x1B] |= 0x08; }
+    }
+    return ok;
+  }
+  void fast() { sun(true); r[0x1C] = 0x60; }   // CHG_STAT 3
+};
+
+static void tickFor(BQ25798& bq, uint32_t& t, uint32_t ms) {
+  for (uint32_t end = t + ms; t < end; ) { t += 100; if (bq.due(t)) bq.loop(t); }
+}
+static bool tickUntilIdle(BQ25798& bq, uint32_t& t, uint32_t max_ms) {
+  for (uint32_t end = t + max_ms; t < end && bq.scanning(); ) { t += 100; if (bq.due(t)) bq.loop(t); }
+  return !bq.scanning();
+}
+static BQ25798Settings autoSettings() { BQ25798Settings s = settings(); s.mppt_auto = 1; return s; }
+
+TEST(BQ25798, ScanPicksThePeakOfThePvCurve) {
+  const struct { double peak; uint8_t code; } cases[] = { {0.75, 75}, {0.65, 63}, {0.85, 88}, {0.81, 81}, {0.70, 69} };
+  for (auto& c : cases) {
+    PanelBQ f;
+    f.peak = c.peak;
+    f.fast();
+    BQ25798 bq(f);
+    uint32_t t = 0;
+    bq.begin(t);
+    bq.apply(autoSettings());
+    tickFor(bq, t, 60000);
+    EXPECT_FALSE(bq.scanning()) << c.peak;     // not before ~2 min of conditions
+    EXPECT_TRUE(bq.mpptOn());
+    tickFor(bq, t, 90000);
+    ASSERT_TRUE(bq.scanning() || bq.scanHasResult()) << c.peak;
+    uint32_t start = t;
+    EXPECT_TRUE(tickUntilIdle(bq, t, 60000)) << c.peak;
+    EXPECT_LT(t - start, 40000u);              // ~30 s
+    ASSERT_TRUE(bq.scanHasResult()) << c.peak;
+    EXPECT_EQ(bq.vocPct(), c.code) << c.peak;
+    EXPECT_EQ(bq.scanChosen(), c.code);
+    EXPECT_EQ(f.r[0x15] & 0xFE, BQ25798::mpptBase(c.code)) << c.peak;
+    EXPECT_EQ(f.r[0x15] & 1, 1);               // EN_MPPT back on
+    EXPECT_EQ(f.r[0x0F] & 0x04, 0);            // no EN_HIZ
+    EXPECT_EQ(f.r[0x05], BQ25798::vindpmFromVoc(10000, c.code) / 100);   // VINDPM for the new share
+    char buf[200];
+    bq.formatStatus(buf, 155);
+    char want[16];
+    snprintf(want, sizeof(want), "mppt auto %u%%", c.code);
+    EXPECT_NE(strstr(buf, want), nullptr) << buf;
+    bq.formatScan(buf, 155);
+    EXPECT_LT((int)strlen(buf), 155);
+    EXPECT_NE(strstr(buf, "62:"), nullptr) << buf;
+    EXPECT_NE(strstr(buf, "90:"), nullptr) << buf;
+  }
+}
+
+TEST(BQ25798, ScanBestShareAndPowers) {
+  PanelBQ f;
+  f.peak = 0.75;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  EXPECT_EQ(bq.scanStart(), 0);
+  EXPECT_EQ(bq.scanStart(), -3);                  // already running
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  ASSERT_TRUE(bq.scanHasResult());
+  EXPECT_EQ(bq.vocPct(), 81);                     // manual mode: the share is not changed
+  EXPECT_EQ(bq.scanShareX10(0), 625);
+  EXPECT_EQ(bq.scanShareX10(11), 900);
+  uint32_t best = 0;
+  unsigned bi = 0;
+  for (unsigned i = 0; i < BQ_SCAN_N; i++) if (bq.scanPowerMw(i) > best) { best = bq.scanPowerMw(i); bi = i; }
+  EXPECT_EQ(bq.scanShareX10(bi), 750);
+  EXPECT_GT(best, 2900u);
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "best 75.0%"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "81%"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "ago"), nullptr) << buf;
+  EXPECT_EQ(f.r[0x15] & 0xFE, BQ25798::mpptBase(81));
+  EXPECT_EQ(f.r[0x15] & 1, 1);
+}
+
+TEST(BQ25798, ScanUsesItsOwnFastTick) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  ASSERT_EQ(bq.scanStart(), 0);
+  int polls = 0;
+  uint32_t p0 = bq.polls();
+  while (bq.scanning() && t < 100000) { t += 100; if (bq.due(t)) { bq.loop(t); polls++; } }
+  EXPECT_GT(polls, 20);                           // well over one call per 10 s
+  tickFor(bq, t, 12000);
+  EXPECT_GT(bq.polls(), p0);                      // the 10 s poll resumes afterwards
+}
+
+TEST(BQ25798, ScanAbortsWhenPowerDrifts) {
+  PanelBQ f;
+  f.fast();
+  f.scale_after = 13;                             // the re-measure of the first share: half the power
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 150000);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_FALSE(bq.scanHasResult());
+  EXPECT_EQ(bq.vocPct(), 81);
+  EXPECT_EQ(f.r[0x15] & 1, 1);                    // EN_MPPT back
+  EXPECT_EQ(f.r[0x15] & 0xFE, BQ25798::mpptBase(81));
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
+  EXPECT_EQ(f.r[0x05], BQ25798::vindpmFromVoc(10000, 81) / 100);   // not left at 62.5 %
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "clouds"), nullptr) << buf;
+  // retried later, with a steady sky
+  f.scale = 1.0;
+  f.scale_after = -1;
+  tickFor(bq, t, 5 * 60000);
+  EXPECT_FALSE(bq.scanHasResult());               // not yet: 10 min
+  tickFor(bq, t, 7 * 60000);
+  EXPECT_TRUE(bq.scanHasResult());
+  EXPECT_EQ(bq.vocPct(), 75);
+}
+
+TEST(BQ25798, ScanSmallDriftIsAccepted) {
+  PanelBQ f;
+  f.fast();
+  f.scale_after = 13;
+  f.scale2 = 0.9;                                 // 10 %
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 150000);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_TRUE(bq.scanHasResult());
+}
+
+TEST(BQ25798, ScanSkippedOutsideFastCharge) {
+  for (uint8_t st : {0x00, 0x20, 0x40, 0x80, 0xE0}) {   // idle, trickle, pre, taper, done
+    PanelBQ f;
+    f.fast();
+    f.r[0x1C] = st;
+    BQ25798 bq(f);
+    uint32_t t = 0;
+    bq.begin(t);
+    bq.apply(autoSettings());
+    f.vindpm_writes = 0;
+    tickFor(bq, t, 15 * 60000);
+    EXPECT_FALSE(bq.scanning());
+    EXPECT_FALSE(bq.scanHasResult());
+    EXPECT_EQ(f.vindpm_writes, 0) << (int)st;
+  }
+  PanelBQ f;                                       // charge state 3 but no panel PG: skipped too
+  f.fast();
+  f.r[0x1B] &= ~0x08;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 10 * 60000);
+  EXPECT_FALSE(bq.scanHasResult());
+  EXPECT_EQ(bq.scanStart(), -2);
+}
+
+TEST(BQ25798, ForcedScanRunsInConstantVoltageAndNeedsMpptMode) {
+  PanelBQ f;
+  f.fast();
+  f.r[0x1C] = 0x80;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  EXPECT_EQ(bq.scanStart(), 0);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_TRUE(bq.scanHasResult());
+  BQ25798Settings s = settings();
+  s.vindpm_mv = 5000;
+  bq.apply(s);
+  EXPECT_EQ(bq.scanStart(), -1);
+}
+
+TEST(BQ25798, ScanSchedule2MinThenHourlyThenNextSession) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 120000);
+  EXPECT_EQ(bq.scanCount(), 0);                   // ~2 min after the conditions were first met
+  tickFor(bq, t, 30000);
+  tickUntilIdle(bq, t, 60000);
+  EXPECT_EQ(bq.scanCount(), 1);
+  tickFor(bq, t, 50 * 60000);
+  EXPECT_EQ(bq.scanCount(), 1);                   // not within the hour
+  tickFor(bq, t, 15 * 60000);
+  tickUntilIdle(bq, t, 60000);
+  EXPECT_EQ(bq.scanCount(), 2);
+  // night, then the next day: 2 min after the conditions are met again, not an hour
+  f.sun(false);
+  tickFor(bq, t, 60000);
+  f.fast();
+  tickFor(bq, t, 4 * 60000);
+  tickUntilIdle(bq, t, 60000);
+  EXPECT_EQ(bq.scanCount(), 3);
+}
+
+TEST(BQ25798, ScanPutsEverythingBackWhenTheSunGoes) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 135000);
+  ASSERT_TRUE(bq.scanning());
+  tickFor(bq, t, 8000);                           // in the middle
+  ASSERT_TRUE(bq.scanning());
+  f.sun(false);
+  tickFor(bq, t, 1000);
+  EXPECT_FALSE(bq.scanning());
+  EXPECT_FALSE(bq.scanHasResult());
+  EXPECT_EQ(bq.vocPct(), 81);
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
+  EXPECT_EQ(f.r[0x15] & 0xFE, BQ25798::mpptBase(81));
+  EXPECT_NE(f.r[0x05], 0);
+  EXPECT_GE(f.r[0x05], 36);                       // VINDPM not left at a probe value under 3.6 V
+}
+
+TEST(BQ25798, ScanAbortedByChargeStateLeavingFastCharge) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 135000);
+  ASSERT_TRUE(bq.scanning());
+  tickFor(bq, t, 6000);
+  f.r[0x1C] = 0x80;                               // CV
+  tickFor(bq, t, 2500);
+  EXPECT_FALSE(bq.scanning());
+  EXPECT_FALSE(bq.scanHasResult());
+  EXPECT_EQ(f.r[0x15] & 1, 1);
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);
+}
+
+TEST(BQ25798, ScanAbortedByChipResetAndByNewSettings) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 135000);
+  ASSERT_TRUE(bq.scanning());
+  tickFor(bq, t, 3000);
+  f.r[0x10] |= 0x05;                              // watchdog bits back: reset
+  tickFor(bq, t, 2500);
+  EXPECT_FALSE(bq.scanning());
+  EXPECT_FALSE(bq.scanHasResult());
+  tickFor(bq, t, 30000);                          // enforce() takes it from here
+  EXPECT_EQ(f.r[0x10] & 0x07, 0);
+
+  PanelBQ g;
+  g.fast();
+  BQ25798 b2(g);
+  t = 0;
+  b2.begin(t);
+  b2.apply(settings());
+  tickFor(b2, t, 30000);
+  ASSERT_EQ(b2.scanStart(), 0);
+  tickFor(b2, t, 4000);
+  ASSERT_TRUE(b2.scanning());
+  BQ25798Settings s = settings();
+  s.voc_pct = 69;
+  b2.apply(s);                                    // a CLI change in the middle
+  EXPECT_FALSE(b2.scanning());
+  EXPECT_EQ(g.r[0x0F] & 0x04, 0);
+  EXPECT_EQ(g.r[0x15] & 0xFE, BQ25798::mpptBase(69));
+  EXPECT_EQ(g.r[0x15] & 1, 1);
+}
+
+TEST(BQ25798, ScanI2cErrorsLeaveEnHizAndMpptToTheNextPoll) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  ASSERT_EQ(bq.scanStart(), 0);
+  tickFor(bq, t, 1000);                           // BEGIN done: EN_HIZ set, EN_MPPT off
+  ASSERT_TRUE(bq.scanning());
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0x04);
+  EXPECT_EQ(f.r[0x15] & 1, 0);
+  f.fail = true;
+  tickFor(bq, t, 600);
+  EXPECT_FALSE(bq.scanning());
+  f.fail = false;
+  tickFor(bq, t, 40000);
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);                 // enforce(): EN_HIZ cleared
+  EXPECT_EQ(f.r[0x15] & 1, 1);                    // EN_MPPT back
+  EXPECT_FALSE(bq.scanHasResult());
+}
+
+TEST(BQ25798, ScanKeepsContinuousAdcAsItWas) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  f.zero_results = true;
+  tickFor(bq, t, 40000);                          // a one-shot reads zeros: continuous
+  f.zero_results = false;
+  ASSERT_TRUE(bq.adcContinuous());
+  ASSERT_EQ(bq.scanStart(), 0);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_TRUE(bq.scanHasResult());
+  EXPECT_TRUE(bq.adcContinuous());
+  EXPECT_EQ(f.r[0x2E] & 0xC0, 0x80);
+}
+
+TEST(BQ25798, ScanOneShotAdcModeIsLeftAsItWas) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  ASSERT_FALSE(bq.adcContinuous());
+  ASSERT_EQ(bq.scanStart(), 0);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_FALSE(bq.adcContinuous());
+  EXPECT_EQ(f.r[0x2E] & 0x80, 0);                 // no conversion left running
+  tickFor(bq, t, 30000);
+  EXPECT_FALSE(bq.adcContinuous());
+  EXPECT_TRUE(bq.reading().valid);
+}
+
+TEST(BQ25798, AutoSettingSaveLoadAndOldFiles) {
+  BQ25798Settings s = settings();
+  EXPECT_EQ(s.mppt_auto, 0);
+  s.mppt_auto = 1;
+  s.voc_pct = 69;
+  EXPECT_TRUE(BQ25798::valid(s));
+  BQ25798Settings o;
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));
+  EXPECT_EQ(o.mppt_auto, 1);
+  EXPECT_EQ(o.voc_pct, 69);
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s) - 1, o));   // the file of b06ffbb had 12 bytes with 0 at the end
+  EXPECT_EQ(o.mppt_auto, 0);                              // 11 bytes: unknown -> not auto
+  ASSERT_TRUE(BQ25798::fromFile(&s, 10, o));              // before voc_pct
+  EXPECT_EQ(o.mppt_auto, 0);
+  EXPECT_EQ(o.voc_pct, 81);
+  s.mppt_auto = 2;
+  EXPECT_FALSE(BQ25798::valid(s));
+  EXPECT_FALSE(BQ25798::fromFile(&s, sizeof(s), o));
+  EXPECT_EQ(o.mppt_auto, 0);
+  s.mppt_auto = 0;
+  uint8_t old12[12];                                      // reserved = 0 as written before
+  memcpy(old12, &s, sizeof(old12) < sizeof(s) ? sizeof(old12) : sizeof(s));
+  ASSERT_TRUE(BQ25798::fromFile(old12, 12, o));
+  EXPECT_EQ(o.mppt_auto, 0);
+}
+
+TEST(BQ25798, NearestVocPct) {
+  EXPECT_EQ(BQ25798::nearestVocPct(625), 63);
+  EXPECT_EQ(BQ25798::nearestVocPct(650), 63);
+  EXPECT_EQ(BQ25798::nearestVocPct(675), 69);
+  EXPECT_EQ(BQ25798::nearestVocPct(725), 75);
+  EXPECT_EQ(BQ25798::nearestVocPct(775), 75);
+  EXPECT_EQ(BQ25798::nearestVocPct(800), 81);
+  EXPECT_EQ(BQ25798::nearestVocPct(850), 88);
+  EXPECT_EQ(BQ25798::nearestVocPct(900), 88);
+}
+
+TEST(BQ25798, StatusAutoLineAndScanProgress) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  tickFor(bq, t, 30000);
+  char buf[200];
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "mppt auto 81%"), nullptr) << buf;
+  EXPECT_LT((int)strlen(buf), 155);
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "no scan yet"), nullptr) << buf;
+  ASSERT_EQ(bq.scanStart(), 0);
+  tickFor(bq, t, 6000);
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "scan "), nullptr) << buf;
+  EXPECT_LT((int)strlen(buf), 155);
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "running"), nullptr) << buf;
+}
