@@ -513,7 +513,7 @@ jobs:
           JSON=$(echo "$LIST" | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "targets=$JSON" >> "$GITHUB_OUTPUT"
           # a run with a repeater is always published (see the release job): its .bin is the base of later deltas
-          if echo "$LIST" | grep -q '_repeater$'; then HAS_REPEATER=true; else HAS_REPEATER=false; fi
+          if echo "$LIST" | grep -qi '_repeater$'; then HAS_REPEATER=true; else HAS_REPEATER=false; fi
           echo "has_repeater=$HAS_REPEATER" >> "$GITHUB_OUTPUT"
           echo "Boards: $JSON"
 
@@ -572,7 +572,7 @@ jobs:
         run: |
           ELF=""
           # only repeaters get LoRa OTA (the delta from their app image); every board can be flashed (dfu)
-          case "${{ matrix.target }}" in *_repeater) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
+          case "${{ matrix.target }}" in *_[rR]epeater) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
           tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" $ELF
 
       - name: Summary

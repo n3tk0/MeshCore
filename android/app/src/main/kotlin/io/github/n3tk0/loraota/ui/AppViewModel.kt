@@ -155,9 +155,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var builds by mutableStateOf(Releases.builds(app.filesDir))   // made by the app's builds, kept on the phone
     var upstream by mutableStateOf<List<FirmwareFile>>(emptyList())   // stock MeshCore releases (flash only)
     /** Firmware found in releases after the first page of the list (what the repeater runs), kept on the phone. */
-    var olderFound by mutableStateOf<List<FirmwareFile>>(emptyList())
+    var olderFound by mutableStateOf(Releases.olderCached(Releases.DEFAULT_REPO, app.filesDir))
     /** The repeater's running image is in no release (all pages looked through) and no build of the app. */
     var runningUnknown by mutableStateOf(false)
+    /** The search for the running image ended early (page cap or a failed fetch): it may still be in a release. */
+    var runningNotChecked by mutableStateOf(false)
+    /** The page of older releases being read now, 0 when no search runs. */
+    var olderPage by mutableStateOf(0)
     var flashUpstream by mutableStateOf(false)
 
     /** Our releases and the app's builds, the builds first (one file once: a build with `release` is both). */
@@ -416,6 +420,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         otaChecked = false
         oldImage = null
         runningUnknown = false
+        runningNotChecked = false
         newImage = null
         patch = null
         done = false
@@ -557,6 +562,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- firmware ----
 
     fun loadReleases() = viewModelScope.launch {
+        // finds of earlier searches first: the queue needs them with no running repeater (and no internet) too
+        olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo, ctx.filesDir) } }
         releases = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
         if (list.isFailure) {
@@ -574,26 +581,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // the firmware the repeater runs, if a release has it
         val i = info ?: return@launch
-        val sha = hex(i.imageSha)
-        olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
+        searchRunning(hex(i.imageSha), Releases.MAX_PAGES, list.isSuccess)
+    }
+
+    /** "Search again" on the card of an incomplete search: more pages. */
+    fun searchAgain() = viewModelScope.launch {
+        val i = info ?: return@launch
+        searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true)
+    }
+
+    /**
+     * Looks for the firmware with [sha] (what the repeater runs) in the loaded lists and then in the older
+     * releases, sets the cards' state and the old image. "Not from GitHub" only when every page was looked
+     * through ([listOk]: no internet proves nothing).
+     */
+    private suspend fun searchRunning(sha: String, maxPages: Int, listOk: Boolean) {
         var found = allFirmware.firstOrNull { it.sha256 == sha }
-        var searched = true
+        var result: Releases.SearchResult? = null
         if (found == null) {
             // not in the first page: the older pages of releases (a find is kept for no internet)
-            val older = runCatching { withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir) } }
-            searched = older.isSuccess
-            older.getOrNull()?.let {
-                olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }.ifEmpty { listOf(it) }
-                found = it
+            olderPage = 2
+            val older = runCatching {
+                withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir, maxPages) { olderPage = it } }
+            }
+            olderPage = 0
+            result = older.getOrNull()
+            if (result is Releases.SearchResult.Found) {
+                found = result.file
+                addOlderFound(result.file)
             }
         }
-        // "not from GitHub" only when every page was looked through (no internet proves nothing)
-        runningUnknown = found == null && searched && list.isSuccess && oldImage == null
+        runningUnknown = found == null && listOk && oldImage == null && result is Releases.SearchResult.NotFound
+        runningNotChecked = found == null && listOk && oldImage == null && result is Releases.SearchResult.Incomplete
         val running = found
         if (running != null && oldImage == null) {
             runCatching { withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) } }
                 .onSuccess { oldImage = Image(running.file, it, running.env) }
         }
+    }
+
+    private suspend fun addOlderFound(f: FirmwareFile) {
+        olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
+            .let { if (it.any { o -> o.sha256 == f.sha256 }) it else listOf(f) + it }
     }
 
     /** The one entry of [newCandidates] to suggest: the newest for the board (the choice stays the user's). */
@@ -625,6 +654,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (i != null && img.sha != hex(i.imageSha)) throw Exception(str(R.string.msg_not_running_firmware))
             oldImage = img
             runningUnknown = false
+            runningNotChecked = false
         } else {
             newImage = img
         }
@@ -1061,8 +1091,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             info = i
             if (!i.enabled) return QueueResult.SKIPPED to str(R.string.q_ota_off)
-            val running = allFirmware.firstOrNull { it.sha256 == hex(i.imageSha) }
-                ?: return QueueResult.SKIPPED to str(R.string.q_unknown_firmware)
+            val sha = hex(i.imageSha)
+            // not in the loaded lists: the older releases too (the find is kept for the next repeater)
+            val running = allFirmware.firstOrNull { it.sha256 == sha } ?: run {
+                val older = runCatching { withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir) } }.getOrNull()
+                (older as? Releases.SearchResult.Found)?.file?.also { addOlderFound(it) }
+            } ?: return QueueResult.SKIPPED to str(R.string.q_unknown_firmware)
             val target = OtaQueueState.target(allFirmware, q.release, running)
                 ?: return QueueResult.SKIPPED to str(R.string.q_no_file, running.env)
             if (target.sha256 == running.sha256) return QueueResult.CURRENT to running.label

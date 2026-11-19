@@ -56,13 +56,55 @@ object Releases {
     private const val PER_PAGE = 50
     /** How many pages of releases [findOlder] looks through at most (the first one is [list]'s). */
     const val MAX_PAGES = 10
+    /** The page cap of an explicit "search again". */
+    const val MAX_PAGES_RETRY = 30
 
-    /** One page of GitHub's release list: how many releases it had and the firmware they list. */
-    internal class Page(val releases: Int, val files: List<FirmwareFile>)
+    /**
+     * One page of GitHub's release list: how many releases it had and the firmware they list. [incomplete]:
+     * a release that had to be checked could not be (its manifest did not download).
+     */
+    internal class Page(val releases: Int, val files: List<FirmwareFile>, val incomplete: Boolean = false)
 
+    /** The outcome of the search for the running firmware in the older releases. */
+    sealed class SearchResult {
+        class Found(val file: FirmwareFile) : SearchResult()
+        /** Every page was looked through (to the last one) and nothing has it. */
+        object NotFound : SearchResult()
+        /** The page cap was reached or a fetch failed: it may still be in a release. */
+        object Incomplete : SearchResult()
+    }
+
+    private fun pageJson(repo: String, n: Int) = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$n")))
+
+    /** Every firmware of the page: all manifests are read (for the UI list). */
     private fun page(repo: String, n: Int): Page {
-        val releases = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$n")))
-        return Page(releases.length(), parseReleases(repo, releases) { get(it) })
+        val releases = pageJson(repo, n)
+        return Page(releases.length(), parseReleases(repo, releases, { get(it) }))
+    }
+
+    /** A page for the search: only the manifests of the releases that may have [sha] are read. */
+    private fun searchPage(repo: String, n: Int, sha: String): Page {
+        val releases = pageJson(repo, n)
+        var failed = false
+        val files = parseReleases(repo, releases, { get(it) }, { mayHave(it, sha) }, { failed = true })
+        return Page(releases.length(), files, failed)
+    }
+
+    /**
+     * Whether a release (its assets) may have the app image with [sha]: an asset's digest is it, or a .bin
+     * has no digest (older releases) so nothing excludes it.
+     */
+    internal fun mayHave(assets: JSONArray, sha: String): Boolean {
+        for (a in 0 until assets.length()) {
+            val asset = assets.getJSONObject(a)
+            val digest = asset.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
+            if (digest == null) {
+                if (asset.optString("name").endsWith(".bin", ignoreCase = true)) return true
+            } else if (digest == sha) {
+                return true
+            }
+        }
+        return false
     }
 
     /**
@@ -81,25 +123,35 @@ object Releases {
 
     /**
      * The firmware whose app image has [sha] (the SHA-256 the repeater tells), from the releases after the
-     * first 50: kept from an earlier search, else pages 2.. of the release list until it is found, a page is
-     * empty or the last one, or [MAX_PAGES] pages were read. The find is kept in [cache] (for no internet and
-     * for [list], which only knows the first page). Null when there is none; throws when GitHub cannot be reached.
+     * first 50: kept from an earlier search, else pages 2.. of the release list until it is found, the last
+     * page is read, or [maxPages] pages were read ([SearchResult]). A find is kept in [cache] (for no internet
+     * and for [list], which only knows the first page). Throws when GitHub cannot be reached at the start.
+     * [onPage] is told each page number before it is read.
      */
-    fun findOlder(repo: String, sha: String, cache: File? = null): FirmwareFile? {
-        if (cache != null) olderCached(repo, cache).firstOrNull { it.sha256 == sha }?.let { return it }
-        val found = searchPages(sha) { page(repo, it) } ?: return null
-        if (cache != null) runCatching { addOlder(repo, cache, found) }
-        return found
+    fun findOlder(repo: String, sha: String, cache: File? = null, maxPages: Int = MAX_PAGES,
+                  onPage: (Int) -> Unit = {}): SearchResult {
+        if (cache != null) olderCached(repo, cache).firstOrNull { it.sha256 == sha }?.let { return SearchResult.Found(it) }
+        val r = searchPages(sha, maxPages) { onPage(it); searchPage(repo, it, sha) }
+        if (cache != null && r is SearchResult.Found) runCatching { addOlder(repo, cache, r.file) }
+        return r
     }
 
     /** The page search of [findOlder], with the page fetch given (so it needs no network to test). */
-    internal fun searchPages(sha: String, fetchPage: (Int) -> Page): FirmwareFile? {
-        for (n in 2..MAX_PAGES) {
-            val p = fetchPage(n)
-            p.files.firstOrNull { it.sha256.isNotEmpty() && it.sha256 == sha }?.let { return it }
-            if (p.releases < PER_PAGE) break   // empty, or the last (short) page
+    internal fun searchPages(sha: String, maxPages: Int = MAX_PAGES, fetchPage: (Int) -> Page): SearchResult {
+        var incomplete = false
+        for (n in 2..maxPages) {
+            val p = try {
+                fetchPage(n)
+            } catch (x: Exception) {
+                if (n == 2) throw x   // nothing read at all: no internet proves nothing
+                return SearchResult.Incomplete
+            }
+            p.files.firstOrNull { it.sha256.isNotEmpty() && it.sha256 == sha }?.let { return SearchResult.Found(it) }
+            if (p.incomplete) incomplete = true
+            // empty, or the last (short) page
+            if (p.releases < PER_PAGE) return if (incomplete) SearchResult.Incomplete else SearchResult.NotFound
         }
-        return null
+        return SearchResult.Incomplete   // the cap
     }
 
     private const val MAX_OLDER = 20
@@ -121,7 +173,8 @@ object Releases {
     fun recommended(candidates: List<FirmwareFile>): FirmwareFile? = candidates.maxByOrNull { it.publishedMillis }
 
     /** The firmware of a page of releases; [fetch] gets a URL (the manifest). */
-    internal fun parseReleases(repo: String, releases: JSONArray, fetch: (String) -> ByteArray): List<FirmwareFile> {
+    internal fun parseReleases(repo: String, releases: JSONArray, fetch: (String) -> ByteArray,
+                               wanted: (JSONArray) -> Boolean = { true }, onFetchFailed: () -> Unit = {}): List<FirmwareFile> {
         val out = ArrayList<FirmwareFile>()
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
@@ -137,8 +190,13 @@ object Releases {
                 if (repo == UPSTREAM_REPO && !rel.optBoolean("draft")) out.addAll(fromAssetNames(rel.optString("tag_name"), assets))
                 continue
             }
+            if (!wanted(assets)) continue   // a search: this release cannot have the firmware
             val published = rel.optString("published_at").ifEmpty { rel.optString("created_at") }
-            val files = runCatching { JSONObject(String(fetch(manifest))).getJSONArray("files") }.getOrNull() ?: continue
+            val files = runCatching { JSONObject(String(fetch(manifest))).getJSONArray("files") }.getOrNull()
+            if (files == null) {
+                onFetchFailed()
+                continue
+            }
             for (f in 0 until files.length()) {
                 val e = files.getJSONObject(f)
                 val file = e.optString("file")
