@@ -1481,7 +1481,7 @@ TEST(BQ25798, AutoSettingSaveLoadAndOldFiles) {
   ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));
   EXPECT_EQ(o.mppt_auto, 1);
   EXPECT_EQ(o.voc_pct, 69);
-  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s) - 1, o));   // the file of b06ffbb had 12 bytes with 0 at the end
+  ASSERT_TRUE(BQ25798::fromFile(&s, 11, o));              // the file of b06ffbb: no mppt_auto yet
   EXPECT_EQ(o.mppt_auto, 0);                              // 11 bytes: unknown -> not auto
   ASSERT_TRUE(BQ25798::fromFile(&s, 10, o));              // before voc_pct
   EXPECT_EQ(o.mppt_auto, 0);
@@ -1571,7 +1571,7 @@ TEST(BQ25798, FileOf10_11_12BytesKeepsWhatItHolds) {
   const int L10 = (int)offsetof(BQ25798Settings, voc_pct), L11 = (int)offsetof(BQ25798Settings, mppt_auto);
   ASSERT_EQ(L10, 10);
   ASSERT_EQ(L11, 11);
-  ASSERT_EQ((int)sizeof(s), 12);
+  ASSERT_EQ((int)offsetof(BQ25798Settings, cal), 12);
   BQ25798Settings o;
   ASSERT_TRUE(BQ25798::fromFile(&s, L10, o));
   EXPECT_EQ(o.voc_pct, 81);
@@ -1681,4 +1681,262 @@ TEST(BQ25798, ScanLastKeepsTheTableAfterALaterFailure) {
   EXPECT_EQ(strstr(small, "last try"), nullptr) << small;
   EXPECT_NE(strstr(small, " 90:"), nullptr) << small;
   EXPECT_EQ(n, (int)strlen(small));
+}
+
+// ---- IBAT calibration ----
+
+// the driver with an ADC result: raw IBAT as given, one 10 s step each
+static void adcStep(BQ25798& bq, FakeBQ& f, uint32_t& t, int16_t ibat) {
+  f.adcValues(3950, ibat, 0, 0);
+  bq.loop(t += 10000);
+  bq.loop(t += 10000);
+}
+
+TEST(IbatCal, OneLowPointIsAnOffset) {
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  EXPECT_EQ(IbatCal::apply(c, -24), -24);
+  ASSERT_EQ(IbatCal::setManual(c, -24, -12), IBAT_SET_OK);
+  IbatFit f = IbatCal::fit(c, IBAT_DIS);
+  EXPECT_EQ(f.points, 1);
+  EXPECT_FLOAT_EQ(f.gain, 1.0f);
+  EXPECT_NEAR(f.offset_ma, 12.0f, 0.01f);
+  EXPECT_EQ(f.source, 2);
+  EXPECT_EQ(IbatCal::apply(c, -24), -12);
+  EXPECT_EQ(IbatCal::apply(c, -300), -288);   // offset only
+  EXPECT_EQ(IbatCal::apply(c, 30), 30);       // the charge direction is untouched
+}
+
+TEST(IbatCal, TwoPointsGainAndOffsetPerDirection) {
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  ASSERT_EQ(IbatCal::setManual(c, -24, -12), IBAT_SET_OK);      // low
+  ASSERT_EQ(IbatCal::setManual(c, -230, -200), IBAT_SET_OK);    // high
+  IbatFit f = IbatCal::fit(c, IBAT_DIS);
+  EXPECT_EQ(f.points, 2);
+  EXPECT_NEAR(f.gain, (200.0f - 12.0f) / (230.0f - 24.0f), 0.001f);
+  EXPECT_EQ(IbatCal::apply(c, -24), -12);
+  EXPECT_EQ(IbatCal::apply(c, -230), -200);
+  EXPECT_EQ(IbatCal::fit(c, IBAT_CHG).points, 0);               // charge not calibrated
+  ASSERT_EQ(IbatCal::setManual(c, 500, 480), IBAT_SET_OK);      // charge: a high point alone
+  EXPECT_EQ(IbatCal::apply(c, 500), 480);
+  EXPECT_EQ(IbatCal::apply(c, -230), -200);                     // discharge unchanged
+}
+
+TEST(IbatCal, BinSelectionAndManualErrors) {
+  EXPECT_EQ(IbatCal::binOf(59), IBAT_LOW);
+  EXPECT_EQ(IbatCal::binOf(-59), IBAT_LOW);
+  EXPECT_EQ(IbatCal::binOf(60), -1);
+  EXPECT_EQ(IbatCal::binOf(149), -1);
+  EXPECT_EQ(IbatCal::binOf(150), IBAT_HIGH);
+  EXPECT_EQ(IbatCal::binOf(-150), IBAT_HIGH);
+  EXPECT_EQ(IbatCal::binOf(0), -1);
+  EXPECT_EQ(IbatCal::binOf(3001), -1);
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  EXPECT_EQ(IbatCal::setManual(c, -24, 0), IBAT_SET_ZERO);
+  EXPECT_EQ(IbatCal::setManual(c, 0, -12), IBAT_SET_ZERO);
+  EXPECT_EQ(IbatCal::setManual(c, 20, -12), IBAT_SET_DIRECTION);
+  EXPECT_EQ(IbatCal::setManual(c, -100, -100), IBAT_SET_ZONE);
+  EXPECT_EQ(IbatCal::setManual(c, -24, -90000), IBAT_SET_ZERO);
+  EXPECT_EQ(IbatCal::setManual(c, -200, -80), IBAT_SET_ZONE);
+  EXPECT_TRUE(IbatCal::empty(c));
+}
+
+TEST(IbatCal, NonsenseFitsAreRejected) {
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  EXPECT_EQ(IbatCal::setManual(c, -5, -58), IBAT_SET_NONSENSE);   // offset 53 mA
+  EXPECT_TRUE(IbatCal::empty(c));
+  ASSERT_EQ(IbatCal::setManual(c, -24, -12), IBAT_SET_OK);
+  EXPECT_EQ(IbatCal::setManual(c, -230, -500), IBAT_SET_NONSENSE);   // gain ~ 2.4
+  EXPECT_EQ(IbatCal::setManual(c, -400, -160), IBAT_SET_NONSENSE);   // gain ~ 0.39
+  EXPECT_EQ(c.bin[IBAT_DIS][IBAT_HIGH].n, 0);                       // the bin was not touched
+  // raw points too close for a gain: the low one alone (not a division by ~0)
+  IbatCalData d; memset(&d, 0, sizeof(d));
+  ASSERT_EQ(IbatCal::setManual(d, -50, -40), IBAT_SET_OK);
+  ASSERT_EQ(IbatCal::setManual(d, -160, -150), IBAT_SET_OK);
+  IbatFit f = IbatCal::fit(d, IBAT_DIS);
+  EXPECT_EQ(f.points, 2);   // span 110 mA: fine
+  d.bin[IBAT_DIS][IBAT_HIGH].raw_x10 = -600;   // forged: span 10 mA
+  f = IbatCal::fit(d, IBAT_DIS);
+  EXPECT_TRUE(f.rejected);
+  EXPECT_EQ(f.points, 1);
+  EXPECT_FLOAT_EQ(f.gain, 1.0f);
+}
+
+TEST(IbatCal, StabilityFilterAndAveraging) {
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  IbatLearner l;
+  EXPECT_FALSE(l.feed(c, -24, -12));        // no predecessor
+  EXPECT_FALSE(l.feed(c, -40, -12));        // raw moved 16 mA: not still
+  EXPECT_FALSE(l.feed(c, -24, -25));        // the reference moved
+  EXPECT_TRUE(l.feed(c, -24, -26));         // both within 3 mA of the one before
+  EXPECT_TRUE(IbatCal::binOf(-26) == IBAT_LOW);
+  IbatCalData d; memset(&d, 0, sizeof(d));
+  IbatLearner m;
+  int accepted = 0;
+  for (int i = 0; i < 30; i++) accepted += m.feed(d, -24 - (i & 1), -12 - (i & 1)) ? 1 : 0;
+  EXPECT_EQ(accepted, 29);
+  EXPECT_EQ(d.bin[IBAT_DIS][IBAT_LOW].n, IBAT_N_CAP);   // capped
+  EXPECT_FALSE(d.bin[IBAT_DIS][IBAT_LOW].manual);
+  EXPECT_NEAR(d.bin[IBAT_DIS][IBAT_LOW].raw_x10, -245, 12);
+  EXPECT_NEAR(d.bin[IBAT_DIS][IBAT_LOW].ref_x10, -125, 12);
+  // 3 % of a big current is still still; 10 % is not
+  IbatCalData e; memset(&e, 0, sizeof(e));
+  IbatLearner h;
+  h.feed(e, 500, 480);
+  EXPECT_TRUE(h.feed(e, 510, 490));
+  EXPECT_FALSE(h.feed(e, 570, 550));
+  // opposite signs, zeros, the middle zone and the other bin of a manual point are not learnt
+  IbatLearner z;
+  for (int i = 0; i < 4; i++) {
+    EXPECT_FALSE(z.feed(e, 5, -5));
+  }
+  for (int i = 0; i < 4; i++) EXPECT_FALSE(z.feed(e, 0, 0));
+  for (int i = 0; i < 4; i++) EXPECT_FALSE(z.feed(e, -100, -100));
+  IbatCalData g; memset(&g, 0, sizeof(g));
+  ASSERT_EQ(IbatCal::setManual(g, -24, -12), IBAT_SET_OK);
+  IbatLearner k;
+  for (int i = 0; i < 30; i++) k.feed(g, -30, -20);
+  EXPECT_EQ(g.bin[IBAT_DIS][IBAT_LOW].raw_x10, -240);   // the manual point stays
+  EXPECT_EQ(g.bin[IBAT_DIS][IBAT_LOW].n, 1);
+}
+
+TEST(IbatCal, AutoNeedsMinimumSamplesAndSaveIsRateLimited) {
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  IbatLearner l;
+  l.synced(c, 0, false);
+  for (int i = 0; i < IBAT_AUTO_MIN_N; i++) l.feed(c, -24, -12);   // the first feed has no predecessor
+  EXPECT_EQ(c.bin[IBAT_DIS][IBAT_LOW].n, IBAT_AUTO_MIN_N - 1);
+  EXPECT_EQ(IbatCal::apply(c, -24), -24);                          // not used yet
+  EXPECT_FALSE(l.dirty());
+  l.feed(c, -24, -12);
+  EXPECT_EQ(IbatCal::apply(c, -24), -12);
+  EXPECT_TRUE(l.dirty());
+  EXPECT_FALSE(l.saveDue(9 * 60000UL));                            // not in the first 10 minutes
+  EXPECT_TRUE(l.saveDue(10 * 60000UL));
+  l.synced(c, 20 * 60000UL, true);
+  EXPECT_FALSE(l.dirty());
+  for (int i = 0; i < 20; i++) l.feed(c, -24, -12);
+  EXPECT_FALSE(l.dirty());                                         // no change: nothing to write
+  for (int i = 0; i < 60; i++) l.feed(c, -24, -22);                // the drain changed by 10 mA
+  EXPECT_TRUE(l.dirty());
+  EXPECT_FALSE(l.saveDue(79 * 60000UL));
+  EXPECT_TRUE(l.saveDue(80 * 60000UL));                            // an hour after the last write
+  EXPECT_TRUE(l.saveDue(80 * 60000UL + 1));
+  // a loaded file is no reason to write
+  IbatLearner n;
+  n.synced(c, 0, false);
+  for (int i = 0; i < 5; i++) n.feed(c, -24, -22);
+  EXPECT_FALSE(n.dirty());
+}
+
+TEST(IbatCal, SanitizeDropsBadBins) {
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  c.bin[IBAT_DIS][IBAT_LOW] = { 240, -120, 5, 1 };    // discharge bin with a positive raw
+  c.bin[IBAT_CHG][IBAT_HIGH] = { 5000, 4800, 20, 0 };
+  c.bin[IBAT_CHG][IBAT_LOW] = { 100, 200, 20, 0 };    // true 20 mA: low bin ok
+  c.bin[IBAT_DIS][IBAT_HIGH] = { -2000, -1900, 99, 0 }; // n over the cap
+  IbatCal::sanitize(c);
+  EXPECT_EQ(c.bin[IBAT_DIS][IBAT_LOW].n, 0);
+  EXPECT_EQ(c.bin[IBAT_CHG][IBAT_HIGH].n, 20);
+  EXPECT_EQ(c.bin[IBAT_CHG][IBAT_LOW].n, 20);
+  EXPECT_EQ(c.bin[IBAT_DIS][IBAT_HIGH].n, 0);
+  c.bin[IBAT_CHG][IBAT_LOW] = { 100, 900, 20, 0 };    // true 90 mA does not belong in the low bin
+  IbatCal::sanitize(c);
+  EXPECT_EQ(c.bin[IBAT_CHG][IBAT_LOW].n, 0);
+}
+
+TEST(IbatCal, BuildDefaultsApplyWithoutPoints) {
+  // the defaults in this build are 0 / 1000: no change
+  IbatCalData c; memset(&c, 0, sizeof(c));
+  IbatFit f = IbatCal::fit(c, IBAT_DIS);
+  EXPECT_EQ(f.source, 0);
+  EXPECT_FLOAT_EQ(f.gain, BQ25798_IBAT_DIS_GAIN_X1000 / 1000.0f);
+  EXPECT_FLOAT_EQ(f.offset_ma, BQ25798_IBAT_DIS_OFFSET_X10 / 10.0f);
+  EXPECT_EQ(IbatCal::apply(c, 123), 123);
+}
+
+TEST(BQ25798, IbatDriverAutoLearnsFromReference) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  for (int i = 0; i < 40; i++) {
+    adcStep(bq, f, t, -24);                 // the ADC says 24 mA out
+    if (bq.reading().valid) bq.setBatteryReference(-12, t);   // the INA219 says 12 mA out (+ = charging)
+  }
+  EXPECT_EQ(bq.reading().ibat_raw_ma, -24);
+  EXPECT_EQ(bq.reading().ibat_ma, -12);     // corrected
+  EXPECT_EQ(bq.batteryCurrentMa(), -12);
+  EXPECT_TRUE(bq.ibatCalSaveDue(t));
+  char buf[200];
+  bq.formatIbat(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "DIS_OFFSET_X10=120 DIS_GAIN_X1000=1000 auto"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "CHG_OFFSET_X10=0 CHG_GAIN_X1000=1000 default"), nullptr) << buf;
+  EXPECT_LT(strlen(buf), 155u);
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "-12mA"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "(bq -24)"), nullptr) << buf;
+  // the reference gone: the corrected ADC, still -12
+  t += 100000;
+  adcStep(bq, f, t, -24);
+  EXPECT_FALSE(bq.hasBatteryReference());
+  EXPECT_EQ(bq.batteryCurrentMa(), -12);
+  bq.ibatCalSaved(t);
+  EXPECT_FALSE(bq.ibatCalSaveDue(t + 1000));
+  // the file carries it
+  BQ25798Settings o;
+  ASSERT_TRUE(BQ25798::fromFile(&bq.settings(), sizeof(BQ25798Settings), o));
+  EXPECT_EQ(IbatCal::apply(o.cal, -24), -12);
+}
+
+TEST(BQ25798, IbatManualCalAndClear) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  EXPECT_EQ(bq.ibatCalManual(-12), -1);     // no ADC result yet
+  uint32_t t = 0;
+  adcStep(bq, f, t, -24);
+  ASSERT_TRUE(bq.reading().valid);
+  EXPECT_EQ(bq.ibatCalManual(12), IBAT_SET_DIRECTION);
+  EXPECT_EQ(bq.ibatCalManual(-12), IBAT_SET_OK);
+  bq.setBatteryReference(-5, t + 7);   // a reference a few ms after the last loop() counts at once
+  EXPECT_EQ(bq.batteryCurrentMa(), -5);
+  bq.clearBatteryReference();
+  EXPECT_EQ(bq.reading().ibat_ma, -12);
+  EXPECT_EQ(bq.batteryCurrentMa(), -12);
+  char buf[200];
+  bq.formatIbat(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "DIS_OFFSET_X10=120"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "manual"), nullptr) << buf;
+  bq.ibatCalClear();
+  EXPECT_EQ(bq.reading().ibat_ma, -24);
+  EXPECT_TRUE(IbatCal::empty(bq.ibatCal()));
+}
+
+TEST(BQ25798, FileWithCalibrationAndOlderFiles) {
+  BQ25798Settings s = settings();
+  ASSERT_EQ(IbatCal::setManual(s.cal, -24, -12), IBAT_SET_OK);
+  s.ichg_ma = 1500;
+  BQ25798Settings o;
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));
+  EXPECT_EQ(IbatCal::apply(o.cal, -24), -12);
+  EXPECT_EQ(o.ichg_ma, 1500);
+  const int CAL = (int)offsetof(BQ25798Settings, cal);
+  for (int len = CAL; len < (int)sizeof(s); len++) {   // cut inside the calibration: none, the rest kept
+    ASSERT_TRUE(BQ25798::fromFile(&s, len, o));
+    EXPECT_TRUE(IbatCal::empty(o.cal)) << len;
+    EXPECT_EQ(o.ichg_ma, 1500);
+  }
+  ASSERT_TRUE(BQ25798::fromFile(&s, 10, o));
+  EXPECT_TRUE(IbatCal::empty(o.cal));
+  // a damaged calibration costs the calibration, not the settings
+  BQ25798Settings bad = s;
+  memset(&bad.cal, 0xFF, sizeof(bad.cal));
+  ASSERT_TRUE(BQ25798::fromFile(&bad, sizeof(bad), o));
+  EXPECT_TRUE(IbatCal::empty(o.cal));
+  EXPECT_EQ(o.ichg_ma, 1500);
+  // a file as written by the build before the calibration: 12 bytes
+  ASSERT_TRUE(BQ25798::fromFile(&s, 12, o));
+  EXPECT_TRUE(IbatCal::empty(o.cal));
 }

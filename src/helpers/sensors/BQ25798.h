@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <helpers/sensors/IbatCal.h>
 
 // TI BQ25798: I2C buck-boost charger with solar MPPT (xiao-solar-lite, hardware/xiao-solar-lite).
 //
@@ -167,14 +168,17 @@ struct BQ25798Settings {
   uint16_t cutoff_mv;   // battery empty: shutdown under this with no sun; 0 = off
   uint8_t  voc_pct;     // MPPT VOC_PCT: 63, 69, 75, 81 or 88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %); 0 = default (81)
   uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: the scan sets voc_pct; 0 (also in older files) = fixed
+  IbatCalData cal;      // IBAT ADC calibration points (see IbatCal.h); all zero (also in older files) = none
 };
-// The /charger file is the struct as is. Files of 10 bytes (before voc_pct) are still read: fromFile().
+// The /charger file is the struct as is. Files of 10, 11 and 12 bytes (before voc_pct / mppt_auto / cal)
+// are still read: fromFile().
 #define BQ_SETTINGS_VERSION    1
 
 struct BQ25798Reading {
   bool     valid;       // at least one ADC result
   uint16_t vbat_mv, vsys_mv, vbus_mv;
-  int16_t  ibat_ma;     // + = charging the battery, - = the battery feeds the node
+  int16_t  ibat_ma;     // + = charging the battery, - = the battery feeds the node; the IBAT ADC with the calibration applied
+  int16_t  ibat_raw_ma; // ... as the ADC gave it
   int16_t  ibus_ma;     // from the panel
   int16_t  tdie_dc;     // die temperature, 0.1 °C
   uint16_t ts_pm;       // TS in 0.1 % of REGN, from a conversion with TS on in the last 15 min (0 = none)
@@ -233,6 +237,11 @@ class BQ25798 {
   uint16_t _sc_best_x10;            // best share, 0.1 %
   uint32_t _sc_best_mw, _sc_81_mw;
   uint8_t  _sc_chosen;              // VOC_PCT label set by the last accepted scan in auto mode (0 = none)
+  // IBAT calibration: a reference current (INA219 in the battery line), the auto learning
+  IbatLearner _learn;
+  bool     _ref_ok;
+  int16_t  _ref_ma;                 // + = charging
+  uint32_t _ref_at;
 
   bool read(uint8_t reg, uint8_t* buf, uint8_t n);
   bool write8(uint8_t reg, uint8_t v);
@@ -323,12 +332,33 @@ public:
   // REG15 without EN_MPPT for a setting (VOC_PCT bits 7:5 + the delay / rate bits)
   static uint8_t mpptBase(uint8_t voc_pct);
   // the settings from the /charger file's bytes (len as read): false for a short or invalid file;
-  // a 10-byte file from before voc_pct gets the default 81
+  // a 10-byte file from before voc_pct gets the default 81, one without the calibration none (a partial one is dropped)
   static bool fromFile(const void* data, int len, BQ25798Settings& s);
   static const char* stateName(uint8_t st);
   // TS in 0.1 % of REGN -> 0.1 °C; BQ_TCELL_NONE for an open (no NTC, > 84 %) or shorted (< 5 %) NTC
   static int16_t ntcTemp(uint16_t ts_pm);
   bool ntcOpen() const { return _s.ntc && _r.ts_pm > 840; }
+
+  // The battery current, + = charging: a reference sensor's (setBatteryReference, an INA219 in the battery
+  // line) while it is fresh, else the IBAT ADC with the calibration applied.
+  int16_t batteryCurrentMa() const;
+  // Call once per new ADC result (adcCount() moved): the reference current (+ = charging, as the sensor
+  // measures it now). With a stable pair the calibration learns from it (auto mode).
+  void setBatteryReference(int16_t ma, uint32_t now);
+  void clearBatteryReference();   // the sensor is gone / failed: the corrected IBAT ADC counts again
+  bool hasBatteryReference() const { return _ref_ok && (int32_t)(_now - _ref_at) < (int32_t)(3 * BQ_POLL_MS); }   // signed: the reference may be a ms newer than the last loop()
+  const IbatCalData& ibatCal() const { return _s.cal; }
+  // `charger ibat cal <mA>`: the current raw IBAT against the true current (+ charge, - discharge).
+  // IBAT_SET_OK, or IBAT_SET_* / -1 (no ADC result yet)
+  int ibatCalManual(int true_ma);
+  void ibatCalClear();            // `charger ibat clear`: no calibration; the next save writes it
+  // the settings (with the calibration) are to be written: a new auto point, at most hourly
+  bool ibatCalSaveDue(uint32_t now) const { return _learn.saveDue(now); }
+  void ibatCalSaved(uint32_t now) { _learn.synced(_s.cal, now, true); }   // after a write of settings()
+  void ibatCalLoaded() { _learn.synced(_s.cal, 0, false); }               // after apply() of a file
+  // `charger ibat`: "bq -24>-12 ina -12 | CHG_OFFSET_X10=0 CHG_GAIN_X1000=1000 default | DIS_OFFSET_X10=120 DIS_GAIN_X1000=1000 auto La45 H-"
+  // (the names are BQ25798_IBAT_<name> for platformio.ini; mA readings: raw > corrected, the INA219's)
+  int formatIbat(char* buf, int len) const;
 
   // true once each time a charge ends ("done"): the gauge takes the cell as full
   bool takeFull() { bool f = _full; _full = false; return f; }
