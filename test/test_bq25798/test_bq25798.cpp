@@ -1530,3 +1530,155 @@ TEST(BQ25798, StatusAutoLineAndScanProgress) {
   bq.formatScan(buf, 155);
   EXPECT_NE(strstr(buf, "running"), nullptr) << buf;
 }
+
+// ---- review fixes: defaults, old files, low-voltage scans, `scan last` ----
+
+TEST(BQ25798, DefaultsSetEveryFieldAndLoadPathWithGarbageIsValid) {
+  BQ25798Settings s;
+  memset(&s, 0xA5, sizeof(s));                          // garbage, padding included
+  BQ25798::defaults(s);
+  EXPECT_EQ(s.version, BQ_SETTINGS_VERSION);
+  EXPECT_EQ(s.chem, BQ_CHEM_LIION);
+  EXPECT_EQ(s.ichg_ma, 1000);
+  EXPECT_EQ(s.vindpm_mv, 0);
+  EXPECT_EQ(s.ntc, 0);
+  EXPECT_EQ(s.shipfet, 1);
+  EXPECT_EQ(s.cutoff_mv, BQ25798::defaultCutoff(BQ_CHEM_LIION));
+  EXPECT_EQ(s.voc_pct, BQ_VOC_PCT_DEFAULT);
+  EXPECT_EQ(s.mppt_auto, 0);
+  EXPECT_TRUE(BQ25798::valid(s));
+  // loadCharger(): no file (len -1), garbage on the stack -> defaults -> valid
+  for (int fill : { 0x00, 0xA5, 0xFF }) {
+    BQ25798Settings g;
+    memset(&g, fill, sizeof(g));
+    uint8_t raw[sizeof(g)];
+    memset(raw, fill, sizeof(raw));
+    if (!BQ25798::fromFile(raw, -1, g)) BQ25798::defaults(g);
+    EXPECT_TRUE(BQ25798::valid(g)) << fill;
+    EXPECT_EQ(g.mppt_auto, 0);
+    // a damaged file of full length: also back to valid defaults
+    memset(&g, fill, sizeof(g));
+    if (!BQ25798::fromFile(raw, sizeof(raw), g)) BQ25798::defaults(g);
+    EXPECT_TRUE(BQ25798::valid(g)) << fill;
+  }
+}
+
+TEST(BQ25798, FileOf10_11_12BytesKeepsWhatItHolds) {
+  BQ25798Settings s = settings();
+  s.ichg_ma = 1500;
+  s.voc_pct = 88;
+  s.mppt_auto = 1;
+  const int L10 = (int)offsetof(BQ25798Settings, voc_pct), L11 = (int)offsetof(BQ25798Settings, mppt_auto);
+  ASSERT_EQ(L10, 10);
+  ASSERT_EQ(L11, 11);
+  ASSERT_EQ((int)sizeof(s), 12);
+  BQ25798Settings o;
+  ASSERT_TRUE(BQ25798::fromFile(&s, L10, o));
+  EXPECT_EQ(o.voc_pct, 81);
+  EXPECT_EQ(o.mppt_auto, 0);
+  ASSERT_TRUE(BQ25798::fromFile(&s, L11, o));           // voc_pct there, no mppt_auto
+  EXPECT_EQ(o.ichg_ma, 1500);
+  EXPECT_EQ(o.voc_pct, 88);
+  EXPECT_EQ(o.mppt_auto, 0);
+  ASSERT_TRUE(BQ25798::fromFile(&s, 12, o));
+  EXPECT_EQ(o.voc_pct, 88);
+  EXPECT_EQ(o.mppt_auto, 1);
+}
+
+// every VINDPM write, to see what the panel was ever asked to hold
+struct LowPanelBQ : public PanelBQ {
+  int min_vindpm = 255;
+  bool writeRegs(uint8_t reg, const uint8_t* buf, uint8_t n) override {
+    for (uint8_t i = 0; i < n; i++) if (reg + i == 0x05 && buf[i] < min_vindpm) min_vindpm = buf[i];
+    return PanelBQ::writeRegs(reg, buf, n);
+  }
+};
+
+TEST(BQ25798, ScanSkipsStepsUnder3V9) {
+  LowPanelBQ f;
+  f.fast();
+  f.voc = 5000;                                         // 62.5 % = 3.1 V ... 77.5 % = 3.8 V are skipped
+  f.peak = 0.85;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());                                 // fixed share: only measures
+  runFor(bq, t, 30000);
+  f.min_vindpm = 255;
+  ASSERT_EQ(bq.scanStart(), 0);
+  ASSERT_TRUE(tickUntilIdle(bq, t, 90000));
+  ASSERT_TRUE(bq.scanHasResult());
+  EXPECT_GE(f.min_vindpm, 39);
+  EXPECT_EQ(bq.scanPowerMw(0), 0u);
+  EXPECT_EQ(bq.scanPowerMw(6), 0u);
+  EXPECT_GT(bq.scanPowerMw(7), 0u);
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_EQ(strstr(buf, " 62:"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, " 80:"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, " 90:"), nullptr) << buf;
+}
+
+TEST(BQ25798, ScanWithTooFewStepsIsNotRun) {
+  LowPanelBQ f;
+  f.fast();
+  f.voc = 4500;                                         // only 87.5 and 90 % reach 3.9 V
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(autoSettings());
+  runFor(bq, t, 30000);
+  f.min_vindpm = 255;
+  ASSERT_EQ(bq.scanStart(), 0);
+  ASSERT_TRUE(tickUntilIdle(bq, t, 90000));
+  EXPECT_FALSE(bq.scanHasResult());
+  EXPECT_EQ(f.r[0x05], BQ25798::vindpmFromVoc(4500, 81) / 100);   // only the restore
+  EXPECT_EQ(f.r[0x0F] & 0x04, 0);                       // EN_HIZ back off
+  EXPECT_EQ(f.r[0x15] & 1, 1);                          // EN_MPPT back
+  EXPECT_EQ(bq.vocPct(), 81);
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "panel too low"), nullptr) << buf;
+  // 4600 mV leaves 3 steps (85, 87.5, 90 %): scanned
+  f.voc = 4600;
+  runFor(bq, t, 30000);
+  ASSERT_EQ(bq.scanStart(), 0);
+  ASSERT_TRUE(tickUntilIdle(bq, t, 90000));
+  EXPECT_TRUE(bq.scanHasResult());
+  EXPECT_EQ(bq.scanPowerMw(8), 0u);
+  EXPECT_GT(bq.scanPowerMw(9), 0u);
+}
+
+TEST(BQ25798, ScanLastKeepsTheTableAfterALaterFailure) {
+  PanelBQ f;
+  f.fast();
+  f.pmax_mw = 800;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  runFor(bq, t, 30000);
+  ASSERT_EQ(bq.scanStart(), 0);
+  ASSERT_TRUE(tickUntilIdle(bq, t, 90000));
+  ASSERT_TRUE(bq.scanHasResult());
+  f.scale_after = f.vindpm_writes + 13;                 // clouds in the second one
+  f.scale = 1.0;
+  tickFor(bq, t, 12 * 60000);
+  ASSERT_EQ(bq.scanStart(), 0);
+  ASSERT_TRUE(tickUntilIdle(bq, t, 90000));
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_EQ(strncmp(buf, "scan ", 5), 0) << buf;
+  EXPECT_NE(strstr(buf, " 62:"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, " 90:"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "; last try: clouds 0m"), nullptr) << buf;
+  EXPECT_EQ(strstr(buf, "scan failed"), nullptr) << buf;
+  EXPECT_LT((int)strlen(buf), 155);
+  // not enough room: the note goes, the table stays whole
+  int table_len = (int)(strstr(buf, "; last try") - buf);
+  char small[200];
+  int n = bq.formatScan(small, table_len + 6);
+  EXPECT_EQ(strstr(small, "last try"), nullptr) << small;
+  EXPECT_NE(strstr(small, " 90:"), nullptr) << small;
+  EXPECT_EQ(n, (int)strlen(small));
+}

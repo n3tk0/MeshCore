@@ -31,6 +31,7 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _vindpm_reg = 0;
   _auto_vin_mv = _auto_vin_count = 0;
   _sc_state = _sc_idx = _sc_tries = 0;
+  _sc_lo = _sc_table_lo = 0;
   _sc_forced = _sc_hiz_set = _sc_mppt_was = false;
   _sc_at = 0;
   _sc_voc = 0;
@@ -55,6 +56,7 @@ void BQ25798::defaults(BQ25798Settings& s) {
   s.ichg_ma = 1000;
   s.vindpm_mv = 0;    // MPPT
   s.voc_pct = BQ_VOC_PCT_DEFAULT;
+  s.mppt_auto = 0;
   s.ntc = 0;          // no NTC on J3: TS_IGNORE
   s.shipfet = 1;      // Q2 fitted, JP3 open (as JLC builds the board)
   s.cutoff_mv = defaultCutoff(s.chem);
@@ -121,7 +123,9 @@ bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
   if (len < OLD_LEN) return false;
   defaults(s);
   memcpy(&s, data, len < (int)sizeof(s) ? len : (int)sizeof(s));
-  if (len < (int)sizeof(s)) { s.voc_pct = BQ_VOC_PCT_DEFAULT; s.mppt_auto = 0; }
+  // fields past the end of an older file: their defaults
+  if (len <= (int)offsetof(BQ25798Settings, voc_pct)) s.voc_pct = BQ_VOC_PCT_DEFAULT;
+  if (len <= (int)offsetof(BQ25798Settings, mppt_auto)) s.mppt_auto = 0;
   if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   if (valid(s)) return true;
   defaults(s);
@@ -613,17 +617,19 @@ void BQ25798::scanFinish(uint32_t now, uint8_t fail) {
   _sc_done_at = now;
   if (fail != BQ_SCF_NOCOND) {   // not started after all: the schedule stays as it was
     _sc_first = false;
-    _sc_not_before = now + (fail ? BQ_SCAN_RETRY_MS : BQ_SCAN_PERIOD_MS);
+    _sc_not_before = now + (fail == BQ_SCF_LOWV ? BQ_SCAN_PERIOD_MS : fail ? BQ_SCAN_RETRY_MS : BQ_SCAN_PERIOD_MS);
   }
   if (!fail) {
-    unsigned best = 0;
+    unsigned best = _sc_lo;
     for (unsigned i = 0; i < BQ_SCAN_N; i++) {
-      _sc_table[i] = _sc_p[i];
-      if (_sc_p[i] > _sc_p[best]) best = i;
+      _sc_table[i] = i < _sc_lo ? 0 : _sc_p[i];
+      if (i >= _sc_lo && _sc_p[i] > _sc_p[best]) best = i;
     }
+    _sc_table_lo = _sc_lo;
     _sc_best_x10 = scanShareX10(best);
     _sc_best_mw = _sc_p[best];
-    _sc_81_mw = (_sc_p[7] + _sc_p[8]) / 2;   // 80.0 and 82.5 %
+    // 80.0 and 82.5 % (only the measured ones)
+    _sc_81_mw = _sc_lo <= 7 ? (_sc_p[7] + _sc_p[8]) / 2 : _sc_lo == 8 ? _sc_p[8] : 0;
     _sc_have = true;
     _sc_ok_at = now;
     _sc_okcount++;
@@ -675,6 +681,7 @@ void BQ25798::scanTick(uint32_t now) {
     if (!ok) { scanFinish(now, BQ_SCF_NOCOND); return; }
     _sc_mppt_was = m & 1;
     _sc_voc = 0;
+    _sc_lo = 0;
     _sc_idx = 0;
     _sc_tries = 0;
     _sc_state = BQ_SC_VOC;   // from here on scanFinish() puts things back
@@ -705,10 +712,14 @@ void BQ25798::scanTick(uint32_t now) {
     }
     if (v < BQ_VOC_MIN_MV) { scanFinish(now, BQ_SCF_NOVOC); return; }
     _sc_voc = v;
+    // steps whose VINDPM would be under BQ_SCAN_MIN_VINDPM (VPOORSRC region) are skipped
+    _sc_lo = 0;
+    while (_sc_lo < BQ_SCAN_N && (uint32_t)v * scanShareX10(_sc_lo) / 1000 / 100 * 100 < BQ_SCAN_MIN_VINDPM) _sc_lo++;
+    if (BQ_SCAN_N - _sc_lo < BQ_SCAN_MIN_STEPS) { scanFinish(now, BQ_SCF_LOWV); return; }
     // VINDPM first, then EN_HIZ off (the weak panel would go under VPOORSRC at the chip's own VINDPM)
-    if (!scanSetVindpm(0) || !write8(BQ_REG_CTRL0, c[0] & ~0x04)) { scanFinish(now, BQ_SCF_I2C); return; }
+    if (!scanSetVindpm(_sc_lo) || !write8(BQ_REG_CTRL0, c[0] & ~0x04)) { scanFinish(now, BQ_SCF_I2C); return; }
     _sc_hiz_set = false;
-    _sc_idx = 0;
+    _sc_idx = _sc_lo;
     _sc_state = BQ_SC_STEP_ADC;
     _sc_at = now + BQ_SCAN_SETTLE_MS;
     return;
@@ -725,15 +736,15 @@ void BQ25798::scanTick(uint32_t now) {
     }
     _sc_p[_sc_idx++] = mw;   // [N] is the first share again
     if (_sc_idx <= BQ_SCAN_N) {
-      if (!scanSetVindpm(_sc_idx < BQ_SCAN_N ? _sc_idx : 0)) { scanFinish(now, BQ_SCF_I2C); return; }
+      if (!scanSetVindpm(_sc_idx < BQ_SCAN_N ? _sc_idx : _sc_lo)) { scanFinish(now, BQ_SCF_I2C); return; }
       _sc_state = BQ_SC_STEP_ADC;
       _sc_at = now + BQ_SCAN_SETTLE_MS;
       return;
     }
-    uint32_t p0 = _sc_p[0], p1 = _sc_p[BQ_SCAN_N];
+    uint32_t p0 = _sc_p[_sc_lo], p1 = _sc_p[BQ_SCAN_N];
     uint32_t hi = p0 > p1 ? p0 : p1, d = p0 > p1 ? p0 - p1 : p1 - p0;
     uint32_t best = 0;
-    for (unsigned i = 0; i < BQ_SCAN_N; i++) if (_sc_p[i] > best) best = _sc_p[i];
+    for (unsigned i = _sc_lo; i < BQ_SCAN_N; i++) if (_sc_p[i] > best) best = _sc_p[i];
     if (hi < BQ_SCAN_MIN_MW || best < BQ_SCAN_MIN_MW) scanFinish(now, BQ_SCF_DARK);
     else if (d * 100 > hi * BQ_SCAN_DRIFT_PCT) scanFinish(now, BQ_SCF_CLOUDS);
     else scanFinish(now, BQ_SCF_NONE);
@@ -746,20 +757,23 @@ void BQ25798::scanTick(uint32_t now) {
 }
 
 int BQ25798::formatScan(char* buf, int len) const {
-  static const char* why[10] = { "", "aborted", "clouds", "sun lost", "left fast charge", "I2C", "no Voc",
-                                 "too dark", "chip reset", "not in fast charge" };
+  static const char* why[11] = { "", "aborted", "clouds", "sun lost", "left fast charge", "I2C", "no Voc",
+                                 "too dark", "chip reset", "not in fast charge", "panel too low" };
   int n = 0;
   buf[0] = 0;
   if (_sc_state) return addf(buf, len, 0, "scan running %u/%u", (unsigned)(_sc_idx > BQ_SCAN_N ? BQ_SCAN_N : _sc_idx) + 1, BQ_SCAN_N + 1);
   if (!_sc_ran) return addf(buf, len, 0, "no scan yet%s", _s.mppt_auto ? " (auto: 2 min after fast charge starts)" : "");
+  unsigned f = _sc_fail < 11 ? _sc_fail : 0;
+  unsigned ago = (unsigned)((_now - _sc_done_at) / 60000UL);
+  if (!_sc_have) return addf(buf, len, 0, "scan failed: %s %um ago", why[f], ago);
+  // the last good table first; a later failure is a short note at the end, dropped when it does not fit
+  n = addf(buf, len, n, "scan %um ago: best %u.%u%% %umW, 81%% %umW |", (unsigned)((_now - _sc_ok_at) / 60000UL),
+           _sc_best_x10 / 10, _sc_best_x10 % 10, (unsigned)_sc_best_mw, (unsigned)_sc_81_mw);
+  for (unsigned i = _sc_table_lo; i < BQ_SCAN_N; i++) n = addf(buf, len, n, " %u:%u", scanShareX10(i) / 10, (unsigned)_sc_table[i]);
   if (_sc_fail) {
-    n = addf(buf, len, n, "scan failed: %s %um ago", why[_sc_fail < 10 ? _sc_fail : 0], (unsigned)((_now - _sc_done_at) / 60000UL));
-    if (_sc_have) n = addf(buf, len, n, "; ");
-  }
-  if (_sc_have) {
-    n = addf(buf, len, n, "scan %um ago: best %u.%u%% %umW, 81%% %umW |", (unsigned)((_now - _sc_ok_at) / 60000UL),
-             _sc_best_x10 / 10, _sc_best_x10 % 10, (unsigned)_sc_best_mw, (unsigned)_sc_81_mw);
-    for (unsigned i = 0; i < BQ_SCAN_N; i++) n = addf(buf, len, n, " %u:%u", scanShareX10(i) / 10, (unsigned)_sc_table[i]);
+    char note[40];
+    int w = snprintf(note, sizeof(note), "; last try: %s %um", why[f], ago);
+    if (w > 0 && n + w < len) { memcpy(buf + n, note, w + 1); n += w; }
   }
   return n;
 }

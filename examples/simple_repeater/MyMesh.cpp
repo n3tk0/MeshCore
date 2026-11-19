@@ -2418,8 +2418,8 @@ static bool samePsave(const PowerSaverConfig& a, const PowerSaverConfig& b) {
 void MyMesh::loadCharger() {
   BQ25798* c = sensors.getCharger();
   if (c == NULL) return;
-  BQ25798Settings s;
-  uint8_t raw[sizeof(s)];
+  BQ25798Settings s{};
+  uint8_t raw[sizeof(s)] = {0};
   int len = readSmallFileLen(_fs, CHARGER_FILE, raw, sizeof(raw));
   if (!BQ25798::fromFile(raw, len, s)) BQ25798::defaults(s);   // an old 10-byte file: voc_pct 81
   gaugeChemistry() = s.chem;
@@ -2547,11 +2547,13 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
         s.voc_pct = (uint8_t)pct;
         s.mppt_auto = 0;
       }
+      else s.mppt_auto = 0;   // bare `vin mppt` leaves auto and keeps the current share
       s.vindpm_mv = 0;
     } else {
       int mv = parseMilli(val);
       if (mv < BQ_VINDPM_MIN || mv > BQ_VINDPM_MAX) { strcpy(reply, "Err - charger vin mppt [auto|63|69|75|81|88]|3600..22000 (mV)"); return; }
       s.vindpm_mv = (uint16_t)(mv / 100 * 100);
+      s.mppt_auto = 0;
     }
   } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
     if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0) { sprintf(reply, "Err - charger %s on|off", args); return; }
