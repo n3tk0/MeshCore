@@ -112,6 +112,8 @@
 #define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
 #define BATT_CAP_FILE            "/batt_cap"
 #define CHARGER_FILE             "/charger"
+#define IBATCAL_FILE             "/ibatcal"      // IBAT calibration curve (IbatCal.h)
+#define IBATCAL_TMP              "/ibatcal.tmp"
 #ifdef WITH_TELEMETRY_HISTORY
   #define HISTORY_FILE           "/tele_hist"
   #define HISTORY_TMP            "/tele_hist.tmp"
@@ -2417,13 +2419,22 @@ static bool samePsave(const PowerSaverConfig& a, const PowerSaverConfig& b) {
   return a.enabled == b.enabled && a.low_mv == b.low_mv && a.crit_mv == b.crit_mv && a.off_mv == b.off_mv;
 }
 
+// the IBAT calibration curve to /ibatcal: a temp file renamed over the old one, a reset mid-write keeps the old curve
+static bool writeIbatCal(FILESYSTEM* fs, BQ25798* c) {
+  uint8_t buf[IBAT_FILE_LEN];
+  int n = c->ibatCurveToFile(buf);
+  if (!writeSmallFile(fs, IBATCAL_TMP, buf, n)) { fs->remove(IBATCAL_TMP); return false; }
+  fs->remove(IBATCAL_FILE);
+  if (!fs->rename(IBATCAL_TMP, IBATCAL_FILE)) return false;
+  c->ibatCalSaved(millis());
+  return true;
+}
+
 // a calibration point of the IBAT ADC learnt from the INA219 (a new one, or one that moved a lot): at most hourly
 void MyMesh::saveChargerCalIfDue() {
   BQ25798* c = sensors.getCharger();
   if (c == NULL || !c->ibatCalSaveDue(millis())) return;
-  BQ25798Settings cs = c->settings();
-  writeSmallFile(_fs, CHARGER_FILE, &cs, sizeof(cs));   // when it fails: the next change tries again
-  c->ibatCalSaved(millis());
+  if (!writeIbatCal(_fs, c)) c->ibatCalSaved(millis());   // when it fails: the next try is an hour away (flash wear)
 }
 
 // The settings from flash (or the defaults: Li-ion 4.2 V, 1 A, MPPT, no NTC, ship FET fitted).
@@ -2437,7 +2448,10 @@ void MyMesh::loadCharger() {
   if (!BQ25798::fromFile(raw, len, s)) BQ25798::defaults(s);   // an old 10-byte file: voc_pct 81
   gaugeChemistry() = s.chem;
   c->apply(s);
-  c->ibatCalLoaded();   // what the file holds: only a change from here on is worth a write
+  // the curve: /ibatcal; without a valid one the calibration of build 934d2da from /charger (saved at the next write)
+  uint8_t cb[IBAT_FILE_LEN + 1] = {0};
+  int cl = readSmallFileLen(_fs, IBATCAL_FILE, cb, sizeof(cb));
+  if (!c->ibatCurveLoad(cb, cl)) c->ibatCurveImportLegacy(s.cal);
 }
 
 #endif   // ENV_INCLUDE_BQ25798
@@ -2463,8 +2477,10 @@ void MyMesh::loadCharger() {
 // charger cutoff <mV>|off       no sun and the battery under this for 5 min: shutdown until the sun is back
 // charger ship                  disconnect the battery for transport/storage (sun or TP2 to GND wakes it)
 // charger ibat                  battery current: raw BQ25798 IBAT, corrected, the INA219's; the calibration
-// charger ibat cal <mA>         this raw reading is really <mA> (+ charge, - discharge; under 60 or from 150 mA)
-// charger ibat clear            no calibration (auto learning starts again with an INA219)
+// charger ibat cal <mA>         this raw reading is really <mA> (+ charge, - discharge): a curve point, kept in /ibatcal
+// charger ibat curve [chg|dis] [2]  the points of a direction (default dis; 2 = the second half)
+// charger ibat export chg|dis   the curve as a line for platformio.ini
+// charger ibat clear [auto]     no calibration (auto: only the learnt points; learning starts again with an INA219)
 // charger reg 0xNN [value]      read / write one BQ25798 register (direct: the managed bits come back
 //                               within 10 s; MSPM0 boards: kept as an expert setting, `auto` drops it)
 void MyMesh::handleChargerCommand(char* args, char* reply) {
@@ -2523,8 +2539,23 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   }
   if (strcmp(args, "ibat") == 0) {   // IBAT ADC calibration (the file keeps it with the other settings)
     if (*val == 0) { c->formatIbat(reply, 155); return; }
-    if (strcmp(val, "clear") == 0) {
-      c->ibatCalClear();
+    if (strncmp(val, "curve", 5) == 0 || strncmp(val, "export", 6) == 0) {
+      bool ex = val[0] == 'e';
+      const char* p = val + (ex ? 6 : 5);
+      int dir = IBAT_DIS, page = 1;
+      while (*p) {
+        while (*p == ' ') p++;
+        if (strncmp(p, "chg", 3) == 0) { dir = IBAT_CHG; p += 3; }
+        else if (strncmp(p, "dis", 3) == 0) { dir = IBAT_DIS; p += 3; }
+        else if (*p == '2') { page = 2; p++; }
+        else if (*p) { strcpy(reply, ex ? "Err - charger ibat export chg|dis" : "Err - charger ibat curve [chg|dis] [2]"); return; }
+      }
+      if (ex) { if (c->formatIbatExport(reply, 155, dir) < 0) strcpy(reply, "Err - too long for one reply: see charger ibat curve"); }
+      else c->formatIbatCurve(reply, 155, dir, page);
+      return;
+    }
+    if (strncmp(val, "clear", 5) == 0 && (val[5] == 0 || strcmp(val + 5, " auto") == 0)) {
+      c->ibatCalClear(val[5] != 0);
     } else if (strncmp(val, "cal", 3) == 0 && (val[3] == ' ' || val[3] == 0)) {
       const char* p = val + 3;
       while (*p == ' ') p++;
@@ -2539,20 +2570,17 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
         strcpy(reply, r == -1 ? "Err - no IBAT reading yet, try in 10 s"
                     : r == IBAT_SET_ZERO ? "Err - raw IBAT or the value is 0: no direction"
                     : r == IBAT_SET_DIRECTION ? "Err - raw IBAT has the other sign: check the direction"
-                    : r == IBAT_SET_ZONE ? "Err - use under 60 mA (offset) or 150 mA and up (gain)"
-                    : "Err - not taken: the gain would be outside 0.5..1.5 or the offset over 50 mA");
+                    : "Err - not taken: offset over 50 mA, ratio outside 0.5..1.5, or out of order with another manual point");
         return;
       }
     } else {
-      strcpy(reply, "Err - charger ibat [cal <mA>|clear]");
+      strcpy(reply, "Err - charger ibat [cal <mA>|clear [auto]|curve|export]");
       return;
     }
-    BQ25798Settings cs = c->settings();
-    if (!writeSmallFile(_fs, CHARGER_FILE, &cs, sizeof(cs))) {
+    if (!writeIbatCal(_fs, c)) {
       strcpy(reply, "Err - could not save");
       return;
     }
-    c->ibatCalSaved(millis());
     strcpy(reply, "OK - ");
     c->formatIbat(reply + 5, 150);
     return;
@@ -2629,7 +2657,6 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   }
   gaugeChemistry() = s.chem;
   c->apply(s);
-  c->ibatCalSaved(millis());   // the file has the calibration too
   if (to_psave) {
     psave.config() = new_psave;
     psave_next_check = 0;
