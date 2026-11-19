@@ -91,6 +91,12 @@ struct NeighbourInfo {
   #define FIRMWARE_VERSION   "v1.18.0"
 #endif
 
+// Short git commit of the build (CI passes -DFIRMWARE_COMMIT='"abc1234"'); "local" for a build by hand.
+// It goes into the LoRa OTA ident so the app can tell which build a repeater runs.
+#ifndef FIRMWARE_COMMIT
+  #define FIRMWARE_COMMIT   "local"
+#endif
+
 #define FIRMWARE_ROLE "repeater"
 
 #define PACKET_LOG_FILE  "/packet_log"

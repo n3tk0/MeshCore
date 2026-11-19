@@ -62,7 +62,26 @@ object OtaProtocol {
         fun inPlace(newSize: Int) = newSize > maxNew && newSize <= maxInPlace
         fun fits(newSize: Int) = newSize <= maxNew || newSize <= maxInPlace
         val unconfirmed get() = flags and FLAG_UNCONFIRMED != 0
+        /** The git commit the firmware was built from (from [ident]); null for firmware that does not tell it. */
+        val commit get() = parseIdent(ident).commit
     }
+
+    /**
+     * What a repeater's ident says: "<version> <date> <commit>|<board>[ <build>]". Older firmware has no commit
+     * ("<version> <date>|<board>"): the commit is the last word of the part before '|' only when it looks like
+     * one (7-40 hex digits, or "local" for a build by hand), so a date is never taken for it.
+     */
+    data class Ident(val head: String, val commit: String?, val board: String)
+
+    fun parseIdent(ident: String): Ident {
+        val head = ident.substringBefore('|').trim()
+        val board = if ('|' in ident) ident.substringAfter('|').trim() else ""
+        val last = head.substringAfterLast(' ', "")
+        val commit = last.takeIf { head.contains(' ') && COMMIT.matches(it) }
+        return Ident(head, commit, board)
+    }
+
+    private val COMMIT = Regex("[0-9a-f]{7,40}|local")
     class Status(val state: Int, val nextSeq: Int, val received: Int, val written: Int)
     class Reply(val op: Int, val status: Int, val data: ByteBuffer)
 

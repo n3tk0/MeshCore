@@ -482,4 +482,9 @@
         <item quantity="one">Обнови %d repeater</item>
         <item quantity="other">Обнови %d repeater-а</item>
     </plurals>
+    <string name="unknown_fw">Този firmware не е от GitHub (SHA256 %1$s…). LoRa OTA с делта не е възможна без същия .bin.</string>
+    <string name="unknown_fw_commit">Този firmware не е от GitHub (SHA256 %1$s…, commit %2$s). LoRa OTA с делта не е възможна без същия .bin.</string>
+    <string name="unknown_fw_flash">Пълно flash (Bluetooth/Wi-Fi)</string>
+    <string name="unknown_fw_pick">Избери стария .bin</string>
+    <string name="recommended">препоръчан</string>
 </resources>

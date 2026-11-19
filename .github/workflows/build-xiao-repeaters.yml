@@ -79,6 +79,13 @@ jobs:
           rm out/*.ota.json
           cat out/ota-manifest.json
 
+      - name: SHA256SUMS
+        run: |
+          # standard `sha256sum` format of every file published here (check with: sha256sum -c SHA256SUMS)
+          cd out
+          sha256sum $(ls -1 | grep -vx SHA256SUMS | sort) > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
