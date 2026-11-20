@@ -58,7 +58,7 @@ class OtaSession(
     }
 
     private suspend fun sideLease() {
-        val r = companion.cli("tempradio ${radio.cliArgs()} ${leaseMins()}")
+        val r = companion.cli("tempradio ${radio.cliArgs()},${leaseMins()}")
         if (!r.contains("OK")) throw OtaFailed(R.string.err_side_channel, listOf(r.trim()), resumable = onSide)
     }
 

@@ -144,8 +144,9 @@ data class SideRadio(val freqKhz: Int, val bwHz: Int, val sf: Int, val cr: Int) 
     val freqMhz get() = freqKhz / 1000.0
     val bwKhz get() = bwHz / 1000.0
 
-    fun cliArgs(): String = "%.3f %s %d %d".format(java.util.Locale.ROOT, freqMhz,
-        if (bwHz % 1000 == 0) (bwHz / 1000).toString() else "%.1f".format(java.util.Locale.ROOT, bwKhz), sf, cr)
+    /** "freq,bw,sf,cr" for the console's 'tempradio' (comma separated, as upstream's and our firmware parse it). */
+    fun cliArgs(): String = "%.3f,%s,%d,%d".format(java.util.Locale.ROOT, freqMhz,
+        java.math.BigDecimal(bwHz).movePointLeft(3).stripTrailingZeros().toPlainString(), sf, cr)   // 31.25 stays 31.25
 
     /** Seconds on air for a LoRa packet of [bytes] (explicit header, CRC, MeshCore's preamble). */
     fun airtime(bytes: Int): Double {
