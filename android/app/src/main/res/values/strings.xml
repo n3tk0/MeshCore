@@ -34,6 +34,7 @@
     <string name="pick_new">Нов firmware от файл</string>
     <string name="msg_releases_rate_limit">Лимитът на GitHub за заявки без токен е изчерпан (HTTP %1$d), опитай след малко</string>
     <string name="releases_stale">Изданията не са обновени: показвам запазените на телефона. %1$s</string>
+    <string name="releases_refresh">Обнови</string>
     <string name="releases_retry">Опитай пак</string>
     <string name="other_boards_hidden">%1$d build за други платки са скрити</string>
     <string name="no_new_firmware">Няма по-нов firmware за тази платка в изданията.</string>

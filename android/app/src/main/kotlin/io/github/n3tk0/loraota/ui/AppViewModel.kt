@@ -571,6 +571,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if ((e as? io.github.n3tk0.loraota.ota.HttpError)?.rateLimited == true) str(R.string.msg_releases_rate_limit, e.code)
         else e?.message ?: ""
 
+    private var releasesLoadedAt = 0L
+    private var upstreamLoadedAt = 0L
+
+    private fun refreshOursIfStale() { if (releases.isEmpty() || Releases.isStale(releasesLoadedAt)) loadReleases() }
+    private fun refreshUpstreamIfStale() { if (upstream.isEmpty() || Releases.isStale(upstreamLoadedAt)) loadUpstream() }
+
     fun loadReleases() = viewModelScope.launch {
         Releases.apiToken = tokens.get()
         releasesError = null
@@ -578,6 +584,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo, ctx.filesDir) } }
         releases = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
+        if (list.isSuccess) releasesLoadedAt = System.currentTimeMillis()
         if (list.isFailure) {
             val why = releasesWhy(list.exceptionOrNull())
             releasesError = why
@@ -767,7 +774,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         flashDone = false
         message = ""
         if (target == FlashTarget.COMPANION) step = Step.FLASH
-        if (releases.isEmpty()) loadReleases()
+        if (flashUpstream) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
     private var flashReturn = Step.REPEATER   // where the companion's flash screen was opened from
@@ -776,7 +783,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun showFlashTab() {
         firmwareTab = 1
         if (flashTarget != FlashTarget.REPEATER) openFlash(FlashTarget.REPEATER)
-        else if (releases.isEmpty()) loadReleases()
+        else if (flashUpstream) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
     fun closeFlash() {
@@ -827,7 +834,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 'Ours' / 'Upstream' above the releases of the flash screen. */
     fun showUpstream(on: Boolean) {
         flashUpstream = on
-        if (on && upstream.isEmpty()) loadUpstream()
+        if (on) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
     fun loadUpstream() = viewModelScope.launch {
@@ -835,6 +842,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         upstreamError = null
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(Releases.UPSTREAM_REPO, ctx.filesDir) } }
         upstream = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(Releases.UPSTREAM_REPO, ctx.filesDir) }
+        if (list.isSuccess) upstreamLoadedAt = System.currentTimeMillis()
         if (list.isFailure) {
             val why = releasesWhy(list.exceptionOrNull())
             upstreamError = why
@@ -1014,7 +1022,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         queueReturn = step
         message = ""
         step = Step.QUEUE
-        if (releases.isEmpty()) loadReleases()
+        refreshOursIfStale()
     }
 
     fun closeQueue() {
