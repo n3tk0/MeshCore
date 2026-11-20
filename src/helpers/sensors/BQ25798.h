@@ -167,7 +167,7 @@ struct BQ25798Settings {
   uint8_t  shipfet;     // 1 = Q2 fitted (SFET_PRESENT), 0 = JP3 closed
   uint16_t cutoff_mv;   // battery empty: shutdown under this with no sun; 0 = off
   uint8_t  voc_pct;     // MPPT VOC_PCT: 63, 69, 75, 81 or 88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %); 0 = default (81)
-  uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: the scan sets voc_pct; 0 (also in older files) = fixed
+  uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: starts from voc_pct 81 (also after a restart), the scan moves it; 0 (also in older files) = fixed
   IbatLegacyCal cal;    // the IBAT calibration of build 934d2da (two points per direction); now only read (imported into the /ibatcal curve), written as zeros
 };
 // The /charger file is the struct as is. Files of 10, 11 and 12 bytes (before voc_pct / mppt_auto / cal)

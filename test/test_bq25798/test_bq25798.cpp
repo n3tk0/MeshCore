@@ -1412,6 +1412,30 @@ TEST(BQ25798, ScanAbortedByChipResetAndByNewSettings) {
   EXPECT_EQ(g.r[0x15] & 1, 1);
 }
 
+TEST(BQ25798, MpptAutoStartsAtDefaultShareAndAppliesAtOnce) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  BQ25798Settings s = settings();
+  s.voc_pct = 63;
+  bq.apply(s);
+  tickFor(bq, t, 1000);
+  EXPECT_EQ(f.r[0x15] & 0xFE, BQ25798::mpptBase(63));
+  s.mppt_auto = 1;                                  // what `charger vin mppt auto` sets
+  s.voc_pct = BQ_VOC_PCT_DEFAULT;
+  bq.apply(s);
+  EXPECT_EQ(bq.vocPct(), 81);
+  EXPECT_TRUE(bq.mpptAuto());
+  EXPECT_EQ(f.r[0x15] & 0xFE, BQ25798::mpptBase(81));   // REG15 at once
+  // a boot with auto on and a scan result (or an earlier manual share) in the file
+  BQ25798Settings saved = autoSettings(), o;
+  saved.voc_pct = 88;
+  ASSERT_TRUE(BQ25798::fromFile(&saved, sizeof(saved), o));
+  EXPECT_EQ(o.voc_pct, 81);
+}
+
 TEST(BQ25798, ScanI2cErrorsLeaveEnHizAndMpptToTheNextPoll) {
   PanelBQ f;
   f.fast();
@@ -1480,7 +1504,11 @@ TEST(BQ25798, AutoSettingSaveLoadAndOldFiles) {
   BQ25798Settings o;
   ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));
   EXPECT_EQ(o.mppt_auto, 1);
+  EXPECT_EQ(o.voc_pct, 81);                               // auto starts from the default, not the saved 69
+  s.mppt_auto = 0;
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));       // manual: the saved share stays
   EXPECT_EQ(o.voc_pct, 69);
+  s.mppt_auto = 1;
   ASSERT_TRUE(BQ25798::fromFile(&s, 11, o));              // the file of b06ffbb: no mppt_auto yet
   EXPECT_EQ(o.mppt_auto, 0);                              // 11 bytes: unknown -> not auto
   ASSERT_TRUE(BQ25798::fromFile(&s, 10, o));              // before voc_pct
@@ -1581,7 +1609,7 @@ TEST(BQ25798, FileOf10_11_12BytesKeepsWhatItHolds) {
   EXPECT_EQ(o.voc_pct, 88);
   EXPECT_EQ(o.mppt_auto, 0);
   ASSERT_TRUE(BQ25798::fromFile(&s, 12, o));
-  EXPECT_EQ(o.voc_pct, 88);
+  EXPECT_EQ(o.voc_pct, 81);                             // auto on: the default, not the saved 88
   EXPECT_EQ(o.mppt_auto, 1);
 }
 

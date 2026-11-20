@@ -134,6 +134,9 @@ bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
   // the calibration is all or nothing: a file cut short inside it has none
   if (len < (int)(offsetof(BQ25798Settings, cal) + sizeof(IbatLegacyCal))) memset(&s.cal, 0, sizeof(s.cal));
   if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
+  // auto always starts from the default share: what a file holds with auto on (an earlier manual share or a scan
+  // result saved along with another setting) is not the starting point
+  if (s.mppt_auto == 1) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   if (valid(s)) return true;
   defaults(s);
   return false;
