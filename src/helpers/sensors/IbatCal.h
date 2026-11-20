@@ -314,6 +314,13 @@ inline int setManual(IbatCurve& c, const IbatCurve& def, int raw_ma, int ref_ma)
   b.src = IBAT_SRC_MANUAL;
   IbatEff e = build(t, def, d);
   if (!(e.present & (1u << k)) || (e.ignored & (1u << k))) return IBAT_SET_NONSENSE;
+  // the new point must not push out another manual point that counted before (a lower current with a raw
+  // above that of a higher manual point): then it is out of order with it, and not taken
+  IbatEff was = build(c, def, d);
+  for (int i = 0; i < IBAT_NP; i++) {
+    if (i == k || t.p[d][i].src != IBAT_SRC_MANUAL || t.p[d][i].n == 0) continue;
+    if ((e.ignored & (1u << i)) && !(was.ignored & (1u << i))) return IBAT_SET_NONSENSE;
+  }
   c = t;
   return IBAT_SET_OK;
 }
@@ -501,6 +508,8 @@ public:
   bool saveDue(uint32_t now) const { return _dirty && (int32_t)(now - _next_save) >= 0; }
   bool dirty() const { return _dirty; }
   void markDirty() { _dirty = true; }
+  // a write failed: stays dirty, the next try after the period (flash wear)
+  void saveFailed(uint32_t now) { _next_save = now + IBAT_SAVE_PERIOD_MS; }
 
   // the file now holds `c`: written by the owner (written = true: the next write waits a period),
   // or just loaded

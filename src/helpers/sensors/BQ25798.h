@@ -357,6 +357,8 @@ public:
   void ibatCalClear(bool auto_only);   // `charger ibat clear [auto]`: the next save writes it
   // the curve is to be written to /ibatcal: a new auto point, at most hourly
   bool ibatCalSaveDue(uint32_t now) const { return _learn.saveDue(now); }
+  bool ibatCalDirty() const { return _learn.dirty(); }
+  void ibatCalSaveFailed(uint32_t now) { _learn.saveFailed(now); }   // the write failed: still unsaved, retry in an hour
   void ibatCalSaved(uint32_t now) { _learn.synced(_cal, now, true); }   // after a write of the curve
   // the /ibatcal bytes (IBAT_FILE_LEN) as they are to be written
   int ibatCurveToFile(uint8_t* buf) const { return IbatCal::toFile(_cal, buf); }
