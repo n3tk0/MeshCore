@@ -2621,8 +2621,10 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     if (strncmp(val, "mppt", 4) == 0 && (val[4] == 0 || val[4] == ' ')) {
       const char* p = val + 4;
       while (*p == ' ') p++;
-      if (strcmp(p, "auto") == 0) {   // charger vin mppt auto: the scan picks VOC_PCT
+      if (strcmp(p, "auto") == 0) {   // charger vin mppt auto: always starts from the default share, the scan moves it
         s.mppt_auto = 1;
+        s.voc_pct = BQ_VOC_PCT_DEFAULT;   // applied to REG15 below like any other vin setting
+        note = ", mppt auto from 81%";
       } else if (*p) {   // charger vin mppt <pct>: VOC_PCT 63|69|75|81|88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %)
         char* end;
         long pct = strtol(p, &end, 10);
