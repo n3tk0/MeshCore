@@ -25,6 +25,11 @@
 // max(50 mA, 15 % of true), or true/raw outside 0.5..1.5 from 50 mA) or when it breaks the order (raw magnitude not
 // growing with the true one); in a conflict a manual point wins over an auto one, else the lower one
 // stays. Pure logic, no hardware: runs in the native unit tests.
+//
+// The same code calibrates the IBUS ADC (the solar input, only positive): an IbatCurve whose CHG half
+// is the curve (points 5 .. 2000 mA as the IBAT charge side, same limits and sample counts), the DIS
+// half stays empty; the *Bus variants below. Its reference is an INA219 moved to the solar input
+// (`charger ina sun`), its file is /ibuscal (magic "IBU", else the same layout as /ibatcal).
 
 #define IBAT_NP                9
 #define IBAT_AUTO_MIN_N        12       // auto samples in a point before it is used (5 .. 200 mA)
@@ -73,6 +78,14 @@
 #endif
 #ifndef BQ25798_IBAT_DIS_CURVE2
 #define BQ25798_IBAT_DIS_CURVE2  ""
+#endif
+
+// The IBUS curve defaults (`charger ibus export [2]`): "raw:true,..." in mA, positive, same format as the IBAT charge one
+#ifndef BQ25798_IBUS_CURVE
+#define BQ25798_IBUS_CURVE       ""
+#endif
+#ifndef BQ25798_IBUS_CURVE2
+#define BQ25798_IBUS_CURVE2      ""
 #endif
 
 #define IBAT_CHG               0        // direction index: raw >= 0
@@ -214,9 +227,10 @@ inline IbatEff build(const IbatCurve& st, const IbatCurve& def, int dir) {
 
 // the line outside the covered range (and the whole line without points): from the accepted points of a
 // direction, else the build default
-inline IbatFit fit(const IbatEff& e, int dir) {
+inline IbatFit fit(const IbatEff& e, int dir, bool bus = false) {
   IbatFit f = { 1.0f, 0.0f, 0, 0, false };
   if (e.m == 0) {
+    if (bus) return f;   // IBUS: no build-time offset / gain, only the curve
     if (dir == IBAT_CHG) { f.gain = BQ25798_IBAT_CHG_GAIN_X1000 / 1000.0f; f.offset_ma = BQ25798_IBAT_CHG_OFFSET_X10 / 10.0f; }
     else { f.gain = BQ25798_IBAT_DIS_GAIN_X1000 / 1000.0f; f.offset_ma = BQ25798_IBAT_DIS_OFFSET_X10 / 10.0f; }
     return f;
@@ -246,11 +260,10 @@ inline IbatFit fit(const IbatEff& e, int dir) {
   return f;
 }
 
-// raw -> corrected, mA
-inline int16_t apply(const IbatCurve& st, const IbatCurve& def, int16_t raw_ma) {
-  int dir = dirOf(raw_ma);
+// raw -> corrected, mA, in the direction `dir` (bus: the IBUS curve, no build offset / gain, never negative)
+inline int16_t applyDir(const IbatCurve& st, const IbatCurve& def, int16_t raw_ma, int dir, bool bus) {
   IbatEff e = build(st, def, dir);
-  IbatFit f = fit(e, dir);
+  IbatFit f = fit(e, dir, bus);
   float v;
   if (e.m == 0) {
     v = raw_ma * f.gain + f.offset_ma;
@@ -269,8 +282,19 @@ inline int16_t apply(const IbatCurve& st, const IbatCurve& def, int16_t raw_ma) 
     }
     v = dir == IBAT_CHG ? t : -t;
   }
+  if (bus && v < 0) v = 0;
   v = v < 0 ? v - 0.5f : v + 0.5f;
   return v > 32000 ? 32000 : v < -32000 ? -32000 : (int16_t)v;
+}
+
+// raw -> corrected, mA
+inline int16_t apply(const IbatCurve& st, const IbatCurve& def, int16_t raw_ma) {
+  return applyDir(st, def, raw_ma, dirOf(raw_ma), false);
+}
+
+// IBUS raw -> corrected, mA: a reading of 0 or less (nothing flows, or the ADC's offset) is left as it is
+inline int16_t applyBus(const IbatCurve& st, const IbatCurve& def, int16_t raw_ma) {
+  return raw_ma <= 0 ? raw_ma : applyDir(st, def, raw_ma, IBAT_CHG, true);
 }
 
 // one auto pair into its point (the one of the true value; the raw one has to have the same sign).
@@ -360,9 +384,10 @@ inline uint16_t crc16(const uint8_t* d, int n) {   // CCITT, init 0xFFFF
   return crc;
 }
 
-inline int toFile(const IbatCurve& c, uint8_t* out) {   // IBAT_FILE_LEN bytes
+#define IBUS_FILE_MAGIC   "IBU"   // /ibuscal: the same layout, the CHG half only
+inline int toFile(const IbatCurve& c, uint8_t* out, const char* magic = "IBC") {   // IBAT_FILE_LEN bytes
   int n = 0;
-  out[n++] = 'I'; out[n++] = 'B'; out[n++] = 'C'; out[n++] = IBAT_FILE_VERSION;
+  out[n++] = (uint8_t)magic[0]; out[n++] = (uint8_t)magic[1]; out[n++] = (uint8_t)magic[2]; out[n++] = IBAT_FILE_VERSION;
   for (int d = 0; d < 2; d++) for (int i = 0; i < IBAT_NP; i++) {
     const IbatPoint& b = c.p[d][i];
     out[n++] = (uint8_t)((uint16_t)b.raw_x10 & 0xFF); out[n++] = (uint8_t)((uint16_t)b.raw_x10 >> 8);
@@ -375,10 +400,10 @@ inline int toFile(const IbatCurve& c, uint8_t* out) {   // IBAT_FILE_LEN bytes
 }
 
 // false: a missing, short, long, foreign, newer or damaged file (c is then left empty)
-inline bool fromFile(const uint8_t* in, int len, IbatCurve& c) {
+inline bool fromFile(const uint8_t* in, int len, IbatCurve& c, const char* magic = "IBC") {
   memset(&c, 0, sizeof(c));
   if (in == 0 || len != IBAT_FILE_LEN) return false;
-  if (in[0] != 'I' || in[1] != 'B' || in[2] != 'C' || in[3] != IBAT_FILE_VERSION) return false;
+  if (in[0] != (uint8_t)magic[0] || in[1] != (uint8_t)magic[1] || in[2] != (uint8_t)magic[2] || in[3] != IBAT_FILE_VERSION) return false;
   uint16_t crc = (uint16_t)(in[len - 2] | (in[len - 1] << 8));
   if (crc != crc16(in, len - 2)) return false;
   int n = 4;
@@ -390,6 +415,7 @@ inline bool fromFile(const uint8_t* in, int len, IbatCurve& c) {
     n += 6;
   }
   sanitize(c);
+  if (magic[2] == IBUS_FILE_MAGIC[2]) memset(c.p[IBAT_DIS], 0, sizeof(c.p[IBAT_DIS]));   // IBUS: the CHG half only
   return true;
 }
 
@@ -458,6 +484,13 @@ inline void buildDefault(IbatCurve& c) {
   parseCurve(BQ25798_IBAT_DIS_CURVE2, IBAT_DIS, c);
 }
 
+// the IBUS default curve: BQ25798_IBUS_CURVE and _CURVE2, as the CHG half
+inline void buildDefaultBus(IbatCurve& c) {
+  memset(&c, 0, sizeof(c));
+  parseCurve(BQ25798_IBUS_CURVE, IBAT_CHG, c);
+  parseCurve(BQ25798_IBUS_CURVE2, IBAT_CHG, c);
+}
+
 }  // namespace IbatCal
 
 // The auto mode: pairs (raw, true) that both hold still go into the points; tells when the file should
@@ -468,6 +501,7 @@ class IbatLearner {
   bool     _dirty;
   uint32_t _next_save;
   IbatCurve _saved;   // what the file holds
+  bool     _bus;      // IBUS: only positive pairs
 
   static bool holdsStill(int a, int b) {
     int d = IbatCal::absi(a - b);
@@ -477,13 +511,14 @@ class IbatLearner {
   }
 
 public:
-  IbatLearner() { memset(&_saved, 0, sizeof(_saved)); _have = false; _prev_raw = _prev_ref = 0; _dirty = false; _next_save = IBAT_SAVE_FIRST_MS; }
+  explicit IbatLearner(bool bus = false) { _bus = bus; memset(&_saved, 0, sizeof(_saved)); _have = false; _prev_raw = _prev_ref = 0; _dirty = false; _next_save = IBAT_SAVE_FIRST_MS; }
 
   // a gap in the readings (the reference is gone): the next pair has no predecessor
   void gap() { _have = false; }
 
   // one pair; true when it went into a point
   bool feed(IbatCurve& c, int raw_ma, int ref_ma) {
+    if (_bus && (raw_ma <= 0 || ref_ma <= 0)) { _have = false; return false; }   // IBUS is never negative
     bool stable = _have && holdsStill(raw_ma, _prev_raw) && holdsStill(ref_ma, _prev_ref);
     _prev_raw = raw_ma;
     _prev_ref = ref_ma;

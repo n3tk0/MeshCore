@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
+BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus), _learnBus(true) {
   defaults(_s);
   memset(&_r, 0, sizeof(_r));
   memset(_status, 0, sizeof(_status));
@@ -52,6 +52,8 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _ref_at = 0;
   memset(&_cal, 0, sizeof(_cal));
   IbatCal::buildDefault(_def);
+  memset(&_calBus, 0, sizeof(_calBus));
+  IbatCal::buildDefaultBus(_defBus);
 }
 
 void BQ25798::defaults(BQ25798Settings& s) {
@@ -65,6 +67,7 @@ void BQ25798::defaults(BQ25798Settings& s) {
   s.ntc = 0;          // no NTC on J3: TS_IGNORE
   s.shipfet = 1;      // Q2 fitted, JP3 open (as JLC builds the board)
   s.cutoff_mv = defaultCutoff(s.chem);
+  s.ina_pos = BQ_INA_BAT;
 }
 
 bool BQ25798::valid(const BQ25798Settings& s) {
@@ -72,7 +75,7 @@ bool BQ25798::valid(const BQ25798Settings& s) {
   if (s.ichg_ma < BQ_ICHG_MIN || s.ichg_ma > BQ_ICHG_MAX) return false;
   if (s.vindpm_mv != 0 && (s.vindpm_mv < BQ_VINDPM_MIN || s.vindpm_mv > BQ_VINDPM_MAX)) return false;
   if (vocCode(s.voc_pct) < 0 || s.mppt_auto > 1) return false;
-  if (s.ntc > 1 || s.shipfet > 1) return false;
+  if (s.ntc > 1 || s.shipfet > 1 || s.ina_pos > BQ_INA_SUN) return false;
   if (s.cutoff_mv != 0 && (s.cutoff_mv < BQ_CUTOFF_MIN || s.cutoff_mv > cutoffMax(s.chem))) return false;
   return true;
 }
@@ -133,6 +136,7 @@ bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
   if (len <= (int)offsetof(BQ25798Settings, mppt_auto)) s.mppt_auto = 0;
   // the calibration is all or nothing: a file cut short inside it has none
   if (len < (int)(offsetof(BQ25798Settings, cal) + sizeof(IbatLegacyCal))) memset(&s.cal, 0, sizeof(s.cal));
+  if (len <= (int)offsetof(BQ25798Settings, ina_pos)) { s.ina_pos = BQ_INA_BAT; s.reserved = 0; }   // a file from before the INA position
   if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   // auto always starts from the default share: what a file holds with auto on (an earlier manual share or a scan
   // result saved along with another setting) is not the starting point
@@ -178,6 +182,7 @@ void BQ25798::apply(const BQ25798Settings& s) {
   if (!valid(s)) return;
   bool vreg_changes = !_applied || s.chem != _s.chem;
   if (_sc_state) scanFinish(_now, BQ_SCF_ABORT);   // the scan's restore uses the old settings: first
+  if (s.ina_pos != _s.ina_pos) clearBatteryReference();   // the INA219 moved: no pair of the old position goes on
   _s = s;
   memset(&_s.cal, 0, sizeof(_s.cal));   // the calibration lives in _cal
   _applied = true;
@@ -329,7 +334,8 @@ bool BQ25798::readAdc(uint32_t now) {
   if (!read(BQ_REG_IBUS_ADC, d, sizeof(d))) return true;   // an I2C error, not zeros
   uint16_t vsys = (uint16_t)((d[12] << 8) | d[13]);
   if (vsys == 0) return false;
-  _r.ibus_ma = (int16_t)((d[0] << 8) | d[1]);
+  _r.ibus_raw_ma = (int16_t)((d[0] << 8) | d[1]);
+  _r.ibus_ma = IbatCal::applyBus(_calBus, _defBus, _r.ibus_raw_ma);
   _r.ibat_raw_ma = (int16_t)((d[2] << 8) | d[3]);
   _r.ibat_ma = IbatCal::apply(_cal, _def, _r.ibat_raw_ma);
   _r.vbus_mv = (uint16_t)((d[4] << 8) | d[5]);
@@ -538,6 +544,7 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   n = addf(buf, len, n, ", %s %u.%02uV %umA", _s.chem == BQ_CHEM_LIFEPO4 ? "lifepo4" : "liion",
            vregFor(_s.chem) / 1000, vregFor(_s.chem) % 1000 / 10, _s.ichg_ma);
   if (trim < 1) n = addf(buf, len, n, ", ntc %s, shipfet %s, cut %umV", _s.ntc ? "on" : "off", _s.shipfet ? "on" : "off", _s.cutoff_mv);
+  if (inaSun()) n = addf(buf, len, n, ", ina sun");
   if (_jumper == 0 && _s.chem == BQ_CHEM_LIFEPO4) n = addf(buf, len, n, ", JP2 1-2!");
   if (_status[5] || (_status[6] & 0xF4)) n = addf(buf, len, n, ", FAULT %02X/%02X", _status[5], _status[6]);
   if (_reconfigs) n = addf(buf, len, n, ", reset x%u", _reconfigs);
@@ -614,7 +621,7 @@ int BQ25798::scanAdc(uint32_t* mw, uint16_t* vbus) {
   if (_adc_continuous ? (a & 0xC0) != 0x80 : (a & 0x80)) return 0;   // converting / not running
   uint8_t d[6];
   if (!read(BQ_REG_IBUS_ADC, d, sizeof(d))) return -1;
-  int16_t ibus = (int16_t)((d[0] << 8) | d[1]);
+  int16_t ibus = IbatCal::applyBus(_calBus, _defBus, (int16_t)((d[0] << 8) | d[1]));   // the calibrated panel current
   uint16_t v = (uint16_t)((d[4] << 8) | d[5]);
   if (v == 0) return -1;   // zeros: the channel is off
   *vbus = v;
@@ -800,15 +807,52 @@ int16_t BQ25798::batteryCurrentMa() const {
 }
 
 void BQ25798::setBatteryReference(int16_t ma, uint32_t now) {
+  if (inaSun()) return;   // the INA219 is on the solar input: IBAT is not touched
   _ref_ok = true;
   _ref_ma = ma;
   _ref_at = now;
   if (_r.valid) _learn.feed(_cal, _r.ibat_raw_ma, ma);
 }
 
+void BQ25798::setSunReference(int16_t ma, uint32_t now) {
+  if (!inaSun()) return;
+  _ref_ok = true;
+  _ref_ma = ma;
+  _ref_at = now;
+  if (_r.valid && vbusPresent()) _learnBus.feed(_calBus, _r.ibus_raw_ma, ma);   // no panel: IBUS and the INA219 both read about 0
+}
+
 void BQ25798::clearBatteryReference() {
   _ref_ok = false;
   _learn.gap();
+  _learnBus.gap();
+}
+
+int BQ25798::ibusCalManual(int true_ma) {
+  if (!_r.valid) return -1;
+  if (true_ma <= 0 || _r.ibus_raw_ma <= 0) return IBAT_SET_ZERO;
+  IbatCurve c = _calBus;
+  int r = IbatCal::setManual(c, _defBus, _r.ibus_raw_ma, true_ma);
+  if (r != IBAT_SET_OK) return r;
+  _calBus = c;
+  _r.ibus_ma = IbatCal::applyBus(_calBus, _defBus, _r.ibus_raw_ma);
+  return IBAT_SET_OK;
+}
+
+void BQ25798::ibusCalClear(bool auto_only) {
+  if (auto_only) IbatCal::clearAuto(_calBus);
+  else memset(&_calBus, 0, sizeof(_calBus));
+  _r.ibus_ma = IbatCal::applyBus(_calBus, _defBus, _r.ibus_raw_ma);
+  _learnBus.gap();
+}
+
+bool BQ25798::ibusCurveLoad(const uint8_t* data, int len) {
+  IbatCurve c;
+  bool ok = IbatCal::fromFile(data, len, c, IBUS_FILE_MAGIC);
+  _calBus = c;   // empty when the file is bad
+  _learnBus.synced(_calBus, 0, false);
+  _r.ibus_ma = IbatCal::applyBus(_calBus, _defBus, _r.ibus_raw_ma);
+  return ok;
 }
 
 int BQ25798::ibatCalManual(int true_ma) {
@@ -875,6 +919,7 @@ int BQ25798::formatIbat(char* buf, int len) const {
   buf[0] = 0;
   if (!_found) return addf(buf, len, 0, "no BQ25798 at 0x6B");
   int n = 0;
+  if (inaSun()) n = addf(buf, len, n, "paused: ina on sun | ");   // learning waits for `charger ina bat`
   if (!_r.valid) n = addf(buf, len, n, "bq ?");
   else {
     n = addf(buf, len, n, "bq %+d>%+d", _r.ibat_raw_ma, _r.ibat_ma);
@@ -893,16 +938,17 @@ int BQ25798::formatIbat(char* buf, int len) const {
   return n;
 }
 
-int BQ25798::formatIbatCurve(char* buf, int len, int dir, int page) const {
+// "<label> 12:-24>-12a24 ...": the points of a direction (page 1 = the first 5, 2 = the rest)
+static int curveLine(char* buf, int len, const IbatCurve& cal, const IbatCurve& def, int dir, int page, const char* label) {
   buf[0] = 0;
-  IbatEff e = IbatCal::build(_cal, _def, dir);
+  IbatEff e = IbatCal::build(cal, def, dir);
   int from = page == 2 ? 5 : 0, to = page == 2 ? IbatCal::NPTS[dir] : 5;
-  int n = addf(buf, len, 0, "%s", dirName(dir));
+  int n = addf(buf, len, 0, "%s", label);
   bool any = false;
   for (int i = from; i < to; i++) {
-    const IbatPoint* p = IbatCal::chosen(_cal, _def, dir, i);
+    const IbatPoint* p = IbatCal::chosen(cal, def, dir, i);
     if (!p) {
-      const IbatPoint& q = _cal.p[dir][i];   // collected, not usable yet
+      const IbatPoint& q = cal.p[dir][i];   // collected, not usable yet
       if (!q.n) continue;
       p = &q;
     }
@@ -919,19 +965,21 @@ int BQ25798::formatIbatCurve(char* buf, int len, int dir, int page) const {
   }
   if (!any) n = addf(buf, len, n, " -");
   if (page == 1) {
-    for (int i = 5; i < IBAT_NP; i++) if (_cal.p[dir][i].n || _def.p[dir][i].n) { n = addf(buf, len, n, " ..2"); break; }
+    for (int i = 5; i < IBAT_NP; i++) if (cal.p[dir][i].n || def.p[dir][i].n) { n = addf(buf, len, n, " ..2"); break; }
   }
   return n;
 }
 
-int BQ25798::formatIbatExport(char* buf, int len, int dir, int page) const {
+// "-D <macro>[2]='\"raw:true,...\"'": the line for platformio.ini; -1 when it does not fit
+static int exportLine(char* buf, int len, const IbatCurve& cal, const IbatCurve& def, int dir, int page,
+                      const char* macro, const char* label) {
   buf[0] = 0;
-  IbatEff e = IbatCal::build(_cal, _def, dir);
+  IbatEff e = IbatCal::build(cal, def, dir);
   int from = page == 2 ? 5 : 0, to = page == 2 ? IBAT_NP : 5;
   int cnt = 0;
   for (int k = 0; k < e.m; k++) if (e.idx[k] >= from && e.idx[k] < to) cnt++;
-  if (cnt == 0) return addf(buf, len, 0, "no points for %s%s", dirName(dir), page == 2 ? " 2" : "");
-  int n = addf(buf, len, 0, "-D BQ25798_IBAT_%s_CURVE%s='\"", dir == IBAT_CHG ? "CHG" : "DIS", page == 2 ? "2" : "");
+  if (cnt == 0) return addf(buf, len, 0, "no points for %s%s", label, page == 2 ? " 2" : "");
+  int n = addf(buf, len, 0, "-D %s%s='\"", macro, page == 2 ? "2" : "");
   int sgn = dir == IBAT_CHG ? 1 : -1;
   bool first = true;
   for (int k = 0; k < e.m; k++) {
@@ -949,5 +997,43 @@ int BQ25798::formatIbatExport(char* buf, int len, int dir, int page) const {
   if (page == 1) {   // points on page 2 too
     for (int k = 0; k < e.m; k++) if (e.idx[k] >= 5) { n = addf(buf, len, n, " ..2"); break; }
   }
+  return n;
+}
+
+int BQ25798::formatIbatCurve(char* buf, int len, int dir, int page) const {
+  return curveLine(buf, len, _cal, _def, dir, page, dirName(dir));
+}
+
+int BQ25798::formatIbatExport(char* buf, int len, int dir, int page) const {
+  return exportLine(buf, len, _cal, _def, dir, page, dir == IBAT_CHG ? "BQ25798_IBAT_CHG_CURVE" : "BQ25798_IBAT_DIS_CURVE", dirName(dir));
+}
+
+int BQ25798::formatIbusCurve(char* buf, int len, int page) const {
+  return curveLine(buf, len, _calBus, _defBus, IBAT_CHG, page, "ibus");
+}
+
+int BQ25798::formatIbusExport(char* buf, int len, int page) const {
+  return exportLine(buf, len, _calBus, _defBus, IBAT_CHG, page, "BQ25798_IBUS_CURVE", "ibus");
+}
+
+int BQ25798::formatIna(char* buf, int len) const {
+  return addf(buf, len, 0, "ina %s%s", inaSun() ? "sun" : "bat",
+              inaSun() ? ": IBUS learns, IBAT paused, battery from the BQ" : ": IBAT learns, IBUS paused");
+}
+
+int BQ25798::formatIbus(char* buf, int len) const {
+  buf[0] = 0;
+  if (!_found) return addf(buf, len, 0, "no BQ25798 at 0x6B");
+  int n = 0;
+  if (!inaSun()) n = addf(buf, len, n, "paused: ina on bat | ");   // learning waits for `charger ina sun`
+  if (!_r.valid) n = addf(buf, len, n, "bq ?");
+  else {
+    n = addf(buf, len, n, "bq %d>%d", _r.ibus_raw_ma, _r.ibus_ma);
+    if (hasSunReference()) n = addf(buf, len, n, " ina %+d", _ref_ma);
+  }
+  IbatEff e = IbatCal::build(_calBus, _defBus, IBAT_CHG);
+  IbatFit f = IbatCal::fit(e, IBAT_CHG, true);
+  n = addf(buf, len, n, " | %s %up", f.points == 0 ? "none" : f.source == 2 ? "manual" : f.source == 1 ? "auto" : "build", (unsigned)e.m);
+  if (f.rejected || e.ignored) n = addf(buf, len, n, " BAD%u", (unsigned)__builtin_popcount(e.ignored));
   return n;
 }
