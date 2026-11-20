@@ -564,6 +564,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Why the list of releases could not be fetched (the list kept on the phone is shown): null when it was. */
     var releasesError by mutableStateOf<String?>(null)
 
+    /** The same for the Upstream list of the flash screen. */
+    var upstreamError by mutableStateOf<String?>(null)
+
     private fun releasesWhy(e: Throwable?): String =
         if ((e as? io.github.n3tk0.loraota.ota.HttpError)?.rateLimited == true) str(R.string.msg_releases_rate_limit, e.code)
         else e?.message ?: ""
@@ -829,11 +832,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadUpstream() = viewModelScope.launch {
         Releases.apiToken = tokens.get()
+        upstreamError = null
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(Releases.UPSTREAM_REPO, ctx.filesDir) } }
         upstream = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(Releases.UPSTREAM_REPO, ctx.filesDir) }
         if (list.isFailure) {
-            message = str(if (upstream.isEmpty()) R.string.msg_releases_failed else R.string.msg_releases_offline,
-                list.exceptionOrNull()?.message ?: "")
+            val why = releasesWhy(list.exceptionOrNull())
+            upstreamError = why
+            message = str(if (upstream.isEmpty()) R.string.msg_releases_failed else R.string.msg_releases_offline, why)
             messageIsError = upstream.isEmpty()
         }
     }

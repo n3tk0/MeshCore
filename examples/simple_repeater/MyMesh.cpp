@@ -2434,7 +2434,7 @@ static bool writeIbatCal(FILESYSTEM* fs, BQ25798* c) {
 void MyMesh::saveChargerCalIfDue() {
   BQ25798* c = sensors.getCharger();
   if (c == NULL || !c->ibatCalSaveDue(millis())) return;
-  if (!writeIbatCal(_fs, c)) c->ibatCalSaved(millis());   // when it fails: the next try is an hour away (flash wear)
+  if (!writeIbatCal(_fs, c)) c->ibatCalSaveFailed(millis());   // stays unsaved; the next try is an hour away (flash wear)
 }
 
 // The settings from flash (or the defaults: Li-ion 4.2 V, 1 A, MPPT, no NTC, ship FET fitted).
@@ -2451,7 +2451,11 @@ void MyMesh::loadCharger() {
   // the curve: /ibatcal; without a valid one the calibration of build 934d2da from /charger (saved at the next write)
   uint8_t cb[IBAT_FILE_LEN + 1] = {0};
   int cl = readSmallFileLen(_fs, IBATCAL_FILE, cb, sizeof(cb));
-  if (!c->ibatCurveLoad(cb, cl)) c->ibatCurveImportLegacy(s.cal);
+  if (!c->ibatCurveLoad(cb, cl)) {
+    c->ibatCurveImportLegacy(s.cal);
+    // into /ibatcal at once: the next write of /charger drops the old calibration from that file
+    if (c->ibatCalDirty() && !writeIbatCal(_fs, c)) c->ibatCalSaveFailed(millis());
+  }
 }
 
 #endif   // ENV_INCLUDE_BQ25798
@@ -2570,7 +2574,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
         strcpy(reply, r == -1 ? "Err - no IBAT reading yet, try in 10 s"
                     : r == IBAT_SET_ZERO ? "Err - raw IBAT or the value is 0: no direction"
                     : r == IBAT_SET_DIRECTION ? "Err - raw IBAT has the other sign: check the direction"
-                    : "Err - not taken: offset over 50 mA, ratio outside 0.5..1.5, or out of order with another manual point");
+                    : "Err - not taken: offset over max(50 mA, 15%), ratio outside 0.5..1.5, or out of order with another manual point");
         return;
       }
     } else {

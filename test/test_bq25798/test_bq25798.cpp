@@ -1829,11 +1829,66 @@ TEST(IbatCal, MonotonicRejection) {
   IbatEff e = IbatCal::build(d, noCurve(), IBAT_CHG);
   EXPECT_EQ(e.m, 2);
   EXPECT_TRUE(e.ignored & (1u << 4));
-  // a manual point wins over a lower auto point it conflicts with
+  // a manual point wins over a lower auto point it conflicts with: ref 72 mA is bucket 4 (true ~71..141), its raw
+  // (49 mA, ratio 1.47) is below the raw of bucket 3 (50 mA): out of order, so the auto point of bucket 3 goes
+  ASSERT_EQ(IbatCal::bucketOf(72), 4);
   IbatCurve m = d;
-  ASSERT_EQ(IbatCal::setManual(m, noCurve(), 450, 400), IBAT_SET_OK);   // bucket 5 (chg 200..316? 40 mA): bucket 3
+  ASSERT_EQ(IbatCal::setManual(m, noCurve(), 49, 72), IBAT_SET_OK);
+  EXPECT_EQ(m.p[IBAT_CHG][4].src, IBAT_SRC_MANUAL);
   e = IbatCal::build(m, noCurve(), IBAT_CHG);
+  EXPECT_TRUE(e.ignored & (1u << 3));           // the lower auto point is dropped
+  EXPECT_FALSE(e.ignored & (1u << 4));          // the manual one stays
+  EXPECT_EQ(e.m, 2);                            // manual 4 and auto 5
+  EXPECT_EQ(e.idx[0], 4);
+  // an AUTO point never displaces anything: the same pair as an auto point at bucket 4 is the one dropped
+  IbatCurve a = d;
+  a.p[IBAT_CHG][4] = { 490, 720, 20, IBAT_SRC_AUTO };
+  e = IbatCal::build(a, noCurve(), IBAT_CHG);
+  EXPECT_TRUE(e.ignored & (1u << 4));
   EXPECT_FALSE(e.ignored & (1u << 3));
+}
+
+TEST(IbatCal, ManualPointThatWouldPushOutAnotherManualOneIsRefused) {
+  IbatCurve c = noCurve();
+  ASSERT_EQ(man(c, 100, 98), IBAT_SET_OK);        // manual, bucket 4? true ~98 mA
+  IbatCurve before = c;
+  // a lower current (bucket 3, true 50) with a raw above 100: would knock the manual 100 out of the order
+  EXPECT_EQ(man(c, 105, 60), IBAT_SET_NONSENSE);
+  EXPECT_EQ(memcmp(&c, &before, sizeof(c)), 0);   // nothing changed
+  ASSERT_EQ(man(c, 55, 50), IBAT_SET_OK);         // in order: fine
+}
+
+TEST(IbatLearner, FailedWriteStaysDirtyAndRetriesAfterThePeriod) {
+  IbatCurve c = noCurve();
+  IbatLearner l;
+  for (int i = 0; i < 30; i++) l.feed(c, -24, -12);
+  ASSERT_TRUE(l.dirty());
+  uint32_t t = IBAT_SAVE_FIRST_MS;
+  ASSERT_TRUE(l.saveDue(t));
+  l.saveFailed(t);                                // the write failed
+  EXPECT_TRUE(l.dirty());
+  EXPECT_FALSE(l.saveDue(t + IBAT_SAVE_PERIOD_MS - 1));
+  EXPECT_TRUE(l.saveDue(t + IBAT_SAVE_PERIOD_MS));
+  l.synced(c, t + IBAT_SAVE_PERIOD_MS, true);     // a good write
+  EXPECT_FALSE(l.dirty());
+}
+
+TEST(BQ25798, LegacyImportIsDirtyUntilSaved) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  IbatLegacyCal L;
+  memset(&L, 0, sizeof(L));
+  bq.ibatCurveImportLegacy(L);
+  EXPECT_FALSE(bq.ibatCalDirty());                // nothing to import: nothing to save
+  L.bin[IBAT_CHG][0].raw_x10 = 240; L.bin[IBAT_CHG][0].ref_x10 = 200; L.bin[IBAT_CHG][0].n = 1;
+  L.bin[IBAT_CHG][0].manual = 1;
+  bq.ibatCurveImportLegacy(L);
+  EXPECT_TRUE(bq.ibatCalDirty());                 // the owner writes /ibatcal at once and calls ibatCalSaved()
+  bq.ibatCalSaveFailed(0);
+  EXPECT_TRUE(bq.ibatCalDirty());
+  bq.ibatCalSaved(0);
+  EXPECT_FALSE(bq.ibatCalDirty());
 }
 
 TEST(IbatCal, StabilityFilterAveragingAndManualPriority) {
