@@ -13,6 +13,10 @@
 #   WITH_MAILBOX         repeater mailbox for direct messages
 #   WITH_LORA_OTA        repeater LoRa OTA
 #   WITH_DEBUG           debug logs (MESH_DEBUG etc.)
+# A board with a sensor built in (not a plug-in) says so in its env build_flags with one marker per sensor:
+#   -D LITE_KEEP_INA260 -D LITE_KEEP_MLX90614
+# (the macro is unused by the code, it only marks). Such a sensor is never undefined here and the I2C scan
+# stays on. An env with -D ENV_INCLUDE_BQ25798 counts as having a built-in charger likewise.
 # Source it before build.sh: it adds to PLATFORMIO_BUILD_FLAGS;
 # the parts left out go one per line to the file $LITE_REMOVED, if set.
 # LITE_ENV is the env being built (some boards cannot drop their GPS); run it from the repo root. Use a subshell, so the flags do not
@@ -25,7 +29,22 @@ removed=()
 keep() { [ "${!1}" = "true" ]; }
 drop() { [ "${!1}" = "false" ]; }
 
-undef() { local s; for s in "$@"; do flags+=("-UENV_INCLUDE_$s"); done; }
+# board-built-in sensors of the env (LITE_KEEP_<NAME> markers; BQ25798 from ENV_INCLUDE_BQ25798): never undefined
+builtin=""
+if [ -n "$LITE_ENV" ]; then
+  builtin=$(pio project config --json-output 2>/dev/null | python3 -c '
+import json, re, sys
+for name, opts in json.load(sys.stdin):
+    if name == "env:" + sys.argv[1]:
+        t = json.dumps(opts)
+        k = set(re.findall(r"LITE_KEEP_([A-Za-z0-9_]+)", t))
+        if "ENV_INCLUDE_BQ25798" in t:
+            k.add("BQ25798")
+        print(" ".join(sorted(k)))
+' "$LITE_ENV")
+fi
+
+undef() { local s; for s in "$@"; do case " $builtin " in *" $s "*) continue;; esac; flags+=("-UENV_INCLUDE_$s"); done; }
 
 if ! keep WITH_RTC; then
   flags+=("-DDISABLE_RTC_AUTODISCOVERY")
@@ -43,20 +62,11 @@ if ! keep WITH_OTHER_SENSORS; then
   undef VL53L0X RAK12035
   removed+=("other sensors")
 fi
-# a board whose own charger is found by the I2C scan (BQ25798 on the Xiao solar lite) needs the scan:
-# without it the charger is never started and the battery reads from the (unconnected) ADC pin
-board_charger=""
-if [ -n "$LITE_ENV" ]; then
-  board_charger=$(pio project config --json-output 2>/dev/null | python3 -c '
-import json, sys
-for name, opts in json.load(sys.stdin):
-    if name == "env:" + sys.argv[1] and "ENV_INCLUDE_BQ25798" in json.dumps(opts):
-        print("BQ25798")
-' "$LITE_ENV")
-fi
+# a board with a built-in I2C part (the BQ25798 charger of the Xiao solar lite, an INA260 / MLX90614 of the MSPM0
+# boards) needs the scan: without it the charger is never started and the battery reads from the (unconnected) ADC pin
 # no I2C sensor kept: skip the bus scan as well (a stuck bus can hang the boot on nRF52)
-if [ -n "$board_charger" ]; then
-  echo "I2C scan kept: the board's $board_charger charger is found by it" >&2
+if [ -n "$builtin" ]; then
+  echo "I2C scan kept: the board has $builtin built in" >&2
 elif ! keep WITH_CLIMATE && ! keep WITH_POWER_METERS && ! keep WITH_OTHER_SENSORS; then
   flags+=("-DDISABLE_ENV_SENSORS")
 fi
@@ -115,5 +125,5 @@ if [ -n "$LITE_REMOVED" ]; then
   if [ ${#removed[@]} -gt 0 ]; then printf '%s\n' "${removed[@]}" > "$LITE_REMOVED"; fi
 fi
 export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:+$PLATFORMIO_BUILD_FLAGS }${flags[*]}"
-unset flags removed board_charger
+unset flags removed builtin
 unset -f keep drop undef

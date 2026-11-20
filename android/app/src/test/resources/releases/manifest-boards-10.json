@@ -1,0 +1,11 @@
+{
+  "files": [
+    {
+      "env": "Xiao_nrf52_solar_lite_repeater",
+      "version": "main",
+      "dfu": "Xiao_nrf52_solar_lite_repeater-lite-main-096f317.zip",
+      "dfu_size": 421475,
+      "dfu_sha256": "8891b8fe39b5fbd2980ae17853b05cc71c42205ba10715c0fed92dc7a5848fe3"
+    }
+  ]
+}

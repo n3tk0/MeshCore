@@ -1,0 +1,14 @@
+{
+  "files": [
+    {
+      "env": "Xiao_nrf52_repeater",
+      "version": "main",
+      "file": "Xiao_nrf52_repeater-lite-main-c32b152.bin",
+      "size": 379244,
+      "sha256": "ee6c861fe22ebbe632f47e4aab8dc9293628dc6092b9ac3b0e67991d17dbdfc0",
+      "dfu": "Xiao_nrf52_repeater-lite-main-c32b152.zip",
+      "dfu_size": 380047,
+      "dfu_sha256": "849f095e0b092369894d2145c848e5e037406555c30c0a83c4e0e0a05cd61897"
+    }
+  ]
+}

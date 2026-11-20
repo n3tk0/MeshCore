@@ -47,6 +47,11 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus) {
   _sc_best_x10 = 0;
   _sc_best_mw = _sc_81_mw = 0;
   _sc_chosen = 0;
+  _ref_ok = false;
+  _ref_ma = 0;
+  _ref_at = 0;
+  memset(&_cal, 0, sizeof(_cal));
+  IbatCal::buildDefault(_def);
 }
 
 void BQ25798::defaults(BQ25798Settings& s) {
@@ -126,6 +131,8 @@ bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
   // fields past the end of an older file: their defaults
   if (len <= (int)offsetof(BQ25798Settings, voc_pct)) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   if (len <= (int)offsetof(BQ25798Settings, mppt_auto)) s.mppt_auto = 0;
+  // the calibration is all or nothing: a file cut short inside it has none
+  if (len < (int)(offsetof(BQ25798Settings, cal) + sizeof(IbatLegacyCal))) memset(&s.cal, 0, sizeof(s.cal));
   if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   if (valid(s)) return true;
   defaults(s);
@@ -169,6 +176,7 @@ void BQ25798::apply(const BQ25798Settings& s) {
   bool vreg_changes = !_applied || s.chem != _s.chem;
   if (_sc_state) scanFinish(_now, BQ_SCF_ABORT);   // the scan's restore uses the old settings: first
   _s = s;
+  memset(&_s.cal, 0, sizeof(_s.cal));   // the calibration lives in _cal
   _applied = true;
   if (!_found) return;
   if (vreg_changes) setCE(false);   // nothing charges until the new VREG reads back
@@ -319,7 +327,8 @@ bool BQ25798::readAdc(uint32_t now) {
   uint16_t vsys = (uint16_t)((d[12] << 8) | d[13]);
   if (vsys == 0) return false;
   _r.ibus_ma = (int16_t)((d[0] << 8) | d[1]);
-  _r.ibat_ma = (int16_t)((d[2] << 8) | d[3]);
+  _r.ibat_raw_ma = (int16_t)((d[2] << 8) | d[3]);
+  _r.ibat_ma = IbatCal::apply(_cal, _def, _r.ibat_raw_ma);
   _r.vbus_mv = (uint16_t)((d[4] << 8) | d[5]);
   _r.vbat_mv = (uint16_t)((d[10] << 8) | d[11]);
   _r.vsys_mv = vsys;
@@ -494,7 +503,9 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   if (_r.valid) {
     if (vbusPresent()) n = addf(buf, len, n, "sun %u.%02uV %dmA", _r.vbus_mv / 1000, _r.vbus_mv % 1000 / 10, _r.ibus_ma);
     else n = addf(buf, len, n, "no sun");
-    n = addf(buf, len, n, ", batt %u.%03uV %+dmA", _r.vbat_mv / 1000, _r.vbat_mv % 1000, _r.ibat_ma);
+    int cur = batteryCurrentMa();   // the reference sensor's when there is one: the BQ's own then follows
+    n = addf(buf, len, n, ", batt %u.%03uV %+dmA", _r.vbat_mv / 1000, _r.vbat_mv % 1000, cur);
+    if (cur != _r.ibat_raw_ma && trim < 3) n = addf(buf, len, n, " (bq %+d)", _r.ibat_raw_ma);
   } else {
     n = addf(buf, len, n, "%s, batt ?", vbusPresent() ? "sun" : "no sun");
   }
@@ -774,6 +785,166 @@ int BQ25798::formatScan(char* buf, int len) const {
     char note[40];
     int w = snprintf(note, sizeof(note), "; last try: %s %um", why[f], ago);
     if (w > 0 && n + w < len) { memcpy(buf + n, note, w + 1); n += w; }
+  }
+  return n;
+}
+
+// ---- IBAT calibration ----
+
+int16_t BQ25798::batteryCurrentMa() const {
+  if (!_r.valid) return 0;
+  return hasBatteryReference() ? _ref_ma : _r.ibat_ma;
+}
+
+void BQ25798::setBatteryReference(int16_t ma, uint32_t now) {
+  _ref_ok = true;
+  _ref_ma = ma;
+  _ref_at = now;
+  if (_r.valid) _learn.feed(_cal, _r.ibat_raw_ma, ma);
+}
+
+void BQ25798::clearBatteryReference() {
+  _ref_ok = false;
+  _learn.gap();
+}
+
+int BQ25798::ibatCalManual(int true_ma) {
+  if (!_r.valid) return -1;
+  IbatCurve c = _cal;
+  int r = IbatCal::setManual(c, _def, _r.ibat_raw_ma, true_ma);
+  if (r != IBAT_SET_OK) return r;
+  _cal = c;
+  _r.ibat_ma = IbatCal::apply(_cal, _def, _r.ibat_raw_ma);
+  return IBAT_SET_OK;
+}
+
+void BQ25798::ibatCalClear(bool auto_only) {
+  if (auto_only) IbatCal::clearAuto(_cal);
+  else memset(&_cal, 0, sizeof(_cal));
+  _r.ibat_ma = IbatCal::apply(_cal, _def, _r.ibat_raw_ma);
+  _learn.gap();
+}
+
+bool BQ25798::ibatCurveLoad(const uint8_t* data, int len) {
+  IbatCurve c;
+  bool ok = IbatCal::fromFile(data, len, c);
+  _cal = c;   // empty when the file is bad
+  _learn.synced(_cal, 0, false);
+  _r.ibat_ma = IbatCal::apply(_cal, _def, _r.ibat_raw_ma);
+  return ok;
+}
+
+void BQ25798::ibatCurveImportLegacy(const IbatLegacyCal& L) {
+  IbatCal::importLegacy(_cal, L);
+  _learn.synced(IbatCurve(), 0, false);   // the file (if any) does not have it: save it
+  if (!IbatCal::empty(_cal)) _learn.markDirty();
+  _r.ibat_ma = IbatCal::apply(_cal, _def, _r.ibat_raw_ma);
+}
+
+// x10 -> "-2.4" / "12" (no ".0")
+static int addx10(char* buf, int len, int n, int v) {
+  int a = v < 0 ? -v : v;
+  const char* sg = v < 0 ? "-" : "";
+  if (a % 10) return addf(buf, len, n, "%s%d.%d", sg, a / 10, a % 10);
+  return addf(buf, len, n, "%s%d", sg, a / 10);
+}
+
+static const char* dirName(int dir) { return dir == IBAT_CHG ? "chg" : "dis"; }
+
+// "chg auto 5p": where the points of this direction come from (manual > auto > build > default) and how many count
+static int formatDir(char* buf, int len, int n, const IbatCurve& st, const IbatCurve& def, int dir) {
+  IbatEff e = IbatCal::build(st, def, dir);
+  IbatFit f = IbatCal::fit(e, dir);
+  n = addf(buf, len, n, "%s %s %up", dirName(dir),
+           f.points == 0 ? "default" : f.source == 2 ? "manual" : f.source == 1 ? "auto" : "build", (unsigned)e.m);
+  if (f.rejected || e.ignored) n = addf(buf, len, n, " BAD%u", (unsigned)__builtin_popcount(e.ignored));
+  return n;
+}
+
+// "CHG_OFFSET_X10=0 CHG_GAIN_X1000=1000": the line outside the covered range (the two-point fit, or the build's)
+static int formatFit(char* buf, int len, int n, const IbatCurve& st, const IbatCurve& def, int dir) {
+  IbatFit f = IbatCal::fit(IbatCal::build(st, def, dir), dir);
+  const char* d = dir == IBAT_CHG ? "CHG" : "DIS";
+  return addf(buf, len, n, "%s_OFFSET_X10=%d %s_GAIN_X1000=%d", d, (int)lroundf(f.offset_ma * 10.0f), d, (int)lroundf(f.gain * 1000.0f));
+}
+
+int BQ25798::formatIbat(char* buf, int len) const {
+  buf[0] = 0;
+  if (!_found) return addf(buf, len, 0, "no BQ25798 at 0x6B");
+  int n = 0;
+  if (!_r.valid) n = addf(buf, len, n, "bq ?");
+  else {
+    n = addf(buf, len, n, "bq %+d>%+d", _r.ibat_raw_ma, _r.ibat_ma);
+    if (hasBatteryReference()) n = addf(buf, len, n, " ina %+d", _ref_ma);
+  }
+  n = addf(buf, len, n, " | ");
+  n = formatDir(buf, len, n, _cal, _def, IBAT_CHG);
+  n = addf(buf, len, n, " | ");
+  n = formatDir(buf, len, n, _cal, _def, IBAT_DIS);
+  // the line outside the curve, as build flags: only when it still fits whole
+  char tmp[96];
+  int w = formatFit(tmp, sizeof(tmp), 0, _cal, _def, IBAT_CHG);
+  tmp[w++] = ' ';
+  w = formatFit(tmp, sizeof(tmp), w, _cal, _def, IBAT_DIS);
+  if (n + 3 + w < len) n = addf(buf, len, n, " | %s", tmp);
+  return n;
+}
+
+int BQ25798::formatIbatCurve(char* buf, int len, int dir, int page) const {
+  buf[0] = 0;
+  IbatEff e = IbatCal::build(_cal, _def, dir);
+  int from = page == 2 ? 5 : 0, to = page == 2 ? IbatCal::NPTS[dir] : 5;
+  int n = addf(buf, len, 0, "%s", dirName(dir));
+  bool any = false;
+  for (int i = from; i < to; i++) {
+    const IbatPoint* p = IbatCal::chosen(_cal, _def, dir, i);
+    if (!p) {
+      const IbatPoint& q = _cal.p[dir][i];   // collected, not usable yet
+      if (!q.n) continue;
+      p = &q;
+    }
+    any = true;
+    n = addf(buf, len, n, " %d:", (int)IbatCal::PT_MA[dir][i]);
+    n = addx10(buf, len, n, p->raw_x10);
+    n = addf(buf, len, n, ">");
+    n = addx10(buf, len, n, p->ref_x10);
+    bool use = IbatCal::usable(*p, i) || p->src == IBAT_SRC_BUILD;
+    if (p->src == IBAT_SRC_MANUAL) n = addf(buf, len, n, "m");
+    else if (p->src == IBAT_SRC_BUILD) n = addf(buf, len, n, "d");
+    else n = addf(buf, len, n, "a%u%s", (unsigned)p->n, use ? "" : "*");
+    if (e.ignored & (1u << i)) n = addf(buf, len, n, "!");
+  }
+  if (!any) n = addf(buf, len, n, " -");
+  if (page == 1) {
+    for (int i = 5; i < IBAT_NP; i++) if (_cal.p[dir][i].n || _def.p[dir][i].n) { n = addf(buf, len, n, " ..2"); break; }
+  }
+  return n;
+}
+
+int BQ25798::formatIbatExport(char* buf, int len, int dir, int page) const {
+  buf[0] = 0;
+  IbatEff e = IbatCal::build(_cal, _def, dir);
+  int from = page == 2 ? 5 : 0, to = page == 2 ? IBAT_NP : 5;
+  int cnt = 0;
+  for (int k = 0; k < e.m; k++) if (e.idx[k] >= from && e.idx[k] < to) cnt++;
+  if (cnt == 0) return addf(buf, len, 0, "no points for %s%s", dirName(dir), page == 2 ? " 2" : "");
+  int n = addf(buf, len, 0, "-D BQ25798_IBAT_%s_CURVE%s='\"", dir == IBAT_CHG ? "CHG" : "DIS", page == 2 ? "2" : "");
+  int sgn = dir == IBAT_CHG ? 1 : -1;
+  bool first = true;
+  for (int k = 0; k < e.m; k++) {
+    if (e.idx[k] < from || e.idx[k] >= to) continue;
+    char tmp[24];
+    int w = addx10(tmp, sizeof(tmp), 0, sgn * (int)e.raw[k]);
+    tmp[w++] = ':';
+    w = addx10(tmp, sizeof(tmp), w, sgn * (int)e.ref[k]);
+    if (n + w + 1 + 3 >= len) { buf[0] = 0; return -1; }   // never a cut-off curve
+    n = addf(buf, len, n, "%s%s", first ? "" : ",", tmp);
+    first = false;
+  }
+  if (n + 3 >= len) { buf[0] = 0; return -1; }
+  n = addf(buf, len, n, "\"'");
+  if (page == 1) {   // points on page 2 too
+    for (int k = 0; k < e.m; k++) if (e.idx[k] >= 5) { n = addf(buf, len, n, " ..2"); break; }
   }
   return n;
 }

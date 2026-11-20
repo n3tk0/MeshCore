@@ -29,24 +29,59 @@ data class FirmwareFile(val release: String, val env: String, val version: Strin
     val label get() = listOfNotNull(version.ifEmpty { release },
         if (isBuild) "Build #" + release.removePrefix(BUILD_PREFIX) else null, if (isLite) "lite" else null).joinToString(" · ")
 
+    /** The short commit: the trailing -<sha7> of the file name (Board-lite-branch-934d2da.bin), else of the version; "" if none. */
+    val commit: String get() = listOf(file, dfu).firstNotNullOfOrNull { COMMIT_FILE.find(it)?.groupValues?.get(1) }
+        ?: COMMIT_VERSION.find(version)?.groupValues?.get(1) ?: ""
+
+    /** [published] like "19.11 22:29" in [zone] (the phone's), "" when unknown. */
+    fun dateLabel(zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String =
+        if (publishedMillis == 0L) "" else java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm")
+            .format(java.time.Instant.ofEpochMilli(publishedMillis).atZone(zone))
+
+    /** For a list row, so builds of one branch differ: "boards-17 · 934d2da · 19.11 22:29 · lite". */
+    fun rowLabel(zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String = listOfNotNull(
+        if (isBuild) "Build #" + release.removePrefix(BUILD_PREFIX) else release.ifEmpty { version },
+        commit.ifEmpty { null }, dateLabel(zone).ifEmpty { null }, if (isLite) "lite" else null).joinToString(" · ")
+
     companion object {
         const val BUILD_PREFIX = "build-"
+        private val COMMIT_FILE = Regex("""-([0-9a-f]{7})\.[A-Za-z0-9]+$""")
+        private val COMMIT_VERSION = Regex("""-([0-9a-f]{7})$""")
     }
 }
 
+/** GitHub answered with an error status. */
+class HttpError(val code: Int, url: String) : java.io.IOException("HTTP $code for $url") {
+    /** 403 / 429 from the API: the limit of requests with no token (60 an hour for a network). */
+    val rateLimited get() = code == 403 || code == 429
+}
+
 object Releases {
+    /** A list loaded longer ago than this is fetched again when its screen opens. */
+    const val STALE_MS = 5 * 60 * 1000L
+
+    /** [loadedAt] 0 = never loaded. */
+    fun isStale(loadedAt: Long, now: Long = System.currentTimeMillis()): Boolean = loadedAt == 0L || now - loadedAt > STALE_MS
     const val DEFAULT_REPO = "n3tk0/MeshCore"
     /** Stock MeshCore: releases with no ota-manifest.json, for a flash only (stock firmware has no LoRa OTA). */
     const val UPSTREAM_REPO = "meshcore-dev/MeshCore"
 
+    /** The GitHub token (the user's or the group's) for the API calls: 5000 requests an hour instead of 60 a network. */
+    @Volatile var apiToken: String? = null
+
+    /** The Authorization header for [url]: only api.github.com, never a file host (a download redirects away from it). */
+    internal fun authFor(url: String, token: String? = apiToken): String? =
+        if (!token.isNullOrEmpty() && URL(url).let { it.protocol == "https" && it.host == "api.github.com" }) "Bearer $token" else null
+
     private fun get(url: String): ByteArray {
         val c = URL(url).openConnection() as HttpURLConnection
+        authFor(url)?.let { c.setRequestProperty("Authorization", it) }
         c.connectTimeout = 15_000
         c.readTimeout = 30_000
         c.setRequestProperty("Accept", "application/vnd.github+json, application/octet-stream")
         c.setRequestProperty("User-Agent", "LoraOta")
         try {
-            if (c.responseCode !in 200..299) throw java.io.IOException("HTTP ${c.responseCode} for $url")
+            if (c.responseCode !in 200..299) throw HttpError(c.responseCode, url)
             return c.inputStream.use { it.readBytes() }
         } finally {
             c.disconnect()

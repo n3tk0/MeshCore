@@ -175,6 +175,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void loadBatteryCapacity();
 #if ENV_INCLUDE_BQ25798
   void loadCharger();
+  void saveChargerCalIfDue();
 #endif
 #if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
   void handleChargerCommand(char* args, char* reply);

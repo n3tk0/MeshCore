@@ -1481,7 +1481,7 @@ TEST(BQ25798, AutoSettingSaveLoadAndOldFiles) {
   ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));
   EXPECT_EQ(o.mppt_auto, 1);
   EXPECT_EQ(o.voc_pct, 69);
-  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s) - 1, o));   // the file of b06ffbb had 12 bytes with 0 at the end
+  ASSERT_TRUE(BQ25798::fromFile(&s, 11, o));              // the file of b06ffbb: no mppt_auto yet
   EXPECT_EQ(o.mppt_auto, 0);                              // 11 bytes: unknown -> not auto
   ASSERT_TRUE(BQ25798::fromFile(&s, 10, o));              // before voc_pct
   EXPECT_EQ(o.mppt_auto, 0);
@@ -1571,7 +1571,7 @@ TEST(BQ25798, FileOf10_11_12BytesKeepsWhatItHolds) {
   const int L10 = (int)offsetof(BQ25798Settings, voc_pct), L11 = (int)offsetof(BQ25798Settings, mppt_auto);
   ASSERT_EQ(L10, 10);
   ASSERT_EQ(L11, 11);
-  ASSERT_EQ((int)sizeof(s), 12);
+  ASSERT_EQ((int)offsetof(BQ25798Settings, cal), 12);
   BQ25798Settings o;
   ASSERT_TRUE(BQ25798::fromFile(&s, L10, o));
   EXPECT_EQ(o.voc_pct, 81);
@@ -1681,4 +1681,473 @@ TEST(BQ25798, ScanLastKeepsTheTableAfterALaterFailure) {
   EXPECT_EQ(strstr(small, "last try"), nullptr) << small;
   EXPECT_NE(strstr(small, " 90:"), nullptr) << small;
   EXPECT_EQ(n, (int)strlen(small));
+}
+
+// ---- IBAT calibration ----
+
+// the driver with an ADC result: raw IBAT as given, one 10 s step each
+static void adcStep(BQ25798& bq, FakeBQ& f, uint32_t& t, int16_t ibat) {
+  f.adcValues(3950, ibat, 0, 0);
+  bq.loop(t += 10000);
+  bq.loop(t += 10000);
+}
+
+static IbatCurve noCurve() { IbatCurve c; memset(&c, 0, sizeof(c)); return c; }
+static int man(IbatCurve& c, int raw, int ref) { IbatCurve d = noCurve(); return IbatCal::setManual(c, d, raw, ref); }
+static int ap(const IbatCurve& c, int raw) { IbatCurve d = noCurve(); return IbatCal::apply(c, d, (int16_t)raw); }
+
+TEST(IbatCal, OnePointIsAnOffsetEverywhere) {
+  IbatCurve c = noCurve();
+  EXPECT_EQ(ap(c, -24), -24);
+  ASSERT_EQ(man(c, -24, -12), IBAT_SET_OK);
+  EXPECT_EQ(ap(c, -24), -12);
+  EXPECT_EQ(ap(c, -300), -288);   // outside: the line through the end point, gain 1
+  EXPECT_EQ(ap(c, -2), 10);       // below the point: the same offset, the sign may flip
+  EXPECT_EQ(ap(c, 30), 30);       // the charge direction is untouched
+}
+
+TEST(IbatCal, BucketChoice) {
+  EXPECT_EQ(IbatCal::bucketOf(1), 0);
+  EXPECT_EQ(IbatCal::bucketOf(7), 0);
+  EXPECT_EQ(IbatCal::bucketOf(8), 1);
+  EXPECT_EQ(IbatCal::bucketOf(14), 1);
+  EXPECT_EQ(IbatCal::bucketOf(15), 2);
+  EXPECT_EQ(IbatCal::bucketOf(60), 3);
+  EXPECT_EQ(IbatCal::bucketOf(150), 5);
+  EXPECT_EQ(IbatCal::bucketOf(1414), 7);
+  EXPECT_EQ(IbatCal::bucketOf(1415), 8);
+  EXPECT_EQ(IbatCal::bucketOf(3000), 8);
+  EXPECT_EQ(IbatCal::bucketOf(3001), -1);
+  EXPECT_EQ(IbatCal::bucketOf(0), -1);
+  EXPECT_EQ(IbatCal::bucketOf(-1), 0);    // discharge: 3 5 8 12 20 35 60 120
+  EXPECT_EQ(IbatCal::bucketOf(-3), 0);
+  EXPECT_EQ(IbatCal::bucketOf(-4), 1);
+  EXPECT_EQ(IbatCal::bucketOf(-6), 1);
+  EXPECT_EQ(IbatCal::bucketOf(-7), 2);
+  EXPECT_EQ(IbatCal::bucketOf(-12), 3);
+  EXPECT_EQ(IbatCal::bucketOf(-26), 4);
+  EXPECT_EQ(IbatCal::bucketOf(-27), 5);
+  EXPECT_EQ(IbatCal::bucketOf(-84), 6);
+  EXPECT_EQ(IbatCal::bucketOf(-85), 7);
+  EXPECT_EQ(IbatCal::bucketOf(-3000), 7);
+}
+
+TEST(IbatCal, InterpolationBetweenPointsPerDirection) {
+  IbatCurve c = noCurve();
+  ASSERT_EQ(man(c, -24, -12), IBAT_SET_OK);     // dis bucket 12 mA
+  ASSERT_EQ(man(c, -60, -48), IBAT_SET_OK);     // dis bucket 35 / 60?
+  ASSERT_EQ(man(c, -230, -200), IBAT_SET_OK);   // dis bucket 120
+  EXPECT_EQ(ap(c, -24), -12);
+  EXPECT_EQ(ap(c, -60), -48);
+  EXPECT_EQ(ap(c, -230), -200);
+  EXPECT_EQ(ap(c, -42), -30);                   // half way between the first two: 12 + (48-12)/2 = 30
+  EXPECT_EQ(ap(c, -145), -124);                 // half way between -60>-48 and -230>-200: 48 + 76 * 85/170
+  EXPECT_EQ(ap(c, 40), 40);                     // charge: no points
+  ASSERT_EQ(man(c, 50, 40), IBAT_SET_OK);
+  ASSERT_EQ(man(c, 1040, 1000), IBAT_SET_OK);
+  EXPECT_EQ(ap(c, 50), 40);
+  EXPECT_EQ(ap(c, 545), 520);   // half way on the 50>40 .. 1040>1000 line
+  EXPECT_EQ(ap(c, -42), -30);                   // discharge unchanged
+}
+
+TEST(IbatCal, ExtrapolationUsesTheFitGainAnchoredAtTheEnd) {
+  IbatCurve c = noCurve();
+  ASSERT_EQ(man(c, -24, -12), IBAT_SET_OK);     // low (under 60 mA)
+  ASSERT_EQ(man(c, -230, -200), IBAT_SET_OK);   // high (>= 150): fit gain 188/206
+  float g = 188.0f / 206.0f;
+  EXPECT_EQ(ap(c, -400), (int)-lroundf(200 + 170 * g));
+  EXPECT_EQ(ap(c, -10), (int)-lroundf(12 - 14 * g));
+  IbatCurve d = noCurve();   // the build default (offset + gain) with no point at all
+  EXPECT_EQ(IbatCal::apply(d, d, 100), 100 * BQ25798_IBAT_CHG_GAIN_X1000 / 1000 + BQ25798_IBAT_CHG_OFFSET_X10 / 10);
+}
+
+TEST(IbatCal, ManualErrors) {
+  IbatCurve c = noCurve();
+  EXPECT_EQ(man(c, -24, 0), IBAT_SET_ZERO);
+  EXPECT_EQ(man(c, 0, -12), IBAT_SET_ZERO);
+  EXPECT_EQ(man(c, 20, -12), IBAT_SET_DIRECTION);
+  EXPECT_EQ(man(c, -24, -90000), IBAT_SET_ZERO);
+  EXPECT_EQ(man(c, -5, -58), IBAT_SET_NONSENSE);      // 53 mA off
+  EXPECT_EQ(man(c, -400, -160), IBAT_SET_NONSENSE);   // ratio 0.4
+  EXPECT_EQ(man(c, 100, 160), IBAT_SET_NONSENSE);     // ratio 1.6
+  EXPECT_TRUE(IbatCal::empty(c));
+  EXPECT_EQ(man(c, -100, -100), IBAT_SET_OK);         // the old 60..149 zone is fine now
+}
+
+TEST(IbatCal, SanityLimitScalesWithCurrent) {
+  IbatCurve c = noCurve();
+  EXPECT_EQ(man(c, 1100, 1000), IBAT_SET_OK);    // 100 mA off, 15 % = 150 mA allowed
+  EXPECT_EQ(man(c, 1150, 1000), IBAT_SET_OK);    // exactly 15 %
+  EXPECT_EQ(man(c, 1160, 1000), IBAT_SET_NONSENSE);
+  EXPECT_EQ(man(c, 2400, 2000), IBAT_SET_NONSENSE);   // 20 %
+  EXPECT_EQ(man(c, 2300, 2000), IBAT_SET_OK);         // 15 %
+  EXPECT_EQ(man(c, 3000, 2900), IBAT_SET_OK);
+  EXPECT_EQ(man(c, 3000, 2600), IBAT_SET_NONSENSE);   // 400 mA > 15 % of 2600 (390)
+  EXPECT_EQ(man(c, 3000, 2700), IBAT_SET_OK);         // 300 mA < 405
+  EXPECT_EQ(man(c, 120, 60), IBAT_SET_NONSENSE);      // low currents: the 50 mA still rules
+  EXPECT_EQ(man(c, 110, 60), IBAT_SET_OK);
+  EXPECT_EQ(man(c, -400, -330), IBAT_SET_NONSENSE);   // 70 mA off, 15 % of 330 = 49.5
+  EXPECT_EQ(man(c, -400, -350), IBAT_SET_OK);         // 50 mA
+}
+
+TEST(IbatCal, ExportPagesOfAFullCurve) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  const int raw[9] = { 6, 12, 22, 55, 110, 220, 540, 1090, 2150 };
+  const int tru[9] = { 5, 10, 20, 50, 100, 200, 500, 1000, 2000 };
+  for (int i = 0; i < 9; i++) {
+    adcStep(bq, f, t, (int16_t)raw[i]);
+    ASSERT_EQ(bq.ibatCalManual(tru[i]), IBAT_SET_OK) << i;
+  }
+  char b1[200], b2[200];
+  ASSERT_GT(bq.formatIbatExport(b1, 155, IBAT_CHG, 1), 0);
+  ASSERT_GT(bq.formatIbatExport(b2, 155, IBAT_CHG, 2), 0);
+  EXPECT_STREQ(b1, "-D BQ25798_IBAT_CHG_CURVE='\"6:5,12:10,22:20,55:50,110:100\"' ..2");
+  EXPECT_STREQ(b2, "-D BQ25798_IBAT_CHG_CURVE2='\"220:200,540:500,1090:1000,2150:2000\"'");
+  IbatCurve d = noCurve();   // the two fragments as default curves give the same curve back
+  EXPECT_EQ(IbatCal::parseCurve("6:5,12:10,22:20,55:50,110:100", IBAT_CHG, d), 5);
+  EXPECT_EQ(IbatCal::parseCurve("220:200,540:500,1090:1000,2150:2000", IBAT_CHG, d), 4);
+  for (int i = 0; i < 9; i++) EXPECT_EQ(IbatCal::apply(noCurve(), d, (int16_t)raw[i]), tru[i]) << i;
+  bq.formatIbatExport(b1, 155, IBAT_DIS, 1);
+  EXPECT_NE(strstr(b1, "no points"), nullptr);
+}
+
+TEST(IbatCal, MonotonicRejection) {
+  IbatCurve c = noCurve();
+  ASSERT_EQ(man(c, 100, 90), IBAT_SET_OK);       // chg 100
+  ASSERT_EQ(man(c, 80, 205), IBAT_SET_NONSENSE); // chg 200 with a raw below the 100 one (and ratio): not taken
+  ASSERT_EQ(man(c, 210, 200), IBAT_SET_OK);
+  EXPECT_EQ(man(c, 95, 500), IBAT_SET_NONSENSE);
+  // a forged auto point out of order: ignored, the rest still works
+  IbatCurve d = noCurve();
+  d.p[IBAT_CHG][3] = { 500, 480, 20, IBAT_SRC_AUTO };    // true 48: raw 50
+  d.p[IBAT_CHG][4] = { 400, 380, 20, IBAT_SRC_AUTO };    // true 100 but raw 40: out of order
+  d.p[IBAT_CHG][5] = { 2100, 2000, 20, IBAT_SRC_AUTO };
+  IbatEff e = IbatCal::build(d, noCurve(), IBAT_CHG);
+  EXPECT_EQ(e.m, 2);
+  EXPECT_TRUE(e.ignored & (1u << 4));
+  // a manual point wins over a lower auto point it conflicts with: ref 72 mA is bucket 4 (true ~71..141), its raw
+  // (49 mA, ratio 1.47) is below the raw of bucket 3 (50 mA): out of order, so the auto point of bucket 3 goes
+  ASSERT_EQ(IbatCal::bucketOf(72), 4);
+  IbatCurve m = d;
+  ASSERT_EQ(IbatCal::setManual(m, noCurve(), 49, 72), IBAT_SET_OK);
+  EXPECT_EQ(m.p[IBAT_CHG][4].src, IBAT_SRC_MANUAL);
+  e = IbatCal::build(m, noCurve(), IBAT_CHG);
+  EXPECT_TRUE(e.ignored & (1u << 3));           // the lower auto point is dropped
+  EXPECT_FALSE(e.ignored & (1u << 4));          // the manual one stays
+  EXPECT_EQ(e.m, 2);                            // manual 4 and auto 5
+  EXPECT_EQ(e.idx[0], 4);
+  // an AUTO point never displaces anything: the same pair as an auto point at bucket 4 is the one dropped
+  IbatCurve a = d;
+  a.p[IBAT_CHG][4] = { 490, 720, 20, IBAT_SRC_AUTO };
+  e = IbatCal::build(a, noCurve(), IBAT_CHG);
+  EXPECT_TRUE(e.ignored & (1u << 4));
+  EXPECT_FALSE(e.ignored & (1u << 3));
+}
+
+TEST(IbatCal, ManualPointThatWouldPushOutAnotherManualOneIsRefused) {
+  IbatCurve c = noCurve();
+  ASSERT_EQ(man(c, 100, 98), IBAT_SET_OK);        // manual, bucket 4? true ~98 mA
+  IbatCurve before = c;
+  // a lower current (bucket 3, true 50) with a raw above 100: would knock the manual 100 out of the order
+  EXPECT_EQ(man(c, 105, 60), IBAT_SET_NONSENSE);
+  EXPECT_EQ(memcmp(&c, &before, sizeof(c)), 0);   // nothing changed
+  ASSERT_EQ(man(c, 55, 50), IBAT_SET_OK);         // in order: fine
+}
+
+TEST(IbatLearner, FailedWriteStaysDirtyAndRetriesAfterThePeriod) {
+  IbatCurve c = noCurve();
+  IbatLearner l;
+  for (int i = 0; i < 30; i++) l.feed(c, -24, -12);
+  ASSERT_TRUE(l.dirty());
+  uint32_t t = IBAT_SAVE_FIRST_MS;
+  ASSERT_TRUE(l.saveDue(t));
+  l.saveFailed(t);                                // the write failed
+  EXPECT_TRUE(l.dirty());
+  EXPECT_FALSE(l.saveDue(t + IBAT_SAVE_PERIOD_MS - 1));
+  EXPECT_TRUE(l.saveDue(t + IBAT_SAVE_PERIOD_MS));
+  l.synced(c, t + IBAT_SAVE_PERIOD_MS, true);     // a good write
+  EXPECT_FALSE(l.dirty());
+}
+
+TEST(BQ25798, LegacyImportIsDirtyUntilSaved) {
+  PanelBQ f;
+  f.fast();
+  BQ25798 bq(f);
+  IbatLegacyCal L;
+  memset(&L, 0, sizeof(L));
+  bq.ibatCurveImportLegacy(L);
+  EXPECT_FALSE(bq.ibatCalDirty());                // nothing to import: nothing to save
+  L.bin[IBAT_CHG][0].raw_x10 = 240; L.bin[IBAT_CHG][0].ref_x10 = 200; L.bin[IBAT_CHG][0].n = 1;
+  L.bin[IBAT_CHG][0].manual = 1;
+  bq.ibatCurveImportLegacy(L);
+  EXPECT_TRUE(bq.ibatCalDirty());                 // the owner writes /ibatcal at once and calls ibatCalSaved()
+  bq.ibatCalSaveFailed(0);
+  EXPECT_TRUE(bq.ibatCalDirty());
+  bq.ibatCalSaved(0);
+  EXPECT_FALSE(bq.ibatCalDirty());
+}
+
+TEST(IbatCal, StabilityFilterAveragingAndManualPriority) {
+  IbatCurve c = noCurve();
+  IbatLearner l;
+  for (int i = 0; i < 30; i++) l.feed(c, -24, -12);
+  EXPECT_EQ(c.p[IBAT_DIS][3].n, IBAT_N_CAP);   // capped
+  EXPECT_EQ(c.p[IBAT_DIS][3].raw_x10, -240);
+  EXPECT_EQ(c.p[IBAT_DIS][3].src, IBAT_SRC_AUTO);
+  IbatCurve d = noCurve();
+  IbatLearner m;
+  for (int i = 0; i < 6; i++) m.feed(d, -24, -12);
+  EXPECT_FALSE(m.feed(d, -60, -12));            // the raw jumps: not stable, not used
+  EXPECT_EQ(d.p[IBAT_DIS][3].n, 5);
+  IbatCurve g = noCurve();
+  ASSERT_EQ(man(g, -24, -12), IBAT_SET_OK);
+  IbatLearner k;
+  for (int i = 0; i < 20; i++) k.feed(g, -26, -13);
+  EXPECT_EQ(g.p[IBAT_DIS][3].raw_x10, -240);    // the manual point stays
+  EXPECT_EQ(g.p[IBAT_DIS][3].n, 1);
+  EXPECT_EQ(g.p[IBAT_DIS][3].src, IBAT_SRC_MANUAL);
+  IbatCurve z = noCurve();
+  IbatLearner q;
+  for (int i = 0; i < 5; i++) { q.feed(z, 0, 5); q.feed(z, 5, -5); q.feed(z, 4000, 4000); }
+  EXPECT_TRUE(IbatCal::empty(z));
+}
+
+TEST(IbatCal, LearningThresholdsAndSaveRateLimit) {
+  IbatCurve c = noCurve();
+  IbatLearner l;
+  for (int i = 0; i < IBAT_AUTO_MIN_N; i++) l.feed(c, -24, -12);   // the first feed has no predecessor
+  EXPECT_EQ(c.p[IBAT_DIS][3].n, IBAT_AUTO_MIN_N - 1);
+  EXPECT_EQ(ap(c, -24), -24);                                       // not used yet
+  EXPECT_FALSE(l.dirty());
+  l.feed(c, -24, -12);
+  EXPECT_EQ(ap(c, -24), -12);
+  EXPECT_TRUE(l.dirty());
+  EXPECT_FALSE(l.saveDue(IBAT_SAVE_FIRST_MS - 1));
+  EXPECT_TRUE(l.saveDue(IBAT_SAVE_FIRST_MS));
+  l.synced(c, IBAT_SAVE_FIRST_MS, true);
+  EXPECT_FALSE(l.dirty());
+  for (int i = 0; i < 10; i++) l.feed(c, -26, -12);                 // moved 0.2 mA per sample, mean drifts a little
+  EXPECT_FALSE(l.dirty());
+  for (int i = 0; i < 40; i++) l.feed(c, -30, -12);                 // (true - raw) moved by > 4 mA
+  EXPECT_TRUE(l.dirty());
+  EXPECT_FALSE(l.saveDue(IBAT_SAVE_FIRST_MS + 1000));
+  EXPECT_TRUE(l.saveDue(IBAT_SAVE_FIRST_MS + IBAT_SAVE_PERIOD_MS));
+  // high current: 6 samples are enough
+  IbatCurve h = noCurve();
+  IbatLearner n;
+  for (int i = 0; i < IBAT_AUTO_MIN_N_HIGH + 1; i++) n.feed(h, 1050, 1000);
+  EXPECT_EQ(ap(h, 1050), 1000);
+  EXPECT_TRUE(n.dirty());
+  IbatCurve lo = noCurve();
+  IbatLearner n2;
+  for (int i = 0; i < IBAT_AUTO_MIN_N_HIGH + 1; i++) n2.feed(lo, 25, 20);   // 20 mA needs the full 12
+  EXPECT_EQ(ap(lo, 25), 25);
+  // clear auto keeps the manual ones
+  ASSERT_EQ(man(h, 105, 100), IBAT_SET_OK);
+  IbatCal::clearAuto(h);
+  EXPECT_EQ(h.p[IBAT_CHG][8].n, 0);
+  EXPECT_EQ(h.p[IBAT_CHG][4].n, 1);
+}
+
+TEST(IbatCal, BuildDefaultCurveParsing) {
+  IbatCurve c = noCurve();
+  EXPECT_EQ(IbatCal::parseCurve("-24:-12,-60:-48 , -2.4:-1.2,junk,5:3,-230:-200,x:y,-24:", IBAT_DIS, c), 4);
+  EXPECT_EQ(c.p[IBAT_DIS][3].raw_x10, -240);
+  EXPECT_EQ(c.p[IBAT_DIS][3].ref_x10, -120);
+  EXPECT_EQ(c.p[IBAT_DIS][3].src, IBAT_SRC_BUILD);
+  EXPECT_EQ(c.p[IBAT_DIS][0].raw_x10, -24);     // -1.2 mA is the first point
+  EXPECT_EQ(c.p[IBAT_DIS][7].ref_x10, -2000);
+  EXPECT_EQ(c.p[IBAT_CHG][0].n, 0);             // the other sign is skipped
+  IbatCurve e = noCurve();
+  EXPECT_EQ(IbatCal::parseCurve("", IBAT_CHG, e), 0);
+  EXPECT_EQ(IbatCal::parseCurve(0, IBAT_CHG, e), 0);
+  EXPECT_EQ(IbatCal::parseCurve("100:90,2100:2000,99999:1", IBAT_CHG, e), 2);
+  // as a default: used where nothing is stored, a stored point wins
+  IbatCurve none = noCurve();
+  EXPECT_EQ(IbatCal::apply(none, c, -24), -12);
+  EXPECT_EQ(IbatCal::apply(none, c, -42), -30);
+  IbatCurve st = noCurve();
+  ASSERT_EQ(IbatCal::setManual(st, c, -24, -10), IBAT_SET_OK);
+  EXPECT_EQ(IbatCal::apply(st, c, -24), -10);
+  EXPECT_EQ(IbatCal::apply(st, c, -60), -48);
+}
+
+TEST(IbatCal, FileFormat) {
+  IbatCurve c = noCurve();
+  ASSERT_EQ(man(c, -24, -12), IBAT_SET_OK);
+  ASSERT_EQ(man(c, 1040, 1000), IBAT_SET_OK);
+  c.p[IBAT_CHG][1] = { 100, 95, 17, IBAT_SRC_AUTO };
+  uint8_t b[IBAT_FILE_LEN + 4];
+  ASSERT_EQ(IbatCal::toFile(c, b), IBAT_FILE_LEN);
+  IbatCurve o;
+  ASSERT_TRUE(IbatCal::fromFile(b, IBAT_FILE_LEN, o));
+  EXPECT_EQ(memcmp(&o, &c, sizeof(c)), 0);
+  EXPECT_EQ(ap(o, -24), -12);
+  // missing / short / long / foreign / newer / damaged
+  EXPECT_FALSE(IbatCal::fromFile(b, 0, o));
+  EXPECT_TRUE(IbatCal::empty(o));
+  EXPECT_FALSE(IbatCal::fromFile(b, IBAT_FILE_LEN - 1, o));
+  EXPECT_FALSE(IbatCal::fromFile(b, IBAT_FILE_LEN + 1, o));
+  uint8_t x[IBAT_FILE_LEN];
+  memcpy(x, b, sizeof(x)); x[0] = 'X';
+  EXPECT_FALSE(IbatCal::fromFile(x, IBAT_FILE_LEN, o));
+  memcpy(x, b, sizeof(x)); x[3] = 2;
+  EXPECT_FALSE(IbatCal::fromFile(x, IBAT_FILE_LEN, o));
+  for (int i = 0; i < IBAT_FILE_LEN; i++) {   // any single flipped bit is caught
+    memcpy(x, b, sizeof(x)); x[i] ^= 0x10;
+    EXPECT_FALSE(IbatCal::fromFile(x, IBAT_FILE_LEN, o)) << i;
+  }
+  // a valid CRC over forged points: the points are dropped by sanitize
+  IbatCurve f = noCurve();
+  f.p[IBAT_DIS][0] = { 240, -120, 5, 0 };   // wrong sign for discharge
+  f.p[IBAT_CHG][2] = { 100, 95, 99, 0 };    // n over the cap, and the wrong bucket
+  f.p[IBAT_CHG][0] = { 100, 95, 5, 7 };     // unknown source
+  IbatCal::toFile(f, x);
+  ASSERT_TRUE(IbatCal::fromFile(x, IBAT_FILE_LEN, o));
+  EXPECT_TRUE(IbatCal::empty(o));
+}
+
+TEST(IbatCal, LegacyFilesOfTheTwoPointBuildImport) {
+  IbatLegacyCal L; memset(&L, 0, sizeof(L));
+  L.bin[IBAT_DIS][0] = { -240, -120, 30, 0 };    // low, auto
+  L.bin[IBAT_DIS][1] = { -2300, -2000, 1, 1 };   // high, manual
+  L.bin[IBAT_CHG][0] = { 100, 900, 3, 0 };       // kept in the file, ignored at use (90 mA off)
+  L.bin[IBAT_CHG][1] = { 5000, 4800, 99, 0 };    // n over the cap: dropped
+  IbatCurve c = noCurve();
+  IbatCal::importLegacy(c, L);
+  EXPECT_EQ(c.p[IBAT_DIS][3].n, 0);   // 30 > cap: dropped
+  EXPECT_EQ(c.p[IBAT_DIS][7].src, IBAT_SRC_MANUAL);
+  EXPECT_EQ(c.p[IBAT_CHG][5].n, 0);
+  EXPECT_EQ(IbatCal::bucketOf(-200), 7);
+  L.bin[IBAT_DIS][0].n = 20;
+  c = noCurve();
+  IbatCal::importLegacy(c, L);
+  EXPECT_EQ(c.p[IBAT_DIS][3].n, 20);
+  EXPECT_EQ(ap(c, -24), -12);
+}
+
+TEST(BQ25798, IbatDriverAutoLearnsFromReference) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  for (int i = 0; i < 40; i++) {
+    adcStep(bq, f, t, -24);                 // the ADC says 24 mA out
+    if (bq.reading().valid) bq.setBatteryReference(-12, t);   // the INA219 says 12 mA out (+ = charging)
+  }
+  EXPECT_EQ(bq.reading().ibat_raw_ma, -24);
+  EXPECT_EQ(bq.reading().ibat_ma, -12);     // corrected
+  EXPECT_EQ(bq.batteryCurrentMa(), -12);
+  EXPECT_TRUE(bq.ibatCalSaveDue(t));
+  char buf[200];
+  bq.formatIbat(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "dis auto 1p"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "chg default 0p"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "DIS_OFFSET_X10=120 DIS_GAIN_X1000=1000"), nullptr) << buf;
+  EXPECT_LT(strlen(buf), 155u);
+  bq.formatIbatCurve(buf, sizeof(buf), IBAT_DIS, 1);
+  EXPECT_STREQ(buf, "dis 12:-24>-12a24");
+  bq.formatIbatExport(buf, sizeof(buf), IBAT_DIS);
+  EXPECT_STREQ(buf, "-D BQ25798_IBAT_DIS_CURVE='\"-24:-12\"'");
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "-12mA"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "(bq -24)"), nullptr) << buf;
+  // the reference gone: the corrected ADC, still -12
+  t += 100000;
+  adcStep(bq, f, t, -24);
+  EXPECT_FALSE(bq.hasBatteryReference());
+  EXPECT_EQ(bq.batteryCurrentMa(), -12);
+  bq.ibatCalSaved(t);
+  EXPECT_FALSE(bq.ibatCalSaveDue(t + 1000));
+  // the file carries it, and /charger does not
+  uint8_t fb[IBAT_FILE_LEN];
+  ASSERT_EQ(bq.ibatCurveToFile(fb), IBAT_FILE_LEN);
+  BQ25798 b2(f);
+  EXPECT_TRUE(b2.ibatCurveLoad(fb, IBAT_FILE_LEN));
+  EXPECT_EQ(IbatCal::apply(b2.ibatCurve(), b2.ibatDefaultCurve(), -24), -12);
+  EXPECT_EQ(bq.settings().cal.bin[IBAT_DIS][0].n, 0);
+}
+
+TEST(BQ25798, IbatManualCalAndClear) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  EXPECT_EQ(bq.ibatCalManual(-12), -1);     // no ADC result yet
+  uint32_t t = 0;
+  adcStep(bq, f, t, -24);
+  ASSERT_TRUE(bq.reading().valid);
+  EXPECT_EQ(bq.ibatCalManual(12), IBAT_SET_DIRECTION);
+  EXPECT_EQ(bq.ibatCalManual(-12), IBAT_SET_OK);
+  bq.setBatteryReference(-5, t + 7);   // a reference a few ms after the last loop() counts at once
+  EXPECT_EQ(bq.batteryCurrentMa(), -5);
+  bq.clearBatteryReference();
+  EXPECT_EQ(bq.reading().ibat_ma, -12);
+  EXPECT_EQ(bq.batteryCurrentMa(), -12);
+  char buf[200];
+  bq.formatIbat(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "DIS_OFFSET_X10=120"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "dis manual 1p"), nullptr) << buf;
+  bq.formatIbatCurve(buf, sizeof(buf), IBAT_DIS, 1);
+  EXPECT_STREQ(buf, "dis 12:-24>-12m");
+  bq.formatIbatCurve(buf, sizeof(buf), IBAT_CHG, 1);
+  EXPECT_STREQ(buf, "chg -");
+  bq.ibatCalClear(true);                    // auto only: the manual point stays
+  EXPECT_EQ(bq.reading().ibat_ma, -12);
+  bq.ibatCalClear(false);
+  EXPECT_EQ(bq.reading().ibat_ma, -24);
+  EXPECT_TRUE(IbatCal::empty(bq.ibatCurve()));
+}
+
+TEST(BQ25798, IbatCurveFileMissingAndCorrupt) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  EXPECT_FALSE(bq.ibatCurveLoad(nullptr, 0));
+  EXPECT_TRUE(IbatCal::empty(bq.ibatCurve()));
+  uint8_t junk[IBAT_FILE_LEN];
+  memset(junk, 0xA5, sizeof(junk));
+  EXPECT_FALSE(bq.ibatCurveLoad(junk, sizeof(junk)));
+  EXPECT_TRUE(IbatCal::empty(bq.ibatCurve()));
+}
+
+TEST(BQ25798, Ibat934d2daChargerFileImportsIntoTheCurve) {
+  BQ25798Settings s = settings();
+  s.ichg_ma = 1500;
+  s.cal.bin[IBAT_DIS][0] = { -240, -120, 20, 0 };
+  s.cal.bin[IBAT_DIS][1] = { -2300, -2000, 1, 1 };
+  BQ25798Settings o;
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));     // the file as written by that build: same size
+  EXPECT_EQ(o.ichg_ma, 1500);
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.apply(o);
+  EXPECT_EQ(bq.settings().cal.bin[IBAT_DIS][0].n, 0);   // not kept in the settings
+  EXPECT_FALSE(bq.ibatCurveLoad(nullptr, 0));           // no /ibatcal yet
+  bq.ibatCurveImportLegacy(o.cal);
+  EXPECT_EQ(IbatCal::apply(bq.ibatCurve(), bq.ibatDefaultCurve(), -24), -12);
+  EXPECT_EQ(IbatCal::apply(bq.ibatCurve(), bq.ibatDefaultCurve(), -230), -200);
+  EXPECT_TRUE(bq.ibatCalSaveDue(IBAT_SAVE_FIRST_MS));   // to be written to /ibatcal
+  // shorter files: no calibration, the rest kept
+  const int CAL = (int)offsetof(BQ25798Settings, cal);
+  for (int len = CAL; len < (int)sizeof(s); len++) {
+    ASSERT_TRUE(BQ25798::fromFile(&s, len, o));
+    EXPECT_EQ(o.cal.bin[IBAT_DIS][0].n, 0) << len;
+    EXPECT_EQ(o.ichg_ma, 1500);
+  }
+  ASSERT_TRUE(BQ25798::fromFile(&s, 10, o));
+  ASSERT_TRUE(BQ25798::fromFile(&s, 12, o));
+  EXPECT_EQ(o.cal.bin[IBAT_DIS][1].n, 0);
+  // a damaged legacy block costs the points, not the settings
+  BQ25798Settings bad = s;
+  memset(&bad.cal, 0xFF, sizeof(bad.cal));
+  ASSERT_TRUE(BQ25798::fromFile(&bad, sizeof(bad), o));
+  IbatCurve c = noCurve();
+  IbatCal::importLegacy(c, o.cal);
+  EXPECT_TRUE(IbatCal::empty(c));
+  EXPECT_EQ(o.ichg_ma, 1500);
 }

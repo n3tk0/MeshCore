@@ -561,13 +561,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- firmware ----
 
+    /** Why the list of releases could not be fetched (the list kept on the phone is shown): null when it was. */
+    var releasesError by mutableStateOf<String?>(null)
+
+    /** The same for the Upstream list of the flash screen. */
+    var upstreamError by mutableStateOf<String?>(null)
+
+    private fun releasesWhy(e: Throwable?): String =
+        if ((e as? io.github.n3tk0.loraota.ota.HttpError)?.rateLimited == true) str(R.string.msg_releases_rate_limit, e.code)
+        else e?.message ?: ""
+
+    private var releasesLoadedAt = 0L
+    private var upstreamLoadedAt = 0L
+
+    private fun refreshOursIfStale() { if (releases.isEmpty() || Releases.isStale(releasesLoadedAt)) loadReleases() }
+    private fun refreshUpstreamIfStale() { if (upstream.isEmpty() || Releases.isStale(upstreamLoadedAt)) loadUpstream() }
+
     fun loadReleases() = viewModelScope.launch {
+        Releases.apiToken = tokens.get()
+        releasesError = null
         // finds of earlier searches first: the queue needs them with no running repeater (and no internet) too
         olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo, ctx.filesDir) } }
         releases = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
+        if (list.isSuccess) releasesLoadedAt = System.currentTimeMillis()
         if (list.isFailure) {
-            val why = list.exceptionOrNull()?.message ?: ""
+            val why = releasesWhy(list.exceptionOrNull())
+            releasesError = why
             if (releases.isNotEmpty()) {
                 // no internet on site: the list kept last time (an error on screen stays)
                 if (!messageIsError || message.isEmpty()) {
@@ -754,7 +774,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         flashDone = false
         message = ""
         if (target == FlashTarget.COMPANION) step = Step.FLASH
-        if (releases.isEmpty()) loadReleases()
+        if (flashUpstream) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
     private var flashReturn = Step.REPEATER   // where the companion's flash screen was opened from
@@ -763,7 +783,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun showFlashTab() {
         firmwareTab = 1
         if (flashTarget != FlashTarget.REPEATER) openFlash(FlashTarget.REPEATER)
-        else if (releases.isEmpty()) loadReleases()
+        else if (flashUpstream) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
     fun closeFlash() {
@@ -782,6 +802,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else if (flashDone) {
             backToRepeaters()   // it restarted with other firmware: log in again
         }
+    }
+
+    /** How many firmware with LoRa OTA are for other boards than the one the repeater runs (hidden from the list); 0 if its board is unknown. */
+    fun otherBoardCount(): Int {
+        val env = oldImage?.env ?: allFirmware.firstOrNull { it.sha256 == oldImage?.sha }?.env ?: return 0
+        return allFirmware.count { it.hasLoraOta && it.env != env }
     }
 
     /** Releases that fit: the right role, and for a repeater whose chip is known the right file type. */
@@ -808,15 +834,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 'Ours' / 'Upstream' above the releases of the flash screen. */
     fun showUpstream(on: Boolean) {
         flashUpstream = on
-        if (on && upstream.isEmpty()) loadUpstream()
+        if (on) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
     fun loadUpstream() = viewModelScope.launch {
+        Releases.apiToken = tokens.get()
+        upstreamError = null
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(Releases.UPSTREAM_REPO, ctx.filesDir) } }
         upstream = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(Releases.UPSTREAM_REPO, ctx.filesDir) }
+        if (list.isSuccess) upstreamLoadedAt = System.currentTimeMillis()
         if (list.isFailure) {
-            message = str(if (upstream.isEmpty()) R.string.msg_releases_failed else R.string.msg_releases_offline,
-                list.exceptionOrNull()?.message ?: "")
+            val why = releasesWhy(list.exceptionOrNull())
+            upstreamError = why
+            message = str(if (upstream.isEmpty()) R.string.msg_releases_failed else R.string.msg_releases_offline, why)
             messageIsError = upstream.isEmpty()
         }
     }
@@ -992,7 +1022,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         queueReturn = step
         message = ""
         step = Step.QUEUE
-        if (releases.isEmpty()) loadReleases()
+        refreshOursIfStale()
     }
 
     fun closeQueue() {
