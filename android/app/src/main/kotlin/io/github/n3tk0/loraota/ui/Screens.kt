@@ -633,6 +633,12 @@ private fun SourceRow(selected: Source, enabled: Boolean, onSelect: (Source) -> 
 /** The list of releases could not be fetched: the one kept on the phone is shown (maybe old); why, and Retry. */
 @Composable
 private fun ReleasesErrorCard(vm: AppViewModel, upstream: Boolean = false) {
+    val warn = if (upstream) null else vm.releasesWarning
+    if (warn != null) Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)) {
+        Text(stringResource(R.string.releases_manifest_failed, warn.first, warn.second), Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium)
+    }
     val why = (if (upstream) vm.upstreamError else vm.releasesError) ?: return
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
         containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)) {

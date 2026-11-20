@@ -109,8 +109,8 @@ class ReleasesSearchTest {
             .put(release("r1", asset("ota-manifest.json"), asset("E.bin", "aa")))
             .put(release("r2", asset("ota-manifest.json"), asset("E.bin", "cc")))   // skipped: not reported
         val out = Releases.parseReleases("n3tk0/MeshCore", releases, { throw java.io.IOException("x") },
-            { Releases.mayHave(it, "aa") }, { failed++ })
-        assertEquals(0, out.size)
+            { Releases.mayHave(it, "aa") }, { _, _ -> failed++ })
+        assertEquals(1, out.size)   // from the asset list, by its digest
         assertEquals(1, failed)
     }
 

@@ -26,6 +26,8 @@
     <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
     <string name="msg_releases_failed">Releases did not load: %1$s</string>
     <string name="msg_releases_offline">No connection (%1$s): showing the releases kept on this phone.</string>
+    <string name="msg_not_running_detail">The repeater runs commit %1$s, image %2$d B; the file is %3$d B.</string>
+    <string name="releases_manifest_failed">%1$d releases: manifest could not be downloaded (%2$s); shown from GitHub\'s file list.</string>
     <string name="msg_not_running_firmware">This is not the firmware the repeater runs.</string>
     <string name="msg_too_big">The new firmware does not fit on the repeater.</string>
     <string name="msg_verified">The repeater runs the new firmware: %1$s</string>

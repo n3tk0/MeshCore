@@ -74,19 +74,36 @@ object Releases {
         if (!token.isNullOrEmpty() && URL(url).let { it.protocol == "https" && it.host == "api.github.com" }) "Bearer $token" else null
 
     private fun get(url: String): ByteArray {
-        val c = URL(url).openConnection() as HttpURLConnection
-        authFor(url)?.let { c.setRequestProperty("Authorization", it) }
-        c.connectTimeout = 15_000
-        c.readTimeout = 30_000
-        c.setRequestProperty("Accept", "application/vnd.github+json, application/octet-stream")
-        c.setRequestProperty("User-Agent", "LoraOta")
-        try {
-            if (c.responseCode !in 200..299) throw HttpError(c.responseCode, url)
-            return c.inputStream.use { it.readBytes() }
-        } finally {
-            c.disconnect()
+        var target = url
+        // redirects by hand (a download goes from github.com to another host): each hop gets the Authorization
+        // header only if it is api.github.com itself, and only https is followed
+        for (hop in 0..MAX_REDIRECTS) {
+            val c = URL(target).openConnection() as HttpURLConnection
+            authFor(target)?.let { c.setRequestProperty("Authorization", it) }
+            c.instanceFollowRedirects = false
+            c.connectTimeout = 15_000
+            c.readTimeout = 30_000
+            c.setRequestProperty("Accept", "application/vnd.github+json, application/octet-stream")
+            c.setRequestProperty("User-Agent", "LoraOta")
+            try {
+                val code = c.responseCode
+                if (code in 300..399 && code != 304) {
+                    val loc = c.getHeaderField("Location") ?: throw HttpError(code, target)
+                    val next = URL(URL(target), loc)
+                    if (next.protocol != "https") throw java.io.IOException("redirect to ${next.protocol}")
+                    target = next.toString()
+                    continue
+                }
+                if (code !in 200..299) throw HttpError(code, target)
+                return c.inputStream.use { it.readBytes() }
+            } finally {
+                c.disconnect()
+            }
         }
+        throw java.io.IOException("too many redirects for $url")
     }
+
+    private const val MAX_REDIRECTS = 5
 
     private const val PER_PAGE = 50
     /** How many pages of releases [findOlder] looks through at most (the first one is [list]'s). */
@@ -111,17 +128,27 @@ object Releases {
 
     private fun pageJson(repo: String, n: Int) = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$n")))
 
+    /** What [listDetailed] found: [manifestFailed] releases had a manifest that did not download ([lastError] says why). */
+    class Listing(val files: List<FirmwareFile>, val manifestFailed: Int = 0, val lastError: String = "")
+
+    /** A short reason for a person: the exception's class and its HTTP code / message. */
+    internal fun describe(e: Throwable): String =
+        if (e is HttpError) "HTTP ${e.code}" else e.javaClass.simpleName + (e.message?.let { ": $it" } ?: "")
+
     /** Every firmware of the page: all manifests are read (for the UI list). */
-    private fun page(repo: String, n: Int): Page {
+    private fun page(repo: String, n: Int): Listing {
         val releases = pageJson(repo, n)
-        return Page(releases.length(), parseReleases(repo, releases, { get(it) }))
+        var failed = 0
+        var last = ""
+        val files = parseReleases(repo, releases, { get(it) }, onFetchFailed = { e, _ -> failed++; last = describe(e) })
+        return Listing(files, failed, last)
     }
 
     /** A page for the search: only the manifests of the releases that may have [sha] are read. */
     private fun searchPage(repo: String, n: Int, sha: String): Page {
         val releases = pageJson(repo, n)
         var failed = false
-        val files = parseReleases(repo, releases, { get(it) }, { mayHave(it, sha) }, { failed = true })
+        val files = parseReleases(repo, releases, { get(it) }, { mayHave(it, sha) }, { _, covered -> if (!covered) failed = true })
         return Page(releases.length(), files, failed)
     }
 
@@ -147,13 +174,16 @@ object Releases {
      * folder the list is kept there (for use with no internet, see [cached]) and kept .bin files no release
      * lists any more are deleted. Older releases: [findOlder].
      */
-    fun list(repo: String = DEFAULT_REPO, cache: File? = null): List<FirmwareFile> {
-        val out = page(repo, 1).files
+    fun list(repo: String = DEFAULT_REPO, cache: File? = null): List<FirmwareFile> = listDetailed(repo, cache).files
+
+    /** [list] and how many releases had to be shown from GitHub's file list because their manifest did not download. */
+    fun listDetailed(repo: String = DEFAULT_REPO, cache: File? = null): Listing {
+        val l = page(repo, 1)
         if (cache != null) runCatching {
-            writeAtomic(listFile(cache, repo), toJson(out).toString().toByteArray())
+            writeAtomic(listFile(cache, repo), toJson(l.files).toString().toByteArray())
             cleanUp(cache)
         }
-        return out
+        return l
     }
 
     /**
@@ -209,7 +239,8 @@ object Releases {
 
     /** The firmware of a page of releases; [fetch] gets a URL (the manifest). */
     internal fun parseReleases(repo: String, releases: JSONArray, fetch: (String) -> ByteArray,
-                               wanted: (JSONArray) -> Boolean = { true }, onFetchFailed: () -> Unit = {}): List<FirmwareFile> {
+                               wanted: (JSONArray) -> Boolean = { true },
+                               onFetchFailed: (Throwable, Boolean) -> Unit = { _, _ -> }): List<FirmwareFile> {
         val out = ArrayList<FirmwareFile>()
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
@@ -227,9 +258,13 @@ object Releases {
             }
             if (!wanted(assets)) continue   // a search: this release cannot have the firmware
             val published = rel.optString("published_at").ifEmpty { rel.optString("created_at") }
-            val files = runCatching { JSONObject(String(fetch(manifest))).getJSONArray("files") }.getOrNull()
+            val fetched = runCatching { JSONObject(String(fetch(manifest))).getJSONArray("files") }
+            val files = fetched.getOrNull()
             if (files == null) {
-                onFetchFailed()
+                // no manifest: the .bin files GitHub lists, checked by the digest it keeps for each
+                val (fallback, covered) = fromBinAssets(rel.optString("tag_name"), assets, published)
+                onFetchFailed(fetched.exceptionOrNull() ?: java.io.IOException("manifest"), covered)
+                out.addAll(fallback)
                 continue
             }
             for (f in 0 until files.length()) {
@@ -246,6 +281,36 @@ object Releases {
             }
         }
         return out
+    }
+
+    /**
+     * The firmware of a release whose manifest did not download, from its asset list: each <env>-....bin with a
+     * "sha256:" digest is a LoRa OTA image (env = the name up to the first '-'), with <same name>.zip as its
+     * DFU file when there is one. The second value: every .bin had a digest (nothing left unknown).
+     */
+    internal fun fromBinAssets(tag: String, assets: JSONArray, published: String = ""): Pair<List<FirmwareFile>, Boolean> {
+        val byName = HashMap<String, JSONObject>()
+        for (a in 0 until assets.length()) assets.getJSONObject(a).let { byName[it.getString("name")] = it }
+        fun digest(a: JSONObject?) = a?.optString("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
+        val out = ArrayList<FirmwareFile>()
+        var covered = true
+        for ((name, a) in byName.entries.sortedBy { it.key }) {
+            if (!name.endsWith(".bin", ignoreCase = true) || name.endsWith("-merged.bin", ignoreCase = true)) continue
+            val sha = digest(a)
+            val url = a.optString("browser_download_url")
+            if (sha == null || url.isEmpty()) { covered = false; continue }
+            val env = name.dropLast(4).substringBefore('-')
+            if (env.isEmpty()) continue
+            val zipName = name.dropLast(4) + ".zip"
+            val zip = byName[zipName]
+            val zipSha = digest(zip)
+            val zipUrl = zip?.optString("browser_download_url").orEmpty()
+            val hasZip = zip != null && zipSha != null && zipUrl.isNotEmpty()
+            out.add(FirmwareFile(tag, env, "", name, a.optInt("size"), sha, url,
+                if (hasZip) zipName else "", if (hasZip) zip!!.optInt("size") else 0, if (hasZip) zipSha!! else "",
+                if (hasZip) zipUrl else "", published))
+        }
+        return out to covered
     }
 
     /**

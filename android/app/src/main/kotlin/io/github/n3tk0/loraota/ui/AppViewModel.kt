@@ -50,6 +50,7 @@ import io.github.n3tk0.loraota.delta.DetoolsPatch
 import io.github.n3tk0.loraota.flash.BleDfu
 import io.github.n3tk0.loraota.flash.BoardCheck
 import io.github.n3tk0.loraota.flash.FlashFailed
+import io.github.n3tk0.loraota.flash.PickedImage
 import io.github.n3tk0.loraota.flash.Role
 import io.github.n3tk0.loraota.flash.WifiOta
 import io.github.n3tk0.loraota.github.BuildJob
@@ -564,6 +565,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Why the list of releases could not be fetched (the list kept on the phone is shown): null when it was. */
     var releasesError by mutableStateOf<String?>(null)
 
+    /** Releases whose manifest did not download (shown from GitHub's file list): count and reason, null when none. */
+    var releasesWarning by mutableStateOf<Pair<Int, String>?>(null)
+
     /** The same for the Upstream list of the flash screen. */
     var upstreamError by mutableStateOf<String?>(null)
 
@@ -580,10 +584,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadReleases() = viewModelScope.launch {
         Releases.apiToken = tokens.get()
         releasesError = null
+        releasesWarning = null
         // finds of earlier searches first: the queue needs them with no running repeater (and no internet) too
         olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }
-        val list = runCatching { withContext(Dispatchers.IO) { Releases.list(repo, ctx.filesDir) } }
-        releases = list.getOrNull() ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
+        val list = runCatching { withContext(Dispatchers.IO) { Releases.listDetailed(repo, ctx.filesDir) } }
+        list.getOrNull()?.let { l -> if (l.manifestFailed > 0) releasesWarning = l.manifestFailed to l.lastError }
+        releases = list.getOrNull()?.files ?: withContext(Dispatchers.IO) { Releases.cached(repo, ctx.filesDir) }
         if (list.isSuccess) releasesLoadedAt = System.currentTimeMillis()
         if (list.isFailure) {
             val why = releasesWhy(list.exceptionOrNull())
@@ -668,15 +674,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pickFile(uri: Uri, isOld: Boolean) = work {
         val data = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
-        val img = Image(fileName(uri), data)
+        val name = fileName(uri)
         if (isOld) {
             val i = info
-            if (i != null && img.sha != hex(i.imageSha)) throw Exception(str(R.string.msg_not_running_firmware))
-            oldImage = img
+            var bytes = runCatching { PickedImage.app(data) }.getOrDefault(data)
+            if (i != null) {
+                // a .uf2 / DFU .zip, or an image padded past what the repeater runs: its first imageSize bytes
+                bytes = PickedImage.running(data, i.imageSize, hex(i.imageSha)) ?: throw Exception(
+                    str(R.string.msg_not_running_firmware) + " " + str(R.string.msg_not_running_detail,
+                        OtaProtocol.parseIdent(i.ident).commit ?: "?", i.imageSize, bytes.size))
+            }
+            oldImage = Image(name, bytes)
             runningUnknown = false
             runningNotChecked = false
         } else {
-            newImage = img
+            newImage = Image(name, PickedImage.app(data))
         }
         patch = null
     }
