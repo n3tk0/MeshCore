@@ -31,6 +31,11 @@
     <string name="msg_verified">The repeater runs the new firmware: %1$s</string>
     <string name="pick_running">Running firmware from a file</string>
     <string name="pick_new">New firmware from a file</string>
+    <string name="msg_releases_rate_limit">GitHub rate limit for requests without a token reached (HTTP %1$d), try again in a while</string>
+    <string name="releases_stale">The releases could not be updated: showing those kept on this phone. %1$s</string>
+    <string name="releases_refresh">Refresh</string>
+    <string name="releases_retry">Retry</string>
+    <string name="other_boards_hidden">%1$d builds for other boards hidden</string>
     <string name="no_new_firmware">No newer firmware for this board in the releases.</string>
     <string name="update">Update</string>
     <string name="resume">Continue</string>

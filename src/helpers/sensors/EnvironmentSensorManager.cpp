@@ -1,4 +1,5 @@
 #include "EnvironmentSensorManager.h"
+#include <math.h>
 
 #include <Wire.h>
 #include <helpers/I2CHealth.h>
@@ -454,7 +455,7 @@ static void query_bq25798(uint8_t ch, uint8_t sub, CayenneLPP& lpp) {
   const BQ25798Reading& r = bq_charger.reading();
   if (!r.valid) return;
   if (sub == 0) {
-    float amps = -r.ibat_ma / 1000.0f;   // as an INA219 in the battery line: + = out of the battery
+    float amps = -bq_charger.batteryCurrentMa() / 1000.0f;   // as an INA219 in the battery line: + = out of the battery (an INA219's own reading when there is one)
     lpp.addVoltage(ch, r.vbat_mv / 1000.0f);
     lpp.addCurrent(ch, amps < 0 ? -amps : amps);
     lpp.addAnalogInput(ch, amps);
@@ -908,8 +909,29 @@ void EnvironmentSensorManager::bqLoop() {
   noteRead(query_bq25798, errors);   // 3 polls in a row with I2C errors: off, tried again later
   if (bq_charger.takeFull()) bq_gauge.markFull();
   if (bq_charger.adcCount() == adcs) return;
+  // an INA219 in the battery line measures the current better than the charger's ADC (which then
+  // learns from it, see IbatCal.h); without one the corrected ADC counts
+  #if ENV_INCLUDE_INA219
+  bool ref = false;
+  if (_ina219_found) {
+    bool on = true;
+    for (int i = 0; i < _active_sensor_count; i++) {
+      if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) on = false;
+    }
+    if (on) {
+      uint32_t ina_errors = i2cErrorCount(*TELEM_WIRE);
+      float ma = INA219.getCurrent_mA();
+      noteRead(query_ina219, ina_errors);
+      if (i2cErrorCount(*TELEM_WIRE) == ina_errors && ma > -30000.0f && ma < 30000.0f) {   // also rules out NaN
+        bq_charger.setBatteryReference((int16_t)lroundf(-ma), millis());   // the BQ counts + = charging
+        ref = true;
+      }
+    }
+  }
+  if (!ref) bq_charger.clearBatteryReference();
+  #endif
   const BQ25798Reading& r = bq_charger.reading();
-  bq_gauge.update(millis(), r.vbat_mv, -r.ibat_ma, gaugeDay());   // the gauge counts + = out of the battery
+  bq_gauge.update(millis(), r.vbat_mv, -bq_charger.batteryCurrentMa(), gaugeDay());   // the gauge counts + = out of the battery
 }
 
 BQ25798* EnvironmentSensorManager::getCharger() {

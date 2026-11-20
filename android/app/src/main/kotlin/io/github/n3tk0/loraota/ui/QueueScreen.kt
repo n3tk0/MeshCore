@@ -63,7 +63,11 @@ fun QueueScreen(vm: AppViewModel) {
 @Composable
 private fun QueuePick(vm: AppViewModel) {
     Hint(stringResource(R.string.q_hint_short), stringResource(R.string.q_hint))
-    Text(stringResource(R.string.q_pick_release), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.q_pick_release), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f))
+        TextButton(onClick = { vm.loadReleases() }, enabled = !vm.busy) { Text(stringResource(R.string.releases_refresh)) }
+    }
     val rels = vm.queueReleases()
     if (rels.isEmpty()) Text(stringResource(R.string.q_no_releases), style = MaterialTheme.typography.bodyMedium)
     for ((rel, label) in rels.take(8)) {

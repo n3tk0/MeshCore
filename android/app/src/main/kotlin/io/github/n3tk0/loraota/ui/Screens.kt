@@ -482,11 +482,15 @@ private fun LoraTab(vm: AppViewModel) {
     val candidates = vm.newCandidates()
     when (vm.loraSource) {
         Source.RELEASES -> {
+            ReleasesErrorCard(vm)
             if (candidates.isEmpty()) Text(stringResource(R.string.no_new_firmware))
             val best = vm.recommended()
             for (f in candidates) {
                 FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' '), f == best) { vm.pickRelease(f) }
             }
+            val hidden = vm.otherBoardCount()
+            if (hidden > 0) Text(stringResource(R.string.other_boards_hidden, hidden), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Source.BUILD -> BuildPanel(vm)
         Source.FILE -> OutlinedButton(onClick = { pickNew.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.pick_new)) }
@@ -589,8 +593,12 @@ private fun FlashContent(vm: AppViewModel) {
                     }
                 }
             }
+            TextButton(onClick = { if (vm.flashUpstream) vm.loadUpstream() else vm.loadReleases() }, enabled = !vm.busy) {
+                Text(stringResource(R.string.releases_refresh))
+            }
             if (vm.flashUpstream) Text(stringResource(R.string.upstream_hint), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ReleasesErrorCard(vm, upstream = vm.flashUpstream)
             val candidates = vm.flashCandidates()
             if (candidates.isEmpty()) Text(stringResource(R.string.flash_none))
             for (f in candidates) {
@@ -622,6 +630,19 @@ private fun SourceRow(selected: Source, enabled: Boolean, onSelect: (Source) -> 
     }
 }
 
+/** The list of releases could not be fetched: the one kept on the phone is shown (maybe old); why, and Retry. */
+@Composable
+private fun ReleasesErrorCard(vm: AppViewModel, upstream: Boolean = false) {
+    val why = (if (upstream) vm.upstreamError else vm.releasesError) ?: return
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.releases_stale, why), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { if (upstream) vm.loadUpstream() else vm.loadReleases() }, enabled = !vm.busy) { Text(stringResource(R.string.releases_retry)) }
+        }
+    }
+}
+
 @Composable
 private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, detail: String, recommended: Boolean = false,
                         onPick: () -> Unit) {
@@ -630,7 +651,7 @@ private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, de
         .clickable(enabled = enabled, onClick = onPick)) {
         RadioButton(selected = selected, onClick = onPick, enabled = enabled)
         Column {
-            Text(f.label, style = MaterialTheme.typography.titleMedium)
+            Text(f.rowLabel(), style = MaterialTheme.typography.titleMedium)
             if (recommended) Text(stringResource(R.string.recommended), style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary)
             Text(detail, style = MaterialTheme.typography.bodySmall)
