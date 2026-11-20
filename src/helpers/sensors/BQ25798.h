@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <helpers/sensors/IbatCal.h>
 
-// TI BQ25798: I2C buck-boost charger with solar MPPT (xiao-solar-lite, hardware/xiao-solar-lite).
+// TI BQ25798: I2C buck-boost charger with solar MPPT (xiao-solar-lite board; designs in the private repo Meshcore-hardware).
 //
 // The chip charges on its own after power-on, with the values the PROG resistor sets (1S: 4.2 V,
 // 1 A) and MPPT off. Firmware sets it up and keeps it set up:

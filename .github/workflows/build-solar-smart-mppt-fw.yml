@@ -1,6 +1,6 @@
 name: Build solar-smart-mppt firmware
 
-# MSPM0L1306 firmware of hardware/solar-smart-mppt (see firmware/README.md).
+# MSPM0L1306 firmware of the solar-smart-mppt board (see solar-smart-mppt/firmware/README.md).
 # - pull request / push to main that touches it, manual run: host tests + .hex/.bin on the run (Artifacts)
 # - tag "solar-smart-mppt-fw-v1": also a GitHub release with the files
 # The ESP32-C3 SWD programmer (../programmer) is built here too: it carries both MSPM0 images.
@@ -12,16 +12,16 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'hardware/solar-smart-mppt/firmware/**'
-      - 'hardware/solar-smart-mppt/programmer/**'
+      - 'solar-smart-mppt/firmware/**'
+      - 'solar-smart-mppt/programmer/**'
       - '.github/workflows/build-solar-smart-mppt-fw.yml'
   push:
     branches: [main]
     tags:
       - 'solar-smart-mppt-fw-v*'
     paths:
-      - 'hardware/solar-smart-mppt/firmware/**'
-      - 'hardware/solar-smart-mppt/programmer/**'
+      - 'solar-smart-mppt/firmware/**'
+      - 'solar-smart-mppt/programmer/**'
       - '.github/workflows/build-solar-smart-mppt-fw.yml'
 
 env:
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: hardware/solar-smart-mppt/firmware
+        working-directory: solar-smart-mppt/firmware
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
@@ -60,7 +60,7 @@ jobs:
           cp build-pa10/smppt.bin build/smppt-j5-pa10.bin
 
       - name: Programmer host tests
-        working-directory: hardware/solar-smart-mppt/programmer
+        working-directory: solar-smart-mppt/programmer
         run: make test
 
       - name: Install Python
@@ -72,7 +72,7 @@ jobs:
         run: pip install --upgrade platformio
 
       - name: Build the ESP32-C3 programmer
-        working-directory: hardware/solar-smart-mppt/programmer
+        working-directory: solar-smart-mppt/programmer
         run: |
           pio run -e supermini
           B=.pio/build/supermini
@@ -86,22 +86,22 @@ jobs:
         with:
           name: solar-smart-mppt-fw
           path: |
-            hardware/solar-smart-mppt/firmware/build/smppt.hex
-            hardware/solar-smart-mppt/firmware/build/smppt.bin
-            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
-            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
-            hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
-            hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
-            hardware/solar-smart-mppt/firmware/build/smppt.elf
+            solar-smart-mppt/firmware/build/smppt.hex
+            solar-smart-mppt/firmware/build/smppt.bin
+            solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
+            solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
+            solar-smart-mppt/firmware/build/mspm0-prog-full.bin
+            solar-smart-mppt/firmware/build/mspm0-prog-update.bin
+            solar-smart-mppt/firmware/build/smppt.elf
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/solar-smart-mppt-fw-v')
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            hardware/solar-smart-mppt/firmware/build/smppt.hex
-            hardware/solar-smart-mppt/firmware/build/smppt.bin
-            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
-            hardware/solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
-            hardware/solar-smart-mppt/firmware/build/mspm0-prog-full.bin
-            hardware/solar-smart-mppt/firmware/build/mspm0-prog-update.bin
+            solar-smart-mppt/firmware/build/smppt.hex
+            solar-smart-mppt/firmware/build/smppt.bin
+            solar-smart-mppt/firmware/build/smppt-j5-pa10.hex
+            solar-smart-mppt/firmware/build/smppt-j5-pa10.bin
+            solar-smart-mppt/firmware/build/mspm0-prog-full.bin
+            solar-smart-mppt/firmware/build/mspm0-prog-update.bin

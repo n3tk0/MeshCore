@@ -1,5 +1,5 @@
 #pragma once
-// CLI `smppt` for the solar-smart-mppt board (hardware/solar-smart-mppt). The board shows itself as an
+// CLI `smppt` for the solar-smart-mppt board (MSPM0 firmware in solar-smart-mppt/firmware). The board shows itself as an
 // INA260 on 0x41 (read by the sensor code) and has its own register map on 0x42, used here:
 //   smppt                       status: voltage, current, %, sun, charging, BMS flags
 //   smppt get <name|0xNN>       one register (names as in `smppt names`)

@@ -1,6 +1,6 @@
 # Соларните платки: firmware, команди и възможности
 
-Обхваща платките от `hardware/`: **xiao-solar-lite** (v0.4, v0.5), **xiao-solar** (v0.4, v0.5) и
+Обхваща соларните зарядни платки за XIAO + Wio-SX1262 и самостоятелното MPPT зарядно (дизайните са в частно репо Meshcore-hardware): **xiao-solar-lite** (v0.4, v0.5), **xiao-solar** (v0.4, v0.5) и
 **solar-smart-mppt** (v0.3). Командите се пишат в CLI-то на repeater-а (през USB serial или отдалечено
 с admin вход). Пълният списък на останалите команди е в [cli_commands.md](cli_commands.md).
 
@@ -155,7 +155,7 @@ v0.4 работи със същия env като lite, защото и там BQ
 
 Двата образа не са взаимозаменяеми: грешният управлява ключа на заряда от I2C извод.
 
-Програматор: [ESP32-C3 SuperMini](../hardware/solar-smart-mppt/programmer/README.md) с двата образа
+Програматор: [ESP32-C3 SuperMini](../solar-smart-mppt/programmer/README.md) с двата образа
 вградени, уеб страница (Wi-Fi), избор на захранване (от платката или от програматора) и update на самия
 програматор. Свързване: GPIO4 SWCLK, GPIO5 SWDIO, GPIO6 NRST, GPIO3 + GPIO7 към 3V3M, GND.
 
