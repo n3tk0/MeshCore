@@ -57,6 +57,11 @@ class HttpError(val code: Int, url: String) : java.io.IOException("HTTP $code fo
 }
 
 object Releases {
+    /** A list loaded longer ago than this is fetched again when its screen opens. */
+    const val STALE_MS = 5 * 60 * 1000L
+
+    /** [loadedAt] 0 = never loaded. */
+    fun isStale(loadedAt: Long, now: Long = System.currentTimeMillis()): Boolean = loadedAt == 0L || now - loadedAt > STALE_MS
     const val DEFAULT_REPO = "n3tk0/MeshCore"
     /** Stock MeshCore: releases with no ota-manifest.json, for a flash only (stock firmware has no LoRa OTA). */
     const val UPSTREAM_REPO = "meshcore-dev/MeshCore"

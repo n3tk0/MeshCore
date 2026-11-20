@@ -593,6 +593,9 @@ private fun FlashContent(vm: AppViewModel) {
                     }
                 }
             }
+            TextButton(onClick = { if (vm.flashUpstream) vm.loadUpstream() else vm.loadReleases() }, enabled = !vm.busy) {
+                Text(stringResource(R.string.releases_refresh))
+            }
             if (vm.flashUpstream) Text(stringResource(R.string.upstream_hint), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             ReleasesErrorCard(vm, upstream = vm.flashUpstream)
