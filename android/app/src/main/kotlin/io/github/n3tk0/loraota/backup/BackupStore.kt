@@ -24,7 +24,7 @@ class WrongPassword : Exception("wrong password")
  */
 object PasswordBox {
     private const val ITERATIONS = 120_000
-    private const val MAX_ITERATIONS = 10_000_000
+    private const val MAX_ITERATIONS = 2_000_000
     private val b64 = Base64.getEncoder()
     private val unb64 = Base64.getDecoder()
 
@@ -77,6 +77,7 @@ object PasswordBox {
     }
 
     fun open(o: JSONObject, password: String): ByteArray {
+        require(o.optString("kdf", "pbkdf2-sha256") == "pbkdf2-sha256") { "unknown kdf ${o.optString("kdf")}" }
         val salt = unb64.decode(o.getString("salt"))
         val iv = unb64.decode(o.getString("iv"))
         val c = Cipher.getInstance("AES/GCM/NoPadding")

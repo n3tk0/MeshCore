@@ -1,4 +1,5 @@
 #include "MyMesh.h"
+#include <helpers/OtaIdent.h>
 #include <helpers/SmartMppt.h>
 #include <algorithm>
 
@@ -226,6 +227,11 @@ static void otaShaSave(void* ctx, uint32_t img_size, const uint8_t* sha) {
   if (!writeSmallFile(fs, OTA_SHA_TMP, buf, 5 + klen + 32)) { fs->remove(OTA_SHA_TMP); return; }
   fs->remove(OTA_SHA_FILE);
   fs->rename(OTA_SHA_TMP, OTA_SHA_FILE);
+}
+
+static void otaShaDrop(void* ctx) {
+  FILESYSTEM* fs = (FILESYSTEM*)ctx;
+  fs->remove(OTA_SHA_FILE);
 }
 #endif
 
@@ -1240,18 +1246,16 @@ void MyMesh::begin(FILESYSTEM *fs) {
   history_save_at = futureMillis(HISTORY_SAVE_EVERY);
 #endif
 #ifdef WITH_LORA_OTA
-  // "<version> <date> <commit>|<board>[ <build>]", at most 60 characters (what INFO sends): the board
-  // name is cut first. The app splits it at '|' and reads the commit as the last word of the first part.
-  snprintf(ota_ident, 61, "%s %s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT,
-           board.getManufacturerName());
+  // "<version> <date> <commit>|<board>", at most 60 characters (what INFO sends); see helpers/OtaIdent.h
 #ifdef FIRMWARE_ENV
-  {
-    size_t il = strlen(ota_ident);
-    if (il + 1 + strlen(FIRMWARE_ENV) <= 60) snprintf(&ota_ident[il], 61 - il, " %s", FIRMWARE_ENV);   // only if it all fits
-  }
+  formatOtaIdent(ota_ident, 61, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT, FIRMWARE_ENV,
+                 board.getManufacturerName());
+#else
+  formatOtaIdent(ota_ident, 61, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT, NULL,
+                 board.getManufacturerName());
 #endif
   lora_ota.setIdent(ota_ident);
-  lora_ota.setShaStore(otaShaLoad, otaShaSave, _fs);
+  lora_ota.setShaStore(otaShaLoad, otaShaSave, _fs, otaShaDrop);
   lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
   lora_ota.setRadioCheck([](void*, const OtaRadioParams& p) {
     return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
@@ -1623,8 +1627,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     // 2 + 64 hex + " 1234567 bytes" is 80 characters, well inside the 160 of the reply buffer
     uint8_t sha[32];
     uint32_t size;
-    if (lora_ota.isActive() || !lora_ota.getImageSha(sha, &size)) {   // hashing takes seconds: not during an update
+    if (lora_ota.isActive()) {   // hashing takes seconds: not during an update
       strcpy(reply, "Err - not now");
+    } else if (!lora_ota.getImageSha(sha, &size)) {
+      strcpy(reply, "Err - image hash failed");
     } else {
       char* p = reply;
       *p++ = '>'; *p++ = ' ';

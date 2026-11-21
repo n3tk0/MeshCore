@@ -77,6 +77,7 @@ import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.HistorySeries
 import io.github.n3tk0.loraota.ota.SelfTest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -550,6 +551,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun backToRepeaters() {
         step = Step.REPEATER
+        if (searching) releasesJob?.cancel()   // the search of the old repeater's firmware is of no use now
         viewModelScope.launch {
             job?.cancelAndJoin()
             restorePath()
@@ -616,13 +618,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // the firmware the repeater runs, if a release has it
         val i = info ?: return@launch
-        searchRunning(hex(i.imageSha), Releases.MAX_PAGES, list.isSuccess)
+        searchRunning(hex(i.imageSha), Releases.MAX_PAGES, list.isSuccess, list.getOrNull()?.releaseCount ?: -1)
     }
 
     /** "Search again" on the card of an incomplete search: more pages. */
     fun searchAgain() = viewModelScope.launch {
         val i = info ?: return@launch
-        searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true)
+        searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true, -1)
     }
 
     /**
@@ -630,30 +632,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * releases, sets the cards' state and the old image. "Not from GitHub" only when every page was looked
      * through ([listOk]: no internet proves nothing).
      */
-    private suspend fun searchRunning(sha: String, maxPages: Int, listOk: Boolean) {
+    private suspend fun searchRunning(sha: String, maxPages: Int, listOk: Boolean, firstPageReleases: Int) {
+        // another repeater may be picked while this runs: the results are for the one the search started with
+        fun stale() = info?.let { hex(it.imageSha) } != sha
         var found = allFirmware.firstOrNull { it.sha256 == sha }
         var result: Releases.SearchResult? = null
-        if (found == null) {
+        // offline: nothing to search (the find kept from earlier is read below); a short first page: no page 2
+        val kept = found == null && !listOk &&
+            withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir).any { it.sha256 == sha } }
+        if (found == null && (listOk || kept) && Releases.hasOlderPages(firstPageReleases)) {
             // not in the first page: the older pages of releases (a find is kept for no internet)
             olderPage = 2
-            val older = runCatching {
-                withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir, maxPages) { olderPage = it } }
+            searching = true
+            val older = try {
+                runCatching {
+                    // the page callback comes from the IO thread: the state is written on the main one
+                    withContext(Dispatchers.IO) {
+                        Releases.findOlder(repo, sha, ctx.filesDir, maxPages) { p ->
+                            viewModelScope.launch(Dispatchers.Main) { if (searching) olderPage = p }
+                        }
+                    }
+                }.also { it.exceptionOrNull()?.let { e -> if (e is CancellationException) throw e } }
+            } finally {
+                searching = false
+                olderPage = 0
             }
-            olderPage = 0
+            if (stale()) return
             result = older.getOrNull()
             if (result is Releases.SearchResult.Found) {
                 found = result.file
                 addOlderFound(result.file)
             }
         }
-        runningUnknown = found == null && listOk && oldImage == null && result is Releases.SearchResult.NotFound
+        if (stale()) return
+        runningUnknown = found == null && listOk && oldImage == null &&
+            (result is Releases.SearchResult.NotFound || (result == null && !Releases.hasOlderPages(firstPageReleases)))
         runningNotChecked = found == null && listOk && oldImage == null && result is Releases.SearchResult.Incomplete
         val running = found
         if (running != null && oldImage == null) {
-            runCatching { withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) } }
-                .onSuccess { oldImage = Image(running.file, it, running.env) }
+            try {
+                val data = withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) }
+                if (!stale() && oldImage == null) oldImage = Image(running.file, data, running.env)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // found, but the file did not come: say it (the old firmware can still be picked by hand)
+                if (!stale()) {
+                    message = str(R.string.msg_running_download_failed, running.file, releasesWhy(e))
+                    messageIsError = true
+                }
+            }
         }
     }
+
+    private var searching = false
 
     private suspend fun addOlderFound(f: FirmwareFile) {
         olderFound = withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir) }

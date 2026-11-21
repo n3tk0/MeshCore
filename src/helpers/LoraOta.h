@@ -119,6 +119,8 @@ typedef bool (*OtaPowerCheck)(void* ctx);                            // enough p
 // save: keep it. The owner of the callbacks decides what "exactly this image" means (e.g. a build key).
 typedef bool (*OtaShaLoad)(void* ctx, uint32_t img_size, uint8_t* sha);
 typedef void (*OtaShaSave)(void* ctx, uint32_t img_size, const uint8_t* sha);
+// drop: forget what is kept (a hash that turned out to be wrong, e.g. after an incremental local build).
+typedef void (*OtaShaDrop)(void* ctx);
 
 class LoraOta {
 public:
@@ -148,6 +150,8 @@ private:
   void* _power_ctx;
   OtaShaLoad _sha_load;
   OtaShaSave _sha_save;
+  OtaShaDrop _sha_drop;
+  bool _img_sha_kept;   // _img_sha came from the store, not from hashing the image
   void* _sha_ctx;
   detools_apply_patch_t _patch;
   SHA256 _out_sha;                    // of the new image as the patch makes it (in place: the start is not kept)
@@ -199,8 +203,10 @@ private:
     if (_img_size == 0) return false;
     // A kept hash that does not match the image only lets BEGIN accept a delta that then fails the check of
     // the new image at the end, so a wrong one is harmless; the owner's key keeps it strict anyway.
+    _img_sha_kept = false;
     if (_sha_load && _sha_load(_sha_ctx, _img_size, _img_sha)) {
       _img_sha_ok = true;
+      _img_sha_kept = true;
       return true;
     }
     SHA256 sha;
@@ -214,6 +220,13 @@ private:
     _img_sha_ok = true;
     if (_sha_save) _sha_save(_sha_ctx, _img_size, _img_sha);
     return true;
+  }
+
+  // The kept hash may be of another build (same size, same key): forget it, the next use hashes the image.
+  void dropKeptSha() {
+    if (!_img_sha_kept) return;
+    _img_sha_ok = _img_sha_kept = false;
+    if (_sha_drop) _sha_drop(_sha_ctx);
   }
 
   bool newImageMatches() {
@@ -355,6 +368,10 @@ private:
       return n;
     }
     if (!computeImageSha()) return reply(out, OTA_OP_BEGIN, OTA_ERR_FLASH);
+    if (memcmp(old_sha, _img_sha, 32) != 0 && _img_sha_kept) {   // maybe the kept hash is stale: hash again
+      dropKeptSha();
+      if (!computeImageSha()) return reply(out, OTA_OP_BEGIN, OTA_ERR_FLASH);
+    }
     if (memcmp(old_sha, _img_sha, 32) != 0) return reply(out, OTA_OP_BEGIN, OTA_ERR_OLD_IMAGE);
     if (new_size <= _target->maxNewSize()) {
       if (!_target->beginNew(new_size)) return reply(out, OTA_OP_BEGIN, OTA_ERR_FLASH);
@@ -420,6 +437,7 @@ private:
 
     int res = detools_apply_patch_finalize(&_patch);
     if (res < 0 || (uint32_t)res != _new_size || _written != _new_size) {
+      dropKeptSha();
       fail(OTA_ERR_PATCH);
       return reply(out, OTA_OP_END, _err);
     }
@@ -428,6 +446,7 @@ private:
       return reply(out, OTA_OP_END, _err);
     }
     if (!newImageMatches()) {
+      dropKeptSha();   // a patch made from another image than the hash says
       fail(OTA_ERR_HASH);
       return reply(out, OTA_OP_END, _err);
     }
@@ -447,14 +466,16 @@ public:
                                _timeout_ms(OTA_DEFAULT_TIMEOUT * 1000), _action(ACT_NONE), _on_side(false),
                                _enabled(false), _paused_at(0),
                                _radio_check(NULL), _radio_ctx(NULL), _power_check(NULL), _power_ctx(NULL),
-                               _sha_load(NULL), _sha_save(NULL), _sha_ctx(NULL),
+                               _sha_load(NULL), _sha_save(NULL), _sha_drop(NULL), _img_sha_kept(false), _sha_ctx(NULL),
                                _head(NULL), _head_pos(0) {
     memset(_owner, 0, sizeof(_owner));
     memset(&_side, 0, sizeof(_side));
   }
 
   void setIdent(const char* ident) { _ident = ident; }
-  void setShaStore(OtaShaLoad load, OtaShaSave save, void* ctx) { _sha_load = load; _sha_save = save; _sha_ctx = ctx; }
+  void setShaStore(OtaShaLoad load, OtaShaSave save, void* ctx, OtaShaDrop drop = NULL) {
+    _sha_load = load; _sha_save = save; _sha_ctx = ctx; _sha_drop = drop;
+  }
   // The SHA-256 of the running image and its size (from the kept copy, else hashed now and kept). False when
   // the image cannot be read.
   bool getImageSha(uint8_t* sha, uint32_t* size) {

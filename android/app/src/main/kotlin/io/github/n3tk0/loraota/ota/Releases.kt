@@ -128,12 +128,17 @@ object Releases {
         object Incomplete : SearchResult()
     }
 
+    /** False when the first page was not full (or the count is known to be 0 < PER_PAGE): there is no page 2 to search. */
+    fun hasOlderPages(firstPageReleases: Int) = firstPageReleases < 0 || firstPageReleases >= PER_PAGE
+
     private fun pageJson(repo: String, n: Int) = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$n")))
 
     /** What [listDetailed] found: [manifestFailed] releases had a manifest that did not download ([lastError] says why). */
     class Listing(val files: List<FirmwareFile>, val manifestFailed: Int = 0, val lastError: String = "",
                   /** The tags of the releases whose manifest failed (their entries are from the asset list). */
-                  val failedTags: Set<String> = emptySet())
+                  val failedTags: Set<String> = emptySet(),
+                  /** How many releases the page had (-1: not known); fewer than a full page: no older page exists. */
+                  val releaseCount: Int = -1)
 
     /** A short reason for a person: the exception's class and its HTTP code / message. */
     internal fun describe(e: Throwable): String =
@@ -147,7 +152,7 @@ object Releases {
         val tags = LinkedHashSet<String>()
         val files = parseReleases(repo, releases, { get(it) }, onFetchFailed = { e, _ -> failed++; last = describe(e) },
             onFallback = { tags.add(it) })
-        return Listing(files, failed, last, tags)
+        return Listing(files, failed, last, tags, releases.length())
     }
 
     /** A page for the search: only the manifests of the releases that may have [sha] are read. */
@@ -207,7 +212,7 @@ object Releases {
             else if (done.add(f.release)) out.addAll(previous.filter { it.release == f.release })
         }
         for (t in known) if (done.add(t)) out.addAll(previous.filter { it.release == t })
-        return Listing(out, l.manifestFailed, l.lastError, l.failedTags)
+        return Listing(out, l.manifestFailed, l.lastError, l.failedTags, l.releaseCount)
     }
 
     /**

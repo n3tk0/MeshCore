@@ -98,4 +98,22 @@ class BackupTest {
             }
         }
     }
+
+    @Test
+    fun anUnknownKdfIsABadFileAndTheCapIs2M() {
+        val o = JSONObject(PasswordBox.export(backup, "secret"))
+        o.getJSONObject("enc").put("kdf", "scrypt")
+        try {
+            PasswordBox.import(o.toString(), "secret")
+            throw AssertionError("scrypt accepted")
+        } catch (e: IllegalArgumentException) {
+        }
+        val o2 = JSONObject(PasswordBox.export(backup, "secret"))
+        o2.getJSONObject("enc").put("iter", 2_000_001)
+        try {
+            PasswordBox.import(o2.toString(), "secret")
+            throw AssertionError("iter above the cap accepted")
+        } catch (e: IllegalArgumentException) {
+        }
+    }
 }

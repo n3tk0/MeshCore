@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <vector>
 #include <helpers/LoraOta.h>
+#include <helpers/OtaIdent.h>
 #include "fixture.h"
 
 // The node's flash, in RAM: the running image and the slot for the new one.
@@ -397,10 +398,6 @@ TEST_F(LoraOtaTest, InPlaceBrokenTailNeverBoots) {
   EXPECT_EQ(OTA_ERR_HASH, out[1]);
 }
 
-int main(int argc, char **argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
 
 TEST_F(LoraOtaTest, LowBatteryPausesBeforeTheCopy) {
   static bool power_ok;
@@ -432,7 +429,12 @@ struct ShaStore {
   bool have = false;
   uint32_t size = 0;
   uint8_t sha[32];
-  int loads = 0, saves = 0;
+  int loads = 0, saves = 0, drops = 0;
+  static void drop(void* ctx) {
+    ShaStore* s = (ShaStore*)ctx;
+    s->drops++;
+    s->have = false;
+  }
   static bool load(void* ctx, uint32_t size, uint8_t* out) {
     ShaStore* s = (ShaStore*)ctx;
     s->loads++;
@@ -483,4 +485,80 @@ TEST_F(LoraOtaTest, KeptShaForAnotherSizeIsNotUsed) {
   ASSERT_TRUE(ota.getImageSha(h, &size));
   EXPECT_EQ(0, memcmp(want, h, 32));
   EXPECT_EQ(1, store.saves);   // hashed and kept again
+}
+
+// an incremental local build: same size and key, other image. The kept hash is of the old build.
+TEST_F(LoraOtaTest, StaleKeptShaIsDroppedAndHashedAgainAtBegin) {
+  ShaStore store;
+  store.have = true;
+  store.size = sizeof(fixture_old);
+  memset(store.sha, 0x55, 32);   // not the hash of the running image
+  ota.setShaStore(ShaStore::load, ShaStore::save, &store, ShaStore::drop);
+  send(ADMIN, beginArgs());      // the app hashed the real image
+  EXPECT_EQ(OTA_OK, out[1]);
+  EXPECT_EQ(1, store.drops);
+  uint8_t h[32], want[32];
+  uint32_t size;
+  sha(fixture_old, sizeof(fixture_old), want);
+  ASSERT_TRUE(ota.getImageSha(h, &size));
+  EXPECT_EQ(0, memcmp(want, h, 32));
+}
+
+TEST_F(LoraOtaTest, KeptShaIsKeptWhenTheDeltaIsForOtherFirmware) {
+  uint8_t other[100] = { 7 };
+  ShaStore store;
+  ota.setShaStore(ShaStore::load, ShaStore::save, &store, ShaStore::drop);
+  uint8_t h[32];
+  uint32_t size;
+  ASSERT_TRUE(ota.getImageSha(h, &size));   // hashed, kept (not "from the store")
+  send(ADMIN, beginArgs(869470, other, sizeof(other)));
+  EXPECT_EQ(OTA_ERR_OLD_IMAGE, out[1]);
+  EXPECT_EQ(0, store.drops);
+}
+
+
+static std::string ident(const char* ver, const char* commit, const char* env, const char* manuf = "Seeed Xiao") {
+  char buf[61];
+  formatOtaIdent(buf, sizeof(buf), ver, "21-Nov-2026", commit, env, manuf);
+  return buf;
+}
+
+TEST(OtaIdent, ReleaseBuildKeepsVersionAndEnv) {
+  EXPECT_EQ("v1.18.0 21-Nov-2026 abc1234|Xiao_nrf52_solar_lite_repeater",
+            ident("v1.18.0", "abc1234", "Xiao_nrf52_solar_lite_repeater"));
+}
+
+TEST(OtaIdent, BranchBuildDoesNotRepeatTheCommit) {
+  // build.sh: FIRMWARE_VERSION is "<version>-<sha7>"
+  EXPECT_EQ("v1.18.0 21-Nov-2026 abc1234|RAK_4631_repeater", ident("v1.18.0-abc1234", "abc1234", "RAK_4631_repeater"));
+}
+
+TEST(OtaIdent, LongBranchNameIsCutFromItsStartAndTheCommitSurvives) {
+  std::string s = ident("claude/some-very-long-branch-name-for-a-test-thread-abc1234", "abc1234", "Xiao_nrf52_solar_lite_repeater");
+  EXPECT_LE(s.size(), 60u) << s;
+  EXPECT_NE(std::string::npos, s.find(" 21-Nov-2026 abc1234|Xiao_nrf52_solar_lite_repeater"));
+  EXPECT_EQ(0u, s.find("st-thread 21-Nov")) << s;
+}
+
+TEST(OtaIdent, NoEnvUsesTheManufacturerAndNothingOverflows) {
+  EXPECT_EQ("v1.18.0 21-Nov-2026 abc1234|Seeed Xiao", ident("v1.18.0-abc1234", "abc1234", NULL));
+  EXPECT_EQ("v1.18.0 21-Nov-2026 local|Seeed Xiao", ident("v1.18.0", "local", ""));
+}
+
+TEST(OtaIdent, TooLongEnvFallsBackToTheManufacturerAndAlwaysFitsInAnySize) {
+  std::string env(80, 'e');
+  std::string s = ident("v1.18.0", "abc1234", env.c_str());
+  EXPECT_EQ("v1.18.0 21-Nov-2026 abc1234|Seeed Xiao", s);
+  for (size_t cap = 0; cap < 80; cap++) {   // never writes past the buffer
+    char buf[100];
+    memset(buf, 'X', sizeof(buf));
+    formatOtaIdent(buf, cap, "a-very-long-version-string-abc1234", "21-Nov-2026", "abc1234", env.c_str(), "M");
+    if (cap) EXPECT_LT(strlen(buf), cap);
+    for (size_t i = cap; i < sizeof(buf); i++) ASSERT_EQ('X', buf[i]);
+  }
+}
+
+int main(int argc, char **argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

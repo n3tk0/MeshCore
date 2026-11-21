@@ -161,4 +161,12 @@ class ReleasesSearchTest {
         val release = fw("zz", "2020-01-01T00:00:00Z", "E")
         assertEquals("build-3", Releases.recommended(listOf(release) + b)?.release)
     }
+
+    @Test
+    fun noOlderPagesWhenTheFirstPageWasNotFull() {
+        assertEquals(false, Releases.hasOlderPages(12))
+        assertEquals(false, Releases.hasOlderPages(0))
+        assertEquals(true, Releases.hasOlderPages(50))
+        assertEquals(true, Releases.hasOlderPages(-1))   // not known: look
+    }
 }

@@ -25,6 +25,7 @@
     <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
     <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
     <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
+    <string name="msg_running_download_failed">Намерих работещия фърмуер (%1$s), но не успях да го изтегля: %2$s. Изберете стария файл ръчно.</string>
     <string name="msg_releases_offline">Няма връзка (%1$s): показвам изданията, запазени на телефона.</string>
     <string name="msg_not_running_detail">Repeater-ът работи с commit %1$s, образ %2$d B; файлът е %3$d B.</string>
     <string name="releases_manifest_failed">%1$d изд.: манифестът не се свали (%2$s); показани от списъка с файлове на GitHub.</string>
