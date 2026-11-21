@@ -286,7 +286,7 @@ object Releases {
     /**
      * The firmware of a release whose manifest did not download, from its asset list: each <env>-....bin with a
      * "sha256:" digest is a LoRa OTA image (env = the name up to the first '-'), with <same name>.zip as its
-     * DFU file when there is one. The second value: every .bin had a digest (nothing left unknown).
+     * DFU file when there is one, or the .bin itself next to a -merged.bin (ESP32 Wi-Fi OTA). The second value: every .bin had a digest (nothing left unknown).
      */
     internal fun fromBinAssets(tag: String, assets: JSONArray, published: String = ""): Pair<List<FirmwareFile>, Boolean> {
         val byName = HashMap<String, JSONObject>()
@@ -306,9 +306,13 @@ object Releases {
             val zipSha = digest(zip)
             val zipUrl = zip?.optString("browser_download_url").orEmpty()
             val hasZip = zip != null && zipSha != null && zipUrl.isNotEmpty()
+            // ESP32: next to a -merged.bin the app .bin is also what Wi-Fi OTA flashes (as the manifest lists it)
+            val esp32 = !hasZip && (name.dropLast(4) + "-merged.bin") in byName
             out.add(FirmwareFile(tag, env, "", name, a.optInt("size"), sha, url,
-                if (hasZip) zipName else "", if (hasZip) zip!!.optInt("size") else 0, if (hasZip) zipSha!! else "",
-                if (hasZip) zipUrl else "", published))
+                if (hasZip) zipName else if (esp32) name else "",
+                if (hasZip) zip!!.optInt("size") else if (esp32) a.optInt("size") else 0,
+                if (hasZip) zipSha!! else if (esp32) sha else "",
+                if (hasZip) zipUrl else if (esp32) url else "", published))
         }
         return out to covered
     }

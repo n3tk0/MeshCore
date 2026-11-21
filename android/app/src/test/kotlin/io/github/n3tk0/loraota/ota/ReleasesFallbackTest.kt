@@ -55,6 +55,11 @@ class ReleasesFallbackTest {
     fun mergedBinIsNotAnOtaImage() {
         val (files, _) = Releases.fromBinAssets("t", JSONArray(listOf(asset("E-1.bin", "aa".repeat(32)), asset("E-1-merged.bin", "bb".repeat(32)))))
         assertEquals(listOf("E-1.bin"), files.map { it.file })
+        // ESP32: the app .bin is also the Wi-Fi OTA image, as the manifest would list it
+        val f = files.single()
+        assertEquals("E-1.bin", f.dfu)
+        assertEquals("aa".repeat(32), f.dfuSha256)
+        assertTrue(f.hasDfu)
     }
 
     @Test
