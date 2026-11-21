@@ -581,7 +581,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun refreshOursIfStale() { if (releases.isEmpty() || Releases.isStale(releasesLoadedAt)) loadReleases() }
     private fun refreshUpstreamIfStale() { if (upstream.isEmpty() || Releases.isStale(upstreamLoadedAt)) loadUpstream() }
 
-    fun loadReleases() = viewModelScope.launch {
+    private var releasesJob: Job? = null
+    private var upstreamJob: Job? = null
+
+    /** Loads our releases; a load that is already running (double Refresh, tab switch) is not started twice: its Job is returned. */
+    fun loadReleases(): Job {
+        releasesJob?.takeIf { it.isActive }?.let { return it }
+        return doLoadReleases().also { releasesJob = it }
+    }
+
+    private fun doLoadReleases() = viewModelScope.launch {
         Releases.apiToken = tokens.get()
         releasesError = null
         releasesWarning = null
@@ -794,6 +803,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var flashReturn = Step.REPEATER   // where the companion's flash screen was opened from
 
+    /** The repeater's LoRa tab: the list of releases is refreshed when it is old, as when the page opens. */
+    fun showLoraTab() {
+        firmwareTab = 0
+        refreshOursIfStale()
+    }
+
     /** The repeater's Bluetooth / Wi-Fi tab. */
     fun showFlashTab() {
         firmwareTab = 1
@@ -852,7 +867,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (on) refreshUpstreamIfStale() else refreshOursIfStale()
     }
 
-    fun loadUpstream() = viewModelScope.launch {
+    /** The same for the upstream list: one load at a time. */
+    fun loadUpstream(): Job {
+        upstreamJob?.takeIf { it.isActive }?.let { return it }
+        return doLoadUpstream().also { upstreamJob = it }
+    }
+
+    private fun doLoadUpstream() = viewModelScope.launch {
         Releases.apiToken = tokens.get()
         upstreamError = null
         val list = runCatching { withContext(Dispatchers.IO) { Releases.list(Releases.UPSTREAM_REPO, ctx.filesDir) } }

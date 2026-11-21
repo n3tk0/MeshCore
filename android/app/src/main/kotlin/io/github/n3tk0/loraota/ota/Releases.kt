@@ -476,10 +476,19 @@ object Releases {
 
     private fun binDir(cache: File) = File(cache, "firmware").also { it.mkdirs() }
 
+    // a unique temp file in the same directory (two writers of one file never share it), renamed over the target
+    @Synchronized
     private fun writeAtomic(dest: File, data: ByteArray) {
-        val tmp = File(dest.path + ".tmp")
-        tmp.writeBytes(data)
-        if (!tmp.renameTo(dest)) tmp.delete()
+        val dir = dest.absoluteFile.parentFile ?: File(".")
+        dir.mkdirs()
+        val tmp = File.createTempFile(dest.name + ".", ".tmp", dir)
+        try {
+            tmp.writeBytes(data)
+            if (!tmp.renameTo(dest)) tmp.delete()
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
     }
 
     private fun toJson(files: List<FirmwareFile>) = JSONArray().apply {

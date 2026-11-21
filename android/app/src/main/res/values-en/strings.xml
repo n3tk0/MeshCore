@@ -12,7 +12,6 @@
     <string name="running_firmware">Running firmware (.bin)</string>
     <string name="new_firmware">New firmware</string>
     <string name="chosen">Chosen: %1$s</string>
-    <string name="reload_releases">Reload releases</string>
     <string name="side_channel">Side channel</string>
     <string name="side_channel_hint">The update runs on another frequency so the network does not stop. Default 869.470 MHz, BW 125, below the 869.618 MHz main channel. 869.40–869.65 MHz allows 10% time on air.</string>
     <string name="duty">Air %</string>
@@ -37,7 +36,10 @@
     <string name="releases_stale">The releases could not be updated: showing those kept on this phone. %1$s</string>
     <string name="releases_refresh">Refresh</string>
     <string name="releases_retry">Retry</string>
-    <string name="other_boards_hidden">%1$d builds for other boards hidden</string>
+    <plurals name="other_boards_hidden">
+        <item quantity="one">%d build for another board hidden</item>
+        <item quantity="other">%d builds for other boards hidden</item>
+    </plurals>
     <string name="no_new_firmware">No newer firmware for this board in the releases.</string>
     <string name="update">Update</string>
     <string name="resume">Continue</string>

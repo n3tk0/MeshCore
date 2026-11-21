@@ -19,7 +19,7 @@
 //
 // Correction of a raw reading: linear between the two neighbouring usable points (by raw magnitude).
 // Outside the covered range: the line through the nearest end point with the gain of the two-point fit
-// (low point under 60 mA + high point from 150 mA; one point only = gain 1, offset only); with no usable
+// (low point under 60 mA + high point from 150 mA, discharge from 60 mA; one point only = gain 1, offset only); with no usable
 // point at all the build offset + gain (BQ25798_IBAT_*_OFFSET_X10 / _GAIN_X1000). Anchoring the line at
 // the end point keeps the result continuous. A point is ignored when it is nonsense (|true - raw| over
 // max(50 mA, 15 % of true), or true/raw outside 0.5..1.5 from 50 mA) or when it breaks the order (raw magnitude not
@@ -41,7 +41,8 @@
 #define IBAT_OFFSET_MAX_MA     50       // |true - raw| over this: a nonsense point / fit
 #define IBAT_RATIO_FROM_MA     50       // the ratio check applies from this true |I|
 #define IBAT_LOW_MAX_MA        60       // two-point fit (extrapolation): low point = true |I| under this
-#define IBAT_HIGH_MIN_MA       150      // ... high point = true |I| from this
+#define IBAT_HIGH_MIN_MA       150      // ... high point = true |I| from this (charge)
+#define IBAT_HIGH_MIN_DIS_MA   60       // ... discharge: its nominal points stop at 120 mA, so 150 would never be reached
 #define IBAT_MIN_SPAN_MA       60       // raw low and high points this far apart for a gain
 #define IBAT_CAL_MAX_MA        3000     // values beyond this are no calibration points
 #define IBAT_STABLE_ABS_MA     3        // two readings in a row within max(3 mA, 4 %) = holding still
@@ -213,7 +214,10 @@ inline IbatEff build(const IbatCurve& st, const IbatCurve& def, int dir) {
     if (!pointSane(raw, ref)) { e.ignored |= (uint16_t)(1u << i); continue; }
     // order: the raw magnitude has to grow with the true one (the true ones grow with the index)
     bool dropped = false;
-    while (e.m > 0 && raw <= e.raw[e.m - 1]) {
+    if (p->src == IBAT_SRC_MANUAL) {   // a manual point never pushes out anything when an earlier manual one is already at or above it: it is the one dropped
+      for (int k = 0; k < e.m; k++) if (e.src[k] == IBAT_SRC_MANUAL && e.raw[k] >= raw) { dropped = true; break; }
+    }
+    while (!dropped && e.m > 0 && raw <= e.raw[e.m - 1]) {
       if (p->src == IBAT_SRC_MANUAL && e.src[e.m - 1] != IBAT_SRC_MANUAL) {   // the manual one wins over a lower auto / build one
         e.ignored |= (uint16_t)(1u << e.idx[e.m - 1]);
         e.m--;
@@ -238,7 +242,7 @@ inline IbatFit fit(const IbatEff& e, int dir, bool bus = false) {
   int lo = -1, hi = -1;
   for (int k = 0; k < e.m; k++) {
     if (e.ref[k] < IBAT_LOW_MAX_MA * 10 && lo < 0) lo = k;
-    if (e.ref[k] >= IBAT_HIGH_MIN_MA * 10) hi = k;
+    if (e.ref[k] >= (dir == IBAT_DIS ? IBAT_HIGH_MIN_DIS_MA : IBAT_HIGH_MIN_MA) * 10) hi = k;
   }
   int sgn = dir == IBAT_CHG ? 1 : -1;
   int single = lo >= 0 ? lo : hi >= 0 ? hi : 0;

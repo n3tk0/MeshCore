@@ -1818,6 +1818,37 @@ TEST(IbatCal, SanityLimitScalesWithCurrent) {
   EXPECT_EQ(man(c, -400, -350), IBAT_SET_OK);         // 50 mA
 }
 
+TEST(IbatCal, ManualOutOfOrderDoesNotDropAValidMiddlePoint) {
+  // manual idx0 raw 10, auto idx1 raw 25, manual idx2 raw 8 (non-monotonic): only idx2 goes
+  IbatCurve c = noCurve(), d = noCurve();
+  c.p[IBAT_CHG][0] = { 100, 50, 1, IBAT_SRC_MANUAL };    // 10 mA raw, 5 mA true
+  c.p[IBAT_CHG][1] = { 250, 100, 20, IBAT_SRC_AUTO };    // 25 mA raw, 10 mA true
+  c.p[IBAT_CHG][2] = { 80, 200, 1, IBAT_SRC_MANUAL };    // 8 mA raw, 20 mA true: out of order
+  IbatEff e = IbatCal::build(c, d, IBAT_CHG);
+  EXPECT_EQ(e.m, 2);
+  EXPECT_EQ(e.idx[0], 0);
+  EXPECT_EQ(e.idx[1], 1);
+  EXPECT_TRUE(e.ignored & (1u << 2));
+  EXPECT_FALSE(e.ignored & (1u << 1));
+  EXPECT_FALSE(e.ignored & (1u << 0));
+}
+
+TEST(IbatCal, DischargeTwoPointFitUsesAnInDirectionHighPoint) {
+  IbatCurve c = noCurve(), d = noCurve();
+  ASSERT_EQ(man(c, -14, -12), IBAT_SET_OK);
+  ASSERT_EQ(man(c, -150, -120), IBAT_SET_OK);
+  IbatEff e = IbatCal::build(c, d, IBAT_DIS);
+  IbatFit f = IbatCal::fit(e, IBAT_DIS);
+  EXPECT_EQ(f.points, 2);
+  EXPECT_LT(f.gain, 0.9f);                  // gain found (was stuck at 1)
+  EXPECT_EQ(ap(c, -200), -160);             // beyond the high point: its gain, not 1 (which would give -170)
+  // charge still needs 150 mA for the high point
+  IbatCurve g = noCurve();
+  ASSERT_EQ(man(g, 6, 5), IBAT_SET_OK);
+  ASSERT_EQ(man(g, 110, 100), IBAT_SET_OK);
+  EXPECT_EQ(IbatCal::fit(IbatCal::build(g, d, IBAT_CHG), IBAT_CHG).points, 1);
+}
+
 TEST(IbatCal, ExportPagesOfAFullCurve) {
   FakeBQ f;
   BQ25798 bq(f);

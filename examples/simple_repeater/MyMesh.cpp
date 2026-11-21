@@ -2443,6 +2443,21 @@ static bool writeIbusCal(FILESYSTEM* fs, BQ25798* c) {
   return true;
 }
 
+// A cal file for loading: the main file, or - when it is missing / damaged and the temp file of an interrupted
+// write (power cut between remove and rename) is complete (CRC ok) - the temp file, renamed into place. Returns the length read (0 when neither is valid).
+static int readCalFile(FILESYSTEM* fs, const char* file, const char* tmp, uint8_t* buf, size_t sz, const char* magic) {
+  IbatCurve probe;
+  int len = readSmallFileLen(fs, file, buf, sz);
+  if (IbatCal::fromFile(buf, len, probe, magic)) return len;
+  int tl = readSmallFileLen(fs, tmp, buf, sz);
+  if (IbatCal::fromFile(buf, tl, probe, magic)) {
+    fs->remove(file);
+    if (!fs->rename(tmp, file)) fs->remove(tmp);   // could not move: the data is in memory now, the next save writes the file
+    return tl;
+  }
+  return 0;   // neither is valid: the loader sees no file (= no curve)
+}
+
 // a calibration point of the IBAT / IBUS ADC learnt from the INA219 (a new one, or one that moved a lot): at most hourly
 void MyMesh::saveChargerCalIfDue() {
   BQ25798* c = sensors.getCharger();
@@ -2473,13 +2488,13 @@ void MyMesh::loadCharger() {
   c->apply(s);
   // the curve: /ibatcal; without a valid one the calibration of build 934d2da from /charger (saved at the next write)
   uint8_t cb[IBAT_FILE_LEN + 1] = {0};
-  int cl = readSmallFileLen(_fs, IBATCAL_FILE, cb, sizeof(cb));
+  int cl = readCalFile(_fs, IBATCAL_FILE, IBATCAL_TMP, cb, sizeof(cb), "IBC");
   if (!c->ibatCurveLoad(cb, cl)) {
     c->ibatCurveImportLegacy(s.cal);
     // into /ibatcal at once: the next write of /charger drops the old calibration from that file
     if (c->ibatCalDirty() && !writeIbatCal(_fs, c)) c->ibatCalSaveFailed(millis());
   }
-  int bl = readSmallFileLen(_fs, IBUSCAL_FILE, cb, sizeof(cb));
+  int bl = readCalFile(_fs, IBUSCAL_FILE, IBUSCAL_TMP, cb, sizeof(cb), IBUS_FILE_MAGIC);
   c->ibusCurveLoad(cb, bl);   // no / a damaged file: no IBUS calibration (the build default curve counts)
 }
 
@@ -2573,19 +2588,21 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     sprintf(reply, "> REG%02lX = 0x%02X%s", reg, b, v2 && *v2 ? " (managed bits come back within 10 s)" : "");
     return;
   }
-  if (strcmp(args, "ibat") == 0) {   // IBAT ADC calibration (the file keeps it with the other settings)
+  if (strcmp(args, "ibat") == 0) {   // IBAT ADC calibration (the curve is in /ibatcal)
     if (*val == 0) { c->formatIbat(reply, 155); return; }
     if (strncmp(val, "curve", 5) == 0 || strncmp(val, "export", 6) == 0) {
       bool ex = val[0] == 'e';
       const char* p = val + (ex ? 6 : 5);
       int dir = IBAT_DIS, page = 1;
+      bool got_dir = false;
       while (*p) {
         while (*p == ' ') p++;
-        if (strncmp(p, "chg", 3) == 0) { dir = IBAT_CHG; p += 3; }
-        else if (strncmp(p, "dis", 3) == 0) { dir = IBAT_DIS; p += 3; }
+        if (strncmp(p, "chg", 3) == 0) { dir = IBAT_CHG; got_dir = true; p += 3; }
+        else if (strncmp(p, "dis", 3) == 0) { dir = IBAT_DIS; got_dir = true; p += 3; }
         else if (*p == '2') { page = 2; p++; }
         else if (*p) { strcpy(reply, ex ? "Err - charger ibat export chg|dis [2]" : "Err - charger ibat curve [chg|dis] [2]"); return; }
       }
+      if (ex && !got_dir) { strcpy(reply, "Err - charger ibat export chg|dis [2]"); return; }
       if (ex) { if (c->formatIbatExport(reply, 155, dir, page) < 0) strcpy(reply, "Err - too long for one reply: see charger ibat curve"); }
       else c->formatIbatCurve(reply, 155, dir, page);
       return;

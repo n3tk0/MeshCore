@@ -583,6 +583,7 @@ int BQ25798::scanStart() {
   if (_sc_state) return -3;
   if (!vbusPresent() || !powerGood() || _hiz_seen) return -2;
   _sc_state = BQ_SC_BEGIN;
+  _learn.gap(); _learnBus.gap();   // the ADC pauses during the scan: no pair may join one from before it
   _sc_forced = true;
   _sc_at = _now;   // at the next loop()
   _sc_tries = 0;
@@ -602,6 +603,7 @@ void BQ25798::scanSchedule(uint32_t now) {
   if ((uint32_t)(now - _sc_cond_at) < (_sc_first ? BQ_SCAN_FIRST_MS : BQ_SCAN_HOLD_MS)) return;
   if (!_sc_first && (int32_t)(now - _sc_not_before) < 0) return;
   _sc_state = BQ_SC_BEGIN;
+  _learn.gap(); _learnBus.gap();   // the ADC pauses during the scan: no pair may join one from before it
   _sc_forced = false;
   _sc_at = now;
   _sc_tries = 0;
@@ -632,6 +634,7 @@ int BQ25798::scanAdc(uint32_t* mw, uint16_t* vbus) {
 // the end, whatever the way: the result (fail = 0) and everything put back
 void BQ25798::scanFinish(uint32_t now, uint8_t fail) {
   uint8_t st = _sc_state;
+  _learn.gap(); _learnBus.gap();   // the readings around the scan do not pair up
   _sc_state = BQ_SC_IDLE;
   _sc_ran = true;
   _sc_fail = fail;
