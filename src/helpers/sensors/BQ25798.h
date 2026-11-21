@@ -360,7 +360,9 @@ public:
   void clearBatteryReference();   // the sensor is gone / failed: the corrected IBAT ADC counts again (also the sun reference)
 
   // ---- INA219 position and the IBUS calibration (see IbatCal.h) ----
-  bool inaSun() const { return _s.ina_pos == BQ_INA_SUN; }
+  bool inaSun() const { return _s.ina_pos == BQ_INA_SUN; }   // a property of the wiring: also valid when the BQ did not answer
+  // The INA219's position alone, before the settings are applied (boot: the battery reading comes before /charger is loaded)
+  void setInaPos(uint8_t pos) { if (pos != _s.ina_pos) { _s.ina_pos = pos; clearBatteryReference(); } }
   // Call once per new ADC result with the INA219 on the solar input (`charger ina sun`): the panel current in mA
   // (+ = from the panel); with a stable pair the IBUS curve learns from it. Ignored when the INA219 is on bat.
   void setSunReference(int16_t ma, uint32_t now);
@@ -375,7 +377,8 @@ public:
   void ibusCalSaved(uint32_t now) { _learnBus.synced(_calBus, now, true); }
   int ibusCurveToFile(uint8_t* buf) const { return IbatCal::toFile(_calBus, buf, IBUS_FILE_MAGIC); }   // IBAT_FILE_LEN bytes
   bool ibusCurveLoad(const uint8_t* data, int len);
-  // `charger ibus`: "sun ina 312>330 ina 335 | auto 5p | OFFSET_X10=.. GAIN_X1000=.."
+  // `charger ibus`: "bq 312>330 ina 335 | auto 5p" (raw>corrected; the ina part with a reference), "paused: ina on bat | " in front
+  // while the INA219 is not on the solar input; "no BQ25798 at 0x6B" without the chip
   int formatIbus(char* buf, int len) const;
   int formatIbusCurve(char* buf, int len, int page) const;    // "ibus 5:4.8>5a14 ..."
   int formatIbusExport(char* buf, int len, int page = 1) const;   // "-D BQ25798_IBUS_CURVE='\"..\"'"

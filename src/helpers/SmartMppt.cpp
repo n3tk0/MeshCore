@@ -5,7 +5,7 @@
 
 // the board's own register map (C header, shared with its firmware so the two cannot drift apart)
 extern "C" {
-#include "../../hardware/solar-smart-mppt/firmware/src/regs.h"
+#include "../../solar-smart-mppt/firmware/src/regs.h"
 }
 
 namespace {

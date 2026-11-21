@@ -2451,6 +2451,15 @@ void MyMesh::saveChargerCalIfDue() {
   if (c->ibusCalSaveDue(millis()) && !writeIbusCal(_fs, c)) c->ibusCalSaveFailed(millis());
 }
 
+// Boot, before the sensors and the battery check (powerOffAtBoot): only where the INA219 is, from /charger, so
+// an INA219 on the solar input is not read as the battery. loadCharger() applies the whole file later.
+void MyMesh::loadChargerEarly(FILESYSTEM* fs) {
+  BQ25798Settings s{};
+  uint8_t raw[sizeof(s)] = {0};
+  int len = readSmallFileLen(fs, CHARGER_FILE, raw, sizeof(raw));
+  if (BQ25798::fromFile(raw, len, s)) sensors.getCharger()->setInaPos(s.ina_pos);
+}
+
 // The settings from flash (or the defaults: Li-ion 4.2 V, 1 A, MPPT, no NTC, ship FET fitted).
 // Charging stays as the CE jumper has it until they are written (a LiFePO4 board holds CE high).
 void MyMesh::loadCharger() {
@@ -2595,7 +2604,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
       int r = c->ibatCalManual((int)ma);
       if (r != IBAT_SET_OK) {
         strcpy(reply, r == -1 ? "Err - no IBAT reading yet, try in 10 s"
-                    : r == IBAT_SET_ZERO ? "Err - raw IBAT or the value is 0: no direction"
+                    : r == IBAT_SET_ZERO ? "Err - raw IBAT or the value is 0 (no direction), or over 3000 mA"
                     : r == IBAT_SET_DIRECTION ? "Err - raw IBAT has the other sign: check the direction"
                     : "Err - not taken: offset over max(50 mA, 15%), ratio outside 0.5..1.5, or out of order with another manual point");
         return;
@@ -2638,7 +2647,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
       int r = c->ibusCalManual((int)ma);
       if (r != IBAT_SET_OK) {
         strcpy(reply, r == -1 ? "Err - no IBUS reading yet, try in 10 s"
-                    : r == IBAT_SET_ZERO ? "Err - raw IBUS or the value is 0 or less"
+                    : r == IBAT_SET_ZERO ? "Err - raw IBUS or the value is 0 or less, or the raw IBUS is over 3000 mA"
                     : "Err - not taken: offset over max(50 mA, 15%), ratio outside 0.5..1.5, or out of order with another manual point");
         return;
       }
@@ -2709,8 +2718,9 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
   } else if (strcmp(args, "ina") == 0) {   // where the INA219 is: persisted in /charger
     if (*val == 0) { c->formatIna(reply, 155); return; }
-    if (strcmp(val, "bat") == 0) { s.ina_pos = BQ_INA_BAT; note = ", ina on the battery: IBAT learns"; }
-    else if (strcmp(val, "sun") == 0) { s.ina_pos = BQ_INA_SUN; note = ", ina on the solar input: IBUS learns, IBAT paused"; }
+    bool bq = c->found();   // the position is kept (and used for the battery reading) with no BQ25798 too
+    if (strcmp(val, "bat") == 0) { s.ina_pos = BQ_INA_BAT; note = bq ? ", ina on the battery: IBAT learns" : ", ina on the battery; no BQ25798 at 0x6B"; }
+    else if (strcmp(val, "sun") == 0) { s.ina_pos = BQ_INA_SUN; note = bq ? ", ina on the solar input: IBUS learns, IBAT paused" : ", ina on the solar input; no BQ25798 at 0x6B"; }
     else { strcpy(reply, "Err - charger ina bat|sun"); return; }
   } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
     if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0) { sprintf(reply, "Err - charger %s on|off", args); return; }

@@ -131,6 +131,9 @@ void setup() {
   ethernet_command[0] = 0;
 #endif
 
+#if ENV_INCLUDE_BQ25798
+  MyMesh::loadChargerEarly(fs);   // where the INA219 is, before the battery is read from it
+#endif
   sensors.begin();
   MyMesh::powerOffAtBoot(true);
 

@@ -9,6 +9,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class PickedImageTest {
@@ -57,5 +58,22 @@ class PickedImageTest {
         assertContentEquals(bin, PickedImage.running(bin, 300, sha))
         assertNull(PickedImage.running(bin, 300, "00".repeat(32)))
         assertNull(PickedImage.running(zip("a.txt" to ByteArray(3)), 300, sha))
+    }
+
+    @Test
+    fun zipWithManifestNeedsTheApplicationBin() {
+        // a bootloader / softdevice package: no application entry, and a stray .bin must not be taken
+        val boot = """{"manifest":{"bootloader":{"bin_file":"bl.bin","dat_file":"bl.dat"}}}""".toByteArray()
+        assertFailsWith<IllegalArgumentException> { PickedImage.app(zip("bl.bin" to bin, "manifest.json" to boot)) }
+        // bin_file named but missing
+        val m = """{"manifest":{"application":{"bin_file":"app.bin"}}}""".toByteArray()
+        assertFailsWith<IllegalArgumentException> { PickedImage.app(zip("other.bin" to bin, "manifest.json" to m)) }
+        assertNull(PickedImage.running(zip("bl.bin" to bin, "manifest.json" to boot), 300, sha))
+    }
+
+    @Test
+    fun zipWithoutManifestIgnoresMergedBin() {
+        assertContentEquals(bin, PickedImage.app(zip("x-merged.bin" to ByteArray(9), "x.bin" to bin)))
+        assertFailsWith<IllegalArgumentException> { PickedImage.app(zip("x-merged.bin" to ByteArray(9))) }
     }
 }

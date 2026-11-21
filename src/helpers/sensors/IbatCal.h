@@ -403,7 +403,7 @@ inline int toFile(const IbatCurve& c, uint8_t* out, const char* magic = "IBC") {
 inline bool fromFile(const uint8_t* in, int len, IbatCurve& c, const char* magic = "IBC") {
   memset(&c, 0, sizeof(c));
   if (in == 0 || len != IBAT_FILE_LEN) return false;
-  if (in[0] != (uint8_t)magic[0] || in[1] != (uint8_t)magic[1] || in[2] != (uint8_t)magic[2] || in[3] != IBAT_FILE_VERSION) return false;
+  if (memcmp(in, magic, 3) != 0 || in[3] != IBAT_FILE_VERSION) return false;
   uint16_t crc = (uint16_t)(in[len - 2] | (in[len - 1] << 8));
   if (crc != crc16(in, len - 2)) return false;
   int n = 4;

@@ -33,11 +33,15 @@ object PickedImage {
                 if (!e.isDirectory) entries[e.name.substringAfterLast('/')] = z.readBytes()
             }
         }
-        val named = entries["manifest.json"]?.let {
-            runCatching { JSONObject(String(it)).getJSONObject("manifest").getJSONObject("application").getString("bin_file") }.getOrNull()
+        val manifest = entries["manifest.json"]
+        if (manifest != null) {
+            // a DFU package: only the application image (a bootloader / softdevice .zip is not one)
+            val named = runCatching { JSONObject(String(manifest)).getJSONObject("manifest").getJSONObject("application").getString("bin_file") }
+                .getOrNull() ?: throw IllegalArgumentException("the .zip has no application image (manifest.json lists no application bin_file)")
+            return entries[named.substringAfterLast('/')]
+                ?: throw IllegalArgumentException("the .zip lacks the application image $named")
         }
-        return (named?.let { entries[it.substringAfterLast('/')] }
-            ?: entries.entries.firstOrNull { it.key.endsWith(".bin", ignoreCase = true) }?.value)
+        return entries.entries.firstOrNull { it.key.endsWith(".bin", ignoreCase = true) && !it.key.endsWith("-merged.bin", ignoreCase = true) }?.value
             ?: throw IllegalArgumentException("no application .bin in the .zip")
     }
 
@@ -46,7 +50,11 @@ object PickedImage {
      * is [sha] (hex); null when the file is not it. With [size] 0 (unknown) the whole app image must match.
      */
     fun running(data: ByteArray, size: Int, sha: String): ByteArray? {
-        val app = runCatching { app(data) }.getOrNull() ?: return null
+        return runningOf(runCatching { app(data) }.getOrNull() ?: return null, size, sha)
+    }
+
+    /** [running] for an app image already taken from the file by [app]. */
+    fun runningOf(app: ByteArray, size: Int, sha: String): ByteArray? {
         val image = if (size in 1..app.size) app.copyOf(size) else app
         return image.takeIf { hex(DetoolsPatch.sha256(it)) == sha }
     }

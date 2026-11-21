@@ -1,5 +1,7 @@
 package io.github.n3tk0.loraota.ota
 
+import io.github.n3tk0.loraota.flash.BoardCheck
+import io.github.n3tk0.loraota.flash.Role
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -129,7 +131,9 @@ object Releases {
     private fun pageJson(repo: String, n: Int) = JSONArray(String(get("https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$n")))
 
     /** What [listDetailed] found: [manifestFailed] releases had a manifest that did not download ([lastError] says why). */
-    class Listing(val files: List<FirmwareFile>, val manifestFailed: Int = 0, val lastError: String = "")
+    class Listing(val files: List<FirmwareFile>, val manifestFailed: Int = 0, val lastError: String = "",
+                  /** The tags of the releases whose manifest failed (their entries are from the asset list). */
+                  val failedTags: Set<String> = emptySet())
 
     /** A short reason for a person: the exception's class and its HTTP code / message. */
     internal fun describe(e: Throwable): String =
@@ -140,8 +144,10 @@ object Releases {
         val releases = pageJson(repo, n)
         var failed = 0
         var last = ""
-        val files = parseReleases(repo, releases, { get(it) }, onFetchFailed = { e, _ -> failed++; last = describe(e) })
-        return Listing(files, failed, last)
+        val tags = LinkedHashSet<String>()
+        val files = parseReleases(repo, releases, { get(it) }, onFetchFailed = { e, _ -> failed++; last = describe(e) },
+            onFallback = { tags.add(it) })
+        return Listing(files, failed, last, tags)
     }
 
     /** A page for the search: only the manifests of the releases that may have [sha] are read. */
@@ -178,12 +184,30 @@ object Releases {
 
     /** [list] and how many releases had to be shown from GitHub's file list because their manifest did not download. */
     fun listDetailed(repo: String = DEFAULT_REPO, cache: File? = null): Listing {
-        val l = page(repo, 1)
-        if (cache != null) runCatching {
+        val fetched = page(repo, 1)
+        if (cache == null) return fetched
+        // a release whose manifest failed is shown from its asset list (less than the manifest has): keep what
+        // the cache knows of it, and do not clean up (the cached list may still be the fuller one)
+        val l = if (fetched.manifestFailed > 0) withCachedFallbacks(fetched, cached(repo, cache)) else fetched
+        runCatching {
             writeAtomic(listFile(cache, repo), toJson(l.files).toString().toByteArray())
-            cleanUp(cache)
+            if (fetched.manifestFailed == 0) cleanUp(cache)
         }
         return l
+    }
+
+    /** [l] with the entries of its failed releases taken from [previous] when that list has the release. */
+    internal fun withCachedFallbacks(l: Listing, previous: List<FirmwareFile>): Listing {
+        val known = l.failedTags.filter { t -> previous.any { it.release == t } }.toSet()
+        if (known.isEmpty()) return l
+        val out = ArrayList<FirmwareFile>()
+        val done = HashSet<String>()
+        for (f in l.files) {
+            if (f.release !in known) out.add(f)
+            else if (done.add(f.release)) out.addAll(previous.filter { it.release == f.release })
+        }
+        for (t in known) if (done.add(t)) out.addAll(previous.filter { it.release == t })
+        return Listing(out, l.manifestFailed, l.lastError, l.failedTags)
     }
 
     /**
@@ -240,7 +264,8 @@ object Releases {
     /** The firmware of a page of releases; [fetch] gets a URL (the manifest). */
     internal fun parseReleases(repo: String, releases: JSONArray, fetch: (String) -> ByteArray,
                                wanted: (JSONArray) -> Boolean = { true },
-                               onFetchFailed: (Throwable, Boolean) -> Unit = { _, _ -> }): List<FirmwareFile> {
+                               onFetchFailed: (Throwable, Boolean) -> Unit = { _, _ -> },
+                               onFallback: (String) -> Unit = {}): List<FirmwareFile> {
         val out = ArrayList<FirmwareFile>()
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
@@ -264,6 +289,7 @@ object Releases {
                 // no manifest: the .bin files GitHub lists, checked by the digest it keeps for each
                 val (fallback, covered) = fromBinAssets(rel.optString("tag_name"), assets, published)
                 onFetchFailed(fetched.exceptionOrNull() ?: java.io.IOException("manifest"), covered)
+                onFallback(rel.optString("tag_name"))
                 out.addAll(fallback)
                 continue
             }
@@ -283,36 +309,61 @@ object Releases {
         return out
     }
 
+    private val ROLE_ENV = Regex("""^(.+?_(?:repeater|companion_radio_(?:ble|usb|wifi)|room_server))(?=-|$)""", RegexOption.IGNORE_CASE)
+
     /**
-     * The firmware of a release whose manifest did not download, from its asset list: each <env>-....bin with a
-     * "sha256:" digest is a LoRa OTA image (env = the name up to the first '-'), with <same name>.zip as its
-     * DFU file when there is one, or the .bin itself next to a -merged.bin (ESP32 Wi-Fi OTA). The second value: every .bin had a digest (nothing left unknown).
+     * The build env of an asset name without its extension, <env>[-lite]-<version>-<sha7>: the prefix that ends in
+     * a role suffix (an env may hold '-': LilyGo_T-Echo_repeater), else the part before "-lite-" / the version.
+     */
+    internal fun envOf(base: String): String =
+        ROLE_ENV.find(base)?.groupValues?.get(1)
+            ?: base.substringBefore("-lite-").let { b -> Regex("""-v\d""").find(b)?.let { b.substring(0, it.range.first) } ?: b.substringBefore('-') }
+
+    /**
+     * The firmware of a release whose manifest did not download, from its asset list, as the manifest would list
+     * it (tools/ota-manifest-entry.sh): a repeater's <env>-....bin with a "sha256:" digest is a LoRa OTA image
+     * (the env: [envOf]), with <same name>.zip as its DFU file when there is one, or the .bin itself next to a
+     * -merged.bin (ESP32 Wi-Fi OTA). Other roles have no LoRa OTA: only their DFU .zip / ESP32 .bin is listed.
+     * The second value: every file that matters had a digest (nothing left unknown).
      */
     internal fun fromBinAssets(tag: String, assets: JSONArray, published: String = ""): Pair<List<FirmwareFile>, Boolean> {
         val byName = HashMap<String, JSONObject>()
         for (a in 0 until assets.length()) assets.getJSONObject(a).let { byName[it.getString("name")] = it }
         fun digest(a: JSONObject?) = a?.optString("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
+        val bases = java.util.TreeSet<String>()
+        for (name in byName.keys) {
+            if (name.endsWith(".bin", ignoreCase = true) && !name.endsWith("-merged.bin", ignoreCase = true)) bases.add(name.dropLast(4))
+            else if (name.endsWith(".zip", ignoreCase = true)) bases.add(name.dropLast(4))
+        }
         val out = ArrayList<FirmwareFile>()
         var covered = true
-        for ((name, a) in byName.entries.sortedBy { it.key }) {
-            if (!name.endsWith(".bin", ignoreCase = true) || name.endsWith("-merged.bin", ignoreCase = true)) continue
-            val sha = digest(a)
-            val url = a.optString("browser_download_url")
-            if (sha == null || url.isEmpty()) { covered = false; continue }
-            val env = name.dropLast(4).substringBefore('-')
+        for (base in bases) {
+            val env = envOf(base)
             if (env.isEmpty()) continue
-            val zipName = name.dropLast(4) + ".zip"
+            val binName = "$base.bin"
+            val bin = byName[binName]
+            val binSha = digest(bin)
+            val binUrl = bin?.optString("browser_download_url").orEmpty()
+            val binOk = bin != null && binSha != null && binUrl.isNotEmpty()
+            val zipName = "$base.zip"
             val zip = byName[zipName]
             val zipSha = digest(zip)
             val zipUrl = zip?.optString("browser_download_url").orEmpty()
             val hasZip = zip != null && zipSha != null && zipUrl.isNotEmpty()
             // ESP32: next to a -merged.bin the app .bin is also what Wi-Fi OTA flashes (as the manifest lists it)
-            val esp32 = !hasZip && (name.dropLast(4) + "-merged.bin") in byName
-            out.add(FirmwareFile(tag, env, "", name, a.optInt("size"), sha, url,
-                if (hasZip) zipName else if (esp32) name else "",
-                if (hasZip) zip!!.optInt("size") else if (esp32) a.optInt("size") else 0,
-                if (hasZip) zipSha!! else if (esp32) sha else "",
-                if (hasZip) zipUrl else if (esp32) url else "", published))
+            val esp32 = !hasZip && binOk && "$base-merged.bin" in byName
+            val dfuName = if (hasZip) zipName else if (esp32) binName else ""
+            val dfuSize = if (hasZip) zip!!.optInt("size") else if (esp32) bin!!.optInt("size") else 0
+            val dfuSha = if (hasZip) zipSha!! else if (esp32) binSha!! else ""
+            val dfuUrl = if (hasZip) zipUrl else if (esp32) binUrl else ""
+            if (BoardCheck.role(env) == Role.REPEATER) {
+                if (!binOk) { if (bin != null) covered = false; continue }
+                out.add(FirmwareFile(tag, env, "", binName, bin!!.optInt("size"), binSha!!, binUrl, dfuName, dfuSize, dfuSha, dfuUrl, published))
+            } else {
+                // no LoRa OTA (file empty), only what the app flashes
+                if (dfuName.isEmpty()) { if (bin != null && !binOk) covered = false; continue }
+                out.add(FirmwareFile(tag, env, "", "", 0, "", "", dfuName, dfuSize, dfuSha, dfuUrl, published))
+            }
         }
         return out to covered
     }

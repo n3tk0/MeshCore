@@ -812,6 +812,7 @@ void BQ25798::setBatteryReference(int16_t ma, uint32_t now) {
   _ref_ma = ma;
   _ref_at = now;
   if (_r.valid) _learn.feed(_cal, _r.ibat_raw_ma, ma);
+  else _learn.gap();
 }
 
 void BQ25798::setSunReference(int16_t ma, uint32_t now) {
@@ -820,6 +821,7 @@ void BQ25798::setSunReference(int16_t ma, uint32_t now) {
   _ref_ma = ma;
   _ref_at = now;
   if (_r.valid && vbusPresent()) _learnBus.feed(_calBus, _r.ibus_raw_ma, ma);   // no panel: IBUS and the INA219 both read about 0
+  else _learnBus.gap();   // no pair: the next one does not join an earlier one across the gap
 }
 
 void BQ25798::clearBatteryReference() {
@@ -1017,8 +1019,10 @@ int BQ25798::formatIbusExport(char* buf, int len, int page) const {
 }
 
 int BQ25798::formatIna(char* buf, int len) const {
-  return addf(buf, len, 0, "ina %s%s", inaSun() ? "sun" : "bat",
-              inaSun() ? ": IBUS learns, IBAT paused, battery from the BQ" : ": IBAT learns, IBUS paused");
+  int n = addf(buf, len, 0, "ina %s%s", inaSun() ? "sun" : "bat",
+               inaSun() ? ": IBUS learns, IBAT paused, battery from the BQ" : ": IBAT learns, IBUS paused");
+  if (!_found) n = addf(buf, len, n, " | no BQ25798 at 0x6B (the position is kept)");
+  return n;
 }
 
 int BQ25798::formatIbus(char* buf, int len) const {

@@ -673,22 +673,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun pickFile(uri: Uri, isOld: Boolean) = work {
-        val data = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
         val name = fileName(uri)
+        val i = info
+        // read and parse (unzip, SHA-256) off the main thread, once; an invalid .zip / .uf2 says why (not its size)
+        val picked = withContext(Dispatchers.IO) {
+            val data = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            val app = PickedImage.app(data)
+            if (!isOld) return@withContext app
+            if (i == null) return@withContext app
+            // an image padded past what the repeater runs (a .uf2): its first imageSize bytes
+            PickedImage.runningOf(app, i.imageSize, hex(i.imageSha)) ?: throw Exception(
+                str(R.string.msg_not_running_firmware) + " " + str(R.string.msg_not_running_detail,
+                    OtaProtocol.parseIdent(i.ident).commit ?: "?", i.imageSize, app.size))
+        }
         if (isOld) {
-            val i = info
-            var bytes = runCatching { PickedImage.app(data) }.getOrDefault(data)
-            if (i != null) {
-                // a .uf2 / DFU .zip, or an image padded past what the repeater runs: its first imageSize bytes
-                bytes = PickedImage.running(data, i.imageSize, hex(i.imageSha)) ?: throw Exception(
-                    str(R.string.msg_not_running_firmware) + " " + str(R.string.msg_not_running_detail,
-                        OtaProtocol.parseIdent(i.ident).commit ?: "?", i.imageSize, bytes.size))
-            }
-            oldImage = Image(name, bytes)
+            oldImage = Image(name, picked)
             runningUnknown = false
             runningNotChecked = false
         } else {
-            newImage = Image(name, PickedImage.app(data))
+            newImage = Image(name, picked)
         }
         patch = null
     }

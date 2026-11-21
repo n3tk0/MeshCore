@@ -2397,6 +2397,43 @@ TEST(BQ25798, OldVersion1IbatcalFileStillLoads) {
   EXPECT_FALSE(bq.ibusCurveLoad(b, IBAT_FILE_LEN));      // an IBAT file is no IBUS one
 }
 
+// the scan's powers (scanStart / formatScan) are VBUS x the corrected IBUS, like the status line
+static uint32_t scanBestMw(bool calibrate, int* raw_out, int* cal_out) {
+  PanelBQ f;
+  f.peak = 0.75;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  *raw_out = bq.reading().ibus_raw_ma;
+  if (calibrate) EXPECT_EQ(bq.ibusCalManual(*raw_out * 112 / 100), IBAT_SET_OK);
+  *cal_out = bq.reading().ibus_ma;
+  EXPECT_EQ(bq.scanStart(), 0);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_TRUE(bq.scanHasResult());
+  uint32_t best = 0;
+  for (unsigned i = 0; i < BQ_SCAN_N; i++) if (bq.scanPowerMw(i) > best) best = bq.scanPowerMw(i);
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "best 75.0%"), nullptr) << buf;
+  return best;
+}
+
+TEST(BQ25798, ScanPowersUseTheCorrectedIbus) {
+  int raw0, cal0, raw1, cal1;
+  uint32_t plain = scanBestMw(false, &raw0, &cal0);
+  uint32_t corrected = scanBestMw(true, &raw1, &cal1);
+  ASSERT_GT(raw0, 0);
+  EXPECT_EQ(raw0, raw1);
+  EXPECT_EQ(cal0, raw0);                  // no calibration: the raw value (build default curve is empty here)
+  EXPECT_GT(cal1, cal0);                  // the manual point lifted it
+  EXPECT_GT(corrected, plain);            // and so did the scan's power (VBUS x corrected IBUS)
+  // about the same ratio as the corrected reading (the curve is nearly a straight gain at these currents)
+  EXPECT_NEAR((double)corrected / plain, (double)cal1 / cal0, 0.08);
+}
+
 TEST(BQ25798, ScanPowerAndStatusUseTheCorrectedIbus) {
   FakeBQ f;
   BQ25798 bq(f);
@@ -2408,4 +2445,19 @@ TEST(BQ25798, ScanPowerAndStatusUseTheCorrectedIbus) {
   char buf[200];
   bq.formatStatus(buf, 155);
   EXPECT_NE(strstr(buf, "sun 18.00V 100mA"), nullptr) << buf;
+}
+
+TEST(BQ25798, InaPositionIsKnownWithoutTheChip) {
+  FakeBQ f;
+  f.r[0x48] = 0;   // no BQ25798 answers as PN 011b
+  BQ25798 bq(f);
+  EXPECT_FALSE(bq.begin(0));
+  EXPECT_FALSE(bq.inaSun());
+  bq.setInaPos(BQ_INA_SUN);                  // from /charger at boot, before anything is applied
+  EXPECT_TRUE(bq.inaSun());
+  EXPECT_FALSE(bq.applied());
+  char buf[200];
+  bq.formatIna(buf, 155);
+  EXPECT_NE(strstr(buf, "ina sun"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "no BQ25798 at 0x6B"), nullptr) << buf;
 }

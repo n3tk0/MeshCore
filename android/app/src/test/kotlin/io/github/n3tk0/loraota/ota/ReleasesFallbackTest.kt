@@ -53,13 +53,61 @@ class ReleasesFallbackTest {
 
     @Test
     fun mergedBinIsNotAnOtaImage() {
-        val (files, _) = Releases.fromBinAssets("t", JSONArray(listOf(asset("E-1.bin", "aa".repeat(32)), asset("E-1-merged.bin", "bb".repeat(32)))))
-        assertEquals(listOf("E-1.bin"), files.map { it.file })
+        val (files, _) = Releases.fromBinAssets("t", JSONArray(listOf(asset("E_repeater-1.bin", "aa".repeat(32)), asset("E_repeater-1-merged.bin", "bb".repeat(32)))))
+        assertEquals(listOf("E_repeater-1.bin"), files.map { it.file })
         // ESP32: the app .bin is also the Wi-Fi OTA image, as the manifest would list it
         val f = files.single()
-        assertEquals("E-1.bin", f.dfu)
+        assertEquals("E_repeater-1.bin", f.dfu)
         assertEquals("aa".repeat(32), f.dfuSha256)
         assertTrue(f.hasDfu)
+    }
+
+    @Test
+    fun envsWithDashesAreKept() {
+        for (env in listOf("LilyGo_T-Echo_repeater", "LilyGo_T-Echo-Lite_repeater", "Ebyte_EoRa-S3_Repeater", "WioTrackerL1-1W_repeater",
+            "wio-e5_repeater", "RAK_4631_companion_radio_ble", "Heltec_v3_room_server")) {
+            assertEquals(env, Releases.envOf("$env-v1.18.0-abc1234"))
+            assertEquals(env, Releases.envOf("$env-lite-v1.18.0-abc1234"))
+            assertEquals(env, Releases.envOf("$env-lite-branch-abc1234"))
+        }
+        assertEquals("Foo", Releases.envOf("Foo-lite-v1-abc1234"))
+        assertEquals("Foo", Releases.envOf("Foo-v1.2-abc1234"))
+        val (files, _) = Releases.fromBinAssets("t", JSONArray(listOf(asset("LilyGo_T-Echo_repeater-v1-abc1234.bin", "aa".repeat(32)))))
+        assertEquals("LilyGo_T-Echo_repeater", files.single().env)
+    }
+
+    @Test
+    fun nonRepeatersAreDfuOnly() {
+        val (files, covered) = Releases.fromBinAssets("t", JSONArray(listOf(
+            asset("RAK_4631_companion_radio_ble-v1-abc1234.zip", "cc".repeat(32), 700),
+            asset("RAK_4631_companion_radio_ble-v1-abc1234.uf2", "dd".repeat(32)),
+            asset("Heltec_v3_companion_radio_ble-v1-abc1234.bin", "ee".repeat(32), 900),
+            asset("Heltec_v3_companion_radio_ble-v1-abc1234-merged.bin", "ff".repeat(32)))))
+        assertTrue(covered)
+        assertEquals(2, files.size)
+        val nrf = files.first { it.env == "RAK_4631_companion_radio_ble" }
+        assertFalse(nrf.hasLoraOta)
+        assertEquals("", nrf.file)
+        assertEquals("RAK_4631_companion_radio_ble-v1-abc1234.zip", nrf.dfu)
+        assertEquals("cc".repeat(32), nrf.dfuSha256)
+        val esp = files.first { it.env == "Heltec_v3_companion_radio_ble" }
+        assertFalse(esp.hasLoraOta)
+        assertEquals("ee".repeat(32), esp.dfuSha256)
+    }
+
+    @Test
+    fun failedManifestKeepsTheCachedEntries() {
+        val cache = java.nio.file.Files.createTempDirectory("rel").toFile()
+        val full = FirmwareFile("boards-15", "X_repeater", "v1", "X_repeater.bin", 5, "aa", "u", "X_repeater.zip", 6, "bb", "z")
+        val fb = FirmwareFile("boards-15", "X_repeater", "", "X_repeater.bin", 5, "aa", "u")
+        val other = FirmwareFile("boards-14", "Y_repeater", "v0", "Y.bin", 5, "cc", "u")
+        val prev = listOf(full, other)
+        val l = Releases.Listing(listOf(fb, other), 1, "x", setOf("boards-15"))
+        val m = Releases.withCachedFallbacks(l, prev)
+        assertEquals(listOf(full, other), m.files)
+        // not in the cache: the fallback stays
+        assertEquals(listOf(fb, other), Releases.withCachedFallbacks(l, listOf(other)).files)
+        cache.deleteRecursively()
     }
 
     @Test
