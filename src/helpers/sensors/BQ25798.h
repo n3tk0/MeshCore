@@ -169,9 +169,13 @@ struct BQ25798Settings {
   uint8_t  voc_pct;     // MPPT VOC_PCT: 63, 69, 75, 81 or 88 (62.5 / 68.75 / 75 / 81.25 / 87.5 %); 0 = default (81)
   uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: starts from voc_pct 81 (also after a restart), the scan moves it; 0 (also in older files) = fixed
   IbatLegacyCal cal;    // the IBAT calibration of build 934d2da (two points per direction); now only read (imported into the /ibatcal curve), written as zeros
+  uint8_t  ina_pos;     // BQ_INA_BAT (0, default) | BQ_INA_SUN: where the INA219 is (battery line or solar input); a file without it: 0
+  uint8_t  reserved;    // 0
 };
-// The /charger file is the struct as is. Files of 10, 11 and 12 bytes (before voc_pct / mppt_auto / cal)
-// are still read: fromFile().
+// The /charger file is the struct as is. Files of 10, 11, 12 and 36 bytes (before voc_pct / mppt_auto / cal /
+// ina_pos) are still read: fromFile().
+#define BQ_INA_BAT             0   // the INA219 is in the battery line: IBAT is calibrated from it, it is the battery gauge
+#define BQ_INA_SUN             1   // ... on the solar input: IBUS is calibrated from it, IBAT is left alone
 #define BQ_SETTINGS_VERSION    1
 
 struct BQ25798Reading {
@@ -179,7 +183,8 @@ struct BQ25798Reading {
   uint16_t vbat_mv, vsys_mv, vbus_mv;
   int16_t  ibat_ma;     // + = charging the battery, - = the battery feeds the node; the IBAT ADC with the calibration applied
   int16_t  ibat_raw_ma; // ... as the ADC gave it
-  int16_t  ibus_ma;     // from the panel
+  int16_t  ibus_ma;     // from the panel; the IBUS ADC with the calibration applied
+  int16_t  ibus_raw_ma; // ... as the ADC gave it
   int16_t  tdie_dc;     // die temperature, 0.1 °C
   uint16_t ts_pm;       // TS in 0.1 % of REGN, from a conversion with TS on in the last 15 min (0 = none)
   int16_t  tcell_dc;    // cell temperature from the NTC, 0.1 °C, or BQ_TCELL_NONE
@@ -242,13 +247,18 @@ class BQ25798 {
   IbatCurve _cal;                   // the stored calibration curve (/ibatcal)
   IbatCurve _def;                   // the build default curve (BQ25798_IBAT_*_CURVE)
   bool     _ref_ok;
-  int16_t  _ref_ma;                 // + = charging
+  int16_t  _ref_ma;                 // + = charging (INA219 on bat) / + = from the panel (on sun)
   uint32_t _ref_at;
+  // IBUS calibration (INA219 on the solar input): the same kind of curve, CHG half only
+  IbatLearner _learnBus;
+  IbatCurve _calBus;                // /ibuscal
+  IbatCurve _defBus;                // BQ25798_IBUS_CURVE / _CURVE2
 
   bool read(uint8_t reg, uint8_t* buf, uint8_t n);
   bool write8(uint8_t reg, uint8_t v);
   bool write16(uint8_t reg, uint16_t v);
   void setCE(bool on);
+  bool fresh() const { return _ref_ok && (int32_t)(_now - _ref_at) < (int32_t)(3 * BQ_POLL_MS); }
   bool readStatus();
   void harvestVoc(bool unloaded, bool mppt_running);
   void enforce();
@@ -347,8 +357,34 @@ public:
   // Call once per new ADC result (adcCount() moved): the reference current (+ = charging, as the sensor
   // measures it now). With a stable pair the calibration learns from it (auto mode).
   void setBatteryReference(int16_t ma, uint32_t now);
-  void clearBatteryReference();   // the sensor is gone / failed: the corrected IBAT ADC counts again
-  bool hasBatteryReference() const { return _ref_ok && (int32_t)(_now - _ref_at) < (int32_t)(3 * BQ_POLL_MS); }   // signed: the reference may be a ms newer than the last loop()
+  void clearBatteryReference();   // the sensor is gone / failed: the corrected IBAT ADC counts again (also the sun reference)
+
+  // ---- INA219 position and the IBUS calibration (see IbatCal.h) ----
+  bool inaSun() const { return _s.ina_pos == BQ_INA_SUN; }   // a property of the wiring: also valid when the BQ did not answer
+  // The INA219's position alone, before the settings are applied (boot: the battery reading comes before /charger is loaded)
+  void setInaPos(uint8_t pos) { if (pos != _s.ina_pos) { _s.ina_pos = pos; clearBatteryReference(); } }
+  // Call once per new ADC result with the INA219 on the solar input (`charger ina sun`): the panel current in mA
+  // (+ = from the panel); with a stable pair the IBUS curve learns from it. Ignored when the INA219 is on bat.
+  void setSunReference(int16_t ma, uint32_t now);
+  bool hasSunReference() const { return inaSun() && fresh(); }
+  const IbatCurve& ibusCurve() const { return _calBus; }
+  const IbatCurve& ibusDefaultCurve() const { return _defBus; }
+  int ibusCalManual(int true_ma);      // `charger ibus cal <mA>` (> 0): IBAT_SET_OK, IBAT_SET_* or -1 (no ADC result yet)
+  void ibusCalClear(bool auto_only);
+  bool ibusCalSaveDue(uint32_t now) const { return _learnBus.saveDue(now); }
+  bool ibusCalDirty() const { return _learnBus.dirty(); }
+  void ibusCalSaveFailed(uint32_t now) { _learnBus.saveFailed(now); }
+  void ibusCalSaved(uint32_t now) { _learnBus.synced(_calBus, now, true); }
+  int ibusCurveToFile(uint8_t* buf) const { return IbatCal::toFile(_calBus, buf, IBUS_FILE_MAGIC); }   // IBAT_FILE_LEN bytes
+  bool ibusCurveLoad(const uint8_t* data, int len);
+  // `charger ibus`: "bq 312>330 ina 335 | auto 5p" (raw>corrected; the ina part with a reference), "paused: ina on bat | " in front
+  // while the INA219 is not on the solar input; "no BQ25798 at 0x6B" without the chip
+  int formatIbus(char* buf, int len) const;
+  int formatIbusCurve(char* buf, int len, int page) const;    // "ibus 5:4.8>5a14 ..."
+  int formatIbusExport(char* buf, int len, int page = 1) const;   // "-D BQ25798_IBUS_CURVE='\"..\"'"
+  // `charger ina`: "ina bat" / "ina sun"
+  int formatIna(char* buf, int len) const;
+  bool hasBatteryReference() const { return !inaSun() && fresh(); }   // signed: the reference may be a ms newer than the last loop()
   const IbatCurve& ibatCurve() const { return _cal; }
   const IbatCurve& ibatDefaultCurve() const { return _def; }
   // `charger ibat cal <mA>`: the current raw IBAT against the true current (+ charge, - discharge), into

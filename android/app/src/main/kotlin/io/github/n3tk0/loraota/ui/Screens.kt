@@ -379,7 +379,7 @@ private fun RepeaterHome(vm: AppViewModel) {
         OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
     }
     TabRow(selectedTabIndex = vm.firmwareTab) {
-        Tab(selected = vm.firmwareTab == 0, onClick = { vm.firmwareTab = 0 }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
+        Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
         Tab(selected = vm.firmwareTab == 1, onClick = { vm.showFlashTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_flash)) })
     }
     if (vm.firmwareTab == 0) LoraTab(vm) else FlashContent(vm)
@@ -488,8 +488,9 @@ private fun LoraTab(vm: AppViewModel) {
             for (f in candidates) {
                 FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' '), f == best) { vm.pickRelease(f) }
             }
+            TextButton(onClick = { vm.loadReleases() }, enabled = !vm.busy) { Text(stringResource(R.string.releases_refresh)) }
             val hidden = vm.otherBoardCount()
-            if (hidden > 0) Text(stringResource(R.string.other_boards_hidden, hidden), style = MaterialTheme.typography.bodySmall,
+            if (hidden > 0) Text(pluralStringResource(R.plurals.other_boards_hidden, hidden, hidden), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Source.BUILD -> BuildPanel(vm)
@@ -537,7 +538,6 @@ private fun LoraTab(vm: AppViewModel) {
         Text(stringResource(R.string.running_firmware), style = MaterialTheme.typography.titleSmall)
         Text(vm.oldImage?.name ?: "—", style = MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick = { pickOld.launch(arrayOf("*/*")) }, enabled = !vm.busy) { Text(stringResource(R.string.pick_running)) }
-        OutlinedButton(onClick = { vm.loadReleases() }, enabled = !vm.busy) { Text(stringResource(R.string.reload_releases)) }
 
         Text(stringResource(R.string.side_channel), style = MaterialTheme.typography.titleSmall)
         Text(stringResource(R.string.side_channel_hint), style = MaterialTheme.typography.bodySmall)
@@ -632,7 +632,13 @@ private fun SourceRow(selected: Source, enabled: Boolean, onSelect: (Source) -> 
 
 /** The list of releases could not be fetched: the one kept on the phone is shown (maybe old); why, and Retry. */
 @Composable
-private fun ReleasesErrorCard(vm: AppViewModel, upstream: Boolean = false) {
+internal fun ReleasesErrorCard(vm: AppViewModel, upstream: Boolean = false) {
+    val warn = if (upstream) null else vm.releasesWarning
+    if (warn != null) Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)) {
+        Text(stringResource(R.string.releases_manifest_failed, warn.first, warn.second), Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium)
+    }
     val why = (if (upstream) vm.upstreamError else vm.releasesError) ?: return
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
         containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)) {

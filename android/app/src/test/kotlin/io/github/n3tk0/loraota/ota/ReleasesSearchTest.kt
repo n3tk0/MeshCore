@@ -106,11 +106,11 @@ class ReleasesSearchTest {
     fun aFailedManifestOfACheckedReleaseIsReported() {
         var failed = 0
         val releases = JSONArray()
-            .put(release("r1", asset("ota-manifest.json"), asset("E.bin", "aa")))
-            .put(release("r2", asset("ota-manifest.json"), asset("E.bin", "cc")))   // skipped: not reported
+            .put(release("r1", asset("ota-manifest.json"), asset("E_repeater.bin", "aa")))
+            .put(release("r2", asset("ota-manifest.json"), asset("E_repeater.bin", "cc")))   // skipped: not reported
         val out = Releases.parseReleases("n3tk0/MeshCore", releases, { throw java.io.IOException("x") },
-            { Releases.mayHave(it, "aa") }, { failed++ })
-        assertEquals(0, out.size)
+            { Releases.mayHave(it, "aa") }, { _, _ -> failed++ })
+        assertEquals(1, out.size)   // from the asset list, by its digest
         assertEquals(1, failed)
     }
 
@@ -160,5 +160,13 @@ class ReleasesSearchTest {
         assert(b[0].publishedMillis > 0)
         val release = fw("zz", "2020-01-01T00:00:00Z", "E")
         assertEquals("build-3", Releases.recommended(listOf(release) + b)?.release)
+    }
+
+    @Test
+    fun noOlderPagesWhenTheFirstPageWasNotFull() {
+        assertEquals(false, Releases.hasOlderPages(12))
+        assertEquals(false, Releases.hasOlderPages(0))
+        assertEquals(true, Releases.hasOlderPages(50))
+        assertEquals(true, Releases.hasOlderPages(-1))   // not known: look
     }
 }

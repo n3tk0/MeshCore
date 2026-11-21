@@ -29,19 +29,45 @@ removed=()
 keep() { [ "${!1}" = "true" ]; }
 drop() { [ "${!1}" = "false" ]; }
 
-# board-built-in sensors of the env (LITE_KEEP_<NAME> markers; BQ25798 from ENV_INCLUDE_BQ25798): never undefined
+# The env's options as one text (strings only, one per line) for the checks below. An empty / failed / unparsable
+# `pio project config` is not fatal (this file is sourced, often under set -e): no flags are found, with a warning.
+lite_env_text() {
+  local out
+  out=$(pio project config --json-output 2>/dev/null) || out=""
+  if [ -z "$out" ]; then echo "lite-flags: pio project config gave nothing, board markers not read" >&2; return 0; fi
+  printf '%s' "$out" | python3 -c '
+import json, sys
+def strs(o):
+    if isinstance(o, str): yield o
+    elif isinstance(o, (list, tuple)):
+        for x in o: yield from strs(x)
+    elif isinstance(o, dict):
+        for x in o.values(): yield from strs(x)
+try:
+    for name, opts in json.load(sys.stdin):
+        if name == "env:" + sys.argv[1]:
+            print("\n".join(strs(opts)))
+except Exception as e:
+    sys.stderr.write("lite-flags: cannot read pio project config (%s)\n" % e)
+' "$LITE_ENV" || true
+}
+
+# board-built-in sensors of the env (LITE_KEEP_<NAME> markers; BQ25798 from -D ENV_INCLUDE_BQ25798, a real -D whose
+# value is not 0; a -U or a longer name does not count): never undefined
 builtin=""
+envtext=""
 if [ -n "$LITE_ENV" ]; then
-  builtin=$(pio project config --json-output 2>/dev/null | python3 -c '
-import json, re, sys
-for name, opts in json.load(sys.stdin):
-    if name == "env:" + sys.argv[1]:
-        t = json.dumps(opts)
-        k = set(re.findall(r"LITE_KEEP_([A-Za-z0-9_]+)", t))
-        if "ENV_INCLUDE_BQ25798" in t:
-            k.add("BQ25798")
-        print(" ".join(sorted(k)))
-' "$LITE_ENV")
+  envtext=$(lite_env_text)
+  builtin=$(printf '%s' "$envtext" | python3 -c '
+import re, sys
+t = sys.stdin.read()
+k = set()
+for m in re.finditer(r"(?<![A-Za-z0-9_])-D\s*LITE_KEEP_([A-Za-z0-9_]+)(?:=(\S*))?(?=\s|$)", t):
+    if m.group(2) not in ("0",): k.add(m.group(1))
+for m in re.finditer(r"(?<![A-Za-z0-9_])-D\s*ENV_INCLUDE_BQ25798(?:=(\S*))?(?=\s|$)", t):
+    if m.group(1) not in ("0",): k.add("BQ25798")
+print(" ".join(sorted(k)))
+' 2>/dev/null) || builtin=""
 fi
 
 undef() { local s; for s in "$@"; do case " $builtin " in *" $s "*) continue;; esac; flags+=("-UENV_INCLUDE_$s"); done; }
@@ -75,13 +101,7 @@ if ! keep WITH_GPS; then
   # break the build (Heltec Tower v2, T-Deck) or leave the GPS running anyway (T1000-E, Tracker, ...)
   gps_kept=""
   if [ -n "$LITE_ENV" ]; then
-    vdirs=$(pio project config --json-output 2>/dev/null | python3 -c '
-import json, re, sys
-for name, opts in json.load(sys.stdin):
-    if name == "env:" + sys.argv[1]:
-        text = json.dumps(opts)
-        print("\n".join(sorted(set(re.findall(r"variants/([A-Za-z0-9_.-]+)", text)))))
-' "$LITE_ENV")
+    vdirs=$(printf '%s' "$envtext" | grep -oE 'variants/[A-Za-z0-9_.-]+' | sed 's|variants/||' | sort -u) || vdirs=""
     for v in $vdirs; do
       f=$(ls "variants/$v"/*.cpp "variants/$v"/*.h 2>/dev/null)
       [ -n "$f" ] || continue
@@ -125,5 +145,5 @@ if [ -n "$LITE_REMOVED" ]; then
   if [ ${#removed[@]} -gt 0 ]; then printf '%s\n' "${removed[@]}" > "$LITE_REMOVED"; fi
 fi
 export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:+$PLATFORMIO_BUILD_FLAGS }${flags[*]}"
-unset flags removed builtin
-unset -f keep drop undef
+unset flags removed builtin envtext
+unset -f keep drop undef lite_env_text

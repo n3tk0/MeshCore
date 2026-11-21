@@ -68,6 +68,7 @@ private fun QueuePick(vm: AppViewModel) {
             modifier = Modifier.weight(1f))
         TextButton(onClick = { vm.loadReleases() }, enabled = !vm.busy) { Text(stringResource(R.string.releases_refresh)) }
     }
+    ReleasesErrorCard(vm)
     val rels = vm.queueReleases()
     if (rels.isEmpty()) Text(stringResource(R.string.q_no_releases), style = MaterialTheme.typography.bodyMedium)
     for ((rel, label) in rels.take(8)) {

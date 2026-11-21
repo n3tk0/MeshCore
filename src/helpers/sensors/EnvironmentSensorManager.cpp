@@ -807,6 +807,9 @@ uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
   if (bqActive() && bq_charger.reading().valid) return bq_charger.reading().vbat_mv;   // the last ADC, no I2C here
   #endif
   #if ENV_INCLUDE_INA219
+  #if ENV_INCLUDE_BQ25798
+  if (bq_charger.inaSun()) return 0;   // `charger ina sun`: the INA219 is on the solar input, not the battery
+  #endif
   if (_ina219_found) {
     for (int i = 0; i < _active_sensor_count; i++) {
       if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) return 0;  // the board's own reading
@@ -910,7 +913,8 @@ void EnvironmentSensorManager::bqLoop() {
   if (bq_charger.takeFull()) bq_gauge.markFull();
   if (bq_charger.adcCount() == adcs) return;
   // an INA219 in the battery line measures the current better than the charger's ADC (which then
-  // learns from it, see IbatCal.h); without one the corrected ADC counts
+  // learns from it, see IbatCal.h); without one the corrected ADC counts. `charger ina sun`: the INA219
+  // is on the solar input, it is the reference of the IBUS ADC instead (the battery current is the BQ's)
   #if ENV_INCLUDE_INA219
   bool ref = false;
   if (_ina219_found) {
@@ -923,7 +927,8 @@ void EnvironmentSensorManager::bqLoop() {
       float ma = INA219.getCurrent_mA();
       noteRead(query_ina219, ina_errors);
       if (i2cErrorCount(*TELEM_WIRE) == ina_errors && ma > -30000.0f && ma < 30000.0f) {   // also rules out NaN
-        bq_charger.setBatteryReference((int16_t)lroundf(-ma), millis());   // the BQ counts + = charging
+        if (bq_charger.inaSun()) bq_charger.setSunReference((int16_t)lroundf(ma), millis());   // on the solar input: + = from the panel; IBAT is left alone
+        else bq_charger.setBatteryReference((int16_t)lroundf(-ma), millis());   // the BQ counts + = charging
         ref = true;
       }
     }
@@ -954,6 +959,9 @@ uint32_t EnvironmentSensorManager::gaugeDay() const {
 BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
   #if ENV_INCLUDE_BQ25798
   if (_bq_found) return &bq_gauge;
+  #if ENV_INCLUDE_INA219
+  if (bq_charger.inaSun()) return NULL;   // the INA219 is on the solar input, not the battery (also with no BQ25798 answering)
+  #endif
   #endif
   #if ENV_INCLUDE_INA219
   if (_ina219_found) return &ina_gauge;
@@ -964,6 +972,9 @@ BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
 void EnvironmentSensorManager::sampleBatteryGauge() {
   #if ENV_INCLUDE_INA219
   if (_bq_found) return;   // getBatteryGauge() returns &bq_gauge when a BQ25798 is present
+  #if ENV_INCLUDE_BQ25798
+  if (bq_charger.inaSun()) return;   // the INA219 is on the solar input: not a battery gauge
+  #endif
   static uint32_t next_sample = 0;
   if (!_ina219_found || (int32_t)(millis() - next_sample) < 0) return;
   next_sample = millis() + 10000;

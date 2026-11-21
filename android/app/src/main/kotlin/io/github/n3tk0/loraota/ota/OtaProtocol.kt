@@ -69,7 +69,9 @@ object OtaProtocol {
     /**
      * What a repeater's ident says: "<version> <date> <commit>|<board>[ <build>]". Older firmware has no commit
      * ("<version> <date>|<board>"): the commit is the last word of the part before '|' only when it looks like
-     * one (7-40 hex digits, or "local" for a build by hand), so a date is never taken for it.
+     * one (7-40 hex digits, or "local" for a build by hand), so a date is never taken for it. Without such a word
+     * the commit is the end of the version ("<name>-<commit>", what build.sh makes). Newer firmware does not
+     * repeat the commit in a version that ends with it and may cut a long version: "<tail> <date> <commit>|<env>".
      */
     data class Ident(val head: String, val commit: String?, val board: String)
 
@@ -77,11 +79,17 @@ object OtaProtocol {
         val head = ident.substringBefore('|').trim()
         val board = if ('|' in ident) ident.substringAfter('|').trim() else ""
         val last = head.substringAfterLast(' ', "")
-        val commit = last.takeIf { head.contains(' ') && COMMIT.matches(it) }
+        var commit = last.takeIf { head.contains(' ') && COMMIT.matches(it) }
+        if (commit == null && head.contains(' ')) {
+            // no commit word (older firmware, or one a long version name pushed out): a branch build's version
+            // is "<name>-<commit>"
+            commit = VERSION_COMMIT.find(head.substringBefore(' '))?.groupValues?.get(1)
+        }
         return Ident(head, commit, board)
     }
 
     private val COMMIT = Regex("[0-9a-f]{7,40}|local")
+    private val VERSION_COMMIT = Regex("-([0-9a-f]{7,40})$")
     class Status(val state: Int, val nextSeq: Int, val received: Int, val written: Int)
     class Reply(val op: Int, val status: Int, val data: ByteBuffer)
 
@@ -144,8 +152,9 @@ data class SideRadio(val freqKhz: Int, val bwHz: Int, val sf: Int, val cr: Int) 
     val freqMhz get() = freqKhz / 1000.0
     val bwKhz get() = bwHz / 1000.0
 
-    fun cliArgs(): String = "%.3f %s %d %d".format(java.util.Locale.ROOT, freqMhz,
-        if (bwHz % 1000 == 0) (bwHz / 1000).toString() else "%.1f".format(java.util.Locale.ROOT, bwKhz), sf, cr)
+    /** "freq,bw,sf,cr" for the console's 'tempradio' (comma separated, as upstream's and our firmware parse it). */
+    fun cliArgs(): String = "%.3f,%s,%d,%d".format(java.util.Locale.ROOT, freqMhz,
+        java.math.BigDecimal(bwHz).movePointLeft(3).stripTrailingZeros().toPlainString(), sf, cr)   // 31.25 stays 31.25
 
     /** Seconds on air for a LoRa packet of [bytes] (explicit header, CRC, MeshCore's preamble). */
     fun airtime(bytes: Int): Double {

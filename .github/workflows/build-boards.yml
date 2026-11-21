@@ -513,7 +513,7 @@ jobs:
           JSON=$(echo "$LIST" | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "targets=$JSON" >> "$GITHUB_OUTPUT"
           # a run with a repeater is always published (see the release job): its .bin is the base of later deltas
-          if echo "$LIST" | grep -qi '_repeater$'; then HAS_REPEATER=true; else HAS_REPEATER=false; fi
+          if echo "$LIST" | grep -qi 'repeater'; then HAS_REPEATER=true; else HAS_REPEATER=false; fi
           echo "has_repeater=$HAS_REPEATER" >> "$GITHUB_OUTPUT"
           echo "Boards: $JSON"
 
@@ -568,7 +568,7 @@ jobs:
           # runs without build.sh's version flags, so PlatformIO wipes .pio/build/<env> (firmware.elf too)
           ELF=""
           # only repeaters get LoRa OTA (the delta from their app image); every board can be flashed (dfu)
-          case "${{ matrix.target }}" in *_[rR]epeater) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
+          case "${{ matrix.target }}" in *[rR][eE][pP][eE][aA][tT][eE][rR]*) ELF=.pio/build/${{ matrix.target }}/firmware.elf ;; esac
           if [ -n "$ELF" ] && [ ! -f "$ELF" ]; then echo "::error::$ELF missing: no app image for LoRa OTA"; exit 1; fi
           tools/ota-manifest-entry.sh ${{ matrix.target }} "${{ env.GIT_TAG_VERSION }}" $ELF
           # with the same flags as the build: an nRF52 repeater too big for the staged OTA copy fails the
@@ -617,7 +617,9 @@ jobs:
         run: |
           # standard `sha256sum` format of every file published here (check with: sha256sum -c SHA256SUMS)
           cd out
-          sha256sum $(ls -1 | grep -vx SHA256SUMS | sort) > SHA256SUMS
+          FILES=$(ls -1 | grep -vx SHA256SUMS | sort || true)
+          if [ -z "$FILES" ]; then echo "::error::no files to checksum in out/"; exit 1; fi
+          sha256sum $FILES > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create Release

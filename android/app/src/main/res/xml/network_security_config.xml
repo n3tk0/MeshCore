@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 7.0 (API 24-25) ships no ISRG roots, but GitHub's asset hosts (*.githubusercontent.com)
+     now use Let's Encrypt chains. Keep the system store and add the ISRG roots as extra anchors.
+     Cleartext stays off, as it was by default for targetSdk >= 28. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/isrg_root_x1" />
+            <certificates src="@raw/isrg_root_x2" />
+            <certificates src="@raw/isrg_root_yr" />
+            <certificates src="@raw/isrg_root_ye" />
+        </trust-anchors>
+    </base-config>
+    <!-- ESP32 Wi-Fi OTA (flash/WifiOta.kt): the device's own access point serves plain HTTP -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.4.1</domain>
+    </domain-config>
+</network-security-config>

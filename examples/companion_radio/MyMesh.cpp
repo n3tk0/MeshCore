@@ -2407,7 +2407,7 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     return true;
   }
 
-  // the LoRa OTA side channel: 'tempradio <freq> <bw> <sf> <cr> <mins>' (as on repeaters), back by itself
+  // the LoRa OTA side channel: 'tempradio <freq>,<bw>,<sf>,<cr>,<mins>' (as on repeaters; spaces work too), back by itself
   // after mins or when the app disconnects, or 'tempradio off'
   if (strcmp(command, "tempradio off") == 0) {
     temp_radio_until = 0;
@@ -2419,7 +2419,8 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     char tmp[48];
     StrHelper::strncpy(tmp, &command[10], sizeof(tmp));
     const char *parts[5];
-    int num = mesh::Utils::parseTextParts(tmp, parts, 5);
+    // comma separated like upstream's repeater command; app builds before 2026-11-20 sent spaces
+    int num = mesh::Utils::parseTextParts(tmp, parts, 5, strchr(tmp, ',') ? ',' : ' ');
     float freq = num > 0 ? strtof(parts[0], nullptr) : 0.0f;
     float bw = num > 1 ? strtof(parts[1], nullptr) : 0.0f;
     uint8_t sf = num > 2 ? atoi(parts[2]) : 0;

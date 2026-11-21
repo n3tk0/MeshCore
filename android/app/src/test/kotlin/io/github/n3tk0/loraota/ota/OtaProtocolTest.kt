@@ -46,7 +46,8 @@ class OtaProtocolTest {
 
     @Test
     fun cliArgs() {
-        assertEquals("869.470 125 7 5", SideRadio.DEFAULT.cliArgs())
-        assertEquals("869.618 62.5 8 8", SideRadio(869618, 62500, 8, 8).cliArgs())
+        assertEquals("869.470,125,7,5", SideRadio.DEFAULT.cliArgs())
+        assertEquals("869.618,62.5,8,8", SideRadio(869618, 62500, 8, 8).cliArgs())
+        assertEquals("869.525,31.25,9,5", SideRadio(869525, 31250, 9, 5).cliArgs())
     }
 }

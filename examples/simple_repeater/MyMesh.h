@@ -175,6 +175,9 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void loadBatteryCapacity();
 #if ENV_INCLUDE_BQ25798
   void loadCharger();
+ public:
+  static void loadChargerEarly(FILESYSTEM* fs);   // before sensors.begin(): the INA219's position
+ private:
   void saveChargerCalIfDue();
 #endif
 #if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260

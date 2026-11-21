@@ -1818,6 +1818,37 @@ TEST(IbatCal, SanityLimitScalesWithCurrent) {
   EXPECT_EQ(man(c, -400, -350), IBAT_SET_OK);         // 50 mA
 }
 
+TEST(IbatCal, ManualOutOfOrderDoesNotDropAValidMiddlePoint) {
+  // manual idx0 raw 10, auto idx1 raw 25, manual idx2 raw 8 (non-monotonic): only idx2 goes
+  IbatCurve c = noCurve(), d = noCurve();
+  c.p[IBAT_CHG][0] = { 100, 50, 1, IBAT_SRC_MANUAL };    // 10 mA raw, 5 mA true
+  c.p[IBAT_CHG][1] = { 250, 100, 20, IBAT_SRC_AUTO };    // 25 mA raw, 10 mA true
+  c.p[IBAT_CHG][2] = { 80, 200, 1, IBAT_SRC_MANUAL };    // 8 mA raw, 20 mA true: out of order
+  IbatEff e = IbatCal::build(c, d, IBAT_CHG);
+  EXPECT_EQ(e.m, 2);
+  EXPECT_EQ(e.idx[0], 0);
+  EXPECT_EQ(e.idx[1], 1);
+  EXPECT_TRUE(e.ignored & (1u << 2));
+  EXPECT_FALSE(e.ignored & (1u << 1));
+  EXPECT_FALSE(e.ignored & (1u << 0));
+}
+
+TEST(IbatCal, DischargeTwoPointFitUsesAnInDirectionHighPoint) {
+  IbatCurve c = noCurve(), d = noCurve();
+  ASSERT_EQ(man(c, -14, -12), IBAT_SET_OK);
+  ASSERT_EQ(man(c, -150, -120), IBAT_SET_OK);
+  IbatEff e = IbatCal::build(c, d, IBAT_DIS);
+  IbatFit f = IbatCal::fit(e, IBAT_DIS);
+  EXPECT_EQ(f.points, 2);
+  EXPECT_LT(f.gain, 0.9f);                  // gain found (was stuck at 1)
+  EXPECT_EQ(ap(c, -200), -160);             // beyond the high point: its gain, not 1 (which would give -170)
+  // charge still needs 150 mA for the high point
+  IbatCurve g = noCurve();
+  ASSERT_EQ(man(g, 6, 5), IBAT_SET_OK);
+  ASSERT_EQ(man(g, 110, 100), IBAT_SET_OK);
+  EXPECT_EQ(IbatCal::fit(IbatCal::build(g, d, IBAT_CHG), IBAT_CHG).points, 1);
+}
+
 TEST(IbatCal, ExportPagesOfAFullCurve) {
   FakeBQ f;
   BQ25798 bq(f);
@@ -2162,7 +2193,7 @@ TEST(BQ25798, Ibat934d2daChargerFileImportsIntoTheCurve) {
   EXPECT_TRUE(bq.ibatCalSaveDue(IBAT_SAVE_FIRST_MS));   // to be written to /ibatcal
   // shorter files: no calibration, the rest kept
   const int CAL = (int)offsetof(BQ25798Settings, cal);
-  for (int len = CAL; len < (int)sizeof(s); len++) {
+  for (int len = CAL; len < CAL + (int)sizeof(IbatLegacyCal); len++) {
     ASSERT_TRUE(BQ25798::fromFile(&s, len, o));
     EXPECT_EQ(o.cal.bin[IBAT_DIS][0].n, 0) << len;
     EXPECT_EQ(o.ichg_ma, 1500);
@@ -2178,4 +2209,286 @@ TEST(BQ25798, Ibat934d2daChargerFileImportsIntoTheCurve) {
   IbatCal::importLegacy(c, o.cal);
   EXPECT_TRUE(IbatCal::empty(c));
   EXPECT_EQ(o.ichg_ma, 1500);
+}
+
+// ---- INA219 position and the IBUS calibration ----
+
+// one ADC round with the panel on: IBAT and IBUS raw
+static void sunStep(BQ25798& bq, FakeBQ& f, uint32_t& t, int16_t ibat, int16_t ibus) {
+  f.sun(true);
+  f.adcValues(3950, ibat, 18000, ibus);
+  bq.loop(t += 10000);
+  bq.loop(t += 10000);
+}
+
+static BQ25798Settings sunSettings() { BQ25798Settings s = settings(); s.ina_pos = BQ_INA_SUN; return s; }
+
+TEST(BQ25798, InaPositionDefaultsToBatAndIsPersistent) {
+  BQ25798Settings d;
+  BQ25798::defaults(d);
+  EXPECT_EQ(d.ina_pos, BQ_INA_BAT);
+  BQ25798Settings s = sunSettings(), o;
+  ASSERT_TRUE(BQ25798::fromFile(&s, sizeof(s), o));
+  EXPECT_EQ(o.ina_pos, BQ_INA_SUN);
+  // the files before the position: bat
+  ASSERT_TRUE(BQ25798::fromFile(&s, (int)offsetof(BQ25798Settings, ina_pos), o));
+  EXPECT_EQ(o.ina_pos, BQ_INA_BAT);
+  // anything else is a damaged file
+  s.ina_pos = 2;
+  EXPECT_FALSE(BQ25798::fromFile(&s, sizeof(s), o));
+  FakeBQ f;
+  BQ25798 bq(f);
+  EXPECT_FALSE(bq.inaSun());
+  bq.begin(0);
+  bq.apply(sunSettings());
+  EXPECT_TRUE(bq.inaSun());
+  BQ25798Settings back = bq.settings();
+  EXPECT_EQ(back.ina_pos, BQ_INA_SUN);
+  char buf[200];
+  bq.formatIna(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "ina sun"), nullptr) << buf;
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "ina sun"), nullptr) << buf;
+  bq.apply(settings());
+  EXPECT_FALSE(bq.inaSun());
+  bq.formatIna(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "ina bat"), nullptr) << buf;
+}
+
+TEST(BQ25798, IbusLearnsOnlyWithTheInaOnSunAndIbatIsLeftAlone) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(sunSettings());
+  uint32_t t = 0;
+  for (int i = 0; i < 40; i++) {
+    sunStep(bq, f, t, -24, 330);                         // IBUS says 330 mA, the INA219 on the panel line 300
+    if (bq.reading().valid) {
+      bq.setBatteryReference(-12, t);                    // a battery reference in sun mode: ignored
+      bq.setSunReference(300, t);
+    }
+  }
+  EXPECT_EQ(bq.reading().ibus_raw_ma, 330);
+  EXPECT_EQ(bq.reading().ibus_ma, 300);
+  EXPECT_TRUE(IbatCal::empty(bq.ibatCurve()));           // IBAT untouched
+  EXPECT_FALSE(bq.ibatCalDirty());
+  EXPECT_FALSE(bq.hasBatteryReference());
+  EXPECT_TRUE(bq.hasSunReference());
+  EXPECT_EQ(bq.reading().ibat_ma, -24);
+  EXPECT_EQ(bq.batteryCurrentMa(), -24);                 // the BQ's own IBAT, no INA219 override
+  EXPECT_TRUE(bq.ibusCalSaveDue(t));
+  char buf[200];
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "sun 18.00V 300mA"), nullptr) << buf;
+  bq.formatIbus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "bq 330>300 ina +300 | auto 1p"), nullptr) << buf;
+  bq.formatIbat(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "paused: ina on sun"), nullptr) << buf;
+  EXPECT_LT(strlen(buf), 155u);
+
+  // on the battery it is the other way round
+  FakeBQ g;
+  BQ25798 b2(g);
+  b2.begin(0);
+  b2.apply(settings());
+  t = 0;
+  for (int i = 0; i < 40; i++) {
+    sunStep(b2, g, t, -24, 330);
+    if (b2.reading().valid) {
+      b2.setSunReference(300, t);                        // ignored
+      b2.setBatteryReference(-12, t);
+    }
+  }
+  EXPECT_TRUE(IbatCal::empty(b2.ibusCurve()));
+  EXPECT_FALSE(b2.ibusCalDirty());
+  EXPECT_EQ(b2.reading().ibus_ma, 330);
+  EXPECT_EQ(b2.reading().ibat_ma, -12);
+  EXPECT_EQ(b2.batteryCurrentMa(), -12);
+  b2.formatIbus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "paused: ina on bat"), nullptr) << buf;
+  b2.formatStatus(buf, 155);
+  EXPECT_EQ(strstr(buf, "ina sun"), nullptr) << buf;
+}
+
+TEST(BQ25798, MovingTheInaDropsTheOldReference) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  sunStep(bq, f, t, -24, 330);
+  bq.setBatteryReference(-12, t);
+  EXPECT_TRUE(bq.hasBatteryReference());
+  bq.apply(sunSettings());
+  EXPECT_FALSE(bq.hasBatteryReference());
+  EXPECT_FALSE(bq.hasSunReference());
+  EXPECT_EQ(bq.batteryCurrentMa(), bq.reading().ibat_ma);
+}
+
+TEST(BQ25798, IbusNegativePairsAndZeroAreNotLearntAndNotCorrected) {
+  IbatCurve c = noCurve();
+  IbatLearner l(true);
+  for (int i = 0; i < 40; i++) { l.feed(c, -30, -20); l.feed(c, 30, -20); l.feed(c, -30, 20); }
+  EXPECT_TRUE(IbatCal::empty(c));
+  for (int i = 0; i < 40; i++) l.feed(c, 105, 100);
+  EXPECT_EQ(c.p[IBAT_CHG][4].n, IBAT_N_CAP);
+  EXPECT_EQ(c.p[IBAT_DIS][3].n, 0);
+  IbatCurve d = noCurve();
+  EXPECT_EQ(IbatCal::applyBus(c, d, 105), 100);
+  EXPECT_EQ(IbatCal::applyBus(c, d, 0), 0);
+  EXPECT_EQ(IbatCal::applyBus(c, d, -7), -7);
+  EXPECT_EQ(IbatCal::applyBus(c, d, 1), 0);     // never negative: the line through (105, 100) would say -4
+  IbatCurve none = noCurve();
+  EXPECT_EQ(IbatCal::applyBus(none, d, 250), 250);   // no points, no build IBAT gain / offset on IBUS
+}
+
+TEST(BQ25798, IbusManualCalCurveExportRoundtripAndFile) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(sunSettings());
+  EXPECT_EQ(bq.ibusCalManual(100), -1);                  // no ADC result yet
+  uint32_t t = 0;
+  sunStep(bq, f, t, 0, 55);
+  ASSERT_TRUE(bq.reading().valid);
+  EXPECT_EQ(bq.ibusCalManual(0), IBAT_SET_ZERO);
+  EXPECT_EQ(bq.ibusCalManual(-50), IBAT_SET_ZERO);
+  EXPECT_EQ(bq.ibusCalManual(50), IBAT_SET_OK);          // raw 55 is really 50
+  sunStep(bq, f, t, 0, 1030);
+  EXPECT_EQ(bq.ibusCalManual(1000), IBAT_SET_OK);
+  sunStep(bq, f, t, 0, 300);
+  EXPECT_EQ(bq.reading().ibus_ma, 289);   // 300 raw: between (55>50) and (1030>1000): 50 + 950 * 245 / 975
+  EXPECT_EQ(IbatCal::applyBus(bq.ibusCurve(), bq.ibusDefaultCurve(), 55), 50);
+  EXPECT_EQ(IbatCal::applyBus(bq.ibusCurve(), bq.ibusDefaultCurve(), 1030), 1000);
+  char buf[200];
+  bq.formatIbusCurve(buf, sizeof(buf), 1);
+  EXPECT_STREQ(buf, "ibus 50:55>50m ..2") << buf;   // 1000 mA is point 7: page 2
+  bq.formatIbusCurve(buf, sizeof(buf), 2);
+  EXPECT_STREQ(buf, "ibus 1000:1030>1000m") << buf;
+  bq.formatIbusExport(buf, sizeof(buf), 1);
+  EXPECT_STREQ(buf, "-D BQ25798_IBUS_CURVE='\"55:50\"' ..2") << buf;
+  char p2[200];
+  ASSERT_GT(bq.formatIbusExport(p2, sizeof(p2), 2), 0);
+  EXPECT_STREQ(p2, "-D BQ25798_IBUS_CURVE2='\"1030:1000\"'") << p2;
+  // the exported values as the build default give the same correction
+  IbatCurve def = noCurve();
+  IbatCal::parseCurve("55:50", IBAT_CHG, def);
+  IbatCal::parseCurve("1030:1000", IBAT_CHG, def);
+  IbatCurve none = noCurve();
+  for (int raw = 1; raw < 2100; raw += 37)
+    EXPECT_EQ(IbatCal::applyBus(none, def, (int16_t)raw), IbatCal::applyBus(bq.ibusCurve(), bq.ibusDefaultCurve(), (int16_t)raw)) << raw;
+  // the file: own magic, the IBAT file is not an IBUS one and the other way round
+  uint8_t fb[IBAT_FILE_LEN];
+  ASSERT_EQ(bq.ibusCurveToFile(fb), IBAT_FILE_LEN);
+  EXPECT_EQ(memcmp(fb, "IBU", 3), 0);
+  BQ25798 b2(f);
+  EXPECT_TRUE(b2.ibusCurveLoad(fb, IBAT_FILE_LEN));
+  EXPECT_EQ(memcmp(&b2.ibusCurve(), &bq.ibusCurve(), sizeof(IbatCurve)), 0);
+  EXPECT_FALSE(b2.ibatCurveLoad(fb, IBAT_FILE_LEN));
+  uint8_t ib[IBAT_FILE_LEN];
+  bq.ibatCurveToFile(ib);
+  EXPECT_FALSE(b2.ibusCurveLoad(ib, IBAT_FILE_LEN));
+  EXPECT_TRUE(IbatCal::empty(b2.ibusCurve()));
+  EXPECT_FALSE(b2.ibusCurveLoad(nullptr, 0));
+  // a forged IBUS file with discharge points: they are dropped
+  IbatCurve forged = noCurve();
+  forged.p[IBAT_DIS][3] = { -100, -95, 5, IBAT_SRC_MANUAL };
+  forged.p[IBAT_CHG][4] = { 1050, 1000, 1, IBAT_SRC_MANUAL };
+  IbatCal::toFile(forged, fb, IBUS_FILE_MAGIC);
+  ASSERT_TRUE(b2.ibusCurveLoad(fb, IBAT_FILE_LEN));
+  EXPECT_EQ(b2.ibusCurve().p[IBAT_DIS][3].n, 0);
+  EXPECT_EQ(b2.ibusCurve().p[IBAT_CHG][4].n, 1);
+  // clear
+  bq.ibusCalClear(true);                                 // auto only: the manual points stay
+  EXPECT_EQ(bq.reading().ibus_ma, IbatCal::applyBus(bq.ibusCurve(), bq.ibusDefaultCurve(), bq.reading().ibus_raw_ma));
+  bq.ibusCalClear(false);
+  EXPECT_TRUE(IbatCal::empty(bq.ibusCurve()));
+  EXPECT_EQ(bq.reading().ibus_ma, bq.reading().ibus_raw_ma);
+  bq.formatIbusExport(buf, sizeof(buf), 1);
+  EXPECT_STREQ(buf, "no points for ibus");
+}
+
+TEST(BQ25798, OldVersion1IbatcalFileStillLoads) {
+  // /ibatcal as the build before the IBUS curve wrote it: "IBC", 1, 18 points of 6 bytes, CRC16
+  uint8_t b[IBAT_FILE_LEN];
+  memset(b, 0, sizeof(b));
+  b[0] = 'I'; b[1] = 'B'; b[2] = 'C'; b[3] = 1;
+  // discharge point 3 (12 mA): raw -240 (0.1 mA), true -120, 20 auto samples
+  int o = 4 + (IBAT_NP + 3) * 6;
+  b[o] = (uint8_t)(-240 & 0xFF); b[o + 1] = (uint8_t)((-240) >> 8);
+  b[o + 2] = (uint8_t)(-120 & 0xFF); b[o + 3] = (uint8_t)((-120) >> 8);
+  b[o + 4] = 20; b[o + 5] = IBAT_SRC_AUTO;
+  uint16_t crc = IbatCal::crc16(b, IBAT_FILE_LEN - 2);
+  b[IBAT_FILE_LEN - 2] = (uint8_t)(crc & 0xFF); b[IBAT_FILE_LEN - 1] = (uint8_t)(crc >> 8);
+  FakeBQ f;
+  BQ25798 bq(f);
+  ASSERT_TRUE(bq.ibatCurveLoad(b, IBAT_FILE_LEN));
+  EXPECT_EQ(IbatCal::apply(bq.ibatCurve(), bq.ibatDefaultCurve(), -24), -12);
+  EXPECT_TRUE(IbatCal::empty(bq.ibusCurve()));
+  EXPECT_FALSE(bq.ibusCurveLoad(b, IBAT_FILE_LEN));      // an IBAT file is no IBUS one
+}
+
+// the scan's powers (scanStart / formatScan) are VBUS x the corrected IBUS, like the status line
+static uint32_t scanBestMw(bool calibrate, int* raw_out, int* cal_out) {
+  PanelBQ f;
+  f.peak = 0.75;
+  f.fast();
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  bq.apply(settings());
+  tickFor(bq, t, 30000);
+  *raw_out = bq.reading().ibus_raw_ma;
+  if (calibrate) EXPECT_EQ(bq.ibusCalManual(*raw_out * 112 / 100), IBAT_SET_OK);
+  *cal_out = bq.reading().ibus_ma;
+  EXPECT_EQ(bq.scanStart(), 0);
+  EXPECT_TRUE(tickUntilIdle(bq, t, 60000));
+  EXPECT_TRUE(bq.scanHasResult());
+  uint32_t best = 0;
+  for (unsigned i = 0; i < BQ_SCAN_N; i++) if (bq.scanPowerMw(i) > best) best = bq.scanPowerMw(i);
+  char buf[200];
+  bq.formatScan(buf, 155);
+  EXPECT_NE(strstr(buf, "best 75.0%"), nullptr) << buf;
+  return best;
+}
+
+TEST(BQ25798, ScanPowersUseTheCorrectedIbus) {
+  int raw0, cal0, raw1, cal1;
+  uint32_t plain = scanBestMw(false, &raw0, &cal0);
+  uint32_t corrected = scanBestMw(true, &raw1, &cal1);
+  ASSERT_GT(raw0, 0);
+  EXPECT_EQ(raw0, raw1);
+  EXPECT_EQ(cal0, raw0);                  // no calibration: the raw value (build default curve is empty here)
+  EXPECT_GT(cal1, cal0);                  // the manual point lifted it
+  EXPECT_GT(corrected, plain);            // and so did the scan's power (VBUS x corrected IBUS)
+  // about the same ratio as the corrected reading (the curve is nearly a straight gain at these currents)
+  EXPECT_NEAR((double)corrected / plain, (double)cal1 / cal0, 0.08);
+}
+
+TEST(BQ25798, ScanPowerAndStatusUseTheCorrectedIbus) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  bq.apply(settings());
+  uint32_t t = 0;
+  sunStep(bq, f, t, 0, 105);
+  EXPECT_EQ(bq.ibusCalManual(100), IBAT_SET_OK);
+  char buf[200];
+  bq.formatStatus(buf, 155);
+  EXPECT_NE(strstr(buf, "sun 18.00V 100mA"), nullptr) << buf;
+}
+
+TEST(BQ25798, InaPositionIsKnownWithoutTheChip) {
+  FakeBQ f;
+  f.r[0x48] = 0;   // no BQ25798 answers as PN 011b
+  BQ25798 bq(f);
+  EXPECT_FALSE(bq.begin(0));
+  EXPECT_FALSE(bq.inaSun());
+  bq.setInaPos(BQ_INA_SUN);                  // from /charger at boot, before anything is applied
+  EXPECT_TRUE(bq.inaSun());
+  EXPECT_FALSE(bq.applied());
+  char buf[200];
+  bq.formatIna(buf, 155);
+  EXPECT_NE(strstr(buf, "ina sun"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, "no BQ25798 at 0x6B"), nullptr) << buf;
 }

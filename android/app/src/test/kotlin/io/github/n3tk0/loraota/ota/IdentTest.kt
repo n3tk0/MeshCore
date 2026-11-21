@@ -23,9 +23,36 @@ class IdentTest {
 
     @Test
     fun oldIdentHasNoCommit() {
-        assertNull(OtaProtocol.parseIdent("v1.18.0-abc1234 19-Nov-2026|Seeed").commit)
+        assertNull(OtaProtocol.parseIdent("v1.18.0 19-Nov-2026|Seeed").commit)
         assertNull(OtaProtocol.parseIdent("v1.18.0 15 Oct 2026|Seeed").commit)   // a year is not a commit
         assertEquals("Seeed", OtaProtocol.parseIdent("v1 x|Seeed").board)
+    }
+
+    @Test
+    fun oldIdentWithTheCommitInTheVersion() {
+        // a branch build of older firmware: the commit only ends the version
+        val i = OtaProtocol.parseIdent("v1.18.0-abc1234 19-Nov-2026|Seeed")
+        assertEquals("abc1234", i.commit)
+        assertEquals("Seeed", i.board)
+        // the date's year is never a commit
+        assertNull(OtaProtocol.parseIdent("v1.18.0-2026 19-Nov-2026|Seeed").commit)
+    }
+
+    @Test
+    fun newIdentFormats() {
+        // release or branch build: the commit is the last word, the board is the env
+        val a = OtaProtocol.parseIdent("v1.18.0 21-Nov-2026 abc1234|Xiao_nrf52_solar_lite_repeater")
+        assertEquals("abc1234", a.commit)
+        assertEquals("Xiao_nrf52_solar_lite_repeater", a.board)
+        // a long branch name cut to its tail
+        val b = OtaProtocol.parseIdent("st-thread 21-Nov-2026 abc1234|Xiao_nrf52_solar_lite_repeater")
+        assertEquals("abc1234", b.commit)
+        // no version at all: "<date> <commit>|<board>"
+        assertEquals("abc1234", OtaProtocol.parseIdent("21-Nov-2026 abc1234|M").commit)
+        // old format with an env after the manufacturer
+        val c = OtaProtocol.parseIdent("v1.18.0-abc1234 19-Nov-2026 abc1234|Seeed Studio Xiao_nrf52_repeater")
+        assertEquals("abc1234", c.commit)
+        assertEquals("Seeed Studio Xiao_nrf52_repeater", c.board)
     }
 
     @Test

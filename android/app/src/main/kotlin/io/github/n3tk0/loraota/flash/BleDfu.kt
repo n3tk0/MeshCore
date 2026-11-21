@@ -67,6 +67,9 @@ object BleDfu {
      */
     suspend fun flash(ctx: Context, address: String, name: String, zip: File, bonded: Boolean, log: (String) -> Unit,
               progress: (Int) -> Unit) {
+        // the forced scan for the bootloader's address + 1 needs Location on Android 7-11 as well
+        if (scanNeedsLocationPermission(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_no_location_permission))
+        if (scanNeedsLocation(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_location_off))
         val done = CompletableDeferred<Unit>()
         val listener = object : DfuProgressListenerAdapter() {
             override fun onProgressChanged(deviceAddress: String, percent: Int, speed: Float, avgSpeed: Float,

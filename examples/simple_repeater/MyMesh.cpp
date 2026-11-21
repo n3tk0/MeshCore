@@ -1,4 +1,5 @@
 #include "MyMesh.h"
+#include <helpers/OtaIdent.h>
 #include <helpers/SmartMppt.h>
 #include <algorithm>
 
@@ -114,6 +115,8 @@
 #define CHARGER_FILE             "/charger"
 #define IBATCAL_FILE             "/ibatcal"      // IBAT calibration curve (IbatCal.h)
 #define IBATCAL_TMP              "/ibatcal.tmp"
+#define IBUSCAL_FILE             "/ibuscal"      // IBUS (solar input) calibration curve, `charger ina sun`
+#define IBUSCAL_TMP              "/ibuscal.tmp"
 #ifdef WITH_TELEMETRY_HISTORY
   #define HISTORY_FILE           "/tele_hist"
   #define HISTORY_TMP            "/tele_hist.tmp"
@@ -224,6 +227,11 @@ static void otaShaSave(void* ctx, uint32_t img_size, const uint8_t* sha) {
   if (!writeSmallFile(fs, OTA_SHA_TMP, buf, 5 + klen + 32)) { fs->remove(OTA_SHA_TMP); return; }
   fs->remove(OTA_SHA_FILE);
   fs->rename(OTA_SHA_TMP, OTA_SHA_FILE);
+}
+
+static void otaShaDrop(void* ctx) {
+  FILESYSTEM* fs = (FILESYSTEM*)ctx;
+  fs->remove(OTA_SHA_FILE);
 }
 #endif
 
@@ -1238,18 +1246,16 @@ void MyMesh::begin(FILESYSTEM *fs) {
   history_save_at = futureMillis(HISTORY_SAVE_EVERY);
 #endif
 #ifdef WITH_LORA_OTA
-  // "<version> <date> <commit>|<board>[ <build>]", at most 60 characters (what INFO sends): the board
-  // name is cut first. The app splits it at '|' and reads the commit as the last word of the first part.
-  snprintf(ota_ident, 61, "%s %s %s|%s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT,
-           board.getManufacturerName());
+  // "<version> <date> <commit>|<board>", at most 60 characters (what INFO sends); see helpers/OtaIdent.h
 #ifdef FIRMWARE_ENV
-  {
-    size_t il = strlen(ota_ident);
-    if (il + 1 + strlen(FIRMWARE_ENV) <= 60) snprintf(&ota_ident[il], 61 - il, " %s", FIRMWARE_ENV);   // only if it all fits
-  }
+  formatOtaIdent(ota_ident, 61, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT, FIRMWARE_ENV,
+                 board.getManufacturerName());
+#else
+  formatOtaIdent(ota_ident, 61, FIRMWARE_VERSION, FIRMWARE_BUILD_DATE, FIRMWARE_COMMIT, NULL,
+                 board.getManufacturerName());
 #endif
   lora_ota.setIdent(ota_ident);
-  lora_ota.setShaStore(otaShaLoad, otaShaSave, _fs);
+  lora_ota.setShaStore(otaShaLoad, otaShaSave, _fs, otaShaDrop);
   lora_ota.setEnabled(_fs->exists(OTA_ON_FILE));
   lora_ota.setRadioCheck([](void*, const OtaRadioParams& p) {
     return radio_driver.paramsSupported(p.freq, p.bw, p.sf, p.cr);
@@ -1621,8 +1627,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     // 2 + 64 hex + " 1234567 bytes" is 80 characters, well inside the 160 of the reply buffer
     uint8_t sha[32];
     uint32_t size;
-    if (lora_ota.isActive() || !lora_ota.getImageSha(sha, &size)) {   // hashing takes seconds: not during an update
+    if (lora_ota.isActive()) {   // hashing takes seconds: not during an update
       strcpy(reply, "Err - not now");
+    } else if (!lora_ota.getImageSha(sha, &size)) {
+      strcpy(reply, "Err - image hash failed");
     } else {
       char* p = reply;
       *p++ = '>'; *p++ = ' ';
@@ -2430,11 +2438,47 @@ static bool writeIbatCal(FILESYSTEM* fs, BQ25798* c) {
   return true;
 }
 
-// a calibration point of the IBAT ADC learnt from the INA219 (a new one, or one that moved a lot): at most hourly
+// the same for the IBUS curve: /ibuscal
+static bool writeIbusCal(FILESYSTEM* fs, BQ25798* c) {
+  uint8_t buf[IBAT_FILE_LEN];
+  int n = c->ibusCurveToFile(buf);
+  if (!writeSmallFile(fs, IBUSCAL_TMP, buf, n)) { fs->remove(IBUSCAL_TMP); return false; }
+  fs->remove(IBUSCAL_FILE);
+  if (!fs->rename(IBUSCAL_TMP, IBUSCAL_FILE)) return false;
+  c->ibusCalSaved(millis());
+  return true;
+}
+
+// A cal file for loading: the main file, or - when it is missing / damaged and the temp file of an interrupted
+// write (power cut between remove and rename) is complete (CRC ok) - the temp file, renamed into place. Returns the length read (0 when neither is valid).
+static int readCalFile(FILESYSTEM* fs, const char* file, const char* tmp, uint8_t* buf, size_t sz, const char* magic) {
+  IbatCurve probe;
+  int len = readSmallFileLen(fs, file, buf, sz);
+  if (IbatCal::fromFile(buf, len, probe, magic)) return len;
+  int tl = readSmallFileLen(fs, tmp, buf, sz);
+  if (IbatCal::fromFile(buf, tl, probe, magic)) {
+    fs->remove(file);
+    if (!fs->rename(tmp, file)) fs->remove(tmp);   // could not move: the data is in memory now, the next save writes the file
+    return tl;
+  }
+  return 0;   // neither is valid: the loader sees no file (= no curve)
+}
+
+// a calibration point of the IBAT / IBUS ADC learnt from the INA219 (a new one, or one that moved a lot): at most hourly
 void MyMesh::saveChargerCalIfDue() {
   BQ25798* c = sensors.getCharger();
-  if (c == NULL || !c->ibatCalSaveDue(millis())) return;
-  if (!writeIbatCal(_fs, c)) c->ibatCalSaveFailed(millis());   // stays unsaved; the next try is an hour away (flash wear)
+  if (c == NULL) return;
+  if (c->ibatCalSaveDue(millis()) && !writeIbatCal(_fs, c)) c->ibatCalSaveFailed(millis());   // stays unsaved; the next try is an hour away (flash wear)
+  if (c->ibusCalSaveDue(millis()) && !writeIbusCal(_fs, c)) c->ibusCalSaveFailed(millis());
+}
+
+// Boot, before the sensors and the battery check (powerOffAtBoot): only where the INA219 is, from /charger, so
+// an INA219 on the solar input is not read as the battery. loadCharger() applies the whole file later.
+void MyMesh::loadChargerEarly(FILESYSTEM* fs) {
+  BQ25798Settings s{};
+  uint8_t raw[sizeof(s)] = {0};
+  int len = readSmallFileLen(fs, CHARGER_FILE, raw, sizeof(raw));
+  if (BQ25798::fromFile(raw, len, s)) sensors.getCharger()->setInaPos(s.ina_pos);
 }
 
 // The settings from flash (or the defaults: Li-ion 4.2 V, 1 A, MPPT, no NTC, ship FET fitted).
@@ -2450,12 +2494,14 @@ void MyMesh::loadCharger() {
   c->apply(s);
   // the curve: /ibatcal; without a valid one the calibration of build 934d2da from /charger (saved at the next write)
   uint8_t cb[IBAT_FILE_LEN + 1] = {0};
-  int cl = readSmallFileLen(_fs, IBATCAL_FILE, cb, sizeof(cb));
+  int cl = readCalFile(_fs, IBATCAL_FILE, IBATCAL_TMP, cb, sizeof(cb), "IBC");
   if (!c->ibatCurveLoad(cb, cl)) {
     c->ibatCurveImportLegacy(s.cal);
     // into /ibatcal at once: the next write of /charger drops the old calibration from that file
     if (c->ibatCalDirty() && !writeIbatCal(_fs, c)) c->ibatCalSaveFailed(millis());
   }
+  int bl = readCalFile(_fs, IBUSCAL_FILE, IBUSCAL_TMP, cb, sizeof(cb), IBUS_FILE_MAGIC);
+  c->ibusCurveLoad(cb, bl);   // no / a damaged file: no IBUS calibration (the build default curve counts)
 }
 
 #endif   // ENV_INCLUDE_BQ25798
@@ -2485,6 +2531,13 @@ void MyMesh::loadCharger() {
 // charger ibat curve [chg|dis] [2]  the points of a direction (default dis; 2 = the second half)
 // charger ibat export chg|dis [2]  the curve as a line for platformio.ini (2 = the second part, _CURVE2)
 // charger ibat clear [auto]     no calibration (auto: only the learnt points; learning starts again with an INA219)
+// charger ina [bat|sun]         where the INA219 is: in the battery line (default; IBAT learns from it) or on the solar
+//                               input (IBUS learns from it; IBAT paused, the battery is the BQ's own reading)
+// charger ibus                  panel current: raw BQ25798 IBUS, corrected, the INA219's (sun); the calibration
+// charger ibus cal <mA>         this raw reading is really <mA>: a curve point, kept in /ibuscal
+// charger ibus curve [2]        the points (5..2000 mA; 2 = the second half)
+// charger ibus export [2]       the curve as a line for platformio.ini (BQ25798_IBUS_CURVE, 2 = _CURVE2)
+// charger ibus clear [auto]     no calibration (auto: only the learnt points)
 // charger reg 0xNN [value]      read / write one BQ25798 register (direct: the managed bits come back
 //                               within 10 s; MSPM0 boards: kept as an expert setting, `auto` drops it)
 void MyMesh::handleChargerCommand(char* args, char* reply) {
@@ -2541,19 +2594,21 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     sprintf(reply, "> REG%02lX = 0x%02X%s", reg, b, v2 && *v2 ? " (managed bits come back within 10 s)" : "");
     return;
   }
-  if (strcmp(args, "ibat") == 0) {   // IBAT ADC calibration (the file keeps it with the other settings)
+  if (strcmp(args, "ibat") == 0) {   // IBAT ADC calibration (the curve is in /ibatcal)
     if (*val == 0) { c->formatIbat(reply, 155); return; }
     if (strncmp(val, "curve", 5) == 0 || strncmp(val, "export", 6) == 0) {
       bool ex = val[0] == 'e';
       const char* p = val + (ex ? 6 : 5);
       int dir = IBAT_DIS, page = 1;
+      bool got_dir = false;
       while (*p) {
         while (*p == ' ') p++;
-        if (strncmp(p, "chg", 3) == 0) { dir = IBAT_CHG; p += 3; }
-        else if (strncmp(p, "dis", 3) == 0) { dir = IBAT_DIS; p += 3; }
+        if (strncmp(p, "chg", 3) == 0) { dir = IBAT_CHG; got_dir = true; p += 3; }
+        else if (strncmp(p, "dis", 3) == 0) { dir = IBAT_DIS; got_dir = true; p += 3; }
         else if (*p == '2') { page = 2; p++; }
         else if (*p) { strcpy(reply, ex ? "Err - charger ibat export chg|dis [2]" : "Err - charger ibat curve [chg|dis] [2]"); return; }
       }
+      if (ex && !got_dir) { strcpy(reply, "Err - charger ibat export chg|dis [2]"); return; }
       if (ex) { if (c->formatIbatExport(reply, 155, dir, page) < 0) strcpy(reply, "Err - too long for one reply: see charger ibat curve"); }
       else c->formatIbatCurve(reply, 155, dir, page);
       return;
@@ -2572,7 +2627,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
       int r = c->ibatCalManual((int)ma);
       if (r != IBAT_SET_OK) {
         strcpy(reply, r == -1 ? "Err - no IBAT reading yet, try in 10 s"
-                    : r == IBAT_SET_ZERO ? "Err - raw IBAT or the value is 0: no direction"
+                    : r == IBAT_SET_ZERO ? "Err - raw IBAT or the value is 0 (no direction), or over 3000 mA"
                     : r == IBAT_SET_DIRECTION ? "Err - raw IBAT has the other sign: check the direction"
                     : "Err - not taken: offset over max(50 mA, 15%), ratio outside 0.5..1.5, or out of order with another manual point");
         return;
@@ -2587,6 +2642,48 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     strcpy(reply, "OK - ");
     c->formatIbat(reply + 5, 150);
+    return;
+  }
+  if (strcmp(args, "ibus") == 0) {   // IBUS ADC calibration: /ibuscal
+    if (*val == 0) { c->formatIbus(reply, 155); return; }
+    if (strncmp(val, "curve", 5) == 0 || strncmp(val, "export", 6) == 0) {
+      bool ex = val[0] == 'e';
+      const char* p = val + (ex ? 6 : 5);
+      while (*p == ' ') p++;
+      if (*p && !(p[0] == '2' && p[1] == 0)) { strcpy(reply, ex ? "Err - charger ibus export [2]" : "Err - charger ibus curve [2]"); return; }
+      int page = *p == '2' ? 2 : 1;
+      if (ex) { if (c->formatIbusExport(reply, 155, page) < 0) strcpy(reply, "Err - too long for one reply: see charger ibus curve"); }
+      else c->formatIbusCurve(reply, 155, page);
+      return;
+    }
+    if (strncmp(val, "clear", 5) == 0 && (val[5] == 0 || strcmp(val + 5, " auto") == 0)) {
+      c->ibusCalClear(val[5] != 0);
+    } else if (strncmp(val, "cal", 3) == 0 && (val[3] == ' ' || val[3] == 0)) {
+      const char* p = val + 3;
+      while (*p == ' ') p++;
+      char* end;
+      long ma = strtol(p, &end, 10);
+      if (*p == 0 || *end || ma < 1 || ma > IBAT_CAL_MAX_MA) {
+        sprintf(reply, "Err - charger ibus cal <mA> (1..%d)", IBAT_CAL_MAX_MA);
+        return;
+      }
+      int r = c->ibusCalManual((int)ma);
+      if (r != IBAT_SET_OK) {
+        strcpy(reply, r == -1 ? "Err - no IBUS reading yet, try in 10 s"
+                    : r == IBAT_SET_ZERO ? "Err - raw IBUS or the value is 0 or less, or the raw IBUS is over 3000 mA"
+                    : "Err - not taken: offset over max(50 mA, 15%), ratio outside 0.5..1.5, or out of order with another manual point");
+        return;
+      }
+    } else {
+      strcpy(reply, "Err - charger ibus [cal <mA>|clear [auto]|curve|export]");
+      return;
+    }
+    if (!writeIbusCal(_fs, c)) {
+      strcpy(reply, "Err - could not save");
+      return;
+    }
+    strcpy(reply, "OK - ");
+    c->formatIbus(reply + 5, 150);
     return;
   }
   BQ25798Settings s = c->settings();
@@ -2642,6 +2739,12 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
       s.vindpm_mv = (uint16_t)(mv / 100 * 100);
       s.mppt_auto = 0;
     }
+  } else if (strcmp(args, "ina") == 0) {   // where the INA219 is: persisted in /charger
+    if (*val == 0) { c->formatIna(reply, 155); return; }
+    bool bq = c->found();   // the position is kept (and used for the battery reading) with no BQ25798 too
+    if (strcmp(val, "bat") == 0) { s.ina_pos = BQ_INA_BAT; note = bq ? ", ina on the battery: IBAT learns" : ", ina on the battery; no BQ25798 at 0x6B"; }
+    else if (strcmp(val, "sun") == 0) { s.ina_pos = BQ_INA_SUN; note = bq ? ", ina on the solar input: IBUS learns, IBAT paused" : ", ina on the solar input; no BQ25798 at 0x6B"; }
+    else { strcpy(reply, "Err - charger ina bat|sun"); return; }
   } else if (strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0) {
     if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0) { sprintf(reply, "Err - charger %s on|off", args); return; }
     uint8_t on = strcmp(val, "on") == 0;
@@ -2654,7 +2757,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     s.cutoff_mv = (uint16_t)mv;
   } else {
-    strcpy(reply, "Err - charger [chem|ichg|vin|scan|ntc|shipfet|cutoff|ship|reg]");
+    strcpy(reply, "Err - charger [chem|ichg|vin|scan|ntc|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
     return;
   }
   if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {

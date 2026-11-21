@@ -12,7 +12,6 @@
     <string name="running_firmware">Running firmware (.bin)</string>
     <string name="new_firmware">New firmware</string>
     <string name="chosen">Chosen: %1$s</string>
-    <string name="reload_releases">Reload releases</string>
     <string name="side_channel">Side channel</string>
     <string name="side_channel_hint">The update runs on another frequency so the network does not stop. Default 869.470 MHz, BW 125, below the 869.618 MHz main channel. 869.40–869.65 MHz allows 10% time on air.</string>
     <string name="duty">Air %</string>
@@ -25,7 +24,10 @@
     <string name="msg_connect_failed">Could not connect to the companion.</string>
     <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
     <string name="msg_releases_failed">Releases did not load: %1$s</string>
+    <string name="msg_running_download_failed">Found the running firmware (%1$s) but it did not download: %2$s. Pick the old file by hand.</string>
     <string name="msg_releases_offline">No connection (%1$s): showing the releases kept on this phone.</string>
+    <string name="msg_not_running_detail">The repeater runs commit %1$s, image %2$d B; the file is %3$d B.</string>
+    <string name="releases_manifest_failed">%1$d releases: manifest could not be downloaded (%2$s); shown from GitHub\'s file list.</string>
     <string name="msg_not_running_firmware">This is not the firmware the repeater runs.</string>
     <string name="msg_too_big">The new firmware does not fit on the repeater.</string>
     <string name="msg_verified">The repeater runs the new firmware: %1$s</string>
@@ -35,7 +37,10 @@
     <string name="releases_stale">The releases could not be updated: showing those kept on this phone. %1$s</string>
     <string name="releases_refresh">Refresh</string>
     <string name="releases_retry">Retry</string>
-    <string name="other_boards_hidden">%1$d builds for other boards hidden</string>
+    <plurals name="other_boards_hidden">
+        <item quantity="one">%d build for another board hidden</item>
+        <item quantity="other">%d builds for other boards hidden</item>
+    </plurals>
     <string name="no_new_firmware">No newer firmware for this board in the releases.</string>
     <string name="update">Update</string>
     <string name="resume">Continue</string>
