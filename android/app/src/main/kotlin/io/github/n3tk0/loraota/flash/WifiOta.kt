@@ -9,6 +9,8 @@ import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.HttpURLConnection
@@ -47,7 +49,12 @@ object WifiOta {
             .build()
         cm.requestNetwork(request, cb)
         val release = { runCatching { cm.unregisterNetworkCallback(cb) }; Unit }
-        val n = withTimeoutOrNull(timeoutMs) { got.await() }
+        val n = try {
+            withTimeoutOrNull(timeoutMs) { got.await() }
+        } catch (e: Throwable) {
+            release()
+            throw e
+        }
         if (n == null) {
             release()
             return null
@@ -75,6 +82,7 @@ object WifiOta {
                 out.write(head)
                 var at = 0
                 while (at < bin.size) {
+                    currentCoroutineContext().ensureActive()
                     val n = minOf(4096, bin.size - at)
                     out.write(bin, at, n)
                     at += n

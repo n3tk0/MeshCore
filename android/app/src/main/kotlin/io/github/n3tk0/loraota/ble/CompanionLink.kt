@@ -7,8 +7,10 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
@@ -31,81 +33,124 @@ class CompanionLink(private val context: Context) {
     }
 
     val frames = Channel<ByteArray>(Channel.UNLIMITED)
-    var onDisconnect: (() -> Unit)? = null
+    @Volatile var onDisconnect: (() -> Unit)? = null
 
-    private var gatt: BluetoothGatt? = null
-    private var rx: BluetoothGattCharacteristic? = null
-    private var connected: CompletableDeferred<Boolean>? = null
-    private var written: CompletableDeferred<Boolean>? = null
+    @Volatile private var gatt: BluetoothGatt? = null
+    @Volatile private var rx: BluetoothGattCharacteristic? = null
+    @Volatile private var connected: CompletableDeferred<Boolean>? = null
+    @Volatile private var written: CompletableDeferred<Boolean>? = null
+    @Volatile private var servicesDiscovered = false
     private val writeLock = Mutex()
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (g != gatt) {
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) runCatching { g.close() }
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                g.requestMtu(247)
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    connected?.complete(false)
+                    return
+                }
+                if (!g.requestMtu(247)) {
+                    if (!g.discoverServices()) connected?.complete(false)
+                }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connected?.complete(false)
                 written?.complete(false)
-                g.close()
-                if (gatt == g) {
-                    gatt = null
-                    onDisconnect?.invoke()
-                }
+                gatt = null
+                rx = null
+                servicesDiscovered = false
+                runCatching { g.close() }
+                onDisconnect?.invoke()
             }
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-            g.discoverServices()
+            if (g != gatt) return
+            if (!servicesDiscovered) {
+                servicesDiscovered = true
+                if (!g.discoverServices()) connected?.complete(false)
+            }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (g != gatt) return
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                connected?.complete(false)
+                return
+            }
             val service = g.getService(SERVICE)
             val tx = service?.getCharacteristic(TX)
-            rx = service?.getCharacteristic(RX)
-            if (tx == null || rx == null) {
+            val rxChar = service?.getCharacteristic(RX)
+            rx = rxChar
+            if (tx == null || rxChar == null) {
                 connected?.complete(false)
                 return
             }
             g.setCharacteristicNotification(tx, true)
             val d = tx.getDescriptor(CCCD)
-            if (Build.VERSION.SDK_INT >= 33) {
-                g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            if (d == null) {
+                connected?.complete(false)
+                return
+            }
+            val ok = if (Build.VERSION.SDK_INT >= 33) {
+                g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
                 d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 @Suppress("DEPRECATION")
                 g.writeDescriptor(d)
             }
+            if (!ok) connected?.complete(false)
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (g != gatt) return
             connected?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (g != gatt) return
             written?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            if (g != gatt) return
             @Suppress("DEPRECATION")
-            if (c.uuid == TX) frames.trySend(c.value.copyOf())
+            if (c.uuid == TX) {
+                val v = c.value ?: return
+                frames.trySend(v.copyOf())
+            }
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
+            if (g != gatt) return
             if (c.uuid == TX) frames.trySend(value.copyOf())
         }
     }
 
     suspend fun connect(device: BluetoothDevice): Boolean {
         close()
+        servicesDiscovered = false
         val done = CompletableDeferred<Boolean>()
         connected = done
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+        val g = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+            ?: run {
+                connected = null
+                return false
+            }
+        gatt = g
         // pairing with the companion's PIN may take a while
         return try {
             withTimeout(60_000) { done.await() }
         } catch (e: Exception) {
+            if (e is CancellationException) {
+                close()
+                throw e
+            }
             close()
             false
         }
@@ -117,7 +162,7 @@ class CompanionLink(private val context: Context) {
         val done = CompletableDeferred<Boolean>()
         written = done
         val ok = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(c, frame, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == android.bluetooth.BluetoothStatusCodes.SUCCESS
+            g.writeCharacteristic(c, frame, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             c.value = frame
@@ -132,7 +177,11 @@ class CompanionLink(private val context: Context) {
     fun close() {
         val g = gatt
         gatt = null
-        g?.disconnect()
-        g?.close()
+        rx = null
+        servicesDiscovered = false
+        connected?.complete(false)
+        written?.complete(false)
+        runCatching { g?.disconnect() }
+        runCatching { g?.close() }
     }
 }

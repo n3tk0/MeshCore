@@ -41,6 +41,7 @@ class BoardCheckTest {
         assertEquals(Role.ROOM_SERVER, BoardCheck.role("RAK_4631_room_server"))
         assertTrue(BoardCheck.fitsCompanion("Faketec_v5_companion_radio_ble"))
         assertFalse(BoardCheck.fitsCompanion("Faketec_v5_companion_radio_usb"))
+        assertFalse(BoardCheck.fitsCompanion("Heltec_v3_companion_radio_wifi"))
         assertFalse(BoardCheck.fitsCompanion("Xiao_nrf52_repeater"))
     }
 }

@@ -224,8 +224,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var restoreRows by mutableStateOf<List<DiffRow>>(emptyList())
     val restoreChecked = mutableStateMapOf<String, Boolean>()
     var importText by mutableStateOf<String?>(null)         // an encrypted file: asks for its password
+    var exportingBackup by mutableStateOf<Backup?>(null)
+    var exportPassword by mutableStateOf("")
     var updateBackupNote by mutableStateOf<String?>(null)   // in the update's 'are you sure': no backup, and why
     private var backupReturn = Step.REPEATER
+    private var scanJob: Job? = null
 
     init {
         BuildWatcher.resume(app)
@@ -240,9 +243,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
+                    job?.cancel()
+                    OtaService.stop(ctx)
+                    phase = null
+                    flashPercent = -1
+                    confirmUpdate = false
+                    flashPlan = null
+                    queueAsk = false
+                    loginSheet = null
+                    busy = false
+                    working = ""
                     message = str(R.string.msg_disconnected)
                     messageIsError = true
-                    loginSheet = null
                     step = Step.COMPANION
                 }
             }
@@ -309,6 +321,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             messageIsError = true
             return
         }
+        scanJob?.cancel()
+        runCatching { scanner.stopScan(scanCallback) }
         devices.clear()
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(CompanionLink.SERVICE)).build()
         try {
@@ -319,15 +333,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         scanning = true
-        viewModelScope.launch {
-            delay(10_000)
-            runCatching { scanner.stopScan(scanCallback) }
-            scanning = false
+        scanJob = viewModelScope.launch {
+            try {
+                delay(10_000)
+            } finally {
+                runCatching { scanner.stopScan(scanCallback) }
+                scanning = false
+            }
         }
     }
 
     fun connect(device: BluetoothDevice) = work {
         if (scanning) {
+            scanJob?.cancel()
             runCatching {
                 (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner?.stopScan(scanCallback)
             }
@@ -406,7 +424,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             delay(4000)   // the companion sends its route back to the repeater
             companion.contact(contact.publicKey)
         } catch (e: Exception) {
-            runCatching { companion.restorePath(contact) }
+            withContext(NonCancellable) { runCatching { companion.restorePath(contact) } }
             throw e
         }
     }
@@ -426,6 +444,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         newImage = null
         patch = null
         done = false
+        confirmUpdate = false
         sent = 0
         total = 0
         phase = null
@@ -443,6 +462,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Again the status and the OTA check, e.g. when an answer got lost. */
     fun recheck() = work {
         val old = repeater ?: return@work
+        oldImage = null
+        patch = null
         val now = companion.contact(old.publicKey)
         if (now != null) repeater = now
         inspect(now ?: old, now?.hops)
@@ -513,7 +534,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         var i: OtaProtocol.Info? = null
         for (attempt in 1..3) {
             delay(3000)
-            i = runCatching { session(r).info() }.getOrNull()
+            i = runCatching { session(r).info() }
+                .also { it.exceptionOrNull()?.let { e -> if (e is CancellationException) throw e } }
+                .getOrNull()
             if (i?.enabled == true) break
         }
         if (i != null) info = i
@@ -544,21 +567,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         OtaService.update(ctx, notifyTitle(), text, if (phase == Phase.RESTART) 0 else sent, if (phase == Phase.RESTART) 0 else total)
     }
 
-    private suspend fun restorePath() {
-        val r = repeater ?: return
+    private suspend fun restorePath(r: Contact? = repeater) {
+        if (r == null) return
         runCatching { companion.restorePath(r) }
     }
 
     fun backToRepeaters() {
+        val oldRepeater = repeater
+        repeater = null
+        info = null
+        status = null
+        sensorBattery = null
+        confirmUpdate = false
         step = Step.REPEATER
         if (searching) releasesJob?.cancel()   // the search of the old repeater's firmware is of no use now
         viewModelScope.launch {
             job?.cancelAndJoin()
-            restorePath()
-            repeater = null
-            info = null
-            status = null
-            sensorBattery = null
+            restorePath(oldRepeater)
         }
     }
 
@@ -622,9 +647,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** "Search again" on the card of an incomplete search: more pages. */
-    fun searchAgain() = viewModelScope.launch {
-        val i = info ?: return@launch
-        searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true, -1)
+    fun searchAgain(): Job {
+        releasesJob?.takeIf { it.isActive }?.let { return it }
+        return viewModelScope.launch {
+            val i = info ?: return@launch
+            searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true, -1)
+        }.also { releasesJob = it }
     }
 
     /**
@@ -637,6 +665,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fun stale() = info?.let { hex(it.imageSha) } != sha
         var found = allFirmware.firstOrNull { it.sha256 == sha }
         var result: Releases.SearchResult? = null
+        var olderFailed = false
         // offline: nothing to search (the find kept from earlier is read below); a short first page: no page 2
         val kept = found == null && !listOk &&
             withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir).any { it.sha256 == sha } }
@@ -658,6 +687,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 olderPage = 0
             }
             if (stale()) return
+            olderFailed = older.isFailure
             result = older.getOrNull()
             if (result is Releases.SearchResult.Found) {
                 found = result.file
@@ -666,8 +696,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (stale()) return
         runningUnknown = found == null && listOk && oldImage == null &&
-            (result is Releases.SearchResult.NotFound || (result == null && !Releases.hasOlderPages(firstPageReleases)))
-        runningNotChecked = found == null && listOk && oldImage == null && result is Releases.SearchResult.Incomplete
+            (result is Releases.SearchResult.NotFound || (result == null && !olderFailed && !Releases.hasOlderPages(firstPageReleases)))
+        runningNotChecked = found == null && listOk && oldImage == null && (result is Releases.SearchResult.Incomplete || olderFailed)
         val running = found
         if (running != null && oldImage == null) {
             try {
@@ -746,10 +776,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
 
     fun sideRadio(): SideRadio = SideRadio(
-        ((freqMhz.toDoubleOrNull() ?: 869.47) * 1000).toInt(),
-        ((bwKhz.toDoubleOrNull() ?: 125.0) * 1000).toInt(),
-        sf.toIntOrNull() ?: 7,
-        cr.toIntOrNull() ?: 5,
+        ((freqMhz.replace(',', '.').toDoubleOrNull() ?: 869.47) * 1000).toInt().coerceIn(137_000, 1_020_000),
+        ((bwKhz.replace(',', '.').toDoubleOrNull() ?: 125.0) * 1000).toInt().coerceIn(7_800, 500_000),
+        (sf.trim().toIntOrNull() ?: 7).coerceIn(5, 12),
+        (cr.trim().toIntOrNull() ?: 5).coerceIn(5, 8),
     )
 
     /** The new image only goes "in place" on this repeater: a power cut while it copies needs a visit. */
@@ -761,7 +791,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Any other nRF52 update: the same final copy, so the same (smaller) risk note. */
     fun nrfCopy(): Boolean = newImage != null && info?.platform == OtaProtocol.PLATFORM_NRF52 && !inPlace()
 
-    fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
+    fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.replace(',', '.').toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
 
     fun estimateMinutes(): Double? {
         val p = patch ?: return null
@@ -799,7 +829,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             done = false
             log.clear()
             OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
-            try {
+            val after = try {
                 session(r).run(old.data, new.data, p, inPlace())
             } catch (e: OtaFailed) {
                 resumable = e.resumable
@@ -813,8 +843,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             resumable = false
             done = true
-            info = runCatching { session(r).info() }.getOrNull() ?: info
-            message = str(R.string.msg_verified, info?.ident?.replace('|', ' ') ?: "")
+            info = after
+            oldImage = new
+            newImage = null
+            patch = null
+            message = str(R.string.msg_verified, after.ident.replace('|', ' '))
         }
     }
 
@@ -930,7 +963,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         flashImage = if (name.endsWith(".uf2", ignoreCase = true)) {
             // the USB drive's file: made into the Bluetooth DFU .zip here
             val zip = runCatching { withContext(Dispatchers.Default) { io.github.n3tk0.loraota.flash.Uf2.toDfuZip(data) } }
-                .getOrElse { throw Exception(str(R.string.err_flash_uf2, it.message ?: "")) }
+                .getOrElse {
+                    if (it is CancellationException) throw it
+                    throw Exception(str(R.string.err_flash_uf2, it.message ?: ""))
+                }
             FlashImage(name.dropLast(4) + ".zip", zip, null)
         } else FlashImage(name, data, null)
     }
@@ -1123,7 +1159,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retryQueue() {
-        queue?.retryFailed()
+        val q = queue ?: return
+        q.retryFailed()
+        queue = OtaQueueState(q.release, q.label, q.entries)
         saveQueue()
         runQueue()
     }
@@ -1192,7 +1230,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val sha = hex(i.imageSha)
             // not in the loaded lists: the older releases too (the find is kept for the next repeater)
             val running = allFirmware.firstOrNull { it.sha256 == sha } ?: run {
-                val older = runCatching { withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir) } }.getOrNull()
+                val older = runCatching { withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir) } }
+                    .also { it.exceptionOrNull()?.let { ex -> if (ex is CancellationException) throw ex } }
+                    .getOrNull()
                 (older as? Releases.SearchResult.Found)?.file?.also { addOlderFound(it) }
             } ?: return QueueResult.SKIPPED to str(R.string.q_unknown_firmware)
             val target = OtaQueueState.target(allFirmware, q.release, running)
@@ -1269,10 +1309,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         battGauge = false
         battChecked = false
         message = ""
-        val dev = deviceKey(kind)
         healthRecords = emptyList()
         step = Step.HEALTH
-        viewModelScope.launch { healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) } }
         refreshHealth()
     }
 
@@ -1284,6 +1322,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The self test (a repeater), then the battery's day and week (for 'drains faster than usual') and the series shown. */
     fun refreshHealth() = work {
         val kind = healthKind
+        val dev = deviceKey(kind)
+        healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) }
         val warnings = ArrayList<HealthWarning>()
         if (kind == DeviceKind.REPEATER) {
             val r = repeater ?: return@work
@@ -1305,7 +1345,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (t == null) {
                     selfTestMissing = true
                 } else {
-                    val dev = deviceKey(kind)
                     val before = healthRecords.lastOrNull()?.let { SelfTest.parse(it.line) }
                     healthRecords = withContext(Dispatchers.IO) {
                         healthStore.add(dev, line)
@@ -1444,17 +1483,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closeBackup() {
         restoreFrom = null
         importText = null
+        exportingBackup = null
+        exportPassword = ""
         step = backupReturn
     }
+
+    private var backupsJob: Job? = null
 
     /** This device's backups first, then those of others of its kind (e.g. for a board that replaces one). */
     private fun loadBackups() {
         val dev = backupDevice
         val kind = backupKind
-        viewModelScope.launch {
+        backupsJob?.cancel()
+        backupsJob = viewModelScope.launch {
             // the keys are decrypted as they are read: not on the main thread
             val all = withContext(Dispatchers.IO) { backupStore.all() }
-            backups = all.filter { it.kind == kind }.sortedBy { if (it.deviceKey == dev) 0 else 1 }
+            if (backupKind == kind) {
+                backups = all.filter { it.kind == kind }.sortedBy { if (it.deviceKey == dev) 0 else 1 }
+            }
         }
     }
 
@@ -1756,7 +1802,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val f = made.firstOrNull { it.hasLoraOta && it in newCandidates() } ?: return
             loraSource = Source.RELEASES
             pickRelease(f)
-        } else if (flashSource == Source.BUILD && (step == Step.FLASH || firmwareTab == 1)) {
+        } else if (flashSource == Source.BUILD && (step == Step.FLASH || (step == Step.UPDATE && firmwareTab == 1))) {
             val f = made.firstOrNull { it.hasDfu } ?: return
             flashSource = Source.RELEASES
             flashUpstream = false
@@ -1765,6 +1811,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        scanJob?.cancel()
+        runCatching {
+            (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        }
         OtaService.stop(ctx)
         link.close()
     }

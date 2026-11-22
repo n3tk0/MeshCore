@@ -52,15 +52,14 @@ fun BackupScreen(vm: AppViewModel) {
         RestoreView(vm, restoring)
         return
     }
-    var exporting by remember { mutableStateOf<Backup?>(null) }
-    var exportPassword by remember { mutableStateOf("") }
     var askPassword by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<Backup?>(null) }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        val b = exporting
-        if (uri != null && b != null) vm.exportBackup(b, uri, exportPassword)
-        exporting = null
-        exportPassword = ""
+        val b = vm.exportingBackup
+        val pw = vm.exportPassword
+        vm.exportingBackup = null
+        vm.exportPassword = ""
+        if (uri != null && b != null) vm.exportBackup(b, uri, pw)
     }
     val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.pickImport(uri)
@@ -87,8 +86,8 @@ fun BackupScreen(vm: AppViewModel) {
     Text(stringResource(R.string.backup_this_device), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
     if (mine.isEmpty()) Text(stringResource(R.string.backup_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
     fun export(b: Backup) {
-        exporting = b
-        exportPassword = ""
+        vm.exportingBackup = b
+        vm.exportPassword = ""
         // the password first (none: the file has no secrets), then where the file goes
         askPassword = true
     }
@@ -115,19 +114,19 @@ fun BackupScreen(vm: AppViewModel) {
         }
     }
 
-    exporting?.takeIf { askPassword }?.let { b ->
+    vm.exportingBackup?.takeIf { askPassword }?.let { b ->
         run {
             AlertDialog(
-                onDismissRequest = { exporting = null; askPassword = false },
+                onDismissRequest = { vm.exportingBackup = null; vm.exportPassword = ""; askPassword = false },
                 title = { Text(stringResource(R.string.export_title)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(stringResource(R.string.export_text))
-                        PasswordField(exportPassword, { exportPassword = it }, stringResource(R.string.export_password))
+                        PasswordField(vm.exportPassword, { vm.exportPassword = it }, stringResource(R.string.export_password))
                     }
                 },
                 confirmButton = { TextButton(onClick = { askPassword = false; save.launch(fileName(b)) }) { Text(stringResource(R.string.export_save)) } },
-                dismissButton = { TextButton(onClick = { exporting = null; askPassword = false }) { Text(stringResource(R.string.cancel)) } },
+                dismissButton = { TextButton(onClick = { vm.exportingBackup = null; vm.exportPassword = ""; askPassword = false }) { Text(stringResource(R.string.cancel)) } },
             )
         }
     }

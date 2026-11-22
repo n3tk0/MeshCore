@@ -46,6 +46,8 @@ class TokenStore(ctx: Context) {
             val c = Cipher.getInstance(TRANSFORM)
             c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV))
             String(c.doFinal(bytes, IV, bytes.size - IV))
+        }.onFailure {
+            prefs.edit().remove(KEY).apply()
         }.getOrNull()
     }
 

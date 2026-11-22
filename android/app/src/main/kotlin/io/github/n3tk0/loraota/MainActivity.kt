@@ -27,8 +27,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        permissions.launch(
-            if (Build.VERSION.SDK_INT >= 33) {
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (savedInstanceState == null) {
+            val wanted = if (Build.VERSION.SDK_INT >= 33) {
                 // notifications: the update's progress while the app is not on screen
                 arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.POST_NOTIFICATIONS)
             } else if (Build.VERSION.SDK_INT >= 31) {
@@ -36,7 +37,10 @@ class MainActivity : ComponentActivity() {
             } else {
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
             }
-        )
+            if (wanted.any { androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+                permissions.launch(wanted)
+            }
+        }
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors) {
                 AppScreen(vm) { lang ->

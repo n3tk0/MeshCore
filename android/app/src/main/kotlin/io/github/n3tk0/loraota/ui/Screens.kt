@@ -677,7 +677,12 @@ private fun BuildPanel(vm: AppViewModel) {
     vm.buildJob?.let { BuildCard(vm) }
     LaunchedEffect(vm.buildRole, vm.repeater, vm.oldImage, vm.companionModel) { vm.loadBuildForm() }
     if (vm.buildInputs.isEmpty()) {
-        if (!vm.busy) OutlinedButton(onClick = { vm.reloadBuildForm() }) { Text(stringResource(R.string.build_reload)) }
+        if (!vm.busy) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.reloadBuildForm() }) { Text(stringResource(R.string.build_reload)) }
+                if (!vm.groupToken) TextButton(onClick = { vm.forgetToken() }) { Text(stringResource(R.string.build_token_forget)) }
+            }
+        }
         return
     }
     var picking by remember { mutableStateOf(false) }

@@ -32,13 +32,16 @@ class OtaService : Service() {
         try {
             ServiceCompat.startForeground(this, ID, n,
                 if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0)
+            fgStarted = true
         } catch (e: Exception) {
             // Android refused the foreground (app went to the background in between, Bluetooth permission
             // lost): the update goes on without the notification rather than the app crashing mid-update
+            fgStarted = false
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action == ACTION_STOP) {
+        if (intent?.action == ACTION_STOP || !active) {
+            fgStarted = false
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -52,6 +55,7 @@ class OtaService : Service() {
     }
 
     override fun onDestroy() {
+        fgStarted = false
         wake?.let { if (it.isHeld) it.release() }
         wake = null
     }
@@ -64,6 +68,7 @@ class OtaService : Service() {
         private const val ACTION_STOP = "stop"
         private const val MAX_HOLD_MS = 12 * 3600_000L   // a big update with waits for time on air
         private var active = false   // no progress after stop: it would leave a notification behind
+        private var fgStarted = false
 
         private fun channel(ctx: Context) {
             if (Build.VERSION.SDK_INT < 26) return   // Android 7: no channels, the notification carries its own settings
@@ -97,13 +102,16 @@ class OtaService : Service() {
             runCatching {
                 ContextCompat.startForegroundService(ctx,
                     Intent(ctx, OtaService::class.java).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text))
+            }.onFailure {
+                active = false
+                fgStarted = false
             }
         }
 
         /** Without the notifications permission the update still goes on, only with no notification. */
         @SuppressLint("MissingPermission")
         fun update(ctx: Context, title: String, text: String, sent: Int, total: Int) {
-            if (!active) return
+            if (!active || !fgStarted) return
             runCatching {
                 ctx.getSystemService(NotificationManager::class.java).notify(ID, notification(ctx, title, text, sent, total))
             }
@@ -111,8 +119,10 @@ class OtaService : Service() {
 
         /** Through the service itself: it may not have called startForeground yet. */
         fun stop(ctx: Context) {
-            if (!active) return
+            if (!active && !fgStarted) return
             active = false
+            fgStarted = false
+            runCatching { ctx.getSystemService(NotificationManager::class.java)?.cancel(ID) }
             runCatching { ctx.startService(Intent(ctx, OtaService::class.java).setAction(ACTION_STOP)) }
                 .onFailure { ctx.stopService(Intent(ctx, OtaService::class.java)) }
         }

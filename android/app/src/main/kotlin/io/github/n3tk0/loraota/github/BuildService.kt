@@ -61,6 +61,11 @@ class BuildService : Service() {
         runCatching { getSystemService(NotificationManager::class.java).notify(ID, notification(this, j)) }
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+    }
+
     override fun onDestroy() {
         scope?.cancel()
         scope = null

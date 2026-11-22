@@ -127,6 +127,7 @@ object OtaProtocol {
 
     fun parseInfo(r: Reply): Info {
         val b = r.data
+        if (b.remaining() < 47) throw OtaFailed(statusRes(r.status))
         val platform = b.get().toInt() and 0xff
         val state = b.get().toInt() and 0xff
         val flags = b.get().toInt() and 0xff
@@ -158,11 +159,15 @@ data class SideRadio(val freqKhz: Int, val bwHz: Int, val sf: Int, val cr: Int) 
 
     /** Seconds on air for a LoRa packet of [bytes] (explicit header, CRC, MeshCore's preamble). */
     fun airtime(bytes: Int): Double {
+        if (bwHz <= 0 || sf !in 5..12 || cr !in 5..8 || bytes < 0) return 0.0
         val tsym = 2.0.pow(sf) / bwHz
         val de = if (tsym > 0.016) 1 else 0
+        val lowSf = sf <= 6
         val preamble = if (sf <= 8) 32 else 16   // RadioLibWrapper::preambleLengthForSF
-        val payload = 8 + maxOf(ceil((8.0 * bytes - 4 * sf + 28 + 16) / (4.0 * (sf - 2 * de))).toInt() * cr, 0)
-        return (preamble + 4.25) * tsym + payload * tsym
+        val headerOffset = if (lowSf) 20 else 28
+        val preambleOverhead = if (lowSf) 6.25 else 4.25
+        val payload = 8 + maxOf(ceil((8.0 * bytes - 4 * sf + headerOffset + 16) / (4.0 * (sf - 2 * de))).toInt() * cr, 0)
+        return (preamble + preambleOverhead) * tsym + payload * tsym
     }
 
     companion object {

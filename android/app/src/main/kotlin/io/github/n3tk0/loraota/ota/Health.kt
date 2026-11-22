@@ -216,11 +216,13 @@ class HealthStore(dir: File) {
 
     private fun readAll(): JSONObject = runCatching { JSONObject(file.readText()) }.getOrDefault(JSONObject())
 
+    @Synchronized
     fun records(device: String): List<Record> {
         val a = readAll().optJSONArray(device) ?: return emptyList()
         return (0 until a.length()).map { val o = a.getJSONObject(it); Record(o.getLong("t"), o.getString("l")) }
     }
 
+    @Synchronized
     fun add(device: String, line: String, time: Long = System.currentTimeMillis()) {
         val all = readAll()
         val a = all.optJSONArray(device) ?: JSONArray()
@@ -228,7 +230,20 @@ class HealthStore(dir: File) {
         val keep = JSONArray()
         for (i in maxOf(0, a.length() - MAX) until a.length()) keep.put(a.get(i))
         all.put(device, keep)
-        file.writeText(all.toString())
+        val dir = file.absoluteFile.parentFile ?: File(".")
+        dir.mkdirs()
+        val tmp = File(dir, "${file.name}.tmp")
+        val text = all.toString()
+        try {
+            tmp.writeText(text)
+            if (!tmp.renameTo(file)) {
+                tmp.delete()
+                file.writeText(text)
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
     }
 
     companion object {

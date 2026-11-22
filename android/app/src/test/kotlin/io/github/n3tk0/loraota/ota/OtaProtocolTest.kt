@@ -42,6 +42,18 @@ class OtaProtocolTest {
         // SF7 / 125 kHz, 150 bytes, 32 symbol preamble: about 0.3 s
         val t = SideRadio.DEFAULT.airtime(150)
         assertTrue(t in 0.2..0.35, "airtime $t")
+        // SF5 / SF6 use the SX126x low-SF formula; invalid parameters return 0.0
+        assertTrue(SideRadio(869470, 125000, 5, 5).airtime(150) > 0.0)
+        assertTrue(SideRadio(869470, 125000, 6, 5).airtime(150) > 0.0)
+        assertEquals(0.0, SideRadio(869470, 0, 7, 5).airtime(150))
+        assertEquals(0.0, SideRadio(869470, 125000, 4, 5).airtime(150))
+        assertEquals(0.0, SideRadio(869470, 125000, 7, 9).airtime(150))
+    }
+
+    @Test
+    fun shortInfoThrowsOtaFailed() {
+        val short = OtaProtocol.parse(byteArrayOf(OtaProtocol.OP_INFO.toByte(), 0, 1, 0))!!
+        kotlin.test.assertFailsWith<OtaFailed> { OtaProtocol.parseInfo(short) }
     }
 
     @Test

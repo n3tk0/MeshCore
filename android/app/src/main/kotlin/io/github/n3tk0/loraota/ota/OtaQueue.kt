@@ -57,8 +57,10 @@ class OtaQueueState(val release: String, val label: String, val entries: List<Qu
         fun releases(files: List<FirmwareFile>): List<Pair<String, String>> =
             files.filter { it.hasLoraOta }.distinctBy { it.release }.map { it.release to it.rowLabel() }
 
-        /** The release's file for the board [running] is: the same env. */
-        fun target(files: List<FirmwareFile>, release: String, running: FirmwareFile): FirmwareFile? =
-            files.firstOrNull { it.release == release && it.env == running.env && it.hasLoraOta }
+        /** The release's file for the board [running] is: the same env, matching lite variant if available. */
+        fun target(files: List<FirmwareFile>, release: String, running: FirmwareFile): FirmwareFile? {
+            val matches = files.filter { it.release == release && it.env == running.env && it.hasLoraOta }
+            return matches.firstOrNull { it.isLite == running.isLite } ?: matches.firstOrNull()
+        }
     }
 }

@@ -76,4 +76,18 @@ class PickedImageTest {
         assertContentEquals(bin, PickedImage.app(zip("x-merged.bin" to ByteArray(9), "x.bin" to bin)))
         assertFailsWith<IllegalArgumentException> { PickedImage.app(zip("x-merged.bin" to ByteArray(9))) }
     }
+
+    @Test
+    fun zipIgnoresMacOsForksAndNormalizesBackslashes() {
+        val m = """{"manifest":{"application":{"bin_file":"dir\\app.bin"}}}""".toByteArray()
+        val z = zip(
+            "__MACOSX/._app.bin" to ByteArray(10),
+            "._other.bin" to ByteArray(10),
+            "sub\\app.bin" to bin,
+            "manifest.json" to m,
+        )
+        assertContentEquals(bin, PickedImage.app(z))
+        val zNoManifest = zip("__MACOSX/._fw.bin" to ByteArray(10), "._fw.bin" to ByteArray(10), "sub\\fw.bin" to bin)
+        assertContentEquals(bin, PickedImage.app(zNoManifest))
+    }
 }
