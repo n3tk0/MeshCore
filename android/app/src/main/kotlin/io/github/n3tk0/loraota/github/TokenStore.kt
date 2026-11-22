@@ -47,7 +47,13 @@ class TokenStore(ctx: Context) {
             c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV))
             String(c.doFinal(bytes, IV, bytes.size - IV))
         }.onFailure {
-            prefs.edit().remove(KEY).apply()
+            // only a key that is surely gone or another one (lock screen reset, app data restored):
+            // a passing Keystore error must not take the user's token
+            if (it is android.security.keystore.KeyPermanentlyInvalidatedException ||
+                it is javax.crypto.AEADBadTagException || it is java.security.UnrecoverableKeyException ||
+                it is IllegalArgumentException) {
+                prefs.edit().remove(KEY).apply()
+            }
         }.getOrNull()
     }
 

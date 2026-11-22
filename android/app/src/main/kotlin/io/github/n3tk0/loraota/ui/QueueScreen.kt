@@ -70,9 +70,6 @@ private fun QueuePick(vm: AppViewModel) {
     }
     ReleasesErrorCard(vm)
     val rels = vm.queueReleases()
-    androidx.compose.runtime.LaunchedEffect(rels) {
-        if (vm.queueRelease == null && rels.isNotEmpty()) vm.queueRelease = rels.first().first
-    }
     if (rels.isEmpty()) Text(stringResource(R.string.q_no_releases), style = MaterialTheme.typography.bodyMedium)
     for ((rel, label) in rels.take(8)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier

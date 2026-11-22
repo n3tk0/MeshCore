@@ -41,7 +41,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
-            val keepOn = vm.running || (vm.busy && vm.queueCurrent != null)
+            // the screen stays on only while an update, a flash, a build or a queue runs
+            val keepOn = vm.keepScreenOn || (vm.busy && vm.queueCurrent != null)
             androidx.compose.runtime.DisposableEffect(keepOn) {
                 if (keepOn) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

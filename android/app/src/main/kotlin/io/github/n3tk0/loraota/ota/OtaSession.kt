@@ -38,6 +38,7 @@ class OtaSession(
         const val MIN_LEASE_MINS = 2                  // renewed with every window; back by itself if the app is gone
         const val PAUSE_AFTER_MS = 45_000L            // a longer wait for time on air goes back to the normal channel
         const val KEEP_PAUSED_EVERY_MS = 15 * 60_000L // the repeater keeps a paused update 30 min from the last request
+        const val STALL_MS = 10 * 60_000L             // sending this long with no packet getting there: stop (resumable)
         const val PACKET_GAP = 2.0                    // the companion waits as long as a packet took (airtime factor 1)
     }
 
@@ -125,7 +126,7 @@ class OtaSession(
         try {
             var st = start(begin)
             var next = st.nextSeq
-            var stalled = 0
+            var stalledMs = 0L   // time spent sending with no progress (waits for time on air not counted)
             progress(next, total)
             while (next < total) {
                 val all = (next until minOf(total, next + WINDOW)).map { seq -> patch.copyOfRange(seq * CHUNK, minOf(patch.size, (seq + 1) * CHUNK)) }
@@ -140,8 +141,8 @@ class OtaSession(
                 if (wait > PAUSE_AFTER_MS) {
                     pauseFor(wait)
                     st = start(begin)
+                    if (st.nextSeq > next) stalledMs = 0
                     next = st.nextSeq
-                    stalled = 0
                     continue
                 }
                 if (wait > 0) {
@@ -149,6 +150,7 @@ class OtaSession(
                     delay(wait)
                 }
                 phase(Phase.SEND, 0)
+                val windowStart = System.currentTimeMillis()
                 sideLease()
                 packets.forEachIndexed { i, bytes ->
                     val t = radio.airtime(requestPacketSize(4 + bytes.size))
@@ -159,9 +161,10 @@ class OtaSession(
                 st = status() ?: lost()
                 if (st.state != OtaProtocol.STATE_RECEIVING) throw OtaFailed(R.string.err_dropped)
                 if (st.nextSeq <= next) {
-                    if (++stalled >= 5) throw OtaFailed(R.string.err_lost, resumable = true)
+                    stalledMs += System.currentTimeMillis() - windowStart
+                    if (stalledMs >= STALL_MS) throw OtaFailed(R.string.err_no_progress, resumable = true)
                 } else {
-                    stalled = 0
+                    stalledMs = 0
                 }
                 if (st.nextSeq < next + packets.size) log("resending from ${st.nextSeq}")
                 next = st.nextSeq

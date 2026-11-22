@@ -209,6 +209,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashImage by mutableStateOf<FlashImage?>(null)
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
+
+    /** A LoRa update, a flash or a build running: the screen stays on (MainActivity). */
+    val keepScreenOn get() = phase != null || flashPercent >= 0 || buildJob?.finished == false
     var flashDone by mutableStateOf(false)
     /** The DFU library's steps of the last Bluetooth flash, seconds from its start first: kept after a failure. */
     var flashLog by mutableStateOf<List<String>>(emptyList())
@@ -247,19 +250,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
-                    job?.cancel()
+                    val wasUpdating = phase != null
+                    val wasFlashingRepeater = flashPercent >= 0
+                    // a repeater's Bluetooth / Wi-Fi flash does not need the companion: let it finish on screen first;
+                    // a LoRa update (even while sleeping in WAIT_AIR / PAUSE / RESTART) or other work is cancelled now
+                    // (the link is already gone so no ABORT is sent, and resumable is kept below)
+                    if (wasFlashingRepeater) job?.join() else job?.cancelAndJoin()
+                    if (wasUpdating) resumable = true
                     patchJob?.cancel()
                     calculatingPatch = false
-                    OtaService.stop(ctx)
-                    phase = null
-                    flashPercent = -1
                     confirmUpdate = false
                     flashPlan = null
                     queueAsk = false
                     loginSheet = null
-                    busy = false
-                    working = ""
-                    message = str(R.string.msg_disconnected)
+                    val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
+                    message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
                     messageIsError = true
                     step = Step.COMPANION
                 }
@@ -460,6 +465,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned ?: contact
+        loadBatteryChem(repeater)
         info = null
         status = null
         sensorBattery = null
@@ -790,16 +796,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
                 if (oldImage === old && newImage === new) patch = p
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
+            } catch (_: OutOfMemoryError) {
+                // a small phone (Android 7, 2-3 GB): no preview; 'Update' tries again and says why
             } finally {
                 if (oldImage === old && newImage === new) calculatingPatch = false
             }
         }
     }
 
-    fun applySidePreset(sfVal: String, bwVal: String) {
-        sf = sfVal
-        bwKhz = bwVal
+    /** A side channel preset; [freq] when the width needs its own centre to stay in 869.4-869.65 MHz. */
+    data class SidePreset(val sf: String, val bw: String, val freq: String?, val label: Int)
+
+    fun applySidePreset(p: SidePreset) {
+        sf = p.sf
+        bwKhz = p.bw
+        if (p.freq != null) freqMhz = p.freq
     }
 
     fun pickRelease(f: FirmwareFile) = work {
@@ -1195,9 +1209,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = ""
         step = Step.QUEUE
         refreshOursIfStale()
-        if (queueRelease == null) {
-            queueRelease = queueReleases().firstOrNull()?.first
-        }
     }
 
     fun closeQueue() {
@@ -1881,6 +1892,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             flashUpstream = false
             if (f in flashCandidates()) pickFlashRelease(f)
         }
+    }
+
+    companion object {
+        // 250 kHz fits the 869.4-869.65 MHz sub-band (10 % duty) only centred on 869.525
+        val SIDE_PRESETS = listOf(
+            SidePreset("7", "250", "869.525", R.string.preset_fast),
+            SidePreset("7", "125", null, R.string.preset_default),
+            SidePreset("9", "125", null, R.string.preset_long),
+        )
+    }
+
+    // ---- the repeater's battery chemistry, for the status card's bar (kept per repeater) ----
+    private val chemPrefs get() = ctx.getSharedPreferences("battery_chem", Context.MODE_PRIVATE)
+    var batteryChem by mutableStateOf(BatteryChem.LI_ION)
+        private set
+
+    fun loadBatteryChem(r: Contact?) {
+        batteryChem = r?.let { BatteryChem.byName(chemPrefs.getString(hex(it.publicKey), null)) } ?: BatteryChem.LI_ION
+    }
+
+    fun chooseBatteryChem(c: BatteryChem) {
+        batteryChem = c
+        repeater?.let { chemPrefs.edit().putString(hex(it.publicKey), c.name).apply() }
     }
 
     override fun onCleared() {
