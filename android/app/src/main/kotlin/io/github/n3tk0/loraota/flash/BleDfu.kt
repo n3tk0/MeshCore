@@ -2,6 +2,7 @@ package io.github.n3tk0.loraota.flash
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
@@ -27,12 +28,24 @@ import java.io.File
 class DfuService : DfuBaseService() {
     override fun getNotificationTarget(): Class<out Activity> = MainActivity::class.java
     override fun isDebug() = false
+
+    /**
+     * Always clear Android's GATT cache, bonded or not. The library skips it for a bonded device and relies on
+     * the Service Changed indication; a companion (PIN bond) whose bootloader comes back on the same address
+     * then gets the application's cached handles: the first write to the bootloader's DFU characteristics
+     * fails with GATT INVALID HANDLE (seen on the Wio Tracker L1). A fresh discovery costs a second.
+     */
+    override fun refreshDeviceCache(gatt: BluetoothGatt, force: Boolean) = super.refreshDeviceCache(gatt, true)
 }
+
+/** Clears Android's cached services of [gatt]'s device (hidden API, as the DFU library does). */
+fun refreshGattCache(gatt: BluetoothGatt): Boolean =
+    runCatching { gatt.javaClass.getMethod("refresh").invoke(gatt) as Boolean }.getOrDefault(false)
 
 /** A device seen advertising its DFU mode: after `start ota` a MeshCore nRF52 node is "<BOARD>_OTA". */
 class DfuDevice(val address: String, val name: String, val rssi: Int)
 
-class FlashFailed(msg: String) : Exception(msg)
+open class FlashFailed(msg: String) : Exception(msg)
 
 @SuppressLint("MissingPermission")
 object BleDfu {
@@ -67,6 +80,21 @@ object BleDfu {
      */
     suspend fun flash(ctx: Context, address: String, name: String, zip: File, bonded: Boolean, log: (String) -> Unit,
               progress: (Int) -> Unit) {
+        try {
+            flashOnce(ctx, address, name, zip, bonded, log, progress)
+        } catch (e: GattFailed) {
+            // a GATT error (e.g. INVALID HANDLE from stale cached services): the cache is cleared by now and the
+            // device is in its bootloader or still in the application, both reached on the same address
+            log("[app] ${e.message}: retrying once with fresh services")
+            delay(2000)
+            flashOnce(ctx, address, name, zip, bonded, log, progress)
+        }
+    }
+
+    private class GattFailed(msg: String) : FlashFailed(msg)
+
+    private suspend fun flashOnce(ctx: Context, address: String, name: String, zip: File, bonded: Boolean,
+                                  log: (String) -> Unit, progress: (Int) -> Unit) {
         // the forced scan for the bootloader's address + 1 needs Location on Android 7-11 as well
         if (scanNeedsLocationPermission(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_no_location_permission))
         if (scanNeedsLocation(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_location_off))
@@ -77,7 +105,9 @@ object BleDfu {
             override fun onDfuCompleted(deviceAddress: String) { done.complete(Unit) }
             override fun onDfuAborted(deviceAddress: String) { done.completeExceptionally(FlashFailed("aborted")) }
             override fun onError(deviceAddress: String, error: Int, errorType: Int, message: String?) {
-                done.completeExceptionally(FlashFailed(message ?: "DFU error $error"))
+                val msg = message ?: "DFU error $error"
+                done.completeExceptionally(
+                    if (errorType == DfuBaseService.ERROR_TYPE_COMMUNICATION) GattFailed(msg) else FlashFailed(msg))
             }
         }
         val logs = DfuLogListener { _, _, message -> log(message) }

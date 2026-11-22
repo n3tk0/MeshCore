@@ -129,9 +129,11 @@ class CompanionLink(private val context: Context) {
         if (!ok || withTimeoutOrNull(10_000) { done.await() } != true) throw IllegalStateException("Bluetooth write failed")
     }
 
-    fun close() {
+    /** [refreshCache]: also drop Android's cached services (before a firmware update changes them). */
+    fun close(refreshCache: Boolean = false) {
         val g = gatt
         gatt = null
+        if (refreshCache && g != null) io.github.n3tk0.loraota.flash.refreshGattCache(g)
         g?.disconnect()
         g?.close()
     }
