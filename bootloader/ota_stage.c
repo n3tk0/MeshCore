@@ -56,9 +56,12 @@ static void no_crc_check(void) {
   if ((SETTINGS_WORD0 & 0xFFFF0000u) != 0) flash_word(&SETTINGS_WORD0, SETTINGS_WORD0 & 0x0000FFFFu);
 }
 
-// half an app: the stock code then stays in DFU (BLE OTA) until a normal update
+// half an app: the stock code then stays in DFU (BLE OTA) until a normal update.
+// Known limit: after no_crc_check() this is the 3rd write of the word since the erase (nWRITE is 2).
+// It only happens when a copy went wrong half way, and it only turns more bits to 0 (the word ends 0),
+// so it is left as it is rather than make that rare path more complex.
 static void no_valid_app(void) {
-  flash_word(&SETTINGS_WORD0, SETTINGS_WORD0 & 0xFFFF0000u);
+  if ((SETTINGS_WORD0 & 0x0000FFFFu) != 0) flash_word(&SETTINGS_WORD0, SETTINGS_WORD0 & 0xFFFF0000u);
 }
 
 /*------------------------------------------------------------------*/
@@ -140,6 +143,7 @@ static bool qspi_begin(void) {
   NRF_QSPI->TASKS_ACTIVATE = 1;
   if (qspi_wait()) {
     for (uint32_t n = 0; n < 1000000u; n++) {                  // a write may still be going on
+      if ((n & 0xFFFu) == 0) wdt_feed();
       if (!qspi_cmd(0x05, 2)) break;                           // read status
       if ((NRF_QSPI->CINSTRDAT0 & 1u) == 0) {
         qspi_on = true;
@@ -148,12 +152,15 @@ static bool qspi_begin(void) {
     }
   }
   NRF_QSPI->TASKS_DEACTIVATE = 1;
+  *(volatile uint32_t*) 0x40029010ul = 1;   // anomaly 122: QSPI keeps drawing current otherwise
+  *(volatile uint32_t*) 0x40029054ul = 1;
   NRF_QSPI->ENABLE = 0;
   return false;
 }
 
 static void qspi_end(void) {
   if (!qspi_on) return;
+  qspi_cmd(0xB9, 1);                        // deep power down: under 1 uA instead of ~15 uA standby
   NRF_QSPI->TASKS_DEACTIVATE = 1;
   *(volatile uint32_t*) 0x40029010ul = 1;   // anomaly 122: QSPI keeps drawing current otherwise
   *(volatile uint32_t*) 0x40029054ul = 1;
@@ -176,12 +183,14 @@ static bool qspi_read(uint32_t addr, uint32_t len) {
 static bool src_read(uint32_t flags, uint32_t addr, uint32_t len) {
   if (flags & OTA_STAGE_SRC_QSPI) {
 #ifdef OTA_STAGE_QSPI_SCK
+    if ((addr & 3u) != 0 || len > OTA_STAGE_QSPI_SIZE || addr > OTA_STAGE_QSPI_SIZE - len) return false;
     return qspi_begin() && qspi_read(addr, len);
 #else
     return false;
 #endif
   }
-  if (addr < DFU_BANK_0_REGION_START || addr + len > BOOTLOADER_REGION_START) return false;
+  if ((addr & 3u) != 0 || addr < DFU_BANK_0_REGION_START || addr >= BOOTLOADER_REGION_START
+      || len > BOOTLOADER_REGION_START - addr) return false;
   for (uint32_t w = 0; w < len / 4; w++) buf[w] = ((const uint32_t*)(uintptr_t) addr)[w];
   return true;
 }
@@ -227,7 +236,7 @@ static bool copy(uint32_t flags, uint32_t src, uint32_t size) {
 }
 
 static bool fits(uint32_t size) {
-  return size > 0 && DFU_BANK_0_REGION_START + size <= BOOTLOADER_REGION_START;
+  return size > 0 && size <= BOOTLOADER_REGION_START - DFU_BANK_0_REGION_START;
 }
 
 // the old image back from the QSPI flash (only with OTA_STAGE_BACKUP)
@@ -250,9 +259,20 @@ static void roll_back(const ota_stage_t* r) {
   mark(&r->failed);
 }
 
+static void mark_boot(const ota_stage_t* r, uint32_t used) {
+  if (used == 0) mark(&r->boots);
+  else if (used - 1 < OTA_STAGE_TRIAL_BOOTS - 1) mark(&r->boots_extra[used - 1]);
+}
+
 static void install(const ota_stage_t* r) {
   bool backup = (r->flags & OTA_STAGE_BACKUP) != 0;
-  if (!fits(r->size) || !src_crc(r->flags, r->src, r->size, r->crc)) {
+  bool qspi_src = (r->flags & OTA_STAGE_SRC_QSPI) != 0;
+  bool ok = fits(r->size);
+  if (ok && !qspi_src) {
+    uint32_t dst_end = DFU_BANK_0_REGION_START + ((r->size + PAGE - 1) & ~(PAGE - 1));
+    if (r->src < dst_end) ok = false;
+  }
+  if (!ok || !src_crc(r->flags, r->src, r->size, r->crc)) {
     if (r->started != OTA_STAGE_SET) {
       mark(&r->failed);   // nothing done: the old app runs on
     } else if (backup) {
@@ -268,6 +288,7 @@ static void install(const ota_stage_t* r) {
   for (int tries = 0; tries < 2; tries++) {
     if (copy(r->flags, r->src, r->size) && app_crc(r->size, r->crc)) {
       mark(&r->installed);
+      if (backup) mark_boot(r, ota_stage_boots_used(r));   // counts the first trial start
       return;
     }
   }
@@ -296,11 +317,13 @@ void ota_stage_run(void) {
   } else if (ota_stage_on_trial(r)) {
     if (!app_crc(r->size, r->crc)) {
       mark(&r->failed);   // the app was changed some other way (e.g. by SWD): no more trial
-    } else if (ota_stage_boots_used(r) >= OTA_STAGE_TRIAL_BOOTS) {
-      roll_back(r);
     } else {
       uint32_t used = ota_stage_boots_used(r);
-      flash_word((volatile uint32_t*) &r->boots, r->boots & ~(1u << used));
+      if (used >= OTA_STAGE_TRIAL_BOOTS) {
+        roll_back(r);
+      } else {
+        mark_boot(r, used);
+      }
     }
   }
 #ifdef OTA_STAGE_QSPI_SCK
