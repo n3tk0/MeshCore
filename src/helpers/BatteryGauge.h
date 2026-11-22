@@ -95,7 +95,10 @@ public:
 
     if (_have_last) {
       uint32_t dt = now_ms - _last_ms;
-      if (dt > 0 && dt <= GAUGE_MAX_GAP_MS) {
+      if (dt > GAUGE_MAX_GAP_MS) {
+        _since_full_valid = false;
+        _full_for_ms = 0;
+      } else if (dt > 0) {
         float mah = discharge_ma * (float)dt / 3600000.0f;
         if (mah > 0) _out_today += mah; else _in_today -= mah;
         if (_charge >= 0) {
@@ -123,9 +126,9 @@ public:
           _full_for_ms = 0;
         }
 
-        // empty after a full charge: what came out is the capacity
+        // empty after a full charge: what came out is the capacity (unless set by hand)
         if (mv <= gaugeEmptyMv() && discharge_ma > 0 && _since_full_valid) {
-          if (_since_full > 100 && _since_full < 60000) {
+          if ((_capacity == 0 || _learnt) && _since_full > 100 && _since_full < 60000) {
             uint16_t cap = (uint16_t)(_since_full + 0.5f);
             if (cap != _capacity || !_learnt) _capacity_changed = true;
             _capacity = cap;

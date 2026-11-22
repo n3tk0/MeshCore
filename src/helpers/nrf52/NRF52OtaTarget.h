@@ -414,9 +414,9 @@ public:
   }
 
   bool beginNew(uint32_t size) override {
-    confirm();   // the next image takes the place of the way back
     stopInPlace();
     if (size > maxNewSize()) return false;
+    confirm();   // the next image takes the place of the way back
     _new_size = size;
     _stage = stagingFor(size);
     _pos = 0;
@@ -427,7 +427,6 @@ public:
   }
 
   bool beginInPlace(uint32_t size, uint32_t patch_size) override {
-    confirm();
     stopInPlace();
     if (onQspi() || size > maxInPlaceSize()) return false;
     uint32_t tail = staging() + pageUp(patch_size);
@@ -440,6 +439,7 @@ public:
     free(trial);
     _patch_page = (uint8_t*) malloc(NRF52_OTA_PAGE);
     if (_patch_page == NULL) return false;
+    confirm();
     _new_size = size;
     _pos = 0;
     _head = head;

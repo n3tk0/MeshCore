@@ -262,14 +262,14 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       uint8_t pubkey[PUB_KEY_SIZE];
       int hex_len = min((int)strlen(hex), PUB_KEY_SIZE*2);
       int pubkey_len = hex_len / 2;
-      if (mesh::Utils::fromHex(pubkey, pubkey_len, hex)) {
+      if (pubkey_len > 0 && mesh::Utils::fromHex(pubkey, pubkey_len, hex)) {
         _callbacks->removeNeighbor(pubkey, pubkey_len);
         strcpy(reply, "OK");
       } else {
         strcpy(reply, "ERR: bad pubkey");
       }
     } else if (memcmp(command, "tempradio ", 10) == 0) {
-      strcpy(tmp, &command[10]);
+      StrHelper::strncpy(tmp, &command[10], sizeof(tmp));
       const char *parts[5];
       int num = mesh::Utils::parseTextParts(tmp, parts, 5);
       float freq  = num > 0 ? strtof(parts[0], nullptr) : 0.0f;
@@ -304,7 +304,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
     } else if (memcmp(command, "board", 5) == 0) {
       sprintf(reply, "%s", _board->getManufacturerName());
     } else if (strcmp(command, "i2c") == 0) {
-      i2cFormatList(reply, 160);  // what was found, and what was turned off and why
+      i2cFormatList(reply, 155);  // what was found, and what was turned off and why
     } else if (strcmp(command, "power") == 0) {
       const char* usb_state = _board->hasUsbPowerDetect()
                                   ? (_board->isUsbPowered() ? "yes" : "no")
@@ -314,11 +314,13 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
                                     : "n/a";
       uint16_t batt_mv = _sensors->getBatteryMilliVolts();  // an INA219 read: once
       if (batt_mv == 0) batt_mv = _board->getBattMilliVolts();
-      snprintf(reply, 160, "batt:%u mV usb:%s solar_chg:%s ext:%s charger:%s",
+      int ext = _sensors->externalPower();
+      bool is_ext = ext >= 0 ? ext > 0 : _board->isExternalPowered();
+      snprintf(reply, 155, "batt:%u mV usb:%s solar_chg:%s ext:%s charger:%s",
               (unsigned)batt_mv,
               usb_state,
               solar_state,
-              _board->isExternalPowered() ? "yes" : "no",
+              is_ext ? "yes" : "no",
               _board->isChargerActive() ? "yes" : "no");
     } else if (memcmp(command, "sensor get ", 11) == 0) {
       const char* key = command + 11;
@@ -329,7 +331,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
         strcpy(reply, "null");
       }
     } else if (memcmp(command, "sensor set ", 11) == 0) {
-      strcpy(tmp, &command[11]);
+      StrHelper::strncpy(tmp, &command[11], sizeof(tmp));
       const char *parts[2];
       int num = mesh::Utils::parseTextParts(tmp, parts, 2, ' ');
       const char *key = (num > 0) ? parts[0] : "";
@@ -396,11 +398,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       if (l != NULL) {
         const char* setting = _sensors->getSettingByKey("gps");
         bool requested = setting != NULL && strcmp(setting, "1") == 0;
-        int prefix_len = snprintf(reply, 160, "req:%u ", requested ? 1U : 0U);
-        if (prefix_len < 0 || prefix_len >= 160) {
-          reply[159] = 0;
+        int prefix_len = snprintf(reply, 155, "req:%u ", requested ? 1U : 0U);
+        if (prefix_len < 0 || prefix_len >= 155) {
+          reply[154] = 0;
         } else {
-          l->formatDiagnostics(reply + prefix_len, 160 - prefix_len);
+          l->formatDiagnostics(reply + prefix_len, 155 - prefix_len);
         }
       } else {
         strcpy(reply, "gps provider not found");
@@ -446,7 +448,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
         bool enabled = l->isEnabled(); // is EN pin on ?
         bool fix = l->isValid();       // has fix ?
         int sats = l->satellitesCount();
-        bool active = !strcmp(_sensors->getSettingByKey("gps"), "1");
+        const char* setting = _sensors->getSettingByKey("gps");
+        bool active = setting != NULL && !strcmp(setting, "1");
         if (enabled) {
           sprintf(reply, "on, %s, %s, %d sats",
             active?"active":"deactivated",
@@ -695,7 +698,7 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, char* command, char* rep
     };
   #if defined(USE_LR2021)
   } else if (memcmp(config, "extra.sf ", 9) == 0) {
-    strcpy(tmp, &config[9]);
+    StrHelper::strncpy(tmp, &config[9], sizeof(tmp));
     const char *parts[4];
     uint8_t sideDetSFs[4];
     int num = mesh::Utils::parseTextParts(tmp, parts, 4);
@@ -717,7 +720,7 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, char* command, char* rep
   #endif
   } else {
     strcpy(reply, "unknown config: ");
-    StrHelper::strncpy(&reply[16], config, 160-17);
+    StrHelper::strncpy(&reply[16], config, 155-17);
   }
 }
 
@@ -853,7 +856,7 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, char* command, char* rep
       sprintf(reply, "No extra SF configured");
     }
   } else {
-    sprintf(reply, "??: %s", config);
+    snprintf(reply, 155, "??: %s", config);
   }
 }
 
@@ -892,16 +895,16 @@ static char* splitNameJump(char* tok) {
 static bool processRegionDefSegment(RegionMap* map, char* tok, RegionEntry** cursor, char* reply) {
   char* jump = splitNameJump(tok);
   char* name = skipSpaces(tok);
-  if (*name == '\0') { snprintf(reply, 160, "Err - empty name"); return false; }
-  if (jump && *jump == '\0') { snprintf(reply, 160, "Err - empty jump"); return false; }
+  if (*name == '\0') { snprintf(reply, 155, "Err - empty name"); return false; }
+  if (jump && *jump == '\0') { snprintf(reply, 155, "Err - empty jump"); return false; }
 
   RegionEntry* r = map->putRegion(name, (*cursor)->id);
-  if (r == NULL) { snprintf(reply, 160, "Err - put failed: %s", name); return false; }
+  if (r == NULL) { snprintf(reply, 155, "Err - put failed: %s", name); return false; }
   r->flags = 0;
 
   if (jump) {
     RegionEntry* j = map->findByNamePrefix(jump);
-    if (j == NULL) { snprintf(reply, 160, "Err - unknown jump: %s", jump); return false; }
+    if (j == NULL) { snprintf(reply, 155, "Err - unknown jump: %s", jump); return false; }
     *cursor = j;
   } else {
     *cursor = r;
@@ -917,20 +920,20 @@ void CommonCLI::handleRegionCmd(char* command, char* reply) {
   if (strncmp(cmd, "region def", 10) == 0 && (cmd[10] == ' ' || cmd[10] == '\0')) {
     char* payload = skipSpaces(cmd + 10);
     rtrimSpaces(payload);
-    if (*payload == '\0') { snprintf(reply, 160, "Err - empty def"); return; }
+    if (*payload == '\0') { snprintf(reply, 155, "Err - empty def"); return; }
 
     RegionEntry* cursor = &_region_map->getWildcard();
     for (char* tok; (tok = takeToken(&payload)) != nullptr; ) {
       if (!processRegionDefSegment(_region_map, tok, &cursor, reply)) return;
     }
-    _region_map->exportTo(reply, 160);
+    _region_map->exportTo(reply, 155);
     return;
   }
 
   const char* parts[4];
   int n = mesh::Utils::parseTextParts(command, parts, 4, ' ');
   if (n == 1) {
-    _region_map->exportTo(reply, 160);
+    _region_map->exportTo(reply, 155);
   } else if (n >= 2 && strcmp(parts[1], "load") == 0) {
     _callbacks->startRegionsLoad();
   } else if (n >= 2 && strcmp(parts[1], "save") == 0) {
@@ -1040,7 +1043,7 @@ void CommonCLI::handleRegionCmd(char* command, char* reply) {
       return;
     }
     
-    int len = _region_map->exportNamesTo(reply, 160, mask, invert);
+    int len = _region_map->exportNamesTo(reply, 155, mask, invert);
     if (len == 0) {
       strcpy(reply, "-none-");
     }

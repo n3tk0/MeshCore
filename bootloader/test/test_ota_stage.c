@@ -41,9 +41,12 @@ void nrf_gpio_pin_write(uint32_t pin, uint32_t v) {
 void nrf_gpio_pin_set(uint32_t pin) { nrf_gpio_pin_write(pin, 1); }
 void nrf_gpio_pin_clear(uint32_t pin) { nrf_gpio_pin_write(pin, 0); }
 
+static uint8_t settings_writes[4096 / 4];   // writes per word on OTA_STAGE_PAGE since last erase
+
 fake_nvmc_t* fake_nvmc(void) {
   if (nvmc.ERASEPAGE) {
     memset((void*)(uintptr_t) nvmc.ERASEPAGE, 0xFF, 4096);
+    if (nvmc.ERASEPAGE == OTA_STAGE_PAGE) memset(settings_writes, 0, sizeof(settings_writes));
     nvmc.ERASEPAGE = 0;
   }
   nvmc.READY = 1;
@@ -51,9 +54,35 @@ fake_nvmc_t* fake_nvmc(void) {
   return &nvmc;
 }
 
+#define CHECK(c) do { if (!(c)) { printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, #c); failures++; } } while (0)
+
+// Track writes to settings page words whenever mark/flash_word is exercised by comparing snapshot
+static uint32_t settings_snap[4096 / 4];
+static int word0_limit = 2;   // see no_valid_app(): a failed copy may write word 0 a 3rd time
+static void snapshot_settings(void) { memcpy(settings_snap, (const void*)(uintptr_t) OTA_STAGE_PAGE, sizeof(settings_snap)); }
+static void check_settings_writes(int max_record_writes) {
+  const uint32_t* cur = (const uint32_t*)(uintptr_t) OTA_STAGE_PAGE;
+  for (uint32_t i = 0; i < 4096 / 4; i++) {
+    if (cur[i] != settings_snap[i]) {
+      // only bits 1 -> 0 are valid in NOR flash without erase
+      CHECK((cur[i] & ~settings_snap[i]) == 0);
+      settings_writes[i]++;
+      settings_snap[i] = cur[i];
+    }
+    CHECK(settings_writes[i] <= (i == 0 ? word0_limit : 2));   // nRF52840 NVMC nWRITE = 2
+    if (i >= OTA_STAGE_FIRST / 4) CHECK(settings_writes[i] <= max_record_writes);
+  }
+}
+
 fake_qspi_t* fake_qspi(void) {
   if (qspi.TASKS_ACTIVATE) { qspi.TASKS_ACTIVATE = 0; if (!qspi_asleep) qspi.EVENTS_READY = 1; }
-  if (qspi.CINSTRCONF) { qspi.CINSTRCONF = 0; qspi.CINSTRDAT0 = 0; qspi.EVENTS_READY = 1; }
+  if (qspi.CINSTRCONF) {
+    uint8_t op = (uint8_t)(qspi.CINSTRCONF & 0xFFu);
+    if (op == 0xB9) qspi_asleep = 1;
+    qspi.CINSTRCONF = 0;
+    qspi.CINSTRDAT0 = 0;
+    qspi.EVENTS_READY = 1;
+  }
   if (qspi.TASKS_READSTART) {
     qspi.TASKS_READSTART = 0;
     if (qspi.READ.SRC + qspi.READ.CNT <= QSPI_SIZE)
@@ -62,8 +91,6 @@ fake_qspi_t* fake_qspi(void) {
   }
   return &qspi;
 }
-
-#define CHECK(c) do { if (!(c)) { printf("  FAIL %s:%d %s\n", __FILE__, __LINE__, #c); failures++; } } while (0)
 
 static uint8_t* mem(uint32_t a) { return (uint8_t*)(uintptr_t) a; }
 
@@ -82,6 +109,12 @@ static void reset_node(void) {
   s[0] = 0xBEEF0001u;   // bank_0 = valid, bank_0_crc = 0xBEEF
   s[1] = 0xFFFF;
   s[2] = sizeof(img_old);
+  memset(settings_writes, 0, sizeof(settings_writes));
+  settings_writes[0] = 1;
+  settings_writes[1] = 1;
+  settings_writes[2] = 1;
+  snapshot_settings();
+  qspi_asleep = 0;
   ops = 0;
   cut_at = -1;
 }
@@ -104,6 +137,12 @@ static ota_stage_t* write_record(uint32_t flags, uint32_t src) {
   }
   t.head_crc = ota_stage_head_crc(&t);
   memcpy(r, &t, sizeof(t));
+  // Record header words were written once (0xFFFFFFFF -> header value)
+  uint32_t slot_word = (uint32_t)(((uintptr_t) r - OTA_STAGE_PAGE) / 4);
+  for (uint32_t k = 0; k < (uint32_t)((const uint8_t*) &t.started - (const uint8_t*) &t) / 4; k++) {
+    settings_writes[slot_word + k] = 1;
+  }
+  snapshot_settings();
   return r;
 }
 
@@ -119,9 +158,10 @@ static uint32_t settings0(void) { return *(uint32_t*) mem(OTA_STAGE_PAGE); }
 static int boot(long cut_after) {
   ops = 0;
   cut_at = cut_after;
-  if (setjmp(cut)) { cut_at = -1; return 1; }
+  if (setjmp(cut)) { cut_at = -1; check_settings_writes(1); return 1; }   // writes before the cut count too
   ota_stage_run();
   cut_at = -1;
+  check_settings_writes(1);
   return 0;
 }
 
@@ -175,6 +215,7 @@ static void test_wrong_dst(void) {
   t.dst = 0x26000; t.src = 0; t.size = sizeof(img_new); t.crc = ota_stage_crc32(0, img_new, sizeof(img_new));
   t.head_crc = ota_stage_head_crc(&t);
   memcpy(r, &t, sizeof(t));
+  snapshot_settings();
   boot(-1);
   CHECK(app_is(img_old, sizeof(img_old)) && r->failed == OTA_STAGE_SET);
 }
@@ -186,7 +227,8 @@ static void test_flash_asleep(void) {
   const ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
   qspi_asleep = 1;
   boot(-1);
-  CHECK(!qspi_asleep && app_is(img_new, sizeof(img_new)) && r->installed == OTA_STAGE_SET);
+  // woken up to read, then put back in deep power down in qspi_end()
+  CHECK(qspi_asleep && app_is(img_new, sizeof(img_new)) && r->installed == OTA_STAGE_SET);
 }
 
 static void test_trial_and_rollback(void) {
@@ -194,13 +236,14 @@ static void test_trial_and_rollback(void) {
   reset_node();
   stage_qspi(1);
   const ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
-  boot(-1);   // install (the first trial start is the next one)
+  boot(-1);   // install + trial boot 1
   CHECK(app_is(img_new, sizeof(img_new)) && r->installed == OTA_STAGE_SET);
-  for (uint32_t i = 1; i <= OTA_STAGE_TRIAL_BOOTS; i++) {
+  CHECK(ota_stage_boots_used(r) == 1);
+  for (uint32_t i = 2; i <= OTA_STAGE_TRIAL_BOOTS; i++) {
     boot(-1);
     CHECK(app_is(img_new, sizeof(img_new)) && ota_stage_boots_used(r) == i);
   }
-  boot(-1);   // never confirmed
+  boot(-1);   // never confirmed -> rollback after exactly OTA_STAGE_TRIAL_BOOTS starts
   CHECK(app_is(img_old, sizeof(img_old)) && r->rb_done == OTA_STAGE_SET);
   boot(-1);
   CHECK(app_is(img_old, sizeof(img_old)));
@@ -212,12 +255,14 @@ static void test_confirmed(void) {
   reset_node();
   stage_qspi(1);
   ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
-  boot(-1);
-  boot(-1);
+  boot(-1);   // install + trial boot 1
+  CHECK(ota_stage_boots_used(r) == 1);
   r->confirmed = OTA_STAGE_SET;   // the app
+  snapshot_settings();
   for (int i = 0; i < 6; i++) boot(-1);
   CHECK(app_is(img_new, sizeof(img_new)) && ota_stage_boots_used(r) == 1 && r->rb_started == OTA_STAGE_UNSET);
   r->rb_request = OTA_STAGE_SET;
+  snapshot_settings();
   boot(-1);
   CHECK(app_is(img_old, sizeof(img_old)) && r->rb_done == OTA_STAGE_SET);
 }
@@ -232,7 +277,7 @@ static void test_half_written_record(void) {
   half->magic = OTA_STAGE_MAGIC;   // power cut right after the first word
   CHECK(ota_stage_find() == 0);
   for (uint32_t i = 0; i <= OTA_STAGE_TRIAL_BOOTS; i++) boot(-1);
-  CHECK(app_is(img_new, sizeof(img_new)) && r->boots == OTA_STAGE_UNSET && r->rb_started == OTA_STAGE_UNSET);
+  CHECK(app_is(img_new, sizeof(img_new)) && ota_stage_boots_used(r) == 1 && r->rb_started == OTA_STAGE_UNSET);
   const ota_stage_t* next = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);   // the next update
   CHECK(next != half && ota_stage_find() == next);
 }
@@ -251,6 +296,7 @@ static void test_app_changed(void) {
 
 static void test_both_sources_bad(void) {
   printf("QSPI: source and backup go bad half way: no app, DFU\n");
+  word0_limit = 3;
   reset_node();
   stage_qspi(1);
   ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
@@ -264,6 +310,7 @@ static void test_both_sources_bad(void) {
   boot(-1);
   CHECK(r->failed == OTA_STAGE_SET);
   CHECK((settings0() & 0xFFFF) == 0);   // the stock code stays in DFU
+  word0_limit = 2;
 }
 
 // a power cut at every step of a run (sampled), then normal starts: always ends with the expected app
@@ -282,8 +329,9 @@ static void test_power_cuts(const char* name, int qspi_src, int rollback) {
     reset_node();
     if (qspi_src) stage_qspi(rollback); else memcpy(mem(src), img_new, sizeof(img_new));
     r = write_record(flags, src);
-    if (rollback) { boot(-1); r->rb_request = OTA_STAGE_SET; }
+    if (rollback) { boot(-1); r->rb_request = OTA_STAGE_SET; snapshot_settings(); }
     if (!boot(k)) continue;
+    snapshot_settings();
     boot(-1);
     tested++;
     if (rollback) {
@@ -297,6 +345,117 @@ static void test_power_cuts(const char* name, int qspi_src, int rollback) {
     }
   }
   printf("  %d cuts out of %ld steps\n", tested, total);
+}
+
+static ota_stage_t* write_custom_record(uint32_t flags, uint32_t src, uint32_t size, uint32_t crc) {
+  ota_stage_t* r = ota_stage_free_slot();
+  ota_stage_t t;
+  memset(&t, 0xFF, sizeof(t));
+  t.magic = OTA_STAGE_MAGIC;
+  t.version = OTA_STAGE_VERSION;
+  t.flags = flags;
+  t.dst = APP;
+  t.src = src;
+  t.size = size;
+  t.crc = crc;
+  t.head_crc = ota_stage_head_crc(&t);
+  memcpy(r, &t, sizeof(t));
+  uint32_t slot_word = (uint32_t)(((uintptr_t) r - OTA_STAGE_PAGE) / 4);
+  for (uint32_t k = 0; k < (uint32_t)((const uint8_t*) &t.started - (const uint8_t*) &t) / 4; k++) {
+    settings_writes[slot_word + k] = 1;
+  }
+  snapshot_settings();
+  return r;
+}
+
+static void test_struct_and_legacy_boots(void) {
+  printf("struct size & legacy boots compatibility\n");
+  CHECK(sizeof(ota_stage_t) == 128);
+  ota_stage_t r;
+  memset(&r, 0xFF, sizeof(r));
+  CHECK(ota_stage_boots_used(&r) == 0);
+  r.boots = 0xFFFFFFFEu;
+  CHECK(ota_stage_boots_used(&r) == 1);
+  r.boots = 0xFFFFFFFCu;
+  CHECK(ota_stage_boots_used(&r) == 2);
+  r.boots = 0xFFFFFFF8u;
+  CHECK(ota_stage_boots_used(&r) == 3);
+  r.boots_extra[0] = 0u;
+  CHECK(ota_stage_boots_used(&r) == 4);   // old format + new words both count
+  r.boots_extra[0] = 0xFFFFFFFFu;
+  r.boots = 0u;
+  CHECK(ota_stage_boots_used(&r) == 1);
+  r.boots_extra[0] = 0u;
+  CHECK(ota_stage_boots_used(&r) == 2);
+  r.boots_extra[1] = 0u;
+  CHECK(ota_stage_boots_used(&r) == 3);
+}
+
+// a record left on trial by an older bootloader (one low bit of boots cleared per start) still ends
+// in a rollback after OTA_STAGE_TRIAL_BOOTS starts
+static void test_legacy_trial_rollback(void) {
+  printf("QSPI: trial record from an older bootloader still rolls back\n");
+  reset_node();
+  stage_qspi(1);
+  ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
+  memcpy(mem(APP), img_new, sizeof(img_new));
+  r->started = OTA_STAGE_SET;
+  r->installed = OTA_STAGE_SET;
+  r->boots = 0xFFFFFFFEu;   // old format: one trial start
+  *(uint32_t*) mem(OTA_STAGE_PAGE) = 0x00000001u;   // CRC check off, as the old install left it
+  settings_writes[0] = 2;
+  snapshot_settings();
+  for (int i = 0; i < 4 && r->rb_done != OTA_STAGE_SET; i++) boot(-1);
+  CHECK(app_is(img_old, sizeof(img_old)) && r->rb_done == OTA_STAGE_SET);
+}
+
+static void test_overlapping_internal(void) {
+  printf("overlapping internal flash source rejected\n");
+  reset_node();
+  uint32_t src = APP + sizeof(img_old);   // after img_old, but inside [APP, APP + pageUp(sizeof(img_new)))
+  memcpy(mem(src), img_new, sizeof(img_new));
+  uint32_t crc = ota_stage_crc32(0, img_new, sizeof(img_new));
+  const ota_stage_t* r = write_custom_record(0, src, sizeof(img_new), crc);
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && r->started == OTA_STAGE_UNSET);
+  CHECK(app_is(img_old, sizeof(img_old)));
+  CHECK(settings0() == 0xBEEF0001u);
+}
+
+static void test_bounds_overflow_alignment(void) {
+  printf("overflowing size/src and unaligned QSPI rejected\n");
+  // size overflows uint32_t when added to APP
+  reset_node();
+  const ota_stage_t* r = write_custom_record(0, APP + 0x50000u, 0xFFFFF000u, 0);
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
+
+  // internal flash src + size overflows uint32_t
+  reset_node();
+  r = write_custom_record(0, 0xFFFF0000u, 0x20000u, 0);
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
+
+  // unaligned internal flash src
+  reset_node();
+  memcpy(mem(APP + 0x50002u), img_new, sizeof(img_new));
+  r = write_custom_record(0, APP + 0x50002u, sizeof(img_new), ota_stage_crc32(0, img_new, sizeof(img_new)));
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
+
+  // unaligned QSPI src
+  reset_node();
+  stage_qspi(0);
+  r = write_custom_record(OTA_STAGE_SRC_QSPI, 2u, 4096u, 0);
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
+
+  // QSPI src + len exceeds 2 MB
+  reset_node();
+  stage_qspi(0);
+  r = write_custom_record(OTA_STAGE_SRC_QSPI, QSPI_SIZE - 1024u, 4096u, 0);
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
 }
 
 int main(void) {
@@ -319,6 +478,10 @@ int main(void) {
   test_half_written_record();
   test_app_changed();
   test_both_sources_bad();
+  test_struct_and_legacy_boots();
+  test_legacy_trial_rollback();
+  test_overlapping_internal();
+  test_bounds_overflow_alignment();
   test_power_cuts("install from internal flash", 0, 0);
   test_power_cuts("install from QSPI", 1, 0);
   test_power_cuts("rollback from QSPI", 1, 1);

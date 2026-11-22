@@ -2623,8 +2623,8 @@ static bool addHashtagChannel(UITask* task, const char* typed) {
   uint8_t hash[32];
   mesh::Utils::sha256(hash, sizeof(hash), (const uint8_t*)name, strlen(name));
   memcpy(ch.channel.secret, hash, 16);   // 128-bit key, the rest stays zero
-  task->setChannelMuted(free_slot, false);   // a muted channel that was in this slot before
   if (!the_mesh.setChannelAndSave(free_slot, ch)) { task->showAlert(T(S_SAVE_FAIL), 1500); return false; }
+  task->setChannelMuted(free_slot, false);   // a muted channel that was in this slot before
   task->haptic(UI_HAPTIC_ACK_MS);
   task->showAlert(T(S_CH_ADDED), 1000);
   channels_screen->open();
@@ -5025,7 +5025,7 @@ void UITask::shutdown(bool restart) {
 #ifdef PIN_BUZZER
   buzzer.shutdown();
   uint32_t buzzer_timer = millis();
-  while (buzzer.isPlaying() && (millis() - 2500) < buzzer_timer) buzzer.loop();
+  while (buzzer.isPlaying() && (millis() - buzzer_timer) < 2500) buzzer.loop();
 #endif
 #ifdef PIN_VIBRATION
   vibration.stop();
@@ -5323,7 +5323,8 @@ void UITask::loop() {
       int delay_millis = current()->render(*_display);
       if (_alert_expiry != 0 && !timeReached(_alert_expiry)) {
         renderAlert();
-        unsigned long alert_left = _alert_expiry - millis();
+        unsigned long now = millis();
+        unsigned long alert_left = _alert_expiry > now ? _alert_expiry - now : 0;
         if ((unsigned long)delay_millis > alert_left) delay_millis = alert_left;
       }
       _next_refresh = millis() + delay_millis;

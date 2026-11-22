@@ -27,7 +27,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (savedInstanceState == null) {
             val wanted = if (Build.VERSION.SDK_INT >= 33) {
                 // notifications: the update's progress while the app is not on screen
@@ -42,6 +41,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
+            val keepOn = vm.running || (vm.busy && vm.queueCurrent != null)
+            androidx.compose.runtime.DisposableEffect(keepOn) {
+                if (keepOn) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                onDispose { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+            }
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors) {
                 AppScreen(vm) { lang ->
                     Lang.set(this, lang)

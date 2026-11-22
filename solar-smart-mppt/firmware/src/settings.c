@@ -232,7 +232,10 @@ static bool write_rec(uint32_t sector, uint32_t *off, uint8_t type, const void *
   h.crc = crc16_ccitt(buf, sizeof(h) + len);
   memcpy(buf, &h, sizeof(h));
   if (*off + total > STORE_SECTOR_SIZE) return false;
-  if (!F->program(sector + *off, buf, total)) return false;
+  if (!F->program(sector + *off, buf, total)) {
+    if (!erased(F->ptr(sector + *off), total)) *off += total;   // skip dirty slot on partial write
+    return false;
+  }
   *off += total;
   return true;
 }
