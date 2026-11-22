@@ -217,7 +217,18 @@ private fun RestoreView(vm: AppViewModel, b: Backup) {
     )
     for ((title, rows) in groups) {
         if (rows.isEmpty()) continue
-        Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(title), style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            if (rows.size > 1) {
+                TextButton(onClick = {
+                    for (r in rows) if (r.item.group != BackupItem.GROUP_KEY) vm.restoreChecked[r.item.ref] = true
+                }, enabled = !vm.busy) { Text(stringResource(R.string.q_select_all)) }
+                TextButton(onClick = {
+                    for (r in rows) vm.restoreChecked[r.item.ref] = false
+                }, enabled = !vm.busy) { Text(stringResource(R.string.q_select_none)) }
+            }
+        }
         for (r in rows) DiffLine(vm, b, r)
     }
 }
@@ -316,9 +327,16 @@ private fun itemValue(i: BackupItem, v: String): String {
 
 @Composable
 private fun PasswordField(value: String, onChange: (String) -> Unit, label: String) {
+    var show by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value, onValueChange = onChange, label = { Text(label) },
-        visualTransformation = PasswordVisualTransformation(),
+        visualTransformation = if (show) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            TextButton(onClick = { show = !show }) {
+                Text(stringResource(if (show) R.string.hide_password else R.string.show_password),
+                    style = MaterialTheme.typography.labelSmall)
+            }
+        },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         singleLine = true, modifier = Modifier.fillMaxWidth(),
     )

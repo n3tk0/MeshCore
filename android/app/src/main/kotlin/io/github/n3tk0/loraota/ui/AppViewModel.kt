@@ -131,6 +131,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // companion
     val devices = mutableStateListOf<BluetoothDevice>()
+    val deviceRssi = mutableStateMapOf<String, Int>()
+    private val companionPrefs get() = ctx.getSharedPreferences("companion", Context.MODE_PRIVATE)
+    var lastCompanionAddress by mutableStateOf(companionPrefs.getString("address", null))
+    var lastCompanionName by mutableStateOf(companionPrefs.getString("name", null))
     var scanning by mutableStateOf(false)
     var companionName by mutableStateOf("")
     var companionOta by mutableStateOf(true)   // our companion firmware: it can go to the side channel
@@ -300,6 +304,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            deviceRssi[result.device.address] = result.rssi
             if (devices.none { it.address == result.device.address }) devices.add(result.device)
         }
     }
@@ -324,6 +329,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         scanJob?.cancel()
         runCatching { scanner.stopScan(scanCallback) }
         devices.clear()
+        deviceRssi.clear()
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(CompanionLink.SERVICE)).build()
         try {
             scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
@@ -343,6 +349,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun connectByAddress(address: String) {
+        val dev = devices.firstOrNull { it.address.equals(address, ignoreCase = true) }
+            ?: runCatching {
+                (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.getRemoteDevice(address)
+            }.getOrNull() ?: return
+        connect(dev)
+    }
+
     fun connect(device: BluetoothDevice) = work {
         if (scanning) {
             scanJob?.cancel()
@@ -360,6 +374,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // left on the side channel by an update cut short; a stock companion has no such command
         companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
+        lastCompanionAddress = device.address
+        lastCompanionName = companionName
+        companionPrefs.edit().putString("address", device.address).putString("name", companionName).apply()
         runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
             companionModel = model
             companionVersion = version
@@ -702,7 +719,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (running != null && oldImage == null) {
             try {
                 val data = withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) }
-                if (!stale() && oldImage == null) oldImage = Image(running.file, data, running.env)
+                if (!stale() && oldImage == null) {
+                    oldImage = Image(running.file, data, running.env)
+                    refreshPatchPreview()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -737,10 +757,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    var calculatingPatch by mutableStateOf(false)
+    private var patchJob: Job? = null
+
+    private fun refreshPatchPreview() {
+        patchJob?.cancel()
+        val old = oldImage
+        val new = newImage
+        if (old == null || new == null) {
+            patch = null
+            calculatingPatch = false
+            return
+        }
+        calculatingPatch = true
+        patchJob = viewModelScope.launch {
+            try {
+                val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
+                if (oldImage === old && newImage === new) patch = p
+            } catch (_: Exception) {
+            } finally {
+                if (oldImage === old && newImage === new) calculatingPatch = false
+            }
+        }
+    }
+
+    fun applySidePreset(sfVal: String, bwVal: String) {
+        sf = sfVal
+        bwKhz = bwVal
+    }
+
     fun pickRelease(f: FirmwareFile) = work {
         val data = withContext(Dispatchers.IO) { Releases.download(f, ctx.filesDir) }
         newImage = Image(f.file, data, f.env)
         patch = null
+        refreshPatchPreview()
     }
 
     fun pickFile(uri: Uri, isOld: Boolean) = work {
@@ -765,6 +815,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             newImage = Image(name, picked)
         }
         patch = null
+        refreshPatchPreview()
     }
 
     /** The name the file has for the user (a content URI's last segment can be just an id). */
@@ -1127,6 +1178,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = ""
         step = Step.QUEUE
         refreshOursIfStale()
+        if (queueRelease == null) {
+            queueRelease = queueReleases().firstOrNull()?.first
+        }
     }
 
     fun closeQueue() {
