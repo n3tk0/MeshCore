@@ -47,13 +47,14 @@ typedef struct {
   // state, written by:
   uint32_t started;       // bootloader: copying the new image
   uint32_t installed;     // bootloader: the new image is in place and checked
-  uint32_t boots;         // bootloader: one bit cleared per start on trial (lowest first)
+  uint32_t boots;         // bootloader: trial boot 1 (0 when used; legacy: cleared low bits)
   uint32_t confirmed;     // app: the new image works
   uint32_t rb_request;    // app: go back to the old image
   uint32_t rb_started;    // bootloader: copying the old image back
   uint32_t rb_done;       // bootloader: the old image is back in place
   uint32_t failed;        // bootloader: gave up (bad source), the app was not touched
-  uint32_t reserved[13];
+  uint32_t boots_extra[OTA_STAGE_TRIAL_BOOTS - 1];   // bootloader: trial boots 2..OTA_STAGE_TRIAL_BOOTS (0 when used)
+  uint32_t reserved[13 - (OTA_STAGE_TRIAL_BOOTS - 1)];
 } ota_stage_t;
 
 // The bootloader sets this in its own image so the app knows it can do a staged install: a word at
@@ -103,8 +104,15 @@ static inline ota_stage_t* ota_stage_free_slot(void) {
 }
 
 static inline uint32_t ota_stage_boots_used(const ota_stage_t* r) {
-  uint32_t n = 0;
-  for (uint32_t b = r->boots; (b & 1u) == 0 && n < 32; b >>= 1) n++;
+  if (r->boots != OTA_STAGE_SET && r->boots != OTA_STAGE_UNSET) {
+    uint32_t n = 0;
+    for (uint32_t b = r->boots; (b & 1u) == 0 && n < 32; b >>= 1) n++;
+    return n;
+  }
+  uint32_t n = (r->boots == OTA_STAGE_SET) ? 1u : 0u;
+  for (uint32_t i = 0; i < OTA_STAGE_TRIAL_BOOTS - 1; i++) {
+    if (r->boots_extra[i] == OTA_STAGE_SET) n++;
+  }
   return n;
 }
 
