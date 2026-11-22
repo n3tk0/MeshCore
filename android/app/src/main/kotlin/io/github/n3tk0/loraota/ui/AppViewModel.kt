@@ -248,6 +248,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
                     job?.cancel()
+                    patchJob?.cancel()
+                    calculatingPatch = false
                     OtaService.stop(ctx)
                     phase = null
                     flashPercent = -1
@@ -447,7 +449,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun login(contact: Contact, password: String) = work {
-        val learned = signIn(contact, password)
+        val learned = try {
+            signIn(contact, password)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (step == Step.REPEATER && loginSheet == null) loginSheet = contact
+            throw e
+        }
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned ?: contact
@@ -455,6 +464,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         status = null
         sensorBattery = null
         otaChecked = false
+        patchJob?.cancel()
+        calculatingPatch = false
         oldImage = null
         runningUnknown = false
         runningNotChecked = false
@@ -479,6 +490,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Again the status and the OTA check, e.g. when an answer got lost. */
     fun recheck() = work {
         val old = repeater ?: return@work
+        patchJob?.cancel()
+        calculatingPatch = false
         oldImage = null
         patch = null
         val now = companion.contact(old.publicKey)
@@ -591,6 +604,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun backToRepeaters() {
         val oldRepeater = repeater
+        patchJob?.cancel()
+        calculatingPatch = false
         repeater = null
         info = null
         status = null
@@ -764,7 +779,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         patchJob?.cancel()
         val old = oldImage
         val new = newImage
-        if (old == null || new == null) {
+        val i = info
+        if (old == null || new == null || (i != null && !i.fits(new.data.size))) {
             patch = null
             calculatingPatch = false
             return
@@ -859,11 +875,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 'Update' / 'Continue': makes the delta if needed, then asks before it starts. */
     fun update() = work {
+        val old = oldImage ?: return@work
+        val new = newImage ?: return@work
+        val i = info
+        if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
+        patchJob?.join()
         if (patch == null) {
-            val old = oldImage ?: return@work
-            val new = newImage ?: return@work
-            val i = info
-            if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
             patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
         }
         updateBackupNote = autoBackup(DeviceKind.REPEATER)
@@ -1261,6 +1278,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pw = savedPassword(c) ?: return QueueResult.SKIPPED to str(R.string.q_no_password)
         repeater = c
         info = null
+        sent = 0
+        total = 0
         log.clear()
         val learned = try {
             signIn(c, pw)
