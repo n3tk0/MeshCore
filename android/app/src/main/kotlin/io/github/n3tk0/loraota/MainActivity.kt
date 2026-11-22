@@ -27,7 +27,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (savedInstanceState == null) {
             val wanted = if (Build.VERSION.SDK_INT >= 33) {
                 // notifications: the update's progress while the app is not on screen
@@ -42,6 +41,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
+            // the screen stays on only while an update, a flash or a build runs
+            val view = androidx.compose.ui.platform.LocalView.current
+            val keep = vm.keepScreenOn
+            androidx.compose.runtime.SideEffect { view.keepScreenOn = keep }
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors) {
                 AppScreen(vm) { lang ->
                     Lang.set(this, lang)

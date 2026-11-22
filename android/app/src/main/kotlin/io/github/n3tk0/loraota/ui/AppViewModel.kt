@@ -205,6 +205,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashImage by mutableStateOf<FlashImage?>(null)
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
+
+    /** A LoRa update, a flash or a build running: the screen stays on (MainActivity). */
+    val keepScreenOn get() = phase != null || flashPercent >= 0 || buildJob?.finished == false
     var flashDone by mutableStateOf(false)
     /** The DFU library's steps of the last Bluetooth flash, seconds from its start first: kept after a failure. */
     var flashLog by mutableStateOf<List<String>>(emptyList())

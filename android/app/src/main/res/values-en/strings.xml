@@ -77,6 +77,7 @@
     <string name="err_air_too_small">The time-on-air limit is too small for even one packet. Check the side channel settings.</string>
     <string name="err_end_lost">The end of the update did not reach the repeater. It keeps everything for 30 minutes: tap Continue.</string>
     <string name="err_lost">Lost the repeater. It keeps its progress for 30 minutes: tap Continue.</string>
+    <string name="err_no_progress">For 10 minutes no packet got to the repeater, though it answers. Check the antenna and the side channel (frequency, SF), then tap Continue.</string>
     <string name="err_dropped">The repeater stopped the update.</string>
     <string name="err_paused">The update was cut short (%1$s). The repeater keeps its progress for 30 minutes: tap Continue.</string>
     <string name="err_old_still_runs">The repeater still runs the old firmware: %1$s</string>
