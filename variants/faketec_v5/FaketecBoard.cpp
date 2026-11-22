@@ -120,6 +120,12 @@ static void buzz(uint16_t ms) {
     analogWrite(PIN_VIBRATION, VIBRATION_PWM);
     delay(ms);
     analogWrite(PIN_VIBRATION, 0);
+    for (int i = 0; i < HWPWM_MODULE_NUM; i++) {
+      if (HwPWMx[i]->checkPin(PIN_VIBRATION)) {
+        HwPWMx[i]->removePin(PIN_VIBRATION);
+        if (HwPWMx[i]->releaseOwnership(0x676f6c41)) HwPWMx[i]->stop();   // analogWrite()'s token
+      }
+    }
   #else
     digitalWrite(PIN_VIBRATION, HIGH);
     delay(ms);
@@ -257,7 +263,7 @@ void FaketecBoard::setQuietPowerHaptics(bool quiet) {
 }
 
 void FaketecBoard::begin() {    
-    NRF52Board::begin();
+    NRF52BoardDCDC::begin();
 #ifdef FAKETEC_COMBO_WAKE
     confirmComboWake();    // may go back to system off: the register then keeps the OFF bit
 #endif

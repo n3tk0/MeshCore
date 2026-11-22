@@ -291,6 +291,21 @@ static void testHex(const char* hexpath, const char* binpath) {
   CHECK(!imageLooksValid(junk, 16));
 }
 
+static void testHexEdgeCases() {
+  std::vector<uint8_t> out(IMAGE_MAX);
+  // base = 0xFFFF0000, off = 0xFFFF, n = 16 -> a = 0xFFFFFFFF, a + n would wrap 32-bit uint
+  // :02000004FFFFFC  (02+00+00+04+FF+FF = 0x204 -> two's comp = 0xFC)
+  // :10FFFF00 00..00 -> 10+FF+FF+00 = 0x20E -> two's comp = 0xF2
+  const char* wrap = ":02000004FFFFFC\n:10FFFF0000000000000000000000000000000000F2\n:00000001FF\n";
+  CHECK(hexToBin(wrap, strlen(wrap), out.data(), IMAGE_MAX) == -3);
+  // type 0x04 with n != 2 (n = 1: :0100000400FB -> 01+00+00+04+00=05 -> FB)
+  const char* bad_ela = ":0100000400FB\n:00000001FF\n";
+  CHECK(hexToBin(bad_ela, strlen(bad_ela), out.data(), IMAGE_MAX) == -1);
+  // type 0x02 with n != 2 (n = 1: :0100000200FD -> 01+00+00+02+00=03 -> FD)
+  const char* bad_esa = ":0100000200FD\n:00000001FF\n";
+  CHECK(hexToBin(bad_esa, strlen(bad_esa), out.data(), IMAGE_MAX) == -1);
+}
+
 int main(int argc, char** argv) {
   testConnect();
   testNoTarget();
@@ -300,6 +315,7 @@ int main(int argc, char** argv) {
   testVerifyCatchesBadFlash();
   testAsleepNeedsReset();
   testUpperSectorsUseWeprotB();
+  testHexEdgeCases();
   if (argc > 1) testRealImage(argv[1]);
   if (argc > 2) testHex(argv[2], argv[1]);
   printf("%d checks, %d failed\n", checks, fails);

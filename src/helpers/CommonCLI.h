@@ -303,7 +303,7 @@ class CommonCLI {
   SensorManager* _sensors;
   RegionMap* _region_map;
   ClientACL* _acl;
-  char tmp[PRV_KEY_SIZE*2 + 4];
+  char tmp[200];
 
   mesh::RTCClock* getRTCClock() { return _rtc; }
   void savePrefs();

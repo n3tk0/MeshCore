@@ -9,7 +9,7 @@ ENV=$1
 VERSION=$2
 ELF=$3
 
-NAME=$(basename "$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
+NAME=$(basename "$(ls out/"${ENV}"[-.]*.uf2 out/"${ENV}"[-.]*-merged.bin out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
 NAME="${NAME%.uf2}"
 NAME="${NAME%-merged.bin}"
 [ -n "$NAME" ] || exit 0

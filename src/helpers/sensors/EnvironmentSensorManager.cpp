@@ -39,7 +39,7 @@ static uint32_t bsec_last_save_ms    = 0;
 #define BSEC_SAVE_INTERVAL_MS (8UL * 60 * 60 * 1000) // 8 hour state-save interval
 #endif
 
-#ifdef ENV_INCLUDE_BME680
+#if ENV_INCLUDE_BME680
 #ifndef TELEM_BME680_ADDRESS
 #define TELEM_BME680_ADDRESS 0x76
 #endif
@@ -48,7 +48,7 @@ static uint32_t bsec_last_save_ms    = 0;
 static Adafruit_BME680 BME680(TELEM_WIRE);
 #endif
 
-#ifdef ENV_INCLUDE_BMP085
+#if ENV_INCLUDE_BMP085
 #define TELEM_BMP085_SEALEVELPRESSURE_HPA (1013.25)
 #include <Adafruit_BMP085.h>
 static Adafruit_BMP085 BMP085;
@@ -304,7 +304,7 @@ static void query_ahtx0(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 }
 #endif
 
-#ifdef ENV_INCLUDE_BME680
+#if ENV_INCLUDE_BME680
 static uint8_t init_bme680(TwoWire*, uint8_t addr) {
   // Wire was set in the static constructor; begin() takes address only.
   return BME680.begin(addr) ? 1 : 0;
@@ -435,7 +435,7 @@ static uint8_t init_ina219(TwoWire* wire, uint8_t) {
 static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
   float amps = INA219.getCurrent_mA() / 1000.0f;
   lpp.addVoltage(ch, INA219.getBusVoltage_V());
-  lpp.addCurrent(ch, amps);
+  lpp.addCurrent(ch, amps < 0 ? -amps : amps);
   lpp.addPower(ch, INA219.getPower_mW() / 1000.0f);
   // LPP current has no sign: the direction (charge / discharge in a battery line) as a signed analog value too
   lpp.addAnalogInput(ch, amps);
@@ -520,7 +520,7 @@ static void query_vl53l0x(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 }
 #endif
 
-#ifdef ENV_INCLUDE_BMP085
+#if ENV_INCLUDE_BMP085
 static uint8_t init_bmp085(TwoWire* wire, uint8_t) {
   return BMP085.begin(0, wire) ? 1 : 0;  // mode 0 = ULTRALOWPOWER
 }
@@ -645,7 +645,7 @@ static const SensorDef SENSOR_TABLE[] = {
 #if ENV_INCLUDE_AHTX0
   { TELEM_AHTX_ADDRESS,    "AHT10/AHT20", init_ahtx0,    query_ahtx0    },
 #endif
-#ifdef ENV_INCLUDE_BME680
+#if ENV_INCLUDE_BME680
   { TELEM_BME680_ADDRESS,                       "BME680",       init_bme680,      query_bme680      },
   { TELEM_BOSCH_ALT_ADDR(TELEM_BME680_ADDRESS), "BME680",       init_bme680,      query_bme680      },
 #endif
@@ -691,7 +691,7 @@ static const SensorDef SENSOR_TABLE[] = {
 #if ENV_INCLUDE_VL53L0X
   { TELEM_VL53L0X_ADDRESS, "VL53L0X",      init_vl53l0x,  query_vl53l0x  },
 #endif
-#ifdef ENV_INCLUDE_BMP085
+#if ENV_INCLUDE_BMP085
   { 0x77,                  "BMP085",       init_bmp085,   query_bmp085   },
 #endif
 #if ENV_INCLUDE_RAK12035
@@ -761,6 +761,7 @@ bool EnvironmentSensorManager::begin() {
       // it answered the scan, then hung the bus: keep away from it
       i2cListDevice(def.address, def.name, I2C_DEV_OFF_BOOT_TIMEOUT);
       detected[def.address] = false;
+      if (i2cBusStuck(*TELEM_WIRE)) { i2cSetBusStuck(*TELEM_WIRE); break; }
       continue;
     }
     if (n == 0) {
@@ -858,12 +859,12 @@ void EnvironmentSensorManager::retryOffSensors() {
   for (int i = 0; i < _active_sensor_count; i++) {
     ActiveSensor& a = _active_sensors[i];
     if (!a.off || a.sub_channel != 0 || (int32_t)(millis() - a.retry_at) < 0) continue;
-    if (i2cBusStuck(*TELEM_WIRE)) {   // nothing to try on a stuck bus: wait for the next slot
-      a.retry_at = millis() + sensorRetryDelay(a.retries);
-      continue;
-    }
     uint32_t errors = i2cErrorCount(*TELEM_WIRE);
     bool ok = i2cProbe(*TELEM_WIRE, a.address) == I2C_PROBE_ACK;
+    if (i2cBusStuck(*TELEM_WIRE)) {   // bus recovery did not clear it: wait for the next slot
+      a.retry_at = millis() + sensorRetryDelay(a.retries);
+      return;
+    }
     // set it up again: after a lost supply its registers are back to reset values (an INA219's
     // calibration, a BME280's mode), and reads would make no error but wrong values
     if (ok) ok = a.init(TELEM_WIRE, a.address) != 0 && i2cErrorCount(*TELEM_WIRE) == errors;

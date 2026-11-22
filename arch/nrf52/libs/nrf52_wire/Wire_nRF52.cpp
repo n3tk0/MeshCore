@@ -129,9 +129,9 @@ void TwoWire::recover() {
 
   configPins();
   _p_twim->FREQUENCY = frequency;
-  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
   _p_twim->PSEL.SCL = _uc_pinSCL;
   _p_twim->PSEL.SDA = _uc_pinSDA;
+  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
   clearEvents();
 }
 
@@ -156,9 +156,9 @@ void TwoWire::begin(void) {
   configPins();
 
   _p_twim->FREQUENCY = TWIM_FREQUENCY_FREQUENCY_K100;
-  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
   _p_twim->PSEL.SCL = _uc_pinSCL;
   _p_twim->PSEL.SDA = _uc_pinSDA;
+  _p_twim->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
 
   NVIC_ClearPendingIRQ(_IRQn);
   NVIC_SetPriority(_IRQn, 3);
@@ -244,6 +244,7 @@ uint8_t TwoWire::requestFrom(uint8_t address, size_t quantity, bool stopBit)
   {
     return 0;
   }
+  if (quantity > SERIAL_BUFFER_SIZE) quantity = SERIAL_BUFFER_SIZE;
 
   size_t byteRead = 0;
   rxBuffer.clear();

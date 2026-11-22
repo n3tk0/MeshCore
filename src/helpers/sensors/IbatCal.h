@@ -503,6 +503,7 @@ class IbatLearner {
   bool     _have;
   int      _prev_raw, _prev_ref;
   bool     _dirty;
+  mutable bool _timer_active;
   uint32_t _next_save;
   IbatCurve _saved;   // what the file holds
   bool     _bus;      // IBUS: only positive pairs
@@ -515,7 +516,7 @@ class IbatLearner {
   }
 
 public:
-  explicit IbatLearner(bool bus = false) { _bus = bus; memset(&_saved, 0, sizeof(_saved)); _have = false; _prev_raw = _prev_ref = 0; _dirty = false; _next_save = IBAT_SAVE_FIRST_MS; }
+  explicit IbatLearner(bool bus = false) { _bus = bus; memset(&_saved, 0, sizeof(_saved)); _have = false; _prev_raw = _prev_ref = 0; _dirty = false; _timer_active = true; _next_save = IBAT_SAVE_FIRST_MS; }
 
   // a gap in the readings (the reference is gone): the next pair has no predecessor
   void gap() { _have = false; }
@@ -544,17 +545,20 @@ public:
     return true;
   }
 
-  bool saveDue(uint32_t now) const { return _dirty && (int32_t)(now - _next_save) >= 0; }
+  bool saveDue(uint32_t now) const {
+    if (_timer_active && (int32_t)(now - _next_save) >= 0) _timer_active = false;
+    return _dirty && !_timer_active;
+  }
   bool dirty() const { return _dirty; }
   void markDirty() { _dirty = true; }
   // a write failed: stays dirty, the next try after the period (flash wear)
-  void saveFailed(uint32_t now) { _next_save = now + IBAT_SAVE_PERIOD_MS; }
+  void saveFailed(uint32_t now) { _next_save = now + IBAT_SAVE_PERIOD_MS; _timer_active = true; }
 
   // the file now holds `c`: written by the owner (written = true: the next write waits a period),
   // or just loaded
   void synced(const IbatCurve& c, uint32_t now, bool written) {
     _saved = c;
     _dirty = false;
-    if (written) _next_save = now + IBAT_SAVE_PERIOD_MS;
+    if (written) { _next_save = now + IBAT_SAVE_PERIOD_MS; _timer_active = true; }
   }
 };

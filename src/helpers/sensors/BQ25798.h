@@ -258,7 +258,11 @@ class BQ25798 {
   bool write8(uint8_t reg, uint8_t v);
   bool write16(uint8_t reg, uint16_t v);
   void setCE(bool on);
-  bool fresh() const { return _ref_ok && (int32_t)(_now - _ref_at) < (int32_t)(3 * BQ_POLL_MS); }
+  bool fresh() const {
+    if (!_ref_ok) return false;
+    int32_t d = (int32_t)(_now - _ref_at);
+    return d >= -(int32_t)BQ_POLL_MS && d < (int32_t)(3 * BQ_POLL_MS);
+  }
   bool readStatus();
   void harvestVoc(bool unloaded, bool mppt_running);
   void enforce();
