@@ -70,6 +70,9 @@ private fun QueuePick(vm: AppViewModel) {
     }
     ReleasesErrorCard(vm)
     val rels = vm.queueReleases()
+    androidx.compose.runtime.LaunchedEffect(rels) {
+        if (vm.queueRelease == null && rels.isNotEmpty()) vm.queueRelease = rels.first().first
+    }
     if (rels.isEmpty()) Text(stringResource(R.string.q_no_releases), style = MaterialTheme.typography.bodyMedium)
     for ((rel, label) in rels.take(8)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
@@ -79,8 +82,22 @@ private fun QueuePick(vm: AppViewModel) {
             Text(label)
         }
     }
-    Text(stringResource(R.string.q_pick_repeaters), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
     val list = vm.queueCandidates()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.q_pick_repeaters), style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+        if (list.isNotEmpty()) {
+            TextButton(onClick = {
+                for (c in list) vm.queuePicked[hex(c.publicKey)] = (c.hops == 0)
+            }, enabled = !vm.busy) { Text(stringResource(R.string.q_select_direct)) }
+            TextButton(onClick = {
+                for (c in list) vm.queuePicked[hex(c.publicKey)] = true
+            }, enabled = !vm.busy) { Text(stringResource(R.string.q_select_all)) }
+            TextButton(onClick = {
+                vm.queuePicked.clear()
+            }, enabled = !vm.busy) { Text(stringResource(R.string.q_select_none)) }
+        }
+    }
     val noPassword = vm.queueNoPassword()
     if (list.isEmpty()) InfoCard(stringResource(R.string.q_no_candidates))
     for (c in list) {
@@ -119,7 +136,8 @@ private fun QueuePick(vm: AppViewModel) {
     }
     val picked = list.filter { vm.queuePicked[hex(it.publicKey)] == true }
     val count = picked.size
-    Button(onClick = { vm.queueAsk = true }, enabled = !vm.busy && count > 0 && vm.queueRelease != null) {
+    Button(onClick = { vm.queueAsk = true }, enabled = !vm.busy && count > 0 && vm.queueRelease != null,
+        modifier = Modifier.fillMaxWidth()) {
         Text(pluralStringResource(R.plurals.q_start, count, count))
     }
     if (vm.queueAsk) {

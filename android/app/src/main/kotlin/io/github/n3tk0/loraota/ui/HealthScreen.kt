@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.pluralStringResource
@@ -374,17 +375,51 @@ private fun Chart(s: HistorySeries) {
     val lo = known.min()
     val hi = known.max()
     val line = MaterialTheme.colorScheme.primary
+    val fill = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
     val grid = MaterialTheme.colorScheme.outlineVariant
-    Row {
-        Text(stringResource(R.string.health_range, format(s.field, lo), format(s.field, hi)),
-            style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-        Text(stringResource(R.string.health_last, format(s.field, s.values.lastOrNull { it != null } ?: lo)),
-            style = MaterialTheme.typography.bodySmall)
+    val fmt = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+    var selectedIdx by androidx.compose.runtime.remember(s) { mutableStateOf<Int?>(null) }
+
+    val inspectedIdx = selectedIdx?.takeIf { it in s.values.indices && s.values[it] != null }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (inspectedIdx != null) {
+            val v = s.values[inspectedIdx]!!
+            val t = s.timeOf(inspectedIdx)
+            val stamp = if (t != null) fmt.format(Date(t * 1000)) else "#$inspectedIdx"
+            Text("$stamp · ${format(s.field, v)}", style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            TextButton(onClick = { selectedIdx = null }) { Text(stringResource(R.string.build_close)) }
+        } else {
+            Text(stringResource(R.string.health_range, format(s.field, lo), format(s.field, hi)),
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.health_last, format(s.field, s.values.lastOrNull { it != null } ?: lo)),
+                style = MaterialTheme.typography.bodySmall)
+        }
     }
-    Canvas(Modifier.fillMaxWidth().height(160.dp)) {
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(170.dp)
+            .pointerInput(s) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: continue
+                        if (change.pressed && size.width > 0 && s.values.isNotEmpty()) {
+                            val rawIdx = ((change.position.x / size.width) * (s.values.size - 1)).toInt()
+                                .coerceIn(0, s.values.size - 1)
+                            // snap to nearest non-null sample
+                            val nearest = s.values.indices.filter { s.values[it] != null }
+                                .minByOrNull { kotlin.math.abs(it - rawIdx) }
+                            selectedIdx = nearest
+                        }
+                    }
+                }
+            }
+    ) {
         val n = s.values.size
         val span = (hi - lo).coerceAtLeast(1).toFloat()
-        val pad = 4.dp.toPx()
+        val pad = 6.dp.toPx()
         fun x(i: Int) = if (n <= 1) size.width / 2 else i * size.width / (n - 1)
         fun y(v: Int) = pad + (size.height - 2 * pad) * (1 - (v - lo) / span)
         for (k in 0..2) {
@@ -393,12 +428,40 @@ private fun Chart(s: HistorySeries) {
         }
         // a gap (the node was off, or the value was not measured) breaks the line
         val path = Path()
+        val fillPath = Path()
         var open = false
+        var segStartX = 0f
+        var lastX = 0f
+        val bottomY = size.height - pad
         for ((i, v) in s.values.withIndex()) {
-            if (v == null) { open = false; continue }
-            if (open) path.lineTo(x(i), y(v)) else path.moveTo(x(i), y(v))
+            if (v == null) {
+                if (open) {
+                    fillPath.lineTo(lastX, bottomY)
+                    fillPath.lineTo(segStartX, bottomY)
+                    fillPath.close()
+                }
+                open = false
+                continue
+            }
+            val px = x(i)
+            val py = y(v)
+            if (open) {
+                path.lineTo(px, py)
+                fillPath.lineTo(px, py)
+            } else {
+                path.moveTo(px, py)
+                fillPath.moveTo(px, py)
+                segStartX = px
+            }
+            lastX = px
             open = true
         }
+        if (open) {
+            fillPath.lineTo(lastX, bottomY)
+            fillPath.lineTo(segStartX, bottomY)
+            fillPath.close()
+        }
+        drawPath(fillPath, fill)
         drawPath(path, line, style = Stroke(width = 2.dp.toPx()))
         // a single point between gaps would not show as a line
         for ((i, v) in s.values.withIndex()) {
@@ -406,14 +469,22 @@ private fun Chart(s: HistorySeries) {
                 drawCircle(line, 2.5.dp.toPx(), Offset(x(i), y(v)))
             }
         }
+        if (inspectedIdx != null) {
+            val ix = x(inspectedIdx)
+            val iy = y(s.values[inspectedIdx]!!)
+            drawLine(line, Offset(ix, 0f), Offset(ix, size.height), strokeWidth = 1.5.dp.toPx())
+            drawCircle(line, 4.5.dp.toPx(), Offset(ix, iy))
+        }
     }
     val first = s.timeOf(0)
     val last = s.timeOf(s.values.size - 1)
     Row {
-        val fmt = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
         Text(if (first != null) fmt.format(Date(first * 1000)) else stringResource(
             if (s.ring == HistorySeries.RING_DAY) R.string.health_ago_day else R.string.health_ago_week),
             style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+        Text(stringResource(R.string.chart_touch_hint), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(1f))
         Text(if (last != null) fmt.format(Date(last * 1000)) else stringResource(R.string.health_now),
             style = MaterialTheme.typography.labelSmall)
     }

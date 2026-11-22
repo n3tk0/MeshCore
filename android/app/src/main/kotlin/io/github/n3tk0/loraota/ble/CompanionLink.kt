@@ -46,13 +46,7 @@ class CompanionLink(private val context: Context) {
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-            // the link closeAndRefresh() is closing: it waits for this disconnect and closes the GATT itself
-            val c = closing
-            if (c != null && c.first == g) {
-                if (newState == BluetoothProfile.STATE_DISCONNECTED) c.second.complete(Unit)
-                return
-            }
-            if (g != gatt) {
+            if (g != gatt && closing?.first != g) {
                 if (newState == BluetoothProfile.STATE_DISCONNECTED) runCatching { g.close() }
                 return
             }
@@ -67,11 +61,18 @@ class CompanionLink(private val context: Context) {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connected?.complete(false)
                 written?.complete(false)
-                gatt = null
-                rx = null
-                servicesDiscovered = false
-                runCatching { g.close() }
-                onDisconnect?.invoke()
+                val c = closing
+                if (c != null && c.first == g) {
+                    c.second.complete(Unit)
+                } else {
+                    runCatching { g.close() }
+                }
+                if (gatt == g) {
+                    gatt = null
+                    rx = null
+                    servicesDiscovered = false
+                    onDisconnect?.invoke()
+                }
             }
         }
 
@@ -207,15 +208,15 @@ class CompanionLink(private val context: Context) {
      */
     suspend fun closeAndRefresh() {
         val g = gatt ?: return
-        val done = CompletableDeferred<Unit>()
-        closing = g to done
         gatt = null
         rx = null
         servicesDiscovered = false
         connected?.complete(false)
         written?.complete(false)
+        val done = CompletableDeferred<Unit>()
+        closing = g to done
         try {
-            g.disconnect()
+            runCatching { g.disconnect() }
             withTimeoutOrNull(2_500) { done.await() }
         } finally {
             closing = null

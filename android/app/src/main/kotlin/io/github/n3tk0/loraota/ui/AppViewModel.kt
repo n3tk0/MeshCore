@@ -131,6 +131,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // companion
     val devices = mutableStateListOf<BluetoothDevice>()
+    val deviceRssi = mutableStateMapOf<String, Int>()
+    private val companionPrefs get() = ctx.getSharedPreferences("companion", Context.MODE_PRIVATE)
+    var lastCompanionAddress by mutableStateOf(companionPrefs.getString("address", null))
+    var lastCompanionName by mutableStateOf(companionPrefs.getString("name", null))
     var scanning by mutableStateOf(false)
     var companionName by mutableStateOf("")
     var companionOta by mutableStateOf(true)   // our companion firmware: it can go to the side channel
@@ -250,6 +254,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // (ABORT, nothing to resume), while a lost link leaves the update paused on the repeater
                     // and a repeater's Bluetooth / Wi-Fi flash does not need the companion at all
                     if (phase == null && flashPercent < 0) job?.cancelAndJoin()
+                    patchJob?.cancel()
+                    calculatingPatch = false
                     confirmUpdate = false
                     flashPlan = null
                     queueAsk = false
@@ -301,6 +307,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            deviceRssi[result.device.address] = result.rssi
             if (devices.none { it.address == result.device.address }) devices.add(result.device)
         }
     }
@@ -325,6 +332,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         scanJob?.cancel()
         runCatching { scanner.stopScan(scanCallback) }
         devices.clear()
+        deviceRssi.clear()
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(CompanionLink.SERVICE)).build()
         try {
             scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
@@ -344,6 +352,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun connectByAddress(address: String) {
+        val dev = devices.firstOrNull { it.address.equals(address, ignoreCase = true) }
+            ?: runCatching {
+                (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.getRemoteDevice(address)
+            }.getOrNull() ?: return
+        connect(dev)
+    }
+
     fun connect(device: BluetoothDevice) = work {
         if (scanning) {
             scanJob?.cancel()
@@ -361,6 +377,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // left on the side channel by an update cut short; a stock companion has no such command
         companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
+        lastCompanionAddress = device.address
+        lastCompanionName = companionName
+        companionPrefs.edit().putString("address", device.address).putString("name", companionName).apply()
         runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
             companionModel = model
             companionVersion = version
@@ -431,7 +450,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun login(contact: Contact, password: String) = work {
-        val learned = signIn(contact, password)
+        val learned = try {
+            signIn(contact, password)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (step == Step.REPEATER && loginSheet == null) loginSheet = contact
+            throw e
+        }
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned ?: contact
@@ -439,6 +465,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         status = null
         sensorBattery = null
         otaChecked = false
+        patchJob?.cancel()
+        calculatingPatch = false
         oldImage = null
         runningUnknown = false
         runningNotChecked = false
@@ -463,6 +491,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Again the status and the OTA check, e.g. when an answer got lost. */
     fun recheck() = work {
         val old = repeater ?: return@work
+        patchJob?.cancel()
+        calculatingPatch = false
         oldImage = null
         patch = null
         val now = companion.contact(old.publicKey)
@@ -575,6 +605,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun backToRepeaters() {
         val oldRepeater = repeater
+        patchJob?.cancel()
+        calculatingPatch = false
         repeater = null
         info = null
         status = null
@@ -703,7 +735,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (running != null && oldImage == null) {
             try {
                 val data = withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) }
-                if (!stale() && oldImage == null) oldImage = Image(running.file, data, running.env)
+                if (!stale() && oldImage == null) {
+                    oldImage = Image(running.file, data, running.env)
+                    refreshPatchPreview()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -738,10 +773,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    var calculatingPatch by mutableStateOf(false)
+    private var patchJob: Job? = null
+
+    private fun refreshPatchPreview() {
+        patchJob?.cancel()
+        val old = oldImage
+        val new = newImage
+        val i = info
+        if (old == null || new == null || (i != null && !i.fits(new.data.size))) {
+            patch = null
+            calculatingPatch = false
+            return
+        }
+        calculatingPatch = true
+        patchJob = viewModelScope.launch {
+            try {
+                val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
+                if (oldImage === old && newImage === new) patch = p
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            } catch (_: OutOfMemoryError) {
+                // a small phone (Android 7, 2-3 GB): no preview; 'Update' tries again and says why
+            } finally {
+                if (oldImage === old && newImage === new) calculatingPatch = false
+            }
+        }
+    }
+
+    fun applySidePreset(sfVal: String, bwVal: String) {
+        sf = sfVal
+        bwKhz = bwVal
+    }
+
     fun pickRelease(f: FirmwareFile) = work {
         val data = withContext(Dispatchers.IO) { Releases.download(f, ctx.filesDir) }
         newImage = Image(f.file, data, f.env)
         patch = null
+        refreshPatchPreview()
     }
 
     fun pickFile(uri: Uri, isOld: Boolean) = work {
@@ -766,6 +836,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             newImage = Image(name, picked)
         }
         patch = null
+        refreshPatchPreview()
     }
 
     /** The name the file has for the user (a content URI's last segment can be just an id). */
@@ -809,11 +880,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 'Update' / 'Continue': makes the delta if needed, then asks before it starts. */
     fun update() = work {
+        val old = oldImage ?: return@work
+        val new = newImage ?: return@work
+        val i = info
+        if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
+        patchJob?.join()
         if (patch == null) {
-            val old = oldImage ?: return@work
-            val new = newImage ?: return@work
-            val i = info
-            if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
             patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
         }
         updateBackupNote = autoBackup(DeviceKind.REPEATER)
@@ -1128,6 +1200,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = ""
         step = Step.QUEUE
         refreshOursIfStale()
+        if (queueRelease == null) {
+            queueRelease = queueReleases().firstOrNull()?.first
+        }
     }
 
     fun closeQueue() {
@@ -1208,6 +1283,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pw = savedPassword(c) ?: return QueueResult.SKIPPED to str(R.string.q_no_password)
         repeater = c
         info = null
+        sent = 0
+        total = 0
         log.clear()
         val learned = try {
             signIn(c, pw)
