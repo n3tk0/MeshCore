@@ -1033,7 +1033,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (flashTarget == FlashTarget.COMPANION) {
             // the DFU library needs the device to itself
             flashingCompanion = true
-            link.close()
+            link.closeAndRefresh()
             delay(1500)
         }
         working = str(R.string.working_flash)
