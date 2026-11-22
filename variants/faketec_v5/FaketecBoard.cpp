@@ -263,7 +263,7 @@ void FaketecBoard::setQuietPowerHaptics(bool quiet) {
 }
 
 void FaketecBoard::begin() {    
-    NRF52BoardDCDC::begin();
+    NRF52Board::begin();
 #ifdef FAKETEC_COMBO_WAKE
     confirmComboWake();    // may go back to system off: the register then keeps the OFF bit
 #endif
