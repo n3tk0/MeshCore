@@ -61,9 +61,11 @@ public:
     abortNew();
     _next = esp_ota_get_next_update_partition(NULL);
     if (_next == NULL || size > _next->size) return false;
+    // before esp_ota_begin(): it refuses (ESP_ERR_OTA_ROLLBACK_INVALID_STATE) while the running image is
+    // still 'pending verify'; the next image goes over the previous one, which is then no way back
+    confirm();
     // erase as the data comes in: erasing the whole partition up front would block for seconds
     if (esp_ota_begin(_next, OTA_WITH_SEQUENTIAL_WRITES, &_handle) != ESP_OK) return false;
-    confirm();   // the next image goes over the previous one, which is then no way back
     _overwritten = true;
     _new_size = size;
     _open = true;
