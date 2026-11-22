@@ -38,10 +38,6 @@ class DfuService : DfuBaseService() {
     override fun refreshDeviceCache(gatt: BluetoothGatt, force: Boolean) = super.refreshDeviceCache(gatt, true)
 }
 
-/** Clears Android's cached services of [gatt]'s device (hidden API, as the DFU library does). */
-fun refreshGattCache(gatt: BluetoothGatt): Boolean =
-    runCatching { gatt.javaClass.getMethod("refresh").invoke(gatt) as Boolean }.getOrDefault(false)
-
 /** A device seen advertising its DFU mode: after `start ota` a MeshCore nRF52 node is "<BOARD>_OTA". */
 class DfuDevice(val address: String, val name: String, val rssi: Int)
 
@@ -83,15 +79,17 @@ object BleDfu {
         try {
             flashOnce(ctx, address, name, zip, bonded, log, progress)
         } catch (e: GattFailed) {
-            // a GATT error (e.g. INVALID HANDLE from stale cached services): the cache is cleared by now and the
-            // device is in its bootloader or still in the application, both reached on the same address
-            log("[app] ${e.message}: retrying once with fresh services")
+            // a GATT error (e.g. INVALID HANDLE from stale cached services): the cache is cleared by now. Retry
+            // on the address the library last used: the bootloader may have come up on the address + 1
+            val again = e.address.ifEmpty { address }
+            log("[app] ${e.message}: retrying once with fresh services on $again")
+            progress(0)
             delay(2000)
-            flashOnce(ctx, address, name, zip, bonded, log, progress)
+            flashOnce(ctx, again, name, zip, bonded, log, progress)
         }
     }
 
-    private class GattFailed(msg: String) : FlashFailed(msg)
+    private class GattFailed(msg: String, val address: String) : FlashFailed(msg)
 
     private suspend fun flashOnce(ctx: Context, address: String, name: String, zip: File, bonded: Boolean,
                                   log: (String) -> Unit, progress: (Int) -> Unit) {
@@ -107,7 +105,7 @@ object BleDfu {
             override fun onError(deviceAddress: String, error: Int, errorType: Int, message: String?) {
                 val msg = message ?: "DFU error $error"
                 done.completeExceptionally(
-                    if (errorType == DfuBaseService.ERROR_TYPE_COMMUNICATION) GattFailed(msg) else FlashFailed(msg))
+                    if (errorType == DfuBaseService.ERROR_TYPE_COMMUNICATION) GattFailed(msg, deviceAddress) else FlashFailed(msg))
             }
         }
         val logs = DfuLogListener { _, _, message -> log(message) }

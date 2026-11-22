@@ -38,6 +38,8 @@ class CompanionLink(private val context: Context) {
     private var connected: CompletableDeferred<Boolean>? = null
     private var written: CompletableDeferred<Boolean>? = null
     private val writeLock = Mutex()
+    /** The link being closed by [closeAndRefresh]: its disconnect is awaited there, not closed here. */
+    @Volatile private var closing: Pair<BluetoothGatt, CompletableDeferred<Unit>>? = null
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
@@ -46,7 +48,8 @@ class CompanionLink(private val context: Context) {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connected?.complete(false)
                 written?.complete(false)
-                g.close()
+                val c = closing
+                if (c != null && c.first == g) c.second.complete(Unit) else g.close()
                 if (gatt == g) {
                     gatt = null
                     onDisconnect?.invoke()
@@ -129,12 +132,34 @@ class CompanionLink(private val context: Context) {
         if (!ok || withTimeoutOrNull(10_000) { done.await() } != true) throw IllegalStateException("Bluetooth write failed")
     }
 
-    /** [refreshCache]: also drop Android's cached services (before a firmware update changes them). */
-    fun close(refreshCache: Boolean = false) {
+    fun close() {
         val g = gatt
         gatt = null
-        if (refreshCache && g != null) io.github.n3tk0.loraota.flash.refreshGattCache(g)
         g?.disconnect()
         g?.close()
     }
+
+    /**
+     * Closes the link and drops Android's cached services of the device (before a firmware update changes
+     * them), in the DFU library's order: disconnect, wait for it, refresh, then close (refresh needs the
+     * client still registered, and a refresh on a live link may start a discovery that races the close).
+     */
+    suspend fun closeAndRefresh() {
+        val g = gatt ?: return
+        gatt = null
+        val done = CompletableDeferred<Unit>()
+        closing = g to done
+        try {
+            g.disconnect()
+            withTimeoutOrNull(2_000) { done.await() }
+            refreshGattCache(g)
+        } finally {
+            closing = null
+            g.close()
+        }
+    }
 }
+
+/** Clears Android's cached services of [gatt]'s device (hidden API, as the DFU library does). */
+fun refreshGattCache(gatt: BluetoothGatt): Boolean =
+    runCatching { gatt.javaClass.getMethod("refresh").invoke(gatt) as Boolean }.getOrDefault(false)
