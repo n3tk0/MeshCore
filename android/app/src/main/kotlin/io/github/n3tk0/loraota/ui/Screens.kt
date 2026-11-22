@@ -261,7 +261,9 @@ private fun CompanionStep(vm: AppViewModel) {
     Button(onClick = { vm.scan() }, enabled = !vm.scanning && !vm.busy) {
         Text(stringResource(if (vm.scanning) R.string.scanning else R.string.scan))
     }
-    for (d in vm.devices.sortedByDescending { vm.deviceRssi[it.address] ?: -120 }) {
+    // in the order found while scanning (cards do not jump under the finger), by signal once it ends
+    val shownDevices = if (vm.scanning) vm.devices.toList() else vm.devices.sortedByDescending { vm.deviceRssi[it.address] ?: -120 }
+    for (d in shownDevices) {
         val rssi = vm.deviceRssi[d.address]
         val isLast = d.address == lastAddr
         Card(
@@ -678,16 +680,13 @@ private fun LoraTab(vm: AppViewModel) {
         Text(stringResource(R.string.side_channel), style = MaterialTheme.typography.titleSmall)
         Text(stringResource(R.string.side_channel_hint), style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            val presets = listOf(
-                Triple("7", "250", R.string.preset_fast),
-                Triple("7", "125", R.string.preset_default),
-                Triple("9", "125", R.string.preset_long),
-            )
-            for ((pSf, pBw, labelRes) in presets) {
-                val selected = vm.sf.trim() == pSf && vm.bwKhz.trim() == pBw
+            for (p in AppViewModel.SIDE_PRESETS) {
+                val selected = vm.sf.trim() == p.sf && vm.bwKhz.trim() == p.bw &&
+                    (p.freq == null || vm.freqMhz.trim() == p.freq)
+                val labelRes = p.label
                 androidx.compose.material3.FilterChip(
                     selected = selected,
-                    onClick = { vm.applySidePreset(pSf, pBw) },
+                    onClick = { vm.applySidePreset(p) },
                     enabled = !vm.busy,
                     label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall) },
                 )
@@ -1085,7 +1084,8 @@ private fun StatusCard(vm: AppViewModel) {
     }
     val sb = vm.sensorBattery
     val volts = sb?.volts ?: (s.battMv / 1000.0)
-    val battPct = ((volts - 3.20) / (4.18 - 3.20)).toFloat().coerceIn(0f, 1f)
+    val chem = vm.batteryChem
+    val battPct = ((volts - chem.emptyV) / (chem.fullV - chem.emptyV)).toFloat().coerceIn(0f, 1f)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1094,12 +1094,21 @@ private fun StatusCard(vm: AppViewModel) {
                 Text(stringResource(R.string.status_batt_uptime, volts, duration(s.upTimeSecs)),
                     style = MaterialTheme.typography.labelLarge)
             }
-            if (volts in 2.5..4.5) {
+            if (volts in (chem.emptyV - 0.5)..(chem.fullV + 0.5)) {
                 LinearProgressIndicator(
                     progress = { battPct },
                     modifier = Modifier.fillMaxWidth().height(6.dp),
-                    color = if (volts < 3.55) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    color = if (volts < chem.lowV) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (c in BatteryChem.entries) {
+                    androidx.compose.material3.FilterChip(
+                        selected = c == chem,
+                        onClick = { vm.setBatteryChem(c) },
+                        label = { Text(c.label, style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
             }
             if (sb != null) {
                 val ma = Math.round(Math.abs(sb.amps) * 1000).toInt()

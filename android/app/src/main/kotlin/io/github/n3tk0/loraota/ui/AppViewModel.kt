@@ -461,6 +461,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned ?: contact
+        loadBatteryChem(repeater)
         info = null
         status = null
         sensorBattery = null
@@ -802,9 +803,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun applySidePreset(sfVal: String, bwVal: String) {
-        sf = sfVal
-        bwKhz = bwVal
+    /** A side channel preset; [freq] when the width needs its own centre to stay in 869.4-869.65 MHz. */
+    data class SidePreset(val sf: String, val bw: String, val freq: String?, val label: Int)
+
+    fun applySidePreset(p: SidePreset) {
+        sf = p.sf
+        bwKhz = p.bw
+        if (p.freq != null) freqMhz = p.freq
     }
 
     fun pickRelease(f: FirmwareFile) = work {
@@ -1200,9 +1205,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = ""
         step = Step.QUEUE
         refreshOursIfStale()
-        if (queueRelease == null) {
-            queueRelease = queueReleases().firstOrNull()?.first
-        }
     }
 
     fun closeQueue() {
@@ -1886,6 +1888,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             flashUpstream = false
             if (f in flashCandidates()) pickFlashRelease(f)
         }
+    }
+
+    companion object {
+        // 250 kHz fits the 869.4-869.65 MHz sub-band (10 % duty) only centred on 869.525
+        val SIDE_PRESETS = listOf(
+            SidePreset("7", "250", "869.525", R.string.preset_fast),
+            SidePreset("7", "125", null, R.string.preset_default),
+            SidePreset("9", "125", null, R.string.preset_long),
+        )
+    }
+
+    // ---- the repeater's battery chemistry, for the status card's bar (kept per repeater) ----
+    private val chemPrefs get() = ctx.getSharedPreferences("battery_chem", Context.MODE_PRIVATE)
+    var batteryChem by mutableStateOf(BatteryChem.LI_ION)
+
+    fun loadBatteryChem(r: Contact?) {
+        batteryChem = r?.let { BatteryChem.byName(chemPrefs.getString(hex(it.publicKey), null)) } ?: BatteryChem.LI_ION
+    }
+
+    fun setBatteryChem(c: BatteryChem) {
+        batteryChem = c
+        repeater?.let { chemPrefs.edit().putString(hex(it.publicKey), c.name).apply() }
     }
 
     override fun onCleared() {
