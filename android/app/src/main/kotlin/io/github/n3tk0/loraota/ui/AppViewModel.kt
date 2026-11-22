@@ -243,16 +243,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
-                    job?.cancel()
-                    OtaService.stop(ctx)
-                    phase = null
-                    flashPercent = -1
+                    // a LoRa update or a flash running ends on its own: a cancel here would be a user's Stop
+                    // (ABORT, nothing to resume), while a lost link leaves the update paused on the repeater
+                    // and a repeater's Bluetooth / Wi-Fi flash does not need the companion at all
+                    if (phase == null && flashPercent < 0) job?.cancelAndJoin()
                     confirmUpdate = false
                     flashPlan = null
                     queueAsk = false
                     loginSheet = null
-                    busy = false
-                    working = ""
                     message = str(R.string.msg_disconnected)
                     messageIsError = true
                     step = Step.COMPANION

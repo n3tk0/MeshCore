@@ -58,7 +58,10 @@ object CompanionBackup {
             if (name.isEmpty() && slot.copyOfRange(33, 49).all { it.toInt() == 0 }) continue
             // the name field has whatever the companion's buffer had after the name's end: zeros instead
             var safeName = name
-            while (safeName.toByteArray(Charsets.UTF_8).size > 31) safeName = safeName.dropLast(1)
+            while (safeName.toByteArray(Charsets.UTF_8).size > 31) {
+                // a whole character off the end, not half of an emoji's surrogate pair
+                safeName = safeName.substring(0, safeName.offsetByCodePoints(safeName.length, -1))
+            }
             val nameBytes = safeName.toByteArray(Charsets.UTF_8)
             val field = ByteArray(32).also { nameBytes.copyInto(it, endIndex = nameBytes.size) }
             out.add(BackupItem(BackupItem.GROUP_CHANNEL, i.toString(), safeName, hex(field + slot.copyOfRange(33, 49))))
