@@ -39,15 +39,21 @@ int hexToBin(const char* text, size_t text_len, uint8_t* out, uint32_t max) {
     switch (rec[3]) {
       case 0x00: {
         uint32_t a = base + off;
-        if (a + n > max) return -3;
+        if (a > max || (uint32_t)n > max - a) return -3;
         memcpy(out + a, rec + 4, n);
         if (a + n > len) len = a + n;
         any = any || n > 0;
         break;
       }
       case 0x01: return any ? (int)len : -4;
-      case 0x02: base = (((uint32_t)rec[4] << 8) | rec[5]) << 4; break;
-      case 0x04: base = (((uint32_t)rec[4] << 8) | rec[5]) << 16; break;
+      case 0x02:
+        if (n != 2) return -1;
+        base = (((uint32_t)rec[4] << 8) | rec[5]) << 4;
+        break;
+      case 0x04:
+        if (n != 2) return -1;
+        base = (((uint32_t)rec[4] << 8) | rec[5]) << 16;
+        break;
       case 0x03: case 0x05: break;     // start address: not needed
       default: return -1;
     }

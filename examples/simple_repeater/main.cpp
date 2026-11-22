@@ -160,6 +160,10 @@ void loop() {
   watchdogFeed();
 
   if (the_mesh.isPowerOff()) {   // battery empty (see `battsave`): only a sleep and a battery check now and then
+    board.loop();
+#ifdef HAS_EXTERNAL_WATCHDOG
+    external_watchdog.loop();
+#endif
     the_mesh.powerOffLoop();
     return;
   }
@@ -250,7 +254,9 @@ void loop() {
 #if defined(NRF52_PLATFORM)
     board.sleep(0); // nrf ignores seconds param, sleeps whenever possible
 #else
-    if (the_mesh.millisHasNowPassed(POWERSAVING_FIRSTSLEEP_SECS * 1000)) { // To check if it is time to sleep
+    static bool first_sleep_ready = false;
+    if (!first_sleep_ready && millis() >= POWERSAVING_FIRSTSLEEP_SECS * 1000UL) first_sleep_ready = true;
+    if (first_sleep_ready) { // To check if it is time to sleep
       board.sleep(30); // Sleep. Wake up after a while or when receiving a LoRa packet
     }
 #endif

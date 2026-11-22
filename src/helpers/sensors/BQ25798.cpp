@@ -665,6 +665,13 @@ void BQ25798::scanFinish(uint32_t now, uint8_t fail) {
   _adc_pending = false;   // a conversion of ours is not one of adc()'s
   _ts_in_shot = false;
   if (st == BQ_SC_BEGIN || st == BQ_SC_IDLE) return;   // nothing changed on the chip yet
+  if (fail == BQ_SCF_RESET) {
+    _unl_now = _unl_last = _voc_valid = false;
+    _hiz_hold = 0;
+    _hiz_seen = false;
+    _next_poll = now;   // enforce() at once: VREG is back at 4.2 V until it runs
+    return;
+  }
   // put back: VINDPM for the share in force, EN_HIZ off, EN_MPPT on (what it was)
   if (_sc_voc >= BQ_VOC_MIN_MV && _s.vindpm_mv == 0) {
     uint8_t reg = (uint8_t)(vindpmFromVoc(_sc_voc, _s.voc_pct) / 100);
@@ -690,7 +697,7 @@ void BQ25798::scanTick(uint32_t now) {
   uint8_t c[2];
   if (!readStatus() || !read(BQ_REG_CTRL0, c, sizeof(c))) { scanFinish(now, BQ_SCF_I2C); return; }
   bool hiz = c[0] & 0x04;
-  if (c[1] & 0x07) { scanFinish(now, BQ_SCF_RESET); return; }   // watchdog bits back: a power-on reset
+  if (c[1] & 0x07) { setCE(false); scanFinish(now, BQ_SCF_RESET); return; }   // watchdog bits back: a power-on reset
   uint8_t st = _sc_state;
   if (!vbusPresent()) { scanFinish(now, st == BQ_SC_BEGIN ? BQ_SCF_NOCOND : BQ_SCF_SUN); return; }
   if (st >= BQ_SC_STEP_ADC) {   // the converter loads the panel from here on

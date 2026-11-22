@@ -128,8 +128,8 @@ static void flashJob() {
       setResult(false, "3V3M вече има напрежение (батерия?): изключи я или избери захранване от платката");
       return;
     }
-    pinMode(PIN_PWR, OUTPUT);
     digitalWrite(PIN_PWR, HIGH);
+    pinMode(PIN_PWR, OUTPUT);
     powered_by_us = true;
     delay(100);
   }
@@ -162,8 +162,8 @@ static void flashJob() {
 static void flashTask(void*) {
   for (;;) {
     if (start_req) {
-      start_req = false;
       busy = true;
+      start_req = false;
       progress("start", 0, 0);
       flashJob();
       progress("", 0, 0);
@@ -205,7 +205,7 @@ button{background:#2a2e32;color:#e6e8ea}.muted{color:#9aa0a6}}
 <button onclick="up('/update','ota')">Обнови</button> <span class="muted" id="otamsg"></span>
 <div class="muted" id="ver"></div></div>
 <script>
-let st={};
+let st={},pt;
 async function post(u,b){const r=await fetch(u,{method:'POST',body:b});return r.text()}
 async function setMode(m){await post('/mode?m='+m);poll()}
 async function sel(i){await post('/select?i='+i);poll()}
@@ -216,7 +216,7 @@ async function up(u,id){const el=document.getElementById(id);if(!el.files.length
  const m=document.getElementById(id=='ota'?'otamsg':'upmsg');m.textContent='качва се…';
  const f=new FormData();f.append('f',el.files[0],el.files[0].name);
  try{m.textContent=await post(u,f)}catch(e){m.textContent='връзката прекъсна (рестарт?)'}poll()}
-async function poll(){try{st=await (await fetch('/status')).json()}catch(e){return}
+async function poll(){clearTimeout(pt);try{st=await (await fetch('/status')).json()}catch(e){pt=setTimeout(poll,2000);return}
  vt.innerHTML=st.vt?'<b class="ok">3V3M: има напрежение</b>':'<b class="err">3V3M: няма напрежение</b>';
  net.textContent=st.net;ver.textContent='Версия '+st.ver+', образи от '+st.rev;
  let h='';st.imgs.forEach((im,i)=>{h+='<label><input type="radio" name="im" '+(i==st.sel?'checked':'')+
@@ -224,7 +224,7 @@ async function poll(){try{st=await (await fetch('/status')).json()}catch(e){retu
  imgs.innerHTML=h;document.querySelectorAll('input[name=pm]').forEach(r=>r.checked=(r.value==st.mode));
  go.disabled=st.busy;pr.max=st.total||1;pr.value=st.busy?st.done:0;
  res.innerHTML=st.busy?('<span class="muted">'+st.step+'…</span>'):(st.res?('<span class="'+(st.ok?'ok':'err')+'">'+st.res+'</span>'):'');
- setTimeout(poll,st.busy?300:1500)}
+ pt=setTimeout(poll,st.busy?300:1500)}
 poll();
 </script></body></html>)HTML";
 
@@ -242,7 +242,7 @@ static void handleStatus() {
   String j = "{\"vt\":";
   j += targetPowered() ? "true" : "false";
   j += ",\"mode\":" + String(power_mode) + ",\"sel\":" + String(selected);
-  j += ",\"busy\":" + String(busy ? "true" : "false");
+  j += ",\"busy\":" + String((busy || start_req) ? "true" : "false");
   j += ",\"step\":\"" + jsonEsc(prog_step) + "\",\"done\":" + String(prog_done) + ",\"total\":" + String(prog_total);
   j += ",\"res\":\"" + jsonEsc(result) + "\",\"ok\":" + String(last_ok ? "true" : "false");
   j += ",\"ver\":\"" PROG_VERSION "\",\"rev\":\"" IMAGES_REV "\",\"net\":\"";
@@ -257,11 +257,16 @@ static void handleStatus() {
   server.send(200, "application/json", j);
 }
 
+static bool upload_err = false;
 static void handleUploadData() {
   HTTPUpload& u = server.upload();
   if (u.status == UPLOAD_FILE_START) {
     upload_text_len = 0;
+    upload_err = busy || start_req;
     free(upload_text);
+    upload_text = nullptr;
+    upload_text_cap = 0;
+    if (upload_err) return;
     upload_text_cap = UPLOAD_TEXT_MAX;
     upload_text = (char*)malloc(upload_text_cap);
     if (!upload_text) { upload_text_cap = 96 * 1024; upload_text = (char*)malloc(upload_text_cap); }
@@ -269,10 +274,17 @@ static void handleUploadData() {
     strncpy(upload_name, u.filename.c_str(), sizeof(upload_name) - 1);
     upload_name[sizeof(upload_name) - 1] = 0;
   } else if (u.status == UPLOAD_FILE_WRITE) {
+    if (upload_err) return;
     if (upload_text_len + u.currentSize <= upload_text_cap) {
       memcpy(upload_text + upload_text_len, u.buf, u.currentSize);
     }
     upload_text_len += u.currentSize;   // past the limit: refused below
+  } else if (u.status == UPLOAD_FILE_ABORTED) {
+    free(upload_text);
+    upload_text = nullptr;
+    upload_text_len = 0;
+    upload_text_cap = 0;
+    upload_err = false;
   }
 }
 
@@ -282,10 +294,11 @@ static void handleUploadDone() {
   free(upload_text);
   upload_text = nullptr;
   upload_text_cap = 0;
+  upload_err = false;
 }
 
 static void parseUpload() {
-  if (busy) { server.send(409, "text/plain", "Записът тече"); return; }
+  if (busy || start_req || upload_err) { server.send(409, "text/plain", "Записът тече"); return; }
   if (!upload_img || !upload_text) { server.send(500, "text/plain", "Няма памет"); return; }
   if (upload_text_len == 0 || upload_text_len > upload_text_cap) {
     server.send(400, "text/plain", "Файлът е празен или твърде голям");
@@ -319,7 +332,7 @@ static bool ota_ok = false;
 static void handleOtaData() {
   HTTPUpload& u = server.upload();
   if (u.status == UPLOAD_FILE_START) {
-    ota_ok = !busy && Update.begin(UPDATE_SIZE_UNKNOWN);
+    ota_ok = !(busy || start_req) && Update.begin(UPDATE_SIZE_UNKNOWN);
   } else if (u.status == UPLOAD_FILE_WRITE) {
     if (ota_ok && Update.write(u.buf, u.currentSize) != u.currentSize) ota_ok = false;
   } else if (u.status == UPLOAD_FILE_END) {
@@ -343,20 +356,20 @@ static void setupWeb() {
   server.on("/select", HTTP_POST, [] {
     int i = server.arg("i").toInt();
     uint32_t len;
-    if (busy || i < 0 || i > NBUILTIN || !imgData(i, &len)) { server.send(400, "text/plain", "no"); return; }
+    if (busy || start_req || i < 0 || i > NBUILTIN || !imgData(i, &len)) { server.send(400, "text/plain", "no"); return; }
     selected = i;
     if (i < NBUILTIN) prefs.putUChar("sel", i);
     server.send(200, "text/plain", "ok");
   });
   server.on("/mode", HTTP_POST, [] {
     int m = server.arg("m").toInt();
-    if (busy || (m != MODE_BOARD && m != MODE_PROG)) { server.send(400, "text/plain", "no"); return; }
+    if (busy || start_req || (m != MODE_BOARD && m != MODE_PROG)) { server.send(400, "text/plain", "no"); return; }
     power_mode = m;
     prefs.putUChar("pmode", m);
     server.send(200, "text/plain", "ok");
   });
   server.on("/flash", HTTP_POST, [] {
-    if (busy) { server.send(409, "text/plain", "busy"); return; }
+    if (busy || start_req) { server.send(409, "text/plain", "busy"); return; }
     result[0] = 0;
     start_req = true;
     server.send(200, "text/plain", "ok");
@@ -411,15 +424,17 @@ static void led() {
 
 static void button() {
   static uint32_t down_at = 0;
+  static bool btn_down = false;
+  uint32_t now = millis();
   bool down = !digitalRead(PIN_BTN);
-  if (down && !down_at) down_at = millis() | 1;
-  if (!down && down_at) {
-    uint32_t held = millis() - down_at;
-    down_at = 0;
-    if (held >= 50 && held < 3000 && !busy) { result[0] = 0; start_req = true; }
+  if (down && !btn_down) { btn_down = true; down_at = now; }
+  if (!down && btn_down) {
+    uint32_t held = (uint32_t)(now - down_at);
+    btn_down = false;
+    if (held >= 50 && held < 3000 && !busy && !start_req) { result[0] = 0; start_req = true; }
   }
   // held 10 s: forget the Wi-Fi settings (back to the access point)
-  if (down && down_at && millis() - down_at > 10000) {
+  if (down && btn_down && (uint32_t)(now - down_at) > 10000) {
     prefs.remove("ssid");
     prefs.remove("pass");
     ESP.restart();

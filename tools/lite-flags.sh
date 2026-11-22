@@ -103,7 +103,7 @@ if ! keep WITH_GPS; then
   if [ -n "$LITE_ENV" ]; then
     vdirs=$(printf '%s' "$envtext" | grep -oE 'variants/[A-Za-z0-9_.-]+' | sed 's|variants/||' | sort -u) || vdirs=""
     for v in $vdirs; do
-      f=$(ls "variants/$v"/*.cpp "variants/$v"/*.h 2>/dev/null)
+      f=$(ls "variants/$v"/*.cpp "variants/$v"/*.h 2>/dev/null) || f=""
       [ -n "$f" ] || continue
       if grep -qE "LocationProvider|MicroNMEA" $f && ! grep -q "ENV_INCLUDE_GPS" $f; then
         gps_kept="$v"

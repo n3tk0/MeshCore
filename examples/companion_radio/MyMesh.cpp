@@ -2513,11 +2513,11 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     return true;
   }
   if (memcmp(command, "set tz.offset ", 14) == 0) {
-    int8_t tz = atof(&command[14]);
+    int tz = atoi(&command[14]);
     if (tz < -12 || tz > 14) {
       strcpy(reply, "Error, must be from -12 to +14");
     } else {
-      _prefs.tz_offset = tz;
+      _prefs.tz_offset = (int8_t)tz;
       savePrefs();
       strcpy(reply, "OK");
     }
@@ -2622,7 +2622,7 @@ void MyMesh::checkCLIRescueCmd() {
           root2.close();
         }
       }
-    } else if (memcmp(cli_command, "cat", 3) == 0) {
+    } else if (memcmp(cli_command, "cat ", 4) == 0) {
 
       // get path from command e.g: "cat /contacts3"
       const char *path = &cli_command[4];
@@ -2773,6 +2773,12 @@ static bool writeUIFile(DataStore* store, const char* filename, const uint8_t* h
   if (!f) return false;
   bool ok = f.write(head, head_len) == (size_t)head_len && (body_len == 0 || f.write(body, body_len) == (size_t)body_len);
   f.close();
+  if (ok) {
+    uint32_t expected = (uint32_t)head_len + (uint32_t)body_len;
+    File check = store->openRead(store->getDataFS(), filename);
+    ok = check && check.size() == expected;
+    if (check) check.close();
+  }
   return ok;
 }
 
@@ -2836,11 +2842,18 @@ bool MyMesh::writeOfflineQueueTo(const char* filename) {
   if (!f) return false;
   uint32_t magic = OFFLINE_LOG_MAGIC;
   bool ok = f.write((uint8_t*)&magic, 4) == 4;
+  uint32_t expected = 4;
   for (int i = 0; ok && i < offline_queue_len; i++) {
     uint8_t rec[2] = { OQ_ADD, offline_queue[i].len };
     ok = f.write(rec, 2) == 2 && f.write(offline_queue[i].buf, rec[1]) == rec[1];
+    expected += 2 + rec[1];
   }
   f.close();
+  if (ok) {
+    File check = _store->openRead(_store->getDataFS(), filename);
+    ok = check && check.size() == expected;
+    if (check) check.close();
+  }
   return ok;
 }
 
@@ -2860,10 +2873,22 @@ bool MyMesh::writeOfflineSnapshot() {
 
 void MyMesh::logOfflineAdd(int dropped_pos) {
 #ifdef OFFLINE_QUEUE_PERSIST
-  flushOfflineTakes();   // the log keeps the order of operations
+  if (flushOfflineTakes()) return;   // snapshot already wrote the current RAM queue (drop + add included)
   if (dropped_pos >= 0) {
     uint8_t rec[3] = { OQ_DROP, (uint8_t)(dropped_pos & 0xFF), (uint8_t)(dropped_pos >> 8) };
-    appendOfflineLog(rec, 3, NULL, 0);
+    FILESYSTEM* fs = _store->getDataFS();
+    bool fresh = !fs->exists(OFFLINE_QUEUE_FILE);
+    File f = _store->openDataAppend(OFFLINE_QUEUE_FILE);
+    bool ok = false;
+    if (f) {
+      uint32_t magic = OFFLINE_LOG_MAGIC;
+      ok = (!fresh || f.write((uint8_t*)&magic, 4) == 4) && f.write(rec, 3) == 3;
+      f.close();
+    }
+    if (!ok) {
+      writeOfflineSnapshot();
+      return;   // snapshot already includes the new frame
+    }
   }
   Frame& fr = offline_queue[offline_queue_len - 1];
   uint8_t rec[2] = { OQ_ADD, fr.len };
@@ -2884,10 +2909,10 @@ void MyMesh::logOfflineTake() {
 #endif
 }
 
-void MyMesh::flushOfflineTakes() {
+bool MyMesh::flushOfflineTakes() {
 #ifdef OFFLINE_QUEUE_PERSIST
   _offline_flush_at = 0;
-  if (_offline_taken == 0) return;
+  if (_offline_taken == 0) return false;
   uint8_t rec[3] = { OQ_TAKE, (uint8_t)(_offline_taken & 0xFF), (uint8_t)(_offline_taken >> 8) };
   _offline_taken = 0;
   File f = _store->openRead(_store->getDataFS(), OFFLINE_QUEUE_FILE);
@@ -2896,8 +2921,26 @@ void MyMesh::flushOfflineTakes() {
   // the log grows with every message; rewrite it as the queue alone once fetched ones take 8 KB
   uint32_t live = 4;
   for (int i = 0; i < offline_queue_len; i++) live += 2 + offline_queue[i].len;
-  if (log_size > live + 8192) writeOfflineSnapshot();
-  else appendOfflineLog(rec, 3, NULL, 0);
+  if (log_size > live + 8192) {
+    writeOfflineSnapshot();
+    return true;
+  }
+  FILESYSTEM* fs = _store->getDataFS();
+  bool fresh = !fs->exists(OFFLINE_QUEUE_FILE);
+  File af = _store->openDataAppend(OFFLINE_QUEUE_FILE);
+  bool ok = false;
+  if (af) {
+    uint32_t magic = OFFLINE_LOG_MAGIC;
+    ok = (!fresh || af.write((uint8_t*)&magic, 4) == 4) && af.write(rec, 3) == 3;
+    af.close();
+  }
+  if (!ok) {
+    writeOfflineSnapshot();
+    return true;
+  }
+  return false;
+#else
+  return false;
 #endif
 }
 
