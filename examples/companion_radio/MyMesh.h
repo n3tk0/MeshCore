@@ -328,7 +328,7 @@ private:
   bool writeOfflineSnapshot();
   void logOfflineAdd(int dropped_pos);
   void logOfflineTake();
-  void flushOfflineTakes();
+  bool flushOfflineTakes();
   bool _tx_allowed;
 #ifdef BACK_ADVERT
   unsigned long _back_repeater_heard;   // millis a repeater next to us was last heard (advert or traffic), 0 = not yet

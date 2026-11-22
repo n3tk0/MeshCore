@@ -9,7 +9,10 @@ ENV=$1
 VERSION=$2
 ELF=$3
 
-NAME=$(basename "$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1)")
+# this env's own file first (ls sorts all its arguments together, so the fallback is a second ls)
+FILE=$(ls out/"${ENV}"[-.]*.uf2 out/"${ENV}"[-.]*-merged.bin 2>/dev/null | head -1) || FILE=""
+[ -n "$FILE" ] || FILE=$(ls out/*.uf2 out/*-merged.bin 2>/dev/null | head -1) || FILE=""
+NAME=$(basename "$FILE")
 NAME="${NAME%.uf2}"
 NAME="${NAME%-merged.bin}"
 [ -n "$NAME" ] || exit 0

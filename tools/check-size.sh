@@ -68,7 +68,11 @@ print(1 if "repeater" in env.lower() and "NRF52_PLATFORM" in names
     echo "::$level::$env: flash $pct % is over $max_pct %"
     fail=1
   fi
-  [ -n "$flash" ] || check="no size (not built?)"
+  if [ -z "$flash" ]; then
+    check="no size (not built?)"
+    echo "::$level::$env: no flash size found"
+    fail=1
+  fi
   echo "| $env | $((size / 1024)) KB | ${flash:-?} | ${ram:-?} | $check |" >> "$summary"
 done
 [ "$level" = error ] || fail=0

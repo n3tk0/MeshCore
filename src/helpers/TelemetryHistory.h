@@ -107,7 +107,11 @@ public:
       uint32_t missed = (now - _rday.last_time) / (TH_DAY_MINS * 60);
       if (missed > 1) {
         missed--;
-        if (missed > TH_WEEK_SLOTS * (TH_WEEK_MINS / TH_DAY_MINS)) missed = TH_WEEK_SLOTS * (TH_WEEK_MINS / TH_DAY_MINS);
+        const uint32_t max_missed = TH_WEEK_SLOTS * (TH_WEEK_MINS / TH_DAY_MINS);
+        if (missed > max_missed) {
+          missed = max_missed;
+          _rday.last_time = now - (missed + 1) * (TH_DAY_MINS * 60);
+        }
         TelemetrySample e;
         blank(e);
         for (uint32_t i = 0; i < missed; i++) {

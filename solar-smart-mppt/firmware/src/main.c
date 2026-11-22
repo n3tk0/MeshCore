@@ -194,11 +194,14 @@ int main(void) {
       if (sun) bq.ship_sent = false;   // VBUS ends ship mode anyway
       bms_step(&bms, &s, chem_active, &in, &o);
       if (o.empty) gauge_empty(&gauge);
+      bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok && !o.ship);   // always: ADC, NTC, limits (before go_ship so SFET_PRESENT is set)
       if (o.ship) go_ship(now);
 
-      // heater: panel power only, battery NTC through the BQ25798 TS ADC; any doubt = off
+      // heater: panel power only (PG and not in HIZ), battery NTC through the BQ25798 TS ADC while enabled; any doubt = off
+      bool ts_valid = (bq.r[BQ_REG_ADC_CTRL] & 0x80) && !(bq.r[BQ_REG_ADC_DIS0] & 0x04);
       heater_in_t hi = {
-        .sun = sun, .bq_ok = bq.ok, .bq_fault = in.bq_fault, .ntc_present = bq.ntc_present,
+        .sun = sun && (bq.r[BQ_REG_STAT0] & 0x08) && !bq.hiz_seen,
+        .bq_ok = bq.ok && ts_valid, .bq_fault = in.bq_fault, .ntc_present = bq.ntc_present,
         .ntc_mode = s.ntc_mode, .ts_x10 = bq_ts_x10(&bq), .ibat_ma = (int16_t)ib, .now_ms = now,
       };
       heater_out_t ho;
@@ -213,7 +216,6 @@ int main(void) {
       hal_oc_off(o.oc_off);
       hal_j7(o.j7_on);
       hal_bal(o.bal1, o.bal2);
-      bool applied = bq_apply(&bq, &s, chem_active, o.charge_ok);   // always: ADC, NTC, limits
       hal_charge(o.charge_ok && applied && !bq.ship_sent);   // ~CE low only with our settings in the chip
       if ((uint32_t)(now - last_wd) >= 10000u) { last_wd = now; bq_kick_watchdog(&bq); }
 

@@ -23,7 +23,8 @@
 #define OTA_STAGE_SLOTS         ((0x1000u - OTA_STAGE_FIRST) / OTA_STAGE_SLOT)   // 24
 #define OTA_STAGE_MAGIC         0x5453434Du   // "MCST"
 #define OTA_STAGE_VERSION       1u
-#define OTA_STAGE_TRIAL_BOOTS   3u
+#define OTA_STAGE_TRIAL_BOOTS   3u      // 1..14 (boots + boots_extra[] live in the old reserved words)
+#define OTA_STAGE_QSPI_SIZE     0x200000u   // the QSPI flash the layout uses (2 MB): sources must lie inside
 
 // flags
 #define OTA_STAGE_SRC_QSPI      0x01u   // src (and backup) are addresses in the QSPI flash
@@ -47,14 +48,23 @@ typedef struct {
   // state, written by:
   uint32_t started;       // bootloader: copying the new image
   uint32_t installed;     // bootloader: the new image is in place and checked
-  uint32_t boots;         // bootloader: one bit cleared per start on trial (lowest first)
+  uint32_t boots;         // bootloader: trial boot 1 (0 when used; legacy: cleared low bits)
   uint32_t confirmed;     // app: the new image works
   uint32_t rb_request;    // app: go back to the old image
   uint32_t rb_started;    // bootloader: copying the old image back
   uint32_t rb_done;       // bootloader: the old image is back in place
   uint32_t failed;        // bootloader: gave up (bad source), the app was not touched
-  uint32_t reserved[13];
+  uint32_t boots_extra[OTA_STAGE_TRIAL_BOOTS - 1];   // bootloader: trial boots 2..OTA_STAGE_TRIAL_BOOTS (0 when used)
+  uint32_t reserved[13 - (OTA_STAGE_TRIAL_BOOTS - 1)];
 } ota_stage_t;
+
+#ifdef __cplusplus
+static_assert(sizeof(ota_stage_t) == OTA_STAGE_SLOT, "ota_stage_t must fill one slot");
+static_assert(OTA_STAGE_TRIAL_BOOTS >= 1 && OTA_STAGE_TRIAL_BOOTS <= 14, "OTA_STAGE_TRIAL_BOOTS: 1..14");
+#else
+_Static_assert(sizeof(ota_stage_t) == OTA_STAGE_SLOT, "ota_stage_t must fill one slot");
+_Static_assert(OTA_STAGE_TRIAL_BOOTS >= 1 && OTA_STAGE_TRIAL_BOOTS <= 14, "OTA_STAGE_TRIAL_BOOTS: 1..14");
+#endif
 
 // The bootloader sets this in its own image so the app knows it can do a staged install: a word at
 // OTA_STAGE_BL_INFO_ADDR, inside the bootloader's flash and read only. Old bootloaders never have it there.
@@ -102,9 +112,18 @@ static inline ota_stage_t* ota_stage_free_slot(void) {
   return 0;
 }
 
+// trial starts so far: boots (0 = one start; an older bootloader cleared one low bit per start instead)
+// plus every boots_extra[] word set, so a record from an older bootloader keeps counting up too
 static inline uint32_t ota_stage_boots_used(const ota_stage_t* r) {
   uint32_t n = 0;
-  for (uint32_t b = r->boots; (b & 1u) == 0 && n < 32; b >>= 1) n++;
+  if (r->boots == OTA_STAGE_SET) {
+    n = 1;
+  } else {
+    for (uint32_t b = r->boots; (b & 1u) == 0 && n < 32; b >>= 1) n++;
+  }
+  for (uint32_t i = 0; i < OTA_STAGE_TRIAL_BOOTS - 1; i++) {
+    if (r->boots_extra[i] == OTA_STAGE_SET) n++;
+  }
   return n;
 }
 

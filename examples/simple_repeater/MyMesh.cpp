@@ -26,7 +26,12 @@
     if (ota_target.isUnconfirmed()) ota_confirmed_at = millis() | 1;
     ota_target.confirm();
   }
-  static bool otaFresh() { return ota_confirmed_at && millis() - ota_confirmed_at < OTA_FRESH_MILLIS; }
+  static bool otaFresh() {
+    if (!ota_confirmed_at) return false;
+    if (millis() - ota_confirmed_at < OTA_FRESH_MILLIS) return true;
+    ota_confirmed_at = 0;
+    return false;
+  }
   #define OTA_SIDE_RADIO_DELAY   2500                 // the BEGIN reply goes out on the normal radio first
   #define OTA_RESTORE_DELAY      1500                 // the last reply goes out on the side radio first
   #define OTA_COMMIT_DELAY       10000                // the END reply goes out (and is repeated if lost) before the reboot
@@ -1512,6 +1517,10 @@ void MyMesh::saveIdentity(const mesh::LocalIdentity &new_id) {
 
 void MyMesh::clearStats() {
   radio_driver.resetStats();
+#ifdef WITH_TELEMETRY_HISTORY
+  history_rx = 0;
+  history_tx = 0;
+#endif
   resetStats();
   ((SimpleMeshTables *)getTables())->resetStats();
 }
@@ -1872,6 +1881,7 @@ void MyMesh::loadMailbox() {
     // none there yet: the one in the internal flash (moved over with the next save)
   }
 #endif
+  if (!_fs->exists(MAILBOX_FILE) && _fs->exists(MAILBOX_TMP)) _fs->rename(MAILBOX_TMP, MAILBOX_FILE);
   if (!_fs->exists(MAILBOX_FILE)) return;
 #if defined(RP2040_PLATFORM)
   File f = _fs->open(MAILBOX_FILE, "r");
@@ -2136,7 +2146,7 @@ bool MyMesh::hasPendingWork() const {
   if (bridge.isRunning()) return true;  // bridge needs WiFi radio, can't sleep
 #endif
 #ifdef WITH_MAILBOX
-  if (mailbox_deliver_owner >= 0 || mailbox_save_at) return true;
+  if (mailbox_deliver_owner >= 0 || (mailbox_save_at && psave.stage() == PSAVE_NORMAL)) return true;
 #endif
 #ifdef WITH_LORA_OTA
   if (lora_ota.isActive()) return true;
@@ -2275,6 +2285,9 @@ void MyMesh::applyPowerStage(uint8_t old_stage) {
 #ifdef WITH_TELEMETRY_HISTORY
     saveHistory();
 #endif
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+    qspi.off();
+#endif
     radio_driver.powerOff();
     psave_radio_off = true;
     psave_next_wake_check = futureMillis(PSAVE_OFF_CHECK_EVERY);
@@ -2296,7 +2309,8 @@ void MyMesh::powerOffAtBoot(bool sensors_ready) {
   psave_sleep_off_mv = 0;
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) return;
   uint16_t mv = sensors_ready ? sensors.getBatteryMilliVolts() : board.getBattMilliVolts();
-  if (board.isExternalPowered() || mv < 2500 || mv > 4600 || mv >= off + PSAVE_OFF_WAKE_MV) return;
+  bool ext = (sensors_ready && sensors.externalPower() >= 0) ? sensors.externalPower() > 0 : board.isExternalPowered();
+  if (ext || mv < 2500 || mv > 4600 || mv >= off + PSAVE_OFF_WAKE_MV) return;
   if (sensors_ready) radio_driver.powerOff();
   psave_sleep_off_mv = off;
   esp_sleep_enable_timer_wakeup((uint64_t)PSAVE_OFF_CHECK_EVERY * 3 * 1000ULL);
@@ -2478,7 +2492,9 @@ void MyMesh::loadChargerEarly(FILESYSTEM* fs) {
   BQ25798Settings s{};
   uint8_t raw[sizeof(s)] = {0};
   int len = readSmallFileLen(fs, CHARGER_FILE, raw, sizeof(raw));
-  if (BQ25798::fromFile(raw, len, s)) sensors.getCharger()->setInaPos(s.ina_pos);
+  if (BQ25798::fromFile(raw, len, s)) {
+    if (BQ25798* c = sensors.getCharger()) c->setInaPos(s.ina_pos);
+  }
 }
 
 // The settings from flash (or the defaults: Li-ion 4.2 V, 1 A, MPPT, no NTC, ship FET fitted).
@@ -2837,6 +2853,7 @@ void MyMesh::formatSelfTest(char* reply) {
 #include <helpers/LppScan.h>
 
 void MyMesh::loadHistory() {
+  if (!_fs->exists(HISTORY_FILE) && _fs->exists(HISTORY_TMP)) _fs->rename(HISTORY_TMP, HISTORY_FILE);
   File f = openForRead(_fs, HISTORY_FILE);
   if (!f) return;
   FsWriter r(f);
