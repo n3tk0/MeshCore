@@ -69,31 +69,42 @@ object BleDfu {
         return synchronized(found) { found.values.sortedByDescending { it.rssi } }
     }
 
+    /** The address a nRF52 bootloader advertises on after losing the app's peer data (as the DFU library does). */
+    private fun incremented(address: String): String =
+        address.substring(0, 15) + "%02X".format(java.util.Locale.US, (address.substring(15).toInt(16) + 1) and 0xFF)
+
     /**
-     * Waits up to [ms] for the target [address] (or its bootloader on `address + 1` / `*_OTA` / `AdaDFU`)
-     * to be seen advertising by Android's BLE scanner. After a disconnect or a `gatt.refresh()`, calling
-     * `device.connectGatt(autoConnect = false)` before Android has seen an advertisement packet from the
-     * peripheral often fails within 200 ms with `0x85 (GATT_ERROR)`.
+     * Scans up to [ms] for the device on [address] or its bootloader on `address + 1` and returns the address
+     * to flash: [address] when the device answers there, `address + 1` when only a bootloader there does (a
+     * previous attempt left it in DFU mode), else [address]. Also, `connectGatt(autoConnect = false)` before
+     * Android has seen an advertisement of the device often fails within 200 ms with 0x85 (GATT_ERROR).
+     * Other devices' `*_OTA` / `AdaDFU` advertisements are ignored: they may be another node in DFU mode.
      */
-    private suspend fun awaitAdvertising(ctx: Context, address: String, ms: Long) {
-        val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner ?: return
-        val seen = CompletableDeferred<Unit>()
+    private suspend fun awaitAdvertising(ctx: Context, address: String, ms: Long, log: (String) -> Unit): String {
+        val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
+            ?: return address
+        val plusOne = incremented(address.uppercase())
+        val exact = CompletableDeferred<Unit>()
+        val sawBootloader = java.util.concurrent.atomic.AtomicBoolean(false)
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, r: ScanResult) {
                 val addr = r.device.address
-                val name = r.scanRecord?.deviceName ?: r.device.name ?: ""
-                if (addr.equals(address, ignoreCase = true) || name.endsWith("_OTA", ignoreCase = true) || name == "AdaDFU") {
-                    seen.complete(Unit)
-                }
+                if (addr.equals(address, ignoreCase = true)) exact.complete(Unit)
+                else if (addr.equals(plusOne, ignoreCase = true)) sawBootloader.set(true)
             }
         }
         runCatching {
             scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
-        }.onFailure { return }
-        try {
-            kotlinx.coroutines.withTimeoutOrNull(ms) { seen.await() }
+        }.onFailure { return address }
+        val found = try {
+            kotlinx.coroutines.withTimeoutOrNull(ms) { exact.await() } != null
         } finally {
             runCatching { scanner.stopScan(cb) }
+        }
+        return when {
+            found -> address
+            sawBootloader.get() -> plusOne.also { log("[app] bootloader found on $it, flashing there") }
+            else -> address.also { log("[app] $address not seen advertising in ${ms / 1000} s, trying anyway") }
         }
     }
 
@@ -105,8 +116,8 @@ object BleDfu {
     suspend fun flash(ctx: Context, address: String, name: String, zip: File, bonded: Boolean, log: (String) -> Unit,
               progress: (Int) -> Unit) {
         try {
-            awaitAdvertising(ctx, address, 3_000)
-            flashOnce(ctx, address, name, zip, bonded, log, progress)
+            val target = awaitAdvertising(ctx, address, 3_000, log)
+            flashOnce(ctx, target, name, zip, bonded, log, progress)
         } catch (e: GattFailed) {
             // a GATT error (e.g. INVALID HANDLE from stale cached services, or 0x85 GATT_ERROR on connect):
             // the cache is cleared by now. Retry on the address the library last used: the bootloader may
@@ -115,8 +126,8 @@ object BleDfu {
             log("[app] ${e.message}: retrying once with fresh services on $again")
             progress(0)
             delay(2000)
-            awaitAdvertising(ctx, again, 4_000)
-            flashOnce(ctx, again, name, zip, bonded, log, progress)
+            val target = awaitAdvertising(ctx, again, 4_000, log)
+            flashOnce(ctx, target, name, zip, bonded, log, progress)
         }
     }
 
