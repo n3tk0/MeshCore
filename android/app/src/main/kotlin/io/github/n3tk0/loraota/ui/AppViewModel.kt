@@ -131,6 +131,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // companion
     val devices = mutableStateListOf<BluetoothDevice>()
+    val deviceRssi = mutableStateMapOf<String, Int>()
+    private val companionPrefs get() = ctx.getSharedPreferences("companion", Context.MODE_PRIVATE)
+    var lastCompanionAddress by mutableStateOf(companionPrefs.getString("address", null))
+    var lastCompanionName by mutableStateOf(companionPrefs.getString("name", null))
     var scanning by mutableStateOf(false)
     var companionName by mutableStateOf("")
     var companionOta by mutableStateOf(true)   // our companion firmware: it can go to the side channel
@@ -205,6 +209,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var flashImage by mutableStateOf<FlashImage?>(null)
     var flashPlan by mutableStateOf<FlashPlan?>(null)
     var flashPercent by mutableStateOf(-1)   // -1: not writing
+
+    /** A LoRa update, a flash or a build running: the screen stays on (MainActivity). */
+    val keepScreenOn get() = phase != null || flashPercent >= 0 || buildJob?.finished == false
     var flashDone by mutableStateOf(false)
     /** The DFU library's steps of the last Bluetooth flash, seconds from its start first: kept after a failure. */
     var flashLog by mutableStateOf<List<String>>(emptyList())
@@ -224,8 +231,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var restoreRows by mutableStateOf<List<DiffRow>>(emptyList())
     val restoreChecked = mutableStateMapOf<String, Boolean>()
     var importText by mutableStateOf<String?>(null)         // an encrypted file: asks for its password
+    var exportingBackup by mutableStateOf<Backup?>(null)
+    var exportPassword by mutableStateOf("")
     var updateBackupNote by mutableStateOf<String?>(null)   // in the update's 'are you sure': no backup, and why
     private var backupReturn = Step.REPEATER
+    private var scanJob: Job? = null
 
     init {
         BuildWatcher.resume(app)
@@ -240,9 +250,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
-                    message = str(R.string.msg_disconnected)
-                    messageIsError = true
+                    val wasUpdating = phase != null
+                    val wasFlashingRepeater = flashPercent >= 0
+                    // a repeater's Bluetooth / Wi-Fi flash does not need the companion: let it finish on screen first;
+                    // a LoRa update (even while sleeping in WAIT_AIR / PAUSE / RESTART) or other work is cancelled now
+                    // (the link is already gone so no ABORT is sent, and resumable is kept below)
+                    if (wasFlashingRepeater) job?.join() else job?.cancelAndJoin()
+                    if (wasUpdating) resumable = true
+                    patchJob?.cancel()
+                    calculatingPatch = false
+                    confirmUpdate = false
+                    flashPlan = null
+                    queueAsk = false
                     loginSheet = null
+                    val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
+                    message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
+                    messageIsError = true
                     step = Step.COMPANION
                 }
             }
@@ -288,6 +311,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            deviceRssi[result.device.address] = result.rssi
             if (devices.none { it.address == result.device.address }) devices.add(result.device)
         }
     }
@@ -309,7 +333,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             messageIsError = true
             return
         }
+        scanJob?.cancel()
+        runCatching { scanner.stopScan(scanCallback) }
         devices.clear()
+        deviceRssi.clear()
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(CompanionLink.SERVICE)).build()
         try {
             scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
@@ -319,15 +346,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         scanning = true
-        viewModelScope.launch {
-            delay(10_000)
-            runCatching { scanner.stopScan(scanCallback) }
-            scanning = false
+        scanJob = viewModelScope.launch {
+            try {
+                delay(10_000)
+            } finally {
+                runCatching { scanner.stopScan(scanCallback) }
+                scanning = false
+            }
         }
+    }
+
+    fun connectByAddress(address: String) {
+        val dev = devices.firstOrNull { it.address.equals(address, ignoreCase = true) }
+            ?: runCatching {
+                (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.getRemoteDevice(address)
+            }.getOrNull() ?: return
+        connect(dev)
     }
 
     fun connect(device: BluetoothDevice) = work {
         if (scanning) {
+            scanJob?.cancel()
             runCatching {
                 (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner?.stopScan(scanCallback)
             }
@@ -342,6 +381,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // left on the side channel by an update cut short; a stock companion has no such command
         companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
         companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
+        lastCompanionAddress = device.address
+        lastCompanionName = companionName
+        companionPrefs.edit().putString("address", device.address).putString("name", companionName).apply()
         runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
             companionModel = model
             companionVersion = version
@@ -406,26 +448,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             delay(4000)   // the companion sends its route back to the repeater
             companion.contact(contact.publicKey)
         } catch (e: Exception) {
-            runCatching { companion.restorePath(contact) }
+            withContext(NonCancellable) { runCatching { companion.restorePath(contact) } }
             throw e
         }
     }
 
     fun login(contact: Contact, password: String) = work {
-        val learned = signIn(contact, password)
+        val learned = try {
+            signIn(contact, password)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (step == Step.REPEATER && loginSheet == null) loginSheet = contact
+            throw e
+        }
         savePassword(contact, password)
         // the route just learned is the one to keep afterwards, not the older (longer) one
         repeater = learned ?: contact
+        loadBatteryChem(repeater)
         info = null
         status = null
         sensorBattery = null
         otaChecked = false
+        patchJob?.cancel()
+        calculatingPatch = false
         oldImage = null
         runningUnknown = false
         runningNotChecked = false
         newImage = null
         patch = null
         done = false
+        confirmUpdate = false
         sent = 0
         total = 0
         phase = null
@@ -443,6 +496,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Again the status and the OTA check, e.g. when an answer got lost. */
     fun recheck() = work {
         val old = repeater ?: return@work
+        patchJob?.cancel()
+        calculatingPatch = false
+        oldImage = null
+        patch = null
         val now = companion.contact(old.publicKey)
         if (now != null) repeater = now
         inspect(now ?: old, now?.hops)
@@ -513,7 +570,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         var i: OtaProtocol.Info? = null
         for (attempt in 1..3) {
             delay(3000)
-            i = runCatching { session(r).info() }.getOrNull()
+            i = runCatching { session(r).info() }
+                .also { it.exceptionOrNull()?.let { e -> if (e is CancellationException) throw e } }
+                .getOrNull()
             if (i?.enabled == true) break
         }
         if (i != null) info = i
@@ -544,21 +603,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         OtaService.update(ctx, notifyTitle(), text, if (phase == Phase.RESTART) 0 else sent, if (phase == Phase.RESTART) 0 else total)
     }
 
-    private suspend fun restorePath() {
-        val r = repeater ?: return
+    private suspend fun restorePath(r: Contact? = repeater) {
+        if (r == null) return
         runCatching { companion.restorePath(r) }
     }
 
     fun backToRepeaters() {
+        val oldRepeater = repeater
+        patchJob?.cancel()
+        calculatingPatch = false
+        repeater = null
+        info = null
+        status = null
+        sensorBattery = null
+        confirmUpdate = false
         step = Step.REPEATER
         if (searching) releasesJob?.cancel()   // the search of the old repeater's firmware is of no use now
         viewModelScope.launch {
             job?.cancelAndJoin()
-            restorePath()
-            repeater = null
-            info = null
-            status = null
-            sensorBattery = null
+            restorePath(oldRepeater)
         }
     }
 
@@ -622,9 +685,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** "Search again" on the card of an incomplete search: more pages. */
-    fun searchAgain() = viewModelScope.launch {
-        val i = info ?: return@launch
-        searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true, -1)
+    fun searchAgain(): Job {
+        releasesJob?.takeIf { it.isActive }?.let { return it }
+        return viewModelScope.launch {
+            val i = info ?: return@launch
+            searchRunning(hex(i.imageSha), Releases.MAX_PAGES_RETRY, true, -1)
+        }.also { releasesJob = it }
     }
 
     /**
@@ -637,6 +703,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fun stale() = info?.let { hex(it.imageSha) } != sha
         var found = allFirmware.firstOrNull { it.sha256 == sha }
         var result: Releases.SearchResult? = null
+        var olderFailed = false
         // offline: nothing to search (the find kept from earlier is read below); a short first page: no page 2
         val kept = found == null && !listOk &&
             withContext(Dispatchers.IO) { Releases.olderCached(repo, ctx.filesDir).any { it.sha256 == sha } }
@@ -658,6 +725,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 olderPage = 0
             }
             if (stale()) return
+            olderFailed = older.isFailure
             result = older.getOrNull()
             if (result is Releases.SearchResult.Found) {
                 found = result.file
@@ -666,13 +734,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (stale()) return
         runningUnknown = found == null && listOk && oldImage == null &&
-            (result is Releases.SearchResult.NotFound || (result == null && !Releases.hasOlderPages(firstPageReleases)))
-        runningNotChecked = found == null && listOk && oldImage == null && result is Releases.SearchResult.Incomplete
+            (result is Releases.SearchResult.NotFound || (result == null && !olderFailed && !Releases.hasOlderPages(firstPageReleases)))
+        runningNotChecked = found == null && listOk && oldImage == null && (result is Releases.SearchResult.Incomplete || olderFailed)
         val running = found
         if (running != null && oldImage == null) {
             try {
                 val data = withContext(Dispatchers.IO) { Releases.download(running, ctx.filesDir) }
-                if (!stale() && oldImage == null) oldImage = Image(running.file, data, running.env)
+                if (!stale() && oldImage == null) {
+                    oldImage = Image(running.file, data, running.env)
+                    refreshPatchPreview()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -707,10 +778,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    var calculatingPatch by mutableStateOf(false)
+    private var patchJob: Job? = null
+
+    private fun refreshPatchPreview() {
+        patchJob?.cancel()
+        val old = oldImage
+        val new = newImage
+        val i = info
+        if (old == null || new == null || (i != null && !i.fits(new.data.size))) {
+            patch = null
+            calculatingPatch = false
+            return
+        }
+        calculatingPatch = true
+        patchJob = viewModelScope.launch {
+            try {
+                val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
+                if (oldImage === old && newImage === new) patch = p
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            } catch (_: OutOfMemoryError) {
+                // a small phone (Android 7, 2-3 GB): no preview; 'Update' tries again and says why
+            } finally {
+                if (oldImage === old && newImage === new) calculatingPatch = false
+            }
+        }
+    }
+
+    /** A side channel preset; [freq] when the width needs its own centre to stay in 869.4-869.65 MHz. */
+    data class SidePreset(val sf: String, val bw: String, val freq: String?, val label: Int)
+
+    fun applySidePreset(p: SidePreset) {
+        sf = p.sf
+        bwKhz = p.bw
+        if (p.freq != null) freqMhz = p.freq
+    }
+
     fun pickRelease(f: FirmwareFile) = work {
         val data = withContext(Dispatchers.IO) { Releases.download(f, ctx.filesDir) }
         newImage = Image(f.file, data, f.env)
         patch = null
+        refreshPatchPreview()
     }
 
     fun pickFile(uri: Uri, isOld: Boolean) = work {
@@ -735,6 +845,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             newImage = Image(name, picked)
         }
         patch = null
+        refreshPatchPreview()
     }
 
     /** The name the file has for the user (a content URI's last segment can be just an id). */
@@ -746,10 +857,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
 
     fun sideRadio(): SideRadio = SideRadio(
-        ((freqMhz.toDoubleOrNull() ?: 869.47) * 1000).toInt(),
-        ((bwKhz.toDoubleOrNull() ?: 125.0) * 1000).toInt(),
-        sf.toIntOrNull() ?: 7,
-        cr.toIntOrNull() ?: 5,
+        ((freqMhz.replace(',', '.').toDoubleOrNull() ?: 869.47) * 1000).toInt().coerceIn(137_000, 1_020_000),
+        ((bwKhz.replace(',', '.').toDoubleOrNull() ?: 125.0) * 1000).toInt().coerceIn(7_800, 500_000),
+        (sf.trim().toIntOrNull() ?: 7).coerceIn(5, 12),
+        (cr.trim().toIntOrNull() ?: 5).coerceIn(5, 8),
     )
 
     /** The new image only goes "in place" on this repeater: a power cut while it copies needs a visit. */
@@ -761,7 +872,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Any other nRF52 update: the same final copy, so the same (smaller) risk note. */
     fun nrfCopy(): Boolean = newImage != null && info?.platform == OtaProtocol.PLATFORM_NRF52 && !inPlace()
 
-    fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
+    fun duty(): Double = if (ignoreAirLimit) 1.0 else ((dutyPercent.replace(',', '.').toDoubleOrNull() ?: 10.0) / 100.0).coerceIn(0.01, 1.0)
 
     fun estimateMinutes(): Double? {
         val p = patch ?: return null
@@ -778,11 +889,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 'Update' / 'Continue': makes the delta if needed, then asks before it starts. */
     fun update() = work {
+        val old = oldImage ?: return@work
+        val new = newImage ?: return@work
+        val i = info
+        if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
+        patchJob?.join()
         if (patch == null) {
-            val old = oldImage ?: return@work
-            val new = newImage ?: return@work
-            val i = info
-            if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
             patch = withContext(Dispatchers.Default) { DeltaGenerator.create(old.data, new.data) }
         }
         updateBackupNote = autoBackup(DeviceKind.REPEATER)
@@ -799,7 +911,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             done = false
             log.clear()
             OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
-            try {
+            val after = try {
                 session(r).run(old.data, new.data, p, inPlace())
             } catch (e: OtaFailed) {
                 resumable = e.resumable
@@ -813,8 +925,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             resumable = false
             done = true
-            info = runCatching { session(r).info() }.getOrNull() ?: info
-            message = str(R.string.msg_verified, info?.ident?.replace('|', ' ') ?: "")
+            info = after
+            oldImage = new
+            newImage = null
+            patch = null
+            message = str(R.string.msg_verified, after.ident.replace('|', ' '))
         }
     }
 
@@ -930,7 +1045,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         flashImage = if (name.endsWith(".uf2", ignoreCase = true)) {
             // the USB drive's file: made into the Bluetooth DFU .zip here
             val zip = runCatching { withContext(Dispatchers.Default) { io.github.n3tk0.loraota.flash.Uf2.toDfuZip(data) } }
-                .getOrElse { throw Exception(str(R.string.err_flash_uf2, it.message ?: "")) }
+                .getOrElse {
+                    if (it is CancellationException) throw it
+                    throw Exception(str(R.string.err_flash_uf2, it.message ?: ""))
+                }
             FlashImage(name.dropLast(4) + ".zip", zip, null)
         } else FlashImage(name, data, null)
     }
@@ -1123,7 +1241,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retryQueue() {
-        queue?.retryFailed()
+        val q = queue ?: return
+        q.retryFailed()
+        queue = OtaQueueState(q.release, q.label, q.entries)
         saveQueue()
         runQueue()
     }
@@ -1169,6 +1289,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pw = savedPassword(c) ?: return QueueResult.SKIPPED to str(R.string.q_no_password)
         repeater = c
         info = null
+        sent = 0
+        total = 0
         log.clear()
         val learned = try {
             signIn(c, pw)
@@ -1192,7 +1314,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val sha = hex(i.imageSha)
             // not in the loaded lists: the older releases too (the find is kept for the next repeater)
             val running = allFirmware.firstOrNull { it.sha256 == sha } ?: run {
-                val older = runCatching { withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir) } }.getOrNull()
+                val older = runCatching { withContext(Dispatchers.IO) { Releases.findOlder(repo, sha, ctx.filesDir) } }
+                    .also { it.exceptionOrNull()?.let { ex -> if (ex is CancellationException) throw ex } }
+                    .getOrNull()
                 (older as? Releases.SearchResult.Found)?.file?.also { addOlderFound(it) }
             } ?: return QueueResult.SKIPPED to str(R.string.q_unknown_firmware)
             val target = OtaQueueState.target(allFirmware, q.release, running)
@@ -1269,10 +1393,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         battGauge = false
         battChecked = false
         message = ""
-        val dev = deviceKey(kind)
         healthRecords = emptyList()
         step = Step.HEALTH
-        viewModelScope.launch { healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) } }
         refreshHealth()
     }
 
@@ -1284,6 +1406,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The self test (a repeater), then the battery's day and week (for 'drains faster than usual') and the series shown. */
     fun refreshHealth() = work {
         val kind = healthKind
+        val dev = deviceKey(kind)
+        healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) }
         val warnings = ArrayList<HealthWarning>()
         if (kind == DeviceKind.REPEATER) {
             val r = repeater ?: return@work
@@ -1305,7 +1429,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (t == null) {
                     selfTestMissing = true
                 } else {
-                    val dev = deviceKey(kind)
                     val before = healthRecords.lastOrNull()?.let { SelfTest.parse(it.line) }
                     healthRecords = withContext(Dispatchers.IO) {
                         healthStore.add(dev, line)
@@ -1444,17 +1567,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closeBackup() {
         restoreFrom = null
         importText = null
+        exportingBackup = null
+        exportPassword = ""
         step = backupReturn
     }
+
+    private var backupsJob: Job? = null
 
     /** This device's backups first, then those of others of its kind (e.g. for a board that replaces one). */
     private fun loadBackups() {
         val dev = backupDevice
         val kind = backupKind
-        viewModelScope.launch {
+        backupsJob?.cancel()
+        backupsJob = viewModelScope.launch {
             // the keys are decrypted as they are read: not on the main thread
             val all = withContext(Dispatchers.IO) { backupStore.all() }
-            backups = all.filter { it.kind == kind }.sortedBy { if (it.deviceKey == dev) 0 else 1 }
+            if (backupKind == kind) {
+                backups = all.filter { it.kind == kind }.sortedBy { if (it.deviceKey == dev) 0 else 1 }
+            }
         }
     }
 
@@ -1756,7 +1886,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val f = made.firstOrNull { it.hasLoraOta && it in newCandidates() } ?: return
             loraSource = Source.RELEASES
             pickRelease(f)
-        } else if (flashSource == Source.BUILD && (step == Step.FLASH || firmwareTab == 1)) {
+        } else if (flashSource == Source.BUILD && (step == Step.FLASH || (step == Step.UPDATE && firmwareTab == 1))) {
             val f = made.firstOrNull { it.hasDfu } ?: return
             flashSource = Source.RELEASES
             flashUpstream = false
@@ -1764,7 +1894,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    companion object {
+        // 250 kHz fits the 869.4-869.65 MHz sub-band (10 % duty) only centred on 869.525
+        val SIDE_PRESETS = listOf(
+            SidePreset("7", "250", "869.525", R.string.preset_fast),
+            SidePreset("7", "125", null, R.string.preset_default),
+            SidePreset("9", "125", null, R.string.preset_long),
+        )
+    }
+
+    // ---- the repeater's battery chemistry, for the status card's bar (kept per repeater) ----
+    private val chemPrefs get() = ctx.getSharedPreferences("battery_chem", Context.MODE_PRIVATE)
+    var batteryChem by mutableStateOf(BatteryChem.LI_ION)
+        private set
+
+    fun loadBatteryChem(r: Contact?) {
+        batteryChem = r?.let { BatteryChem.byName(chemPrefs.getString(hex(it.publicKey), null)) } ?: BatteryChem.LI_ION
+    }
+
+    fun chooseBatteryChem(c: BatteryChem) {
+        batteryChem = c
+        repeater?.let { chemPrefs.edit().putString(hex(it.publicKey), c.name).apply() }
+    }
+
     override fun onCleared() {
+        scanJob?.cancel()
+        runCatching {
+            (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        }
         OtaService.stop(ctx)
         link.close()
     }

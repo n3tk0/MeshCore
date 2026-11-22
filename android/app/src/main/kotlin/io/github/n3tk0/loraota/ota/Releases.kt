@@ -163,6 +163,8 @@ object Releases {
         return Page(releases.length(), files, failed)
     }
 
+    private fun JSONObject.str(key: String): String = if (isNull(key)) "" else optString(key)
+
     /**
      * Whether a release (its assets) may have the app image with [sha]: an asset's digest is it, or a .bin
      * has no digest (older releases) so nothing excludes it.
@@ -170,9 +172,9 @@ object Releases {
     internal fun mayHave(assets: JSONArray, sha: String): Boolean {
         for (a in 0 until assets.length()) {
             val asset = assets.getJSONObject(a)
-            val digest = asset.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
+            val digest = asset.str("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
             if (digest == null) {
-                if (asset.optString("name").endsWith(".bin", ignoreCase = true)) return true
+                if (asset.str("name").endsWith(".bin", ignoreCase = true)) return true
             } else if (digest == sha) {
                 return true
             }
@@ -283,31 +285,31 @@ object Releases {
                 if (asset.getString("name") == "ota-manifest.json") manifest = asset.getString("browser_download_url")
             }
             if (manifest == null) {
-                if (repo == UPSTREAM_REPO && !rel.optBoolean("draft")) out.addAll(fromAssetNames(rel.optString("tag_name"), assets))
+                if (repo == UPSTREAM_REPO && !rel.optBoolean("draft")) out.addAll(fromAssetNames(rel.str("tag_name"), assets))
                 continue
             }
             if (!wanted(assets)) continue   // a search: this release cannot have the firmware
-            val published = rel.optString("published_at").ifEmpty { rel.optString("created_at") }
+            val published = rel.str("published_at").ifEmpty { rel.str("created_at") }
             val fetched = runCatching { JSONObject(String(fetch(manifest))).getJSONArray("files") }
             val files = fetched.getOrNull()
             if (files == null) {
                 // no manifest: the .bin files GitHub lists, checked by the digest it keeps for each
-                val (fallback, covered) = fromBinAssets(rel.optString("tag_name"), assets, published)
+                val (fallback, covered) = fromBinAssets(rel.str("tag_name"), assets, published)
                 onFetchFailed(fetched.exceptionOrNull() ?: java.io.IOException("manifest"), covered)
-                onFallback(rel.optString("tag_name"))
+                onFallback(rel.str("tag_name"))
                 out.addAll(fallback)
                 continue
             }
             for (f in 0 until files.length()) {
                 val e = files.getJSONObject(f)
-                val file = e.optString("file")
+                val file = e.str("file")
                 val url = if (file.isEmpty()) "" else urls[file] ?: continue
-                val dfu = e.optString("dfu")
+                val dfu = e.str("dfu")
                 val dfuUrl = if (dfu.isEmpty()) "" else urls[dfu] ?: ""
                 if (file.isEmpty() && dfuUrl.isEmpty()) continue
-                out.add(FirmwareFile(rel.optString("tag_name"), e.getString("env"), e.optString("version"),
-                    file, e.optInt("size"), e.optString("sha256").lowercase(), url,
-                    if (dfuUrl.isEmpty()) "" else dfu, e.optInt("dfu_size"), e.optString("dfu_sha256").lowercase(), dfuUrl,
+                out.add(FirmwareFile(rel.str("tag_name"), e.getString("env"), e.str("version"),
+                    file, e.optInt("size"), e.str("sha256").lowercase(), url,
+                    if (dfuUrl.isEmpty()) "" else dfu, e.optInt("dfu_size"), e.str("dfu_sha256").lowercase(), dfuUrl,
                     published))
             }
         }
@@ -334,7 +336,7 @@ object Releases {
     internal fun fromBinAssets(tag: String, assets: JSONArray, published: String = ""): Pair<List<FirmwareFile>, Boolean> {
         val byName = HashMap<String, JSONObject>()
         for (a in 0 until assets.length()) assets.getJSONObject(a).let { byName[it.getString("name")] = it }
-        fun digest(a: JSONObject?) = a?.optString("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
+        fun digest(a: JSONObject?) = a?.str("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
         val bases = java.util.TreeSet<String>()
         for (name in byName.keys) {
             if (name.endsWith(".bin", ignoreCase = true) && !name.endsWith("-merged.bin", ignoreCase = true)) bases.add(name.dropLast(4))
@@ -348,12 +350,12 @@ object Releases {
             val binName = "$base.bin"
             val bin = byName[binName]
             val binSha = digest(bin)
-            val binUrl = bin?.optString("browser_download_url").orEmpty()
+            val binUrl = bin?.str("browser_download_url").orEmpty()
             val binOk = bin != null && binSha != null && binUrl.isNotEmpty()
             val zipName = "$base.zip"
             val zip = byName[zipName]
             val zipSha = digest(zip)
-            val zipUrl = zip?.optString("browser_download_url").orEmpty()
+            val zipUrl = zip?.str("browser_download_url").orEmpty()
             val hasZip = zip != null && zipSha != null && zipUrl.isNotEmpty()
             // ESP32: next to a -merged.bin the app .bin is also what Wi-Fi OTA flashes (as the manifest lists it)
             val esp32 = !hasZip && binOk && "$base-merged.bin" in byName
@@ -385,9 +387,9 @@ object Releases {
             val m = ASSET_NAME.matchEntire(name) ?: continue
             val (env, version, ext) = m.destructured
             if (ext == "bin" && (name.endsWith("-merged.bin") || "${name.removeSuffix(".bin")}-merged.bin" !in byName)) continue
-            val sha = a.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase() ?: continue
+            val sha = a.str("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase() ?: continue
             out.add(FirmwareFile(tag, env, version, "", 0, "", "",
-                name, a.optInt("size"), sha, a.optString("browser_download_url")))
+                name, a.optInt("size"), sha, a.str("browser_download_url")))
         }
         return out.sortedBy { it.env.lowercase() }
     }
@@ -404,8 +406,8 @@ object Releases {
         for (l in lists) {
             val a = runCatching { JSONArray(String(l.readBytes())) }.getOrNull() ?: continue
             for (i in 0 until a.length()) a.getJSONObject(i).let {
-                keep.add("${it.optString("sha256")}.bin")
-                keep.add("${it.optString("dfu_sha256")}.bin")
+                keep.add("${it.str("sha256")}.bin")
+                keep.add("${it.str("dfu_sha256")}.bin")
             }
         }
         binDir(cache).listFiles()?.forEach { if (it.name !in keep && !it.name.endsWith(".tmp")) it.delete() }
@@ -447,10 +449,10 @@ object Releases {
     }.getOrDefault(emptyList())
 
     private fun fromJson(a: JSONArray) = (0 until a.length()).map { a.getJSONObject(it) }.map {
-        FirmwareFile(it.getString("release"), it.getString("env"), it.getString("version"), it.getString("file"),
-            it.getInt("size"), it.getString("sha256"), it.getString("url"),
-            it.optString("dfu"), it.optInt("dfu_size"), it.optString("dfu_sha256"), it.optString("dfu_url"),
-            it.optString("published"))
+        FirmwareFile(it.getString("release"), it.getString("env"), it.str("version"), it.str("file"),
+            it.optInt("size"), it.str("sha256"), it.str("url"),
+            it.str("dfu"), it.optInt("dfu_size"), it.str("dfu_sha256"), it.str("dfu_url"),
+            it.str("published"))
     }
 
     /** The .bin, from the phone when it was downloaded before; checked against its checksum either way. */

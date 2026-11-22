@@ -117,7 +117,8 @@ class CompanionRadio(private val link: CompanionLink) {
             while (true) {
                 val f = link.frames.receive()
                 if (match(f)) return@withTimeoutOrNull f
-                if ((f[0].toInt() and 0xff) == PUSH_BINARY_RESPONSE || (f[0].toInt() and 0xff) == PUSH_CLI_REPLY_CAPTURED) {
+                val c = code(f)
+                if (c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL) {
                     pending.addLast(f)
                     while (pending.size > 32) pending.removeFirst()
                 }
@@ -127,7 +128,7 @@ class CompanionRadio(private val link: CompanionLink) {
         }
     }
 
-    private fun code(f: ByteArray) = f[0].toInt() and 0xff
+    private fun code(f: ByteArray) = if (f.isEmpty()) -1 else f[0].toInt() and 0xff
 
     private suspend fun command(frame: ByteArray, timeoutMs: Long = 5000, vararg codes: Int): ByteArray = lock.withLock {
         link.send(frame)
@@ -165,16 +166,29 @@ class CompanionRadio(private val link: CompanionLink) {
         link.send(byteArrayOf(CMD_GET_CONTACTS.toByte()))
         val out = ArrayList<Contact>()
         var end = false
-        while (!end) {
-            val f = await(10_000) { code(it) in intArrayOf(2, RESP_CONTACT, RESP_END_OF_CONTACTS, RESP_ERR) }
-                ?: throw CompanionError("contacts")
-            when (code(f)) {
-                RESP_CONTACT -> if (f.size >= 148) out.add(Contact(f))
-                RESP_END_OF_CONTACTS -> end = true
-                RESP_ERR -> throw CompanionError("contacts")
+        try {
+            while (!end) {
+                val f = await(10_000) { code(it) in intArrayOf(2, RESP_CONTACT, RESP_END_OF_CONTACTS, RESP_ERR) }
+                    ?: throw CompanionError("contacts")
+                when (code(f)) {
+                    RESP_CONTACT -> if (f.size >= 148) out.add(Contact(f))
+                    RESP_END_OF_CONTACTS -> end = true
+                    RESP_ERR -> throw CompanionError("contacts")
+                }
+            }
+            out
+        } finally {
+            if (!end) {
+                while (true) {
+                    val f = link.frames.tryReceive().getOrNull() ?: break
+                    val c = code(f)
+                    if (c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL) {
+                        pending.addLast(f)
+                        while (pending.size > 32) pending.removeFirst()
+                    }
+                }
             }
         }
-        out
     }
 
     /** Admin login; true when the repeater accepted it with admin rights. */
@@ -197,7 +211,15 @@ class CompanionRadio(private val link: CompanionLink) {
 
     /** The contact as the companion has it now (with the route it learned). */
     suspend fun contact(publicKey: ByteArray): Contact? = try {
-        Contact(command(byteArrayOf(CMD_GET_CONTACT_BY_KEY.toByte()) + publicKey, 5000, RESP_CONTACT))
+        lock.withLock {
+            link.send(byteArrayOf(CMD_GET_CONTACT_BY_KEY.toByte()) + publicKey)
+            val f = await(5000) {
+                (code(it) == RESP_CONTACT && it.size >= 148 && Contact(it).publicKey.contentEquals(publicKey)) ||
+                    code(it) == RESP_ERR
+            } ?: throw CompanionError("no reply from the companion")
+            if (code(f) == RESP_ERR) throw CompanionError("companion error ${if (f.size > 1) f[1].toInt() else 0}")
+            Contact(f)
+        }
     } catch (e: CompanionError) {
         null
     }
@@ -212,6 +234,7 @@ class CompanionRadio(private val link: CompanionLink) {
     /** Sends a request; returns its tag (to match the response with). */
     suspend fun sendRequest(contact: Contact, data: ByteArray): Int {
         val f = command(byteArrayOf(CMD_SEND_BINARY_REQ.toByte()) + contact.publicKey + data, 5000, RESP_SENT)
+        if (f.size < 6) throw CompanionError("short reply")
         return ByteBuffer.wrap(f, 2, 4).order(ByteOrder.LITTLE_ENDIAN).int
     }
 
@@ -304,6 +327,7 @@ class CompanionRadio(private val link: CompanionLink) {
     /** [rx delay, airtime factor], each x1000. */
     suspend fun tuning(): Pair<Int, Int> {
         val f = command(byteArrayOf(CMD_GET_TUNING_PARAMS.toByte()), 5000, RESP_TUNING_PARAMS)
+        if (f.size < 9) throw CompanionError("short reply")
         val b = ByteBuffer.wrap(f, 1, 8).order(ByteOrder.LITTLE_ENDIAN)
         return b.int to b.int
     }
@@ -313,6 +337,7 @@ class CompanionRadio(private val link: CompanionLink) {
     /** [config, max hops]. */
     suspend fun autoAdd(): Pair<Int, Int> {
         val f = command(byteArrayOf(CMD_GET_AUTOADD_CONFIG.toByte()), 5000, RESP_AUTOADD_CONFIG)
+        if (f.size < 2) throw CompanionError("short reply")
         return (f[1].toInt() and 0xff) to (if (f.size > 2) f[2].toInt() and 0xff else 0)
     }
 
@@ -338,7 +363,9 @@ class CompanionRadio(private val link: CompanionLink) {
 
     /** A channel slot: [idx][name 32][secret 16]; null when there is no such slot. */
     suspend fun channel(idx: Int): ByteArray? = try {
-        command(byteArrayOf(CMD_GET_CHANNEL.toByte(), idx.toByte()), 5000, RESP_CHANNEL_INFO).copyOfRange(1, 50)
+        val f = command(byteArrayOf(CMD_GET_CHANNEL.toByte(), idx.toByte()), 5000, RESP_CHANNEL_INFO)
+        if (f.size < 50) throw CompanionError("short reply")
+        f.copyOfRange(1, 50)
     } catch (e: CompanionError) {
         null
     }

@@ -129,4 +129,23 @@ class ReleasesFallbackTest {
         assertEquals("HTTP 403", Releases.describe(HttpError(403, "u")))
         assertEquals("IOException: tls", Releases.describe(IOException("tls")))
     }
+
+    @Test
+    fun jsonNullsDoNotBecomeLiteralNullString() {
+        val rel = JSONObject()
+            .put("tag_name", "boards-18")
+            .put("published_at", JSONObject.NULL)
+            .put("created_at", JSONObject.NULL)
+            .put("assets", JSONArray()
+                .put(JSONObject().put("name", "ota-manifest.json").put("browser_download_url", "http://m"))
+                .put(JSONObject().put("name", "E.bin").put("browser_download_url", "http://e").put("digest", JSONObject.NULL)))
+        val manifest = """{"files":[{"env":"E","version":null,"file":"E.bin","size":3,"sha256":"ab","dfu":null,"dfu_sha256":null}]}"""
+        val out = Releases.parseReleases("o/r", JSONArray().put(rel), { manifest.toByteArray() })
+        assertEquals(1, out.size)
+        assertEquals("", out[0].published)
+        assertEquals("", out[0].version)
+        assertEquals("", out[0].dfu)
+        assertEquals("", out[0].dfuSha256)
+        assertTrue(Releases.mayHave(rel.getJSONArray("assets"), "ab"))
+    }
 }

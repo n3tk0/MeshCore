@@ -146,16 +146,21 @@ object BuildWatcher {
                 j = step(ctx, api, j, live)
                 if (j.finished) return end(j)
                 if (j.offline) j = j.copy(offline = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Broken) {
                 return end(j.copy(phase = BuildPhase.FAILED, step = "", error = e.message ?: ""))
             } catch (e: GitHubError) {
+                val rateLimited = e.code == 429 || (e.code == 403 && e.message?.contains("rate limit", ignoreCase = true) == true)
                 // a token taken back or without the right access: waiting does not help
-                if (e.code == 401 || e.code == 403 || e.code == 404) {
+                if (!rateLimited && (e.code == 401 || e.code == 403 || e.code == 404)) {
                     return end(j.copy(phase = BuildPhase.FAILED, error = accessError(ctx, e, TokenStore(ctx).usesGroup)))
                 }
                 j = j.copy(offline = true)
             } catch (e: IOException) {
                 j = j.copy(offline = true)   // no internet for now: try again
+            } catch (e: Exception) {
+                j = j.copy(offline = true)   // captive portal HTML / malformed response: try again
             }
             if (System.currentTimeMillis() - j.dispatchedAt > MAX_MS) {
                 return end(j.copy(phase = BuildPhase.FAILED, error = str(ctx, R.string.build_err_timeout)))
@@ -187,9 +192,10 @@ object BuildWatcher {
             val step = if (phase == BuildPhase.RUNNING) runCatching { api.currentStep(j.runId) }.getOrDefault(j.step) else ""
             return j.copy(phase = phase, step = step)
         }
-        if (live()) save(ctx, j.copy(phase = BuildPhase.DOWNLOADING, step = ""))
+        if (!live()) return j
+        save(ctx, j.copy(phase = BuildPhase.DOWNLOADING, step = ""))
         // a run with some boards failed still brings the ones that built
-        val made = download(ctx, api, j)
+        val made = download(ctx, api, j, live)
         return if (run.succeeded && made > 0) j.copy(phase = BuildPhase.DONE, made = made, step = "")
         else j.copy(phase = BuildPhase.FAILED, made = made, step = "", error = str(ctx,
             if (run.succeeded) R.string.build_err_no_files else R.string.build_err_failed, run.conclusion))
@@ -198,18 +204,20 @@ object BuildWatcher {
     private fun created(r: Run) = runCatching { Instant.parse(r.createdAt).toEpochMilli() }.getOrDefault(0L)
 
     /** Every artifact of the run: its firmware (by its .ota.json) to the phone; the count of entries. */
-    private fun download(ctx: Context, api: GitHubApi, j: BuildJob): Int {
+    private fun download(ctx: Context, api: GitHubApi, j: BuildJob, live: () -> Boolean = { true }): Int {
         var made = 0
         for (a in api.artifacts(j.runId)) {
+            if (!live()) return made
             if (a.expired) continue
             val zip = api.downloadArtifact(a.id)
+            if (!live()) return made
             try {
                 val files = unzip(zip)
                 val entries = entries(files, FirmwareFile.BUILD_PREFIX + j.runNumber)
                 if (entries.isEmpty()) continue
                 Releases.addBuild(ctx.filesDir, entries, files)
                 made += entries.size
-            } catch (e: IOException) {
+            } catch (e: Exception) {
                 // a damaged zip or a file that does not match its .ota.json: the same again next time
                 throw Broken(e.message ?: e.toString())
             }
@@ -251,7 +259,7 @@ object BuildWatcher {
 
     /** What to tell about a refusal: the group's token gone stale needs a new group APK, not new rights. */
     fun accessError(ctx: Context, e: GitHubError, group: Boolean): String =
-        if (group && e.code == 401) str(ctx, R.string.build_err_group_token) else str(ctx, R.string.build_err_access, e.message ?: "")
+        if (group && (e.code == 401 || e.code == 403)) str(ctx, R.string.build_err_group_token) else str(ctx, R.string.build_err_access, e.message ?: "")
 
     @SuppressLint("MissingPermission")
     private fun notifyDone(ctx: Context, j: BuildJob) {

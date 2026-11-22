@@ -38,6 +38,7 @@ class OtaSession(
         const val MIN_LEASE_MINS = 2                  // renewed with every window; back by itself if the app is gone
         const val PAUSE_AFTER_MS = 45_000L            // a longer wait for time on air goes back to the normal channel
         const val KEEP_PAUSED_EVERY_MS = 15 * 60_000L // the repeater keeps a paused update 30 min from the last request
+        const val STALL_MS = 10 * 60_000L             // sending this long with no packet getting there: stop (resumable)
         const val PACKET_GAP = 2.0                    // the companion waits as long as a packet took (airtime factor 1)
     }
 
@@ -125,6 +126,7 @@ class OtaSession(
         try {
             var st = start(begin)
             var next = st.nextSeq
+            var stalledMs = 0L   // time spent sending with no progress (waits for time on air not counted)
             progress(next, total)
             while (next < total) {
                 val all = (next until minOf(total, next + WINDOW)).map { seq -> patch.copyOfRange(seq * CHUNK, minOf(patch.size, (seq + 1) * CHUNK)) }
@@ -139,6 +141,7 @@ class OtaSession(
                 if (wait > PAUSE_AFTER_MS) {
                     pauseFor(wait)
                     st = start(begin)
+                    if (st.nextSeq > next) stalledMs = 0
                     next = st.nextSeq
                     continue
                 }
@@ -147,6 +150,7 @@ class OtaSession(
                     delay(wait)
                 }
                 phase(Phase.SEND, 0)
+                val windowStart = System.currentTimeMillis()
                 sideLease()
                 packets.forEachIndexed { i, bytes ->
                     val t = radio.airtime(requestPacketSize(4 + bytes.size))
@@ -156,7 +160,13 @@ class OtaSession(
                 }
                 st = status() ?: lost()
                 if (st.state != OtaProtocol.STATE_RECEIVING) throw OtaFailed(R.string.err_dropped)
-                if (st.nextSeq < next) log("resending from ${st.nextSeq}")
+                if (st.nextSeq <= next) {
+                    stalledMs += System.currentTimeMillis() - windowStart
+                    if (stalledMs >= STALL_MS) throw OtaFailed(R.string.err_no_progress, resumable = true)
+                } else {
+                    stalledMs = 0
+                }
+                if (st.nextSeq < next + packets.size) log("resending from ${st.nextSeq}")
                 next = st.nextSeq
                 progress(next, total)
             }
@@ -165,11 +175,13 @@ class OtaSession(
             sideLease()
             log("END")
             var e: OtaProtocol.Reply? = null
+            var ready = false
             for (attempt in 1..3) {
                 e = request(OtaProtocol.end(), statusTimeoutMs(), 2)
                 if (e != null) break
                 // the END or its reply was lost: READY means it got there, RECEIVING means send it again
                 val s = status() ?: break
+                if (s.state == OtaProtocol.STATE_READY) ready = true
                 if (s.state != OtaProtocol.STATE_RECEIVING) break
                 log("END again")
             }
@@ -180,7 +192,7 @@ class OtaSession(
                 stopped = true   // the repeater gave up on this one
                 throw OtaFailed(OtaProtocol.statusRes(e.status))
             }
-            if (e != null) begun = false   // the repeater has the new image: a Stop now must not drop it
+            if (e != null || ready) begun = false   // the repeater has the new image: a Stop now must not drop it
             phase(Phase.RESTART, System.currentTimeMillis() + 30_000)
             normalRadio()
             if (e == null) log("no answer to END, asking the repeater on the normal channel")
@@ -199,7 +211,7 @@ class OtaSession(
                 withContext(NonCancellable) {
                     runCatching {
                         // a paused repeater is on the normal channel; one that is switching is on the side channel
-                        if (request(OtaProtocol.abort(), statusTimeoutMs(), 2) == null && !onSide) {
+                        if (request(OtaProtocol.abort(), if (onSide) statusTimeoutMs() else 20_000, 2) == null && !onSide) {
                             sideLease()
                             onSide = true
                             request(OtaProtocol.abort(), statusTimeoutMs(), 2)

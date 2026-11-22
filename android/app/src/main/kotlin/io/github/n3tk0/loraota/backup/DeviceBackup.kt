@@ -57,8 +57,14 @@ object CompanionBackup {
             // an empty slot: nothing to keep (and a restore leaves the slot as it is)
             if (name.isEmpty() && slot.copyOfRange(33, 49).all { it.toInt() == 0 }) continue
             // the name field has whatever the companion's buffer had after the name's end: zeros instead
-            val field = ByteArray(32).also { name.toByteArray().copyInto(it, endIndex = minOf(31, name.toByteArray().size)) }
-            out.add(BackupItem(BackupItem.GROUP_CHANNEL, i.toString(), name, hex(field + slot.copyOfRange(33, 49))))
+            var safeName = name
+            while (safeName.toByteArray(Charsets.UTF_8).size > 31) {
+                // a whole character off the end, not half of an emoji's surrogate pair
+                safeName = safeName.substring(0, safeName.offsetByCodePoints(safeName.length, -1))
+            }
+            val nameBytes = safeName.toByteArray(Charsets.UTF_8)
+            val field = ByteArray(32).also { nameBytes.copyInto(it, endIndex = nameBytes.size) }
+            out.add(BackupItem(BackupItem.GROUP_CHANNEL, i.toString(), safeName, hex(field + slot.copyOfRange(33, 49))))
         }
         for (ct in c.contacts()) out.add(BackupItem(BackupItem.GROUP_CONTACT, hex(ct.publicKey), ct.name, hex(ct.frame)))
         return out
@@ -74,7 +80,9 @@ object CompanionBackup {
         val order = listOf(BackupItem.GROUP_KEY, BackupItem.GROUP_SETTING, BackupItem.GROUP_CHANNEL, BackupItem.GROUP_CONTACT)
         for (item in items.sortedBy { order.indexOf(it.group) }) {
             val r = runCatching { applyOne(c, item, privateKey) }
-            if (r.isSuccess) done++ else failed.add(item to (r.exceptionOrNull()?.message ?: ""))
+            val ex = r.exceptionOrNull()
+            if (ex is kotlinx.coroutines.CancellationException) throw ex
+            if (r.isSuccess) done++ else failed.add(item to (ex?.message ?: ""))
         }
         return RestoreResult(done, failed)
     }

@@ -72,7 +72,7 @@ object DetoolsPatch {
             toSize = b and 0x3f
             var shift = 6
             while (b and 0x80 != 0) {
-                if (p >= patch.size || shift > 27) throw CorruptPatch("size")
+                if (p >= patch.size || shift > 25) throw CorruptPatch("size")
                 b = patch[p++].toInt() and 0xff
                 toSize = toSize or ((b and 0x7f) shl shift)
                 shift += 7
@@ -94,7 +94,7 @@ object DetoolsPatch {
             var v = (b and 0x3f).toLong()
             var shift = 6
             while (b and 0x80 != 0) {
-                if (q >= body.size) throw CorruptPatch("short")
+                if (q >= body.size || shift > 25) throw CorruptPatch("size")
                 b = body[q++].toInt() and 0xff
                 v = v or ((b and 0x7f).toLong() shl shift)
                 shift += 7
@@ -107,16 +107,23 @@ object DetoolsPatch {
         var fromPos = 0
         while (toPos < toSize) {
             val diff = size()
-            if (diff < 0 || toPos + diff > toSize || fromPos + diff > old.size || q + diff > body.size) throw CorruptPatch("diff")
+            if (diff < 0 || toPos.toLong() + diff > toSize || fromPos.toLong() + diff > old.size || q.toLong() + diff > body.size) {
+                throw CorruptPatch("diff")
+            }
             for (k in 0 until diff) to[toPos + k] = (body[q + k] + old[fromPos + k]).toByte()
             q += diff; toPos += diff; fromPos += diff
             val extra = size()
-            if (extra < 0 || toPos + extra > toSize || q + extra > body.size) throw CorruptPatch("extra")
+            if (extra < 0 || toPos.toLong() + extra > toSize || q.toLong() + extra > body.size) {
+                throw CorruptPatch("extra")
+            }
             System.arraycopy(body, q, to, toPos, extra)
             q += extra; toPos += extra
-            fromPos += size()
-            if (fromPos < 0 || fromPos > old.size) throw CorruptPatch("adjustment")
+            val adj = size()
+            val nextFrom = fromPos.toLong() + adj
+            if (nextFrom < 0 || nextFrom > old.size) throw CorruptPatch("adjustment")
+            fromPos = nextFrom.toInt()
         }
+        if (q != body.size) throw CorruptPatch("trailing data")
         return to
     }
 

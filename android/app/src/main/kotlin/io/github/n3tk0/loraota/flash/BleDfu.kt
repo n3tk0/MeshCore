@@ -52,19 +52,36 @@ object BleDfu {
         if (scanNeedsLocationPermission(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_no_location_permission))
         if (scanNeedsLocation(ctx)) throw FlashFailed(Lang.wrap(ctx).getString(R.string.msg_location_off))
         val found = LinkedHashMap<String, DfuDevice>()
+        var scanError: Int? = null
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, r: ScanResult) {
-                val name = r.scanRecord?.deviceName ?: r.device.name ?: return
+                val devName = try {
+                    r.device.name
+                } catch (_: SecurityException) {
+                    null
+                }
+                val name = r.scanRecord?.deviceName ?: devName ?: return
                 if (name.endsWith("_OTA", ignoreCase = true) || name == "AdaDFU") {
                     synchronized(found) { found[r.device.address] = DfuDevice(r.device.address, name, r.rssi) }
                 }
             }
+
+            override fun onScanFailed(errorCode: Int) {
+                scanError = errorCode
+            }
         }
-        scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
+        try {
+            scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
+        } catch (e: SecurityException) {
+            throw FlashFailed(Lang.wrap(ctx).getString(io.github.n3tk0.loraota.ble.scanPermissionMessage()))
+        }
         try {
             delay(ms)
         } finally {
             runCatching { scanner.stopScan(cb) }
+        }
+        scanError?.let { code ->
+            if (synchronized(found) { found.isEmpty() }) throw FlashFailed("BLE scan failed ($code)")
         }
         return synchronized(found) { found.values.sortedByDescending { it.rssi } }
     }

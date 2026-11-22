@@ -101,4 +101,22 @@ class DeltaTest {
         File(dir, "new.bin").writeBytes(new)
         File(dir, "patch.bin").writeBytes(patch)
     }
+
+    @Test
+    fun rejectsCorruptTrailingDataAndOverlongVarint() {
+        val old = byteArrayOf(1, 2, 3, 4)
+        val new = byteArrayOf(1, 2, 5, 4)
+        // toSize varint with >5 continuation bytes (shift > 25) must fail
+        val overlongToSize = byteArrayOf(0x04, 0x81.toByte(), 0x81.toByte(), 0x81.toByte(), 0x81.toByte(), 0x81.toByte(), 0x01)
+        kotlin.test.assertFailsWith<DetoolsPatch.CorruptPatch> { DetoolsPatch.apply(old, overlongToSize) }
+
+        // Valid body followed by trailing byte must fail
+        val body = byteArrayOf(0x00, 0x04, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x7f) // dfpatch=0, diff=4, 4 zeros, extra=0, adj=0, trailing=0x7f
+        val hsHeader = (((Heatshrink.WINDOW_BITS - 4) shl 4) or (Heatshrink.LOOKAHEAD_BITS - 3)).toByte()
+        val withTrailing = byteArrayOf(0x04, 0x04, hsHeader) + Heatshrink.compress(body)
+        kotlin.test.assertFailsWith<DetoolsPatch.CorruptPatch> { DetoolsPatch.apply(old, withTrailing) }
+
+        // Sanity check: normal patch still applies
+        assertContentEquals(new, DetoolsPatch.apply(old, DetoolsPatch.create(old, new)))
+    }
 }

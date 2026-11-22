@@ -45,4 +45,15 @@ class OtaQueueTest {
         assertEquals("n1", OtaQueueState.target(files, "r1", running)!!.sha256)
         assertNull(OtaQueueState.target(files, "r3", running))
     }
+
+    @Test
+    fun targetPrefersSameLiteVariant() {
+        val fullR1 = FirmwareFile("r1", "Xiao_nrf52_repeater", "r1", "Xiao_nrf52_repeater-v1.bin", 1, "f1", "")
+        val liteR1 = FirmwareFile("r1", "Xiao_nrf52_repeater", "r1", "Xiao_nrf52_repeater-lite-v1.bin", 1, "l1", "")
+        val fullR2 = FirmwareFile("r2", "Xiao_nrf52_repeater", "r2", "Xiao_nrf52_repeater-v2.bin", 1, "f2", "")
+        val liteR2 = FirmwareFile("r2", "Xiao_nrf52_repeater", "r2", "Xiao_nrf52_repeater-lite-v2.bin", 1, "l2", "")
+        val files = listOf(fullR2, liteR2)
+        assertEquals("l2", OtaQueueState.target(files, "r2", liteR1)!!.sha256)
+        assertEquals("f2", OtaQueueState.target(files, "r2", fullR1)!!.sha256)
+    }
 }

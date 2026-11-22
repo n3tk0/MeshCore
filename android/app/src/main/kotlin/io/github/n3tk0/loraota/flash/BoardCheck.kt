@@ -5,7 +5,7 @@ enum class Role { REPEATER, COMPANION, ROOM_SERVER, OTHER }
 
 object BoardCheck {
     // words that say nothing about the board
-    private val generic = setOf("seeed", "diy", "board", "repeater", "companion", "radio", "ble", "usb", "room",
+    private val generic = setOf("seeed", "diy", "board", "repeater", "companion", "radio", "ble", "usb", "wifi", "room",
         "server", "lite", "ota", "sensor", "modem", "kiss", "adadfu")
 
     fun role(env: String): Role {
@@ -18,8 +18,8 @@ object BoardCheck {
         }
     }
 
-    /** A companion over Bluetooth needs a BLE build: a USB one would leave the phone with no way back in. */
-    fun fitsCompanion(env: String) = role(env) == Role.COMPANION && "usb" !in env.lowercase()
+    /** A companion over Bluetooth needs a BLE build: a USB or Wi-Fi one would leave the phone with no way back in. */
+    fun fitsCompanion(env: String) = role(env) == Role.COMPANION && "usb" !in env.lowercase() && "wifi" !in env.lowercase()
 
     // chip names say the platform (checked on its own), not the board: an nRF52840 build fits many boards
     private val chips = setOf("esp32", "esp32s3", "esp32c3", "esp32c6", "nrf52", "nrf52840", "rp2040", "stm32", "stm32wl")

@@ -234,17 +234,65 @@ private fun BottomStatus(vm: AppViewModel) {
 @SuppressLint("MissingPermission")
 @Composable
 private fun CompanionStep(vm: AppViewModel) {
+    LaunchedEffect(Unit) {
+        if (vm.devices.isEmpty() && !vm.scanning && !vm.busy) vm.scan()
+    }
     Text(stringResource(R.string.companion_hint))
+    val lastAddr = vm.lastCompanionAddress
+    val lastName = vm.lastCompanionName
+    if (lastAddr != null && !lastName.isNullOrEmpty() && vm.devices.none { it.address == lastAddr }) {
+        Card(
+            modifier = Modifier.fillMaxWidth().clickable(enabled = !vm.busy) { vm.connectByAddress(lastAddr) },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        ) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.last_companion), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                    Text(lastName, style = MaterialTheme.typography.titleMedium)
+                    Text(lastAddr, style = MaterialTheme.typography.bodySmall)
+                }
+                Button(onClick = { vm.connectByAddress(lastAddr) }, enabled = !vm.busy) {
+                    Text(stringResource(R.string.connect_now))
+                }
+            }
+        }
+    }
     Button(onClick = { vm.scan() }, enabled = !vm.scanning && !vm.busy) {
         Text(stringResource(if (vm.scanning) R.string.scanning else R.string.scan))
     }
-    for (d in vm.devices) {
-        Card(modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !vm.busy) { vm.connect(d) }) {
-            Column(Modifier.padding(12.dp)) {
-                Text(d.name ?: "?", style = MaterialTheme.typography.titleMedium)
-                Text(d.address, style = MaterialTheme.typography.bodySmall)
+    // in the order found while scanning (cards do not jump under the finger), by signal once it ends
+    val shownDevices = if (vm.scanning) vm.devices.toList() else vm.devices.sortedByDescending { vm.deviceRssi[it.address] ?: -120 }
+    for (d in shownDevices) {
+        val rssi = vm.deviceRssi[d.address]
+        val isLast = d.address == lastAddr
+        Card(
+            modifier = Modifier.fillMaxWidth().clickable(enabled = !vm.busy) { vm.connect(d) },
+            colors = if (isLast) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else CardDefaults.cardColors(),
+        ) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    if (isLast) {
+                        Text(stringResource(R.string.last_companion), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text(d.name ?: "?", style = MaterialTheme.typography.titleMedium)
+                    Text(d.address, style = MaterialTheme.typography.bodySmall)
+                }
+                if (rssi != null) {
+                    Surface(
+                        color = if (rssi >= -70) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            stringResource(R.string.signal_dbm, rssi),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (rssi >= -70) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }
@@ -267,6 +315,9 @@ private fun RepeaterStep(vm: AppViewModel) {
     OutlinedTextField(
         value = query, onValueChange = { query = it }, singleLine = true,
         leadingIcon = { Icon(Icons.Default.Search, null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null) }
+        },
         placeholder = { Text(stringResource(R.string.search_repeater)) },
         modifier = Modifier.fillMaxWidth(),
     )
@@ -281,7 +332,21 @@ private fun RepeaterStep(vm: AppViewModel) {
     for ((title, list) in groups) {
         if (list.isEmpty()) continue
         Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-        for (c in list) RepeaterRow(vm, c) { vm.message = ""; vm.loginSheet = c }
+        for (c in list) {
+            RepeaterRow(
+                vm = vm,
+                c = c,
+                onClick = {
+                    vm.message = ""
+                    val saved = vm.savedPassword(c)
+                    if (!saved.isNullOrEmpty()) vm.login(c, saved) else vm.loginSheet = c
+                },
+                onEditPassword = {
+                    vm.message = ""
+                    vm.loginSheet = c
+                },
+            )
+        }
     }
 
     vm.loginSheet?.let { c ->
@@ -293,46 +358,80 @@ private fun RepeaterStep(vm: AppViewModel) {
 }
 
 @Composable
-private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
-        .fillMaxWidth()
-        .clickable(enabled = !vm.busy, onClick = onClick)
-        .padding(vertical = 6.dp)) {
-        Column(Modifier.weight(1f)) {
-            Text(c.name, style = MaterialTheme.typography.bodyLarge)
-            RouteText(c.hops)
-        }
-        if (vm.hasSavedPassword(c)) {
-            Icon(Icons.Default.Lock, stringResource(R.string.password_saved), modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit, onEditPassword: () -> Unit) {
+    val hasPw = vm.hasSavedPassword(c)
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = !vm.busy, onClick = onClick),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(c.name, style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RouteBadge(c.hops)
+                    if (hasPw) {
+                        Text(stringResource(R.string.tap_to_login), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (hasPw) {
+                TextButton(onClick = onEditPassword, enabled = !vm.busy) {
+                    Icon(Icons.Default.Lock, stringResource(R.string.password_saved), modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.change_password), style = MaterialTheme.typography.labelMedium)
+                }
+            }
         }
     }
 }
 
 @Composable
+private fun RouteBadge(hops: Int?) {
+    val (bg, fg) = when (hops) {
+        0 -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+        null -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    Surface(color = bg, shape = MaterialTheme.shapes.small) {
+        Text(
+            when (hops) {
+                null -> stringResource(R.string.route_unknown)
+                0 -> stringResource(R.string.route_direct)
+                else -> pluralStringResource(R.plurals.route_hops, hops, hops)
+            },
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = fg,
+        )
+    }
+}
+
+@Composable
 private fun RouteText(hops: Int?) {
-    Text(
-        when (hops) {
-            null -> stringResource(R.string.route_unknown)
-            0 -> stringResource(R.string.route_direct)
-            else -> pluralStringResource(R.plurals.route_hops, hops, hops)
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = if (hops == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    RouteBadge(hops)
 }
 
 /** Name, route, password and Login together: the result shows here too, not under the list. */
 @Composable
 private fun LoginSheet(vm: AppViewModel, c: Contact) {
     var password by remember(c) { mutableStateOf(vm.savedPassword(c) ?: "") }
+    var showPassword by remember { mutableStateOf(false) }
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(c.name, style = MaterialTheme.typography.titleLarge)
         RouteText(c.hops)
         OutlinedTextField(
             value = password, onValueChange = { password = it },
             label = { Text(stringResource(R.string.admin_password)) },
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { showPassword = !showPassword }) {
+                    Text(stringResource(if (showPassword) R.string.hide_password else R.string.show_password),
+                        style = MaterialTheme.typography.labelSmall)
+                }
+            },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !vm.busy,
         )
@@ -353,8 +452,8 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(stringResource(if (withFlashButton) R.string.companion else R.string.running_now),
-                style = MaterialTheme.typography.labelMedium)
-            if (vm.companionModel.isNotEmpty()) Text("${vm.companionModel} · ${vm.companionVersion}")
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            if (vm.companionModel.isNotEmpty()) Text("${vm.companionModel} · ${vm.companionVersion}", style = MaterialTheme.typography.titleMedium)
             if (!vm.companionOta) {
                 Text(stringResource(R.string.companion_stock), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -375,8 +474,12 @@ private fun RepeaterHome(vm: AppViewModel) {
     StatusCard(vm)
     vm.info?.let { RunningCard(it) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { vm.openHealth(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.health_open)) }
-        OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
+        OutlinedButton(onClick = { vm.openHealth(DeviceKind.REPEATER) }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.health_open))
+        }
+        OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.backup_open))
+        }
     }
     TabRow(selectedTabIndex = vm.firmwareTab) {
         Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
@@ -388,14 +491,24 @@ private fun RepeaterHome(vm: AppViewModel) {
 @Composable
 private fun RunningCard(info: OtaProtocol.Info) {
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium)
-            Text(info.ident.replace('|', '\n'))
-            Text(stringResource(R.string.platform) + ": " + when (info.platform) {
-                OtaProtocol.PLATFORM_NRF52 -> "nRF52"
-                OtaProtocol.PLATFORM_ESP32 -> "ESP32"
-                else -> "?"
-            }, style = MaterialTheme.typography.bodySmall)
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+                    Text(
+                        when (info.platform) {
+                            OtaProtocol.PLATFORM_NRF52 -> "nRF52"
+                            OtaProtocol.PLATFORM_ESP32 -> "ESP32"
+                            else -> "?"
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+            Text(info.ident.replace('|', '\n'), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -485,6 +598,11 @@ private fun LoraTab(vm: AppViewModel) {
             ReleasesErrorCard(vm)
             if (candidates.isEmpty()) Text(stringResource(R.string.no_new_firmware))
             val best = vm.recommended()
+            if (best != null && vm.newImage?.sha != best.sha256) {
+                OutlinedButton(onClick = { vm.pickRelease(best) }, enabled = !vm.busy) {
+                    Text(stringResource(R.string.pick_recommended) + ": " + best.rowLabel())
+                }
+            }
             for (f in candidates) {
                 FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' '), f == best) { vm.pickRelease(f) }
             }
@@ -499,11 +617,31 @@ private fun LoraTab(vm: AppViewModel) {
     if (vm.newImage != null && candidates.none { it.sha256 == vm.newImage?.sha }) {
         Text(stringResource(R.string.chosen, vm.newImage!!.name))
     }
+    if (vm.calculatingPatch) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LinearProgressIndicator(Modifier.weight(1f))
+            Text(stringResource(R.string.delta_calculating), style = MaterialTheme.typography.bodySmall)
+        }
+    } else if (vm.patch != null) {
+        val p = vm.patch!!
+        val est = vm.estimateMinutes() ?: 0.0
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        ) {
+            Text(
+                stringResource(R.string.delta_preview, p.size / 1024.0, est),
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
+    }
     if (vm.inPlace()) InPlaceWarning(detail = true)
     if (vm.nrfCopy()) CopyNote()
 
     val ready = vm.oldImage != null && vm.newImage != null && info.enabled && vm.direct && vm.companionOta
-    Button(onClick = { vm.update() }, enabled = ready && !vm.busy) {
+    Button(onClick = { vm.update() }, enabled = ready && !vm.busy, modifier = Modifier.fillMaxWidth()) {
         Text(stringResource(if (continuing) R.string.resume else R.string.update))
     }
     if (vm.done) InfoCard(stringResource(R.string.done_hint))
@@ -541,6 +679,19 @@ private fun LoraTab(vm: AppViewModel) {
 
         Text(stringResource(R.string.side_channel), style = MaterialTheme.typography.titleSmall)
         Text(stringResource(R.string.side_channel_hint), style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            for (p in AppViewModel.SIDE_PRESETS) {
+                val selected = vm.sf.trim() == p.sf && vm.bwKhz.trim() == p.bw &&
+                    (p.freq == null || vm.freqMhz.trim() == p.freq)
+                val labelRes = p.label
+                androidx.compose.material3.FilterChip(
+                    selected = selected,
+                    onClick = { vm.applySidePreset(p) },
+                    enabled = !vm.busy,
+                    label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall) },
+                )
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NumberField(vm.freqMhz, { vm.freqMhz = it }, "MHz", Modifier.weight(1.4f), !vm.busy)
             NumberField(vm.bwKhz, { vm.bwKhz = it }, "BW kHz", Modifier.weight(1f), !vm.busy)
@@ -565,6 +716,7 @@ private fun LoraTab(vm: AppViewModel) {
 
 @Composable
 private fun FlashContent(vm: AppViewModel) {
+    var filterQuery by rememberSaveable { mutableStateOf("") }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.pickFlashFile(uri)
     }
@@ -600,8 +752,24 @@ private fun FlashContent(vm: AppViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             ReleasesErrorCard(vm, upstream = vm.flashUpstream)
             val candidates = vm.flashCandidates()
-            if (candidates.isEmpty()) Text(stringResource(R.string.flash_none))
-            for (f in candidates) {
+            if (candidates.size > 4) {
+                OutlinedTextField(
+                    value = filterQuery, onValueChange = { filterQuery = it }, singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (filterQuery.isNotEmpty()) IconButton(onClick = { filterQuery = "" }) { Icon(Icons.Default.Close, null) }
+                    },
+                    placeholder = { Text(stringResource(R.string.search_firmware)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            val words = filterQuery.lowercase().split(Regex("[\\s_]+")).filter { it.isNotEmpty() }
+            val shown = if (words.isEmpty()) candidates else candidates.filter { f ->
+                val text = "${f.env} ${f.version} ${f.release} ${f.dfu}".lowercase()
+                words.all { it in text }
+            }
+            if (shown.isEmpty()) Text(stringResource(R.string.flash_none))
+            for (f in shown) {
                 FirmwareRow(f, vm.flashImage?.name == f.dfu && vm.flashImage?.env == f.env, !vm.busy,
                     f.env.replace('_', ' ') + if (f.dfuIsZip) " · Bluetooth" else " · Wi-Fi") { vm.pickFlashRelease(f) }
             }
@@ -612,7 +780,9 @@ private fun FlashContent(vm: AppViewModel) {
         }
     }
     vm.flashImage?.let { if (it.env == null) Text(stringResource(R.string.chosen, it.name)) }
-    Button(onClick = { vm.flashCheck() }, enabled = vm.flashImage != null && !vm.busy) { Text(stringResource(R.string.flash_start)) }
+    Button(onClick = { vm.flashCheck() }, enabled = vm.flashImage != null && !vm.busy, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.flash_start))
+    }
 }
 
 /** Releases (and builds made before) / a new build on GitHub / a file. */
@@ -677,7 +847,12 @@ private fun BuildPanel(vm: AppViewModel) {
     vm.buildJob?.let { BuildCard(vm) }
     LaunchedEffect(vm.buildRole, vm.repeater, vm.oldImage, vm.companionModel) { vm.loadBuildForm() }
     if (vm.buildInputs.isEmpty()) {
-        if (!vm.busy) OutlinedButton(onClick = { vm.reloadBuildForm() }) { Text(stringResource(R.string.build_reload)) }
+        if (!vm.busy) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.reloadBuildForm() }) { Text(stringResource(R.string.build_reload)) }
+                if (!vm.groupToken) TextButton(onClick = { vm.forgetToken() }) { Text(stringResource(R.string.build_token_forget)) }
+            }
+        }
         return
     }
     var picking by remember { mutableStateOf(false) }
@@ -744,12 +919,19 @@ private fun optionLabel(input: WorkflowInput): String {
 private fun TokenForm(vm: AppViewModel) {
     val uri = LocalUriHandler.current
     var token by remember { mutableStateOf("") }
+    var showToken by remember { mutableStateOf(false) }
     Hint(stringResource(R.string.build_token_short), stringResource(R.string.build_token_long, vm.repo))
     TextButton(onClick = { runCatching { uri.openUri(GitHubApi.NEW_TOKEN_URL) } }) { Text(stringResource(R.string.build_token_make)) }
     OutlinedTextField(
         value = token, onValueChange = { token = it },
         label = { Text(stringResource(R.string.build_token_field)) },
-        visualTransformation = PasswordVisualTransformation(),
+        visualTransformation = if (showToken) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            TextButton(onClick = { showToken = !showToken }) {
+                Text(stringResource(if (showToken) R.string.hide_password else R.string.show_password),
+                    style = MaterialTheme.typography.labelSmall)
+            }
+        },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !vm.busy,
     )
@@ -834,10 +1016,19 @@ internal fun RunningView(vm: AppViewModel) {
     } else {
         vm.phase?.let { PhaseView(vm, it) }
         vm.newImage?.let { Text(it.name, style = MaterialTheme.typography.bodySmall) }
+        if (vm.log.isNotEmpty()) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.live_log), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                    LogLines(vm.log.takeLast(8))
+                }
+            }
+        }
     }
     InfoCard(stringResource(R.string.power_note))
     // no Stop for a flash: a cut-short DFU leaves the device in its bootloader
-    if (!flashing) OutlinedButton(onClick = { vm.stop() }) { Text(stringResource(R.string.stop)) }
+    if (!flashing) OutlinedButton(onClick = { vm.stop() }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.stop)) }
 }
 
 /** The steps of the last Bluetooth flash: what went wrong where, to copy and send on. */
@@ -891,22 +1082,46 @@ private fun StatusCard(vm: AppViewModel) {
         if (!vm.busy) Text(stringResource(R.string.status_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
+    val sb = vm.sensorBattery
+    val volts = sb?.volts ?: (s.battMv / 1000.0)
+    val chem = vm.batteryChem
+    val battPct = ((volts - chem.emptyV) / (chem.fullV - chem.emptyV)).toFloat().coerceIn(0f, 1f)
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(stringResource(R.string.status_title), style = MaterialTheme.typography.labelMedium)
-            val sb = vm.sensorBattery
-            Text(stringResource(R.string.status_batt_uptime, sb?.volts ?: (s.battMv / 1000.0), duration(s.upTimeSecs)))
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.status_title), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.status_batt_uptime, volts, duration(s.upTimeSecs)),
+                    style = MaterialTheme.typography.labelLarge)
+            }
+            if (volts in (chem.emptyV - 0.5)..(chem.fullV + 0.5)) {
+                LinearProgressIndicator(
+                    progress = { battPct },
+                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                    color = if (volts < chem.lowV) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (c in BatteryChem.entries) {
+                    androidx.compose.material3.FilterChip(
+                        selected = c == chem,
+                        onClick = { vm.chooseBatteryChem(c) },
+                        label = { Text(c.label, style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
+            }
             if (sb != null) {
                 val ma = Math.round(Math.abs(sb.amps) * 1000).toInt()
                 Text(when {
                     !sb.signed -> stringResource(R.string.status_batt_current, ma)
                     sb.amps < 0 -> stringResource(R.string.status_batt_charging, ma)
                     else -> stringResource(R.string.status_batt_discharging, ma)
-                }, style = MaterialTheme.typography.bodySmall)
+                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
             Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi) +
                 (s.lastSnr?.let { ", SNR %.1f dB".format(it) } ?: ""), style = MaterialTheme.typography.bodySmall)
-            Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -995,21 +1210,65 @@ private fun PhaseView(vm: AppViewModel, phase: Phase) {
             delay(1000)
         }
     }
-    val minsLeft = ((vm.waitUntil - now).coerceAtLeast(0) + 59_999) / 60_000
+    val stepIdx = when (phase) {
+        Phase.START -> 0
+        Phase.SWITCH -> 1
+        Phase.SEND, Phase.WAIT_AIR -> 2
+        Phase.FINISH, Phase.RESTART -> 3
+    }
+    val steps = listOf(R.string.step_start, R.string.step_switch, R.string.step_send, R.string.step_verify)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for ((i, labelRes) in steps.withIndex()) {
+            val done = i < stepIdx
+            val current = i == stepIdx
+            Surface(
+                modifier = Modifier.weight(1f),
+                color = when {
+                    current -> MaterialTheme.colorScheme.primary
+                    done -> MaterialTheme.colorScheme.primaryContainer
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                },
+                shape = MaterialTheme.shapes.small,
+            ) {
+                Text(
+                    "${i + 1}. ${stringResource(labelRes)}",
+                    modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = when {
+                        current -> MaterialTheme.colorScheme.onPrimary
+                        done -> MaterialTheme.colorScheme.onPrimaryContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+    val secsLeft = ((vm.waitUntil - now).coerceAtLeast(0) / 1000).toInt()
+    val minsLeft = (secsLeft + 59) / 60
+    val percent = if (vm.total > 0) vm.sent * 100 / vm.total else 0
     val text = when (phase) {
         Phase.START -> stringResource(R.string.phase_start)
         Phase.SWITCH -> stringResource(R.string.phase_switch)
-        Phase.SEND -> {
-            val percent = if (vm.total > 0) vm.sent * 100 / vm.total else 0
-            stringResource(R.string.phase_send, percent, vm.remainingMinutes())
-        }
+        Phase.SEND -> stringResource(R.string.phase_send, percent, vm.remainingMinutes())
         Phase.WAIT_AIR -> stringResource(R.string.phase_wait_air, minsLeft)
         Phase.FINISH -> stringResource(R.string.phase_finish)
         Phase.RESTART -> stringResource(R.string.phase_restart)
     }
     Text(text, style = MaterialTheme.typography.titleMedium)
     if (vm.total > 0 && phase != Phase.RESTART) {
-        LinearProgressIndicator(progress = { vm.sent.toFloat() / vm.total }, modifier = Modifier.fillMaxWidth())
+        LinearProgressIndicator(progress = { vm.sent.toFloat() / vm.total }, modifier = Modifier.fillMaxWidth().height(8.dp))
+        Text(stringResource(R.string.packets_progress, vm.sent, vm.total, percent),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (phase == Phase.WAIT_AIR && secsLeft > 0) {
+        Text(
+            stringResource(R.string.wait_air_countdown, secsLeft / 60, secsLeft % 60),
+            style = MaterialTheme.typography.titleSmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

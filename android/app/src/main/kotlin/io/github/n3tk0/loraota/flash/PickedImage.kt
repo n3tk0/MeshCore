@@ -30,7 +30,11 @@ object PickedImage {
         ZipInputStream(ByteArrayInputStream(data)).use { z ->
             while (true) {
                 val e = z.nextEntry ?: break
-                if (!e.isDirectory) entries[e.name.substringAfterLast('/')] = z.readBytes()
+                val normalized = e.name.replace('\\', '/')
+                val name = normalized.substringAfterLast('/')
+                if (!e.isDirectory && !name.startsWith("._") && "__MACOSX/" !in normalized) {
+                    entries[name] = z.readBytes()
+                }
             }
         }
         val manifest = entries["manifest.json"]
@@ -38,7 +42,7 @@ object PickedImage {
             // a DFU package: only the application image (a bootloader / softdevice .zip is not one)
             val named = runCatching { JSONObject(String(manifest)).getJSONObject("manifest").getJSONObject("application").getString("bin_file") }
                 .getOrNull() ?: throw IllegalArgumentException("the .zip has no application image (manifest.json lists no application bin_file)")
-            return entries[named.substringAfterLast('/')]
+            return entries[named.replace('\\', '/').substringAfterLast('/')]
                 ?: throw IllegalArgumentException("the .zip lacks the application image $named")
         }
         return entries.entries.firstOrNull { it.key.endsWith(".bin", ignoreCase = true) && !it.key.endsWith("-merged.bin", ignoreCase = true) }?.value
