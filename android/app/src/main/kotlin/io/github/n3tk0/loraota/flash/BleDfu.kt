@@ -80,31 +80,41 @@ object BleDfu {
      * Android has seen an advertisement of the device often fails within 200 ms with 0x85 (GATT_ERROR).
      * Other devices' `*_OTA` / `AdaDFU` advertisements are ignored: they may be another node in DFU mode.
      */
-    private suspend fun awaitAdvertising(ctx: Context, address: String, ms: Long, log: (String) -> Unit): String {
+    private suspend fun awaitAdvertising(ctx: Context, address: String, ms: Long, log: (String) -> Unit,
+                                         fallback: String = address): String {
         val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
-            ?: return address
+            ?: return fallback
         val plusOne = incremented(address.uppercase())
         val exact = CompletableDeferred<Unit>()
+        val bootloader = CompletableDeferred<Unit>()
         val sawBootloader = java.util.concurrent.atomic.AtomicBoolean(false)
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, r: ScanResult) {
                 val addr = r.device.address
                 if (addr.equals(address, ignoreCase = true)) exact.complete(Unit)
-                else if (addr.equals(plusOne, ignoreCase = true)) sawBootloader.set(true)
+                else if (addr.equals(plusOne, ignoreCase = true)) { sawBootloader.set(true); bootloader.complete(Unit) }
             }
         }
         runCatching {
             scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
-        }.onFailure { return address }
+        }.onFailure { return fallback }
         val found = try {
-            kotlinx.coroutines.withTimeoutOrNull(ms) { exact.await() } != null
+            kotlinx.coroutines.withTimeoutOrNull(ms) {
+                // the device's own address wins; once a bootloader on + 1 shows up, give the address only
+                // a short grace (both should not advertise at once) instead of the whole timeout
+                kotlinx.coroutines.selects.select<Unit> {
+                    exact.onAwait {}
+                    bootloader.onAwait {}
+                }
+                if (!exact.isCompleted) kotlinx.coroutines.withTimeoutOrNull(500) { exact.await() }
+            }.let { exact.isCompleted }
         } finally {
             runCatching { scanner.stopScan(cb) }
         }
         return when {
             found -> address
             sawBootloader.get() -> plusOne.also { log("[app] bootloader found on $it, flashing there") }
-            else -> address.also { log("[app] $address not seen advertising in ${ms / 1000} s, trying anyway") }
+            else -> fallback.also { log("[app] $address not seen advertising in ${ms / 1000} s, trying $it anyway") }
         }
     }
 
@@ -126,7 +136,9 @@ object BleDfu {
             log("[app] ${e.message}: retrying once with fresh services on $again")
             progress(0)
             delay(2000)
-            val target = awaitAdvertising(ctx, again, 4_000, log)
+            // scan around the original address (the device itself or its bootloader on + 1), not around
+            // [again]: when that is already + 1 its own + 1 would be a different device
+            val target = awaitAdvertising(ctx, address, 4_000, log, fallback = again)
             flashOnce(ctx, target, name, zip, bonded, log, progress)
         }
     }
