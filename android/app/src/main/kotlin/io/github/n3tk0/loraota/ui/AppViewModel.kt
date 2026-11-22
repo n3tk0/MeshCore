@@ -250,17 +250,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         link.onDisconnect = {
             viewModelScope.launch {
                 if (step != Step.COMPANION && !flashingCompanion) {
-                    // a LoRa update or a flash running ends on its own: a cancel here would be a user's Stop
-                    // (ABORT, nothing to resume), while a lost link leaves the update paused on the repeater
-                    // and a repeater's Bluetooth / Wi-Fi flash does not need the companion at all
-                    if (phase == null && flashPercent < 0) job?.cancelAndJoin()
+                    val wasUpdating = phase != null
+                    val wasFlashingRepeater = flashPercent >= 0
+                    // a repeater's Bluetooth / Wi-Fi flash does not need the companion: let it finish on screen first;
+                    // a LoRa update (even while sleeping in WAIT_AIR / PAUSE / RESTART) or other work is cancelled now
+                    // (the link is already gone so no ABORT is sent, and resumable is kept below)
+                    if (wasFlashingRepeater) job?.join() else job?.cancelAndJoin()
+                    if (wasUpdating) resumable = true
                     patchJob?.cancel()
                     calculatingPatch = false
                     confirmUpdate = false
                     flashPlan = null
                     queueAsk = false
                     loginSheet = null
-                    message = str(R.string.msg_disconnected)
+                    val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
+                    message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
                     messageIsError = true
                     step = Step.COMPANION
                 }

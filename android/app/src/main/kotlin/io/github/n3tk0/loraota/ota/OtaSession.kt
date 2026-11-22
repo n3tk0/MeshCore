@@ -141,8 +141,8 @@ class OtaSession(
                 if (wait > PAUSE_AFTER_MS) {
                     pauseFor(wait)
                     st = start(begin)
+                    if (st.nextSeq > next) stalledMs = 0
                     next = st.nextSeq
-                    stalledMs = 0
                     continue
                 }
                 if (wait > 0) {
