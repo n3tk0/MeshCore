@@ -1105,7 +1105,7 @@ private fun StatusCard(vm: AppViewModel) {
                 for (c in BatteryChem.entries) {
                     androidx.compose.material3.FilterChip(
                         selected = c == chem,
-                        onClick = { vm.setBatteryChem(c) },
+                        onClick = { vm.chooseBatteryChem(c) },
                         label = { Text(c.label, style = MaterialTheme.typography.labelSmall) },
                     )
                 }

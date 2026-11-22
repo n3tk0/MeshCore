@@ -1902,12 +1902,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- the repeater's battery chemistry, for the status card's bar (kept per repeater) ----
     private val chemPrefs get() = ctx.getSharedPreferences("battery_chem", Context.MODE_PRIVATE)
     var batteryChem by mutableStateOf(BatteryChem.LI_ION)
+        private set
 
     fun loadBatteryChem(r: Contact?) {
         batteryChem = r?.let { BatteryChem.byName(chemPrefs.getString(hex(it.publicKey), null)) } ?: BatteryChem.LI_ION
     }
 
-    fun setBatteryChem(c: BatteryChem) {
+    fun chooseBatteryChem(c: BatteryChem) {
         batteryChem = c
         repeater?.let { chemPrefs.edit().putString(hex(it.publicKey), c.name).apply() }
     }
