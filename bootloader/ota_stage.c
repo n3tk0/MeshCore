@@ -56,7 +56,10 @@ static void no_crc_check(void) {
   if ((SETTINGS_WORD0 & 0xFFFF0000u) != 0) flash_word(&SETTINGS_WORD0, SETTINGS_WORD0 & 0x0000FFFFu);
 }
 
-// half an app: the stock code then stays in DFU (BLE OTA) until a normal update
+// half an app: the stock code then stays in DFU (BLE OTA) until a normal update.
+// Known limit: after no_crc_check() this is the 3rd write of the word since the erase (nWRITE is 2).
+// It only happens when a copy went wrong half way, and it only turns more bits to 0 (the word ends 0),
+// so it is left as it is rather than make that rare path more complex.
 static void no_valid_app(void) {
   if ((SETTINGS_WORD0 & 0x0000FFFFu) != 0) flash_word(&SETTINGS_WORD0, SETTINGS_WORD0 & 0xFFFF0000u);
 }
@@ -180,13 +183,13 @@ static bool qspi_read(uint32_t addr, uint32_t len) {
 static bool src_read(uint32_t flags, uint32_t addr, uint32_t len) {
   if (flags & OTA_STAGE_SRC_QSPI) {
 #ifdef OTA_STAGE_QSPI_SCK
-    if ((addr & 3u) != 0 || len > 0x200000u || addr > 0x200000u - len) return false;
+    if ((addr & 3u) != 0 || len > OTA_STAGE_QSPI_SIZE || addr > OTA_STAGE_QSPI_SIZE - len) return false;
     return qspi_begin() && qspi_read(addr, len);
 #else
     return false;
 #endif
   }
-  if (addr < DFU_BANK_0_REGION_START || addr >= BOOTLOADER_REGION_START
+  if ((addr & 3u) != 0 || addr < DFU_BANK_0_REGION_START || addr >= BOOTLOADER_REGION_START
       || len > BOOTLOADER_REGION_START - addr) return false;
   for (uint32_t w = 0; w < len / 4; w++) buf[w] = ((const uint32_t*)(uintptr_t) addr)[w];
   return true;

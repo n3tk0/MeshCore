@@ -58,6 +58,7 @@ fake_nvmc_t* fake_nvmc(void) {
 
 // Track writes to settings page words whenever mark/flash_word is exercised by comparing snapshot
 static uint32_t settings_snap[4096 / 4];
+static int word0_limit = 2;   // see no_valid_app(): a failed copy may write word 0 a 3rd time
 static void snapshot_settings(void) { memcpy(settings_snap, (const void*)(uintptr_t) OTA_STAGE_PAGE, sizeof(settings_snap)); }
 static void check_settings_writes(int max_record_writes) {
   const uint32_t* cur = (const uint32_t*)(uintptr_t) OTA_STAGE_PAGE;
@@ -68,7 +69,7 @@ static void check_settings_writes(int max_record_writes) {
       settings_writes[i]++;
       settings_snap[i] = cur[i];
     }
-    CHECK(settings_writes[i] <= 2);   // nRF52840 NVMC nWRITE = 2
+    CHECK(settings_writes[i] <= (i == 0 ? word0_limit : 2));   // nRF52840 NVMC nWRITE = 2
     if (i >= OTA_STAGE_FIRST / 4) CHECK(settings_writes[i] <= max_record_writes);
   }
 }
@@ -157,7 +158,7 @@ static uint32_t settings0(void) { return *(uint32_t*) mem(OTA_STAGE_PAGE); }
 static int boot(long cut_after) {
   ops = 0;
   cut_at = cut_after;
-  if (setjmp(cut)) { cut_at = -1; return 1; }
+  if (setjmp(cut)) { cut_at = -1; check_settings_writes(1); return 1; }   // writes before the cut count too
   ota_stage_run();
   cut_at = -1;
   check_settings_writes(1);
@@ -295,6 +296,7 @@ static void test_app_changed(void) {
 
 static void test_both_sources_bad(void) {
   printf("QSPI: source and backup go bad half way: no app, DFU\n");
+  word0_limit = 3;
   reset_node();
   stage_qspi(1);
   ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
@@ -308,6 +310,7 @@ static void test_both_sources_bad(void) {
   boot(-1);
   CHECK(r->failed == OTA_STAGE_SET);
   CHECK((settings0() & 0xFFFF) == 0);   // the stock code stays in DFU
+  word0_limit = 2;
 }
 
 // a power cut at every step of a run (sampled), then normal starts: always ends with the expected app
@@ -377,12 +380,33 @@ static void test_struct_and_legacy_boots(void) {
   CHECK(ota_stage_boots_used(&r) == 2);
   r.boots = 0xFFFFFFF8u;
   CHECK(ota_stage_boots_used(&r) == 3);
+  r.boots_extra[0] = 0u;
+  CHECK(ota_stage_boots_used(&r) == 4);   // old format + new words both count
+  r.boots_extra[0] = 0xFFFFFFFFu;
   r.boots = 0u;
   CHECK(ota_stage_boots_used(&r) == 1);
   r.boots_extra[0] = 0u;
   CHECK(ota_stage_boots_used(&r) == 2);
   r.boots_extra[1] = 0u;
   CHECK(ota_stage_boots_used(&r) == 3);
+}
+
+// a record left on trial by an older bootloader (one low bit of boots cleared per start) still ends
+// in a rollback after OTA_STAGE_TRIAL_BOOTS starts
+static void test_legacy_trial_rollback(void) {
+  printf("QSPI: trial record from an older bootloader still rolls back\n");
+  reset_node();
+  stage_qspi(1);
+  ota_stage_t* r = write_record(OTA_STAGE_SRC_QSPI | OTA_STAGE_BACKUP, 0);
+  memcpy(mem(APP), img_new, sizeof(img_new));
+  r->started = OTA_STAGE_SET;
+  r->installed = OTA_STAGE_SET;
+  r->boots = 0xFFFFFFFEu;   // old format: one trial start
+  *(uint32_t*) mem(OTA_STAGE_PAGE) = 0x00000001u;   // CRC check off, as the old install left it
+  settings_writes[0] = 2;
+  snapshot_settings();
+  for (int i = 0; i < 4 && r->rb_done != OTA_STAGE_SET; i++) boot(-1);
+  CHECK(app_is(img_old, sizeof(img_old)) && r->rb_done == OTA_STAGE_SET);
 }
 
 static void test_overlapping_internal(void) {
@@ -409,6 +433,13 @@ static void test_bounds_overflow_alignment(void) {
   // internal flash src + size overflows uint32_t
   reset_node();
   r = write_custom_record(0, 0xFFFF0000u, 0x20000u, 0);
+  boot(-1);
+  CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
+
+  // unaligned internal flash src
+  reset_node();
+  memcpy(mem(APP + 0x50002u), img_new, sizeof(img_new));
+  r = write_custom_record(0, APP + 0x50002u, sizeof(img_new), ota_stage_crc32(0, img_new, sizeof(img_new)));
   boot(-1);
   CHECK(r->failed == OTA_STAGE_SET && app_is(img_old, sizeof(img_old)));
 
@@ -448,6 +479,7 @@ int main(void) {
   test_app_changed();
   test_both_sources_bad();
   test_struct_and_legacy_boots();
+  test_legacy_trial_rollback();
   test_overlapping_internal();
   test_bounds_overflow_alignment();
   test_power_cuts("install from internal flash", 0, 0);

@@ -195,7 +195,7 @@ index bd99713..a38b5f3 100644
  int main(void) {
    // Populate Boot Address and MBR Param into MBR if not already
    // MBR_BOOTLOADER_ADDR/MBR_PARAM_PAGE_ADDR are used if available, else UICR registers are used
-@@ -185,6 +187,14 @@ int main(void) {
+@@ -185,6 +187,15 @@ int main(void) {
      led_state(STATE_WRITING_FINISHED);
    }
  
