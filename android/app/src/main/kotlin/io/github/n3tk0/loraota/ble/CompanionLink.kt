@@ -140,9 +140,16 @@ class CompanionLink(private val context: Context) {
     }
 
     /**
-     * Closes the link and drops Android's cached services of the device (before a firmware update changes
-     * them), in the DFU library's order: disconnect, wait for it, refresh, then close (refresh needs the
-     * client still registered, and a refresh on a live link may start a discovery that races the close).
+     * Closes the link cleanly before the DFU service takes over: disconnect, wait for
+     * STATE_DISCONNECTED (so the SoftDevice ends the connection and starts advertising again
+     * instead of waiting for the 2 s supervision timeout), then close the GATT client.
+     *
+     * Note: do NOT call gatt.refresh() here before the buttonless jump! At this point the
+     * companion is still running the application (whose cached services already include the
+     * 0x1530 BLEDfu service). Calling gatt.refresh() on a bonded device right before g.close()
+     * causes Android's subsequent direct connectGatt(autoConnect = false) in DfuBaseService
+     * to fail immediately (~200 ms) with 0x85 (GATT_ERROR). The cache refresh is performed by
+     * DfuService.refreshDeviceCache() after the buttonless jump into the bootloader.
      */
     suspend fun closeAndRefresh() {
         val g = gatt ?: return
@@ -151,8 +158,7 @@ class CompanionLink(private val context: Context) {
         closing = g to done
         try {
             g.disconnect()
-            withTimeoutOrNull(2_000) { done.await() }
-            refreshGattCache(g)
+            withTimeoutOrNull(2_500) { done.await() }
         } finally {
             closing = null
             g.close()

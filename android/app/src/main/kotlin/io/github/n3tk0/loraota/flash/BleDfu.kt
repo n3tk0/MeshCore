@@ -70,6 +70,34 @@ object BleDfu {
     }
 
     /**
+     * Waits up to [ms] for the target [address] (or its bootloader on `address + 1` / `*_OTA` / `AdaDFU`)
+     * to be seen advertising by Android's BLE scanner. After a disconnect or a `gatt.refresh()`, calling
+     * `device.connectGatt(autoConnect = false)` before Android has seen an advertisement packet from the
+     * peripheral often fails within 200 ms with `0x85 (GATT_ERROR)`.
+     */
+    private suspend fun awaitAdvertising(ctx: Context, address: String, ms: Long) {
+        val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner ?: return
+        val seen = CompletableDeferred<Unit>()
+        val cb = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, r: ScanResult) {
+                val addr = r.device.address
+                val name = r.scanRecord?.deviceName ?: r.device.name ?: ""
+                if (addr.equals(address, ignoreCase = true) || name.endsWith("_OTA", ignoreCase = true) || name == "AdaDFU") {
+                    seen.complete(Unit)
+                }
+            }
+        }
+        runCatching {
+            scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
+        }.onFailure { return }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(ms) { seen.await() }
+        } finally {
+            runCatching { scanner.stopScan(cb) }
+        }
+    }
+
+    /**
      * Flashes the DFU .zip: the device's application jumps to its bootloader (legacy buttonless DFU, the
      * Adafruit BLEDfu service), then the image goes over. [progress] gets 0..100, [log] the library's steps.
      * [bonded]: a companion (PIN bond kept); a repeater is never bonded.
@@ -77,14 +105,17 @@ object BleDfu {
     suspend fun flash(ctx: Context, address: String, name: String, zip: File, bonded: Boolean, log: (String) -> Unit,
               progress: (Int) -> Unit) {
         try {
+            awaitAdvertising(ctx, address, 3_000)
             flashOnce(ctx, address, name, zip, bonded, log, progress)
         } catch (e: GattFailed) {
-            // a GATT error (e.g. INVALID HANDLE from stale cached services): the cache is cleared by now. Retry
-            // on the address the library last used: the bootloader may have come up on the address + 1
+            // a GATT error (e.g. INVALID HANDLE from stale cached services, or 0x85 GATT_ERROR on connect):
+            // the cache is cleared by now. Retry on the address the library last used: the bootloader may
+            // have come up on the address + 1
             val again = e.address.ifEmpty { address }
             log("[app] ${e.message}: retrying once with fresh services on $again")
             progress(0)
             delay(2000)
+            awaitAdvertising(ctx, again, 4_000)
             flashOnce(ctx, again, name, zip, bonded, log, progress)
         }
     }
@@ -104,8 +135,9 @@ object BleDfu {
             override fun onDfuAborted(deviceAddress: String) { done.completeExceptionally(FlashFailed("aborted")) }
             override fun onError(deviceAddress: String, error: Int, errorType: Int, message: String?) {
                 val msg = message ?: "DFU error $error"
-                done.completeExceptionally(
-                    if (errorType == DfuBaseService.ERROR_TYPE_COMMUNICATION) GattFailed(msg, deviceAddress) else FlashFailed(msg))
+                val commError = errorType == DfuBaseService.ERROR_TYPE_COMMUNICATION ||
+                    errorType == DfuBaseService.ERROR_TYPE_COMMUNICATION_STATE
+                done.completeExceptionally(if (commError) GattFailed(msg, deviceAddress) else FlashFailed(msg))
             }
         }
         val logs = DfuLogListener { _, _, message -> log(message) }
