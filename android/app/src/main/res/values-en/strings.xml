@@ -709,4 +709,8 @@
     <string name="field_prep_done">Ready for field: cached %1$d files for %2$d boards.</string>
     <string name="diag_share">Share diagnostics</string>
     <string name="diag_hint">Creates a text report with app version, BLE info, and logs. Passwords and tokens are redacted automatically.</string>
+    <string name="ago_unknown">unknown time</string>
+    <string name="rset_radio_confirm_title">Change radio parameters?</string>
+    <string name="rset_radio_confirm_body">Changes to “radio” take effect after a reboot. Mismatched radio parameters can disconnect a remote repeater from the mesh. Are you sure?</string>
+    <string name="field_prep_done_partial">Ready for field: cached %1$d files for %2$d boards (%3$d skipped due to download errors).</string>
 </resources>

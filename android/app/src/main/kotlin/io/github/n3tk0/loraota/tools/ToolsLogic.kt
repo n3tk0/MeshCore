@@ -129,22 +129,55 @@ object CliHelper {
         return base.filter { it.startsWith(lower) && it.trim() != lower.trim() }.take(limit)
     }
 
+    /** True when the command embeds a secret value (so it should not be saved to command history). */
+    fun isSecretWriteCommand(command: String): Boolean {
+        val c = command.trim().lowercase(Locale.ROOT)
+        return c.startsWith("password ") || c.startsWith("set guest.password ") || c.startsWith("set wifi.pwd ")
+    }
+
+    /** True when the command's reply contains a secret value that must be redacted in exported transcripts. */
+    fun isSecretReadCommand(command: String): Boolean {
+        val c = command.trim().lowercase(Locale.ROOT)
+        return c == "get guest.password" || c == "get wifi.pwd"
+    }
+
     private val REDACT_RULES = listOf(
-        Regex("""(?i)(password\s+now:\s*)\S+""") to "$1[REDACTED]",
-        Regex("""(?i)(\bpassword\s+)\S+""") to "$1[REDACTED]",
-        Regex("""(?i)(\bguest\.password\s+)\S+""") to "$1[REDACTED]",
-        Regex("""(?i)(\bwifi\.pwd\s+)\S+""") to "$1[REDACTED]",
-        Regex("""(?i)(Authorization:\s*Bearer\s+)\S+""") to "$1[REDACTED]",
-        Regex("""(?i)(Bearer\s+)[A-Za-z0-9_\-\.]{8,}""") to "$1[REDACTED]",
+        Regex("""(?i)(password[ \t]+now:[ \t]*)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(\bpassword[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(\bguest\.password[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(\bwifi\.pwd[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(Authorization:[ \t]*Bearer[ \t]+)\S+""") to "$1[REDACTED]",
+        Regex("""(?i)(Bearer[ \t]+)[A-Za-z0-9_\-\.]{8,}""") to "$1[REDACTED]",
         Regex("""\bgh[pousr]_[A-Za-z0-9_]{10,}\b""") to "[REDACTED_TOKEN]",
         Regex("""\bgithub_pat_[A-Za-z0-9_]{10,}\b""") to "[REDACTED_TOKEN]",
     )
 
-    /** Strips admin/guest/Wi-Fi passwords and GitHub tokens from logs or shared diagnostics. */
+    /** Strips admin/guest/Wi-Fi passwords (including spaces) and GitHub tokens from logs or shared diagnostics. */
     fun redactSecrets(text: String): String {
         var out = text
         for ((regex, replacement) in REDACT_RULES) {
             out = regex.replace(out, replacement)
+        }
+        return out
+    }
+
+    /**
+     * Redacts both inline secrets and reply lines immediately following secret-reading commands
+     * (`get guest.password`, `get wifi.pwd`). Each entry is `(isCommand, text)`.
+     */
+    fun redactCliEntries(entries: List<Pair<Boolean, String>>): List<String> {
+        val out = ArrayList<String>(entries.size)
+        var hideNextReply = false
+        for ((isCmd, text) in entries) {
+            if (isCmd) {
+                hideNextReply = isSecretReadCommand(text)
+                out.add(redactSecrets(text))
+            } else if (hideNextReply) {
+                hideNextReply = false
+                out.add("[REDACTED]")
+            } else {
+                out.add(redactSecrets(text))
+            }
         }
         return out
     }
@@ -231,7 +264,24 @@ object DiagnosticReport {
         }
         if (cliHistory.isNotEmpty()) {
             sb.append("\n--- CLI Transcript (last ").append(minOf(cliHistory.size, 50)).append(") ---\n")
-            for (line in cliHistory.takeLast(50)) sb.append(line).append('\n')
+            var hideNextReply = false
+            for (line in cliHistory.takeLast(50)) {
+                val cmdBody = line.removePrefix("[COMMAND] ").takeIf { line.startsWith("[COMMAND] ") }
+                when {
+                    cmdBody != null -> {
+                        hideNextReply = CliHelper.isSecretReadCommand(cmdBody)
+                        sb.append(line).append('\n')
+                    }
+                    hideNextReply && line.startsWith("[REPLY]") -> {
+                        hideNextReply = false
+                        sb.append("[REPLY] [REDACTED]\n")
+                    }
+                    else -> {
+                        hideNextReply = false
+                        sb.append(line).append('\n')
+                    }
+                }
+            }
         }
         return CliHelper.redactSecrets(sb.toString())
     }

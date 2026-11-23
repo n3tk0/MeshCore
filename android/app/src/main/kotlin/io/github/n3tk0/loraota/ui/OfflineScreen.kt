@@ -66,14 +66,13 @@ import java.util.Locale
 fun OfflineScreen(vm: AppViewModel) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var deleteCandidate by remember { mutableStateOf<Backup?>(null) }
-    var exportCandidate by remember { mutableStateOf<Backup?>(null) }
-    var exportPw by remember { mutableStateOf("") }
+    var showExportDialog by rememberSaveable { mutableStateOf(false) }
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        val b = exportCandidate
-        val pw = exportPw
-        exportCandidate = null
-        exportPw = ""
+        val b = vm.exportingBackup
+        val pw = vm.exportPassword
+        vm.exportingBackup = null
+        vm.exportPassword = ""
         if (uri != null && b != null) vm.exportBackup(b, uri, pw)
     }
 
@@ -99,7 +98,11 @@ fun OfflineScreen(vm: AppViewModel) {
     } else {
         OfflineBackupsList(
             backups = vm.offlineBackups,
-            onExport = { b -> exportCandidate = b; exportPw = "" },
+            onExport = { b ->
+                vm.exportingBackup = b
+                vm.exportPassword = ""
+                showExportDialog = true
+            },
             onDelete = { b -> deleteCandidate = b },
         )
     }
@@ -121,16 +124,21 @@ fun OfflineScreen(vm: AppViewModel) {
         )
     }
 
-    exportCandidate?.let { b ->
+    val exportTarget = vm.exportingBackup
+    if (showExportDialog && exportTarget != null) {
         AlertDialog(
-            onDismissRequest = { exportCandidate = null },
+            onDismissRequest = {
+                showExportDialog = false
+                vm.exportingBackup = null
+                vm.exportPassword = ""
+            },
             title = { Text(stringResource(R.string.backup_export)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.backup_export_hint), style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(
-                        value = exportPw,
-                        onValueChange = { exportPw = it },
+                        value = vm.exportPassword,
+                        onValueChange = { vm.exportPassword = it },
                         label = { Text(stringResource(R.string.backup_password_optional)) },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
@@ -140,12 +148,17 @@ fun OfflineScreen(vm: AppViewModel) {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val safe = b.deviceName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "meshcore" }
+                    showExportDialog = false
+                    val safe = exportTarget.deviceName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "meshcore" }
                     saveFile.launch("$safe-backup.json")
                 }) { Text(stringResource(R.string.backup_export)) }
             },
             dismissButton = {
-                TextButton(onClick = { exportCandidate = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = {
+                    showExportDialog = false
+                    vm.exportingBackup = null
+                    vm.exportPassword = ""
+                }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }

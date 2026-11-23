@@ -75,22 +75,42 @@ class ToolsLogicTest {
     }
 
     @Test
-    fun cliHelperRedactsPasswordsAndTokens() {
+    fun cliHelperRedactsPasswordsWithSpacesAndSecretReadReplies() {
         val sample = """
-            > password SuperSecret123
-            password now: SuperSecret123
-            > set guest.password GuestPass99
-            > set wifi.pwd MyWifiSecret
+            > password Super Secret 123
+            password now: Super Secret 123
+            > set guest.password Guest Pass 99
+            > set wifi.pwd My Wifi Secret
             Authorization: Bearer ghp_1234567890abcdefghij
             token=github_pat_ABCDEF1234567890
         """.trimIndent()
         val clean = CliHelper.redactSecrets(sample)
-        assertFalse("SuperSecret123" in clean)
-        assertFalse("GuestPass99" in clean)
-        assertFalse("MyWifiSecret" in clean)
+        assertFalse("Super" in clean)
+        assertFalse("Secret 123" in clean)
+        assertFalse("Guest Pass 99" in clean)
+        assertFalse("My Wifi Secret" in clean)
         assertFalse("ghp_1234567890abcdefghij" in clean)
         assertFalse("github_pat_ABCDEF1234567890" in clean)
         assertTrue("[REDACTED]" in clean)
+
+        assertTrue(CliHelper.isSecretWriteCommand("password foo bar"))
+        assertTrue(CliHelper.isSecretWriteCommand("set guest.password 123"))
+        assertTrue(CliHelper.isSecretWriteCommand("set wifi.pwd abc"))
+        assertFalse(CliHelper.isSecretWriteCommand("get name"))
+
+        val redactedEntries = CliHelper.redactCliEntries(
+            listOf(
+                true to "get guest.password",
+                false to "> hiddenGuestPass",
+                true to "get wifi.pwd",
+                false to "> hiddenWifiPass",
+                true to "ver",
+                false to "v1.18.2",
+            )
+        )
+        assertEquals("[REDACTED]", redactedEntries[1])
+        assertEquals("[REDACTED]", redactedEntries[3])
+        assertEquals("v1.18.2", redactedEntries[5])
     }
 
     @Test
@@ -127,10 +147,19 @@ class ToolsLogicTest {
             repeaterName = "R1",
             repeaterIdent = "heltec|v1.18",
             logs = listOf("Bearer ghp_secretvalue123456"),
-            cliHistory = listOf("[COMMAND] password myadminpass"),
+            cliHistory = listOf(
+                "[COMMAND] password my admin pass",
+                "[COMMAND] get guest.password",
+                "[REPLY] > secretGuestValue",
+                "[COMMAND] ver",
+                "[REPLY] v1.18",
+            ),
         )
         assertFalse("ghp_secretvalue123456" in report)
-        assertFalse("myadminpass" in report)
+        assertFalse("my admin pass" in report)
+        assertFalse("secretGuestValue" in report)
+        assertTrue("[REPLY] [REDACTED]" in report)
+        assertTrue("[REPLY] v1.18" in report)
         assertTrue("LoRa OTA Diagnostic Report" in report)
     }
 

@@ -4,8 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -83,6 +81,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
     val transcriptScroll = rememberScrollState()
 
     LaunchedEffect(lines.size) {
+        copiedNotice = false
         if (lines.isNotEmpty()) transcriptScroll.animateScrollTo(transcriptScroll.maxValue)
     }
 
@@ -98,17 +97,18 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         }
     }
 
-    fun transcriptText(): String = CliHelper.redactSecrets(
-        lines.joinToString("\n") { line ->
+    fun transcriptText(): String {
+        val redacted = CliHelper.redactCliEntries(lines.map { (it.kind == CliLineKind.COMMAND) to it.text })
+        return lines.zip(redacted).joinToString("\n") { (line, safeText) ->
             val prefix = when (line.kind) {
                 CliLineKind.COMMAND -> "> "
                 CliLineKind.REPLY -> "  "
                 CliLineKind.INFO -> "# "
                 CliLineKind.ERROR -> "! "
             }
-            "[${timeFmt.format(Date(line.timeMs))}] $prefix${line.text}"
+            "[${timeFmt.format(Date(line.timeMs))}] $prefix$safeText"
         }
-    )
+    }
 
     // Stock companion warning for remote repeater CLI (fire-and-forget still allowed)
     if (!isCompanion && vm.canReadRepeater == false) {

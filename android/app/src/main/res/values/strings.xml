@@ -710,4 +710,8 @@
     <string name="field_prep_done">Готово за терен: кеширани %1$d файла за %2$d платки.</string>
     <string name="diag_share">Сподели диагностика</string>
     <string name="diag_hint">Подготвя текстов отчет за версията, BLE и логовете. Паролите и токените се премахват автоматично.</string>
+    <string name="ago_unknown">неизвестно време</string>
+    <string name="rset_radio_confirm_title">Промяна на радио параметри?</string>
+    <string name="rset_radio_confirm_body">Промяната на „radio“ влиза в сила след рестарт. Невалидни или несъвпадащи параметри могат да прекъснат отдалечения достъп до рипитъра. Сигурен ли си?</string>
+    <string name="field_prep_done_partial">Готово за терен: кеширани %1$d файла за %2$d платки (%3$d пропуснати при сваляне).</string>
 </resources>

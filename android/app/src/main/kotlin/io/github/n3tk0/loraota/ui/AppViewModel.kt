@@ -331,6 +331,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var offlineReturn = Step.COMPANION
     val offlineHealth = mutableStateMapOf<String, List<HealthStore.Record>>()
     val offlineBackups = mutableStateListOf<Backup>()
+    /** Survives configuration changes while the system CSV file picker is open. */
+    var pendingCsvExport: Pair<HistorySeries, String>? = null
 
     private fun finishDisconnect(flashMsg: String?) {
         reconnecting = false
@@ -399,6 +401,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                         val started = runCatching {
                                             companion.start()
                                             companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
+                                            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
                                             true
                                         }.getOrDefault(false)
                                         if (started) {
@@ -587,6 +590,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             companionDevice = device
             // left on the side channel by an update cut short; a stock companion has no such command
             companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
             companionName = companion.nodeName.ifEmpty {
                 runCatching { device.name }.getOrNull() ?: device.address
             }
@@ -674,7 +678,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() {
         loginSheet = null
-        reconnectJob?.cancel()
+        val rj = reconnectJob
         reconnectJob = null
         reconnecting = false
         reconnectAttempt = 0
@@ -684,6 +688,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         devices.clear()   // a new connect waits for a new scan, after the clean-up
         viewModelScope.launch {
             try {
+                rj?.cancelAndJoin()    // wait for any in-flight reconnect attempt before closing GATT
                 job?.cancelAndJoin()   // the update's own clean-up (ABORT, normal radio) goes first
                 busy = true
                 restorePath()
@@ -822,7 +827,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun hasSavedPassword(contact: Contact) = hex(contact.publicKey) in savedKeys
 
-    fun savedPassword(contact: Contact): String? = passwordStore.get(hex(contact.publicKey))
+    fun savedPassword(contact: Contact): String? {
+        val key = hex(contact.publicKey)
+        val pw = passwordStore.get(key)
+        if (pw == null && key !in passwordStore.keys()) savedKeys.remove(key)
+        return pw
+    }
 
     private fun savePassword(contact: Contact, password: String) {
         val key = hex(contact.publicKey)
@@ -2341,17 +2351,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- repeater 4-tab navigation ----
 
     fun selectRepeaterTab(tab: RepeaterTab) {
-        if (busy && tab != repeaterTab) return
+        if ((busy || reconnecting) && tab != repeaterTab) return
         repeaterTab = tab
         if (tab == RepeaterTab.HEALTH) {
             val dev = deviceKey(DeviceKind.REPEATER)
             if (repeaterHealthLoadedFor != dev || healthKind != DeviceKind.REPEATER) {
                 resetHealthState(DeviceKind.REPEATER)
                 refreshHealth()
-            }
-        } else if (tab == RepeaterTab.TOOLS && canReadRepeater == null) {
-            viewModelScope.launch {
-                canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
             }
         }
     }
@@ -2382,7 +2388,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun sendCliCommand(rawCommand: String, isCompanion: Boolean) = work {
         val cmd = rawCommand.trim()
         if (cmd.isEmpty()) return@work
-        if (cliCommandHistory.firstOrNull() != cmd) {
+        if (!CliHelper.isSecretWriteCommand(cmd) && cliCommandHistory.firstOrNull() != cmd) {
             cliCommandHistory.add(0, cmd)
             while (cliCommandHistory.size > 50) cliCommandHistory.removeAt(cliCommandHistory.lastIndex)
         }
@@ -2435,20 +2441,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- repeater quick actions & neighbors ----
 
+    /** Sets repeater UTC clock directly from the phone's epoch time (`time <epoch>`), independent of companion RTC drift. */
     fun syncRepeaterClock() = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
             canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
         }
+        val cmd = "time ${System.currentTimeMillis() / 1000L}"
         working = str(R.string.qa_clock_sync)
         if (canReadRepeater != true) {
-            companion.sendRemoteCli(r, "clock sync")
+            companion.sendRemoteCli(r, cmd)
             lastClockReply = str(R.string.cli_sent_stock_companion)
             message = str(R.string.qa_clock_sent)
             return@work
         }
         val reply = try {
-            RepeaterBackup.ask(companion, r, "clock sync")?.trim()
+            RepeaterBackup.ask(companion, r, cmd)?.trim()
         } finally {
             withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
         }
@@ -2617,11 +2625,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         step = Step.SWEEP
-        if (canReadRepeater == null) {
-            viewModelScope.launch {
-                canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
-            }
-        }
     }
 
     fun closeSweep() {
@@ -2758,6 +2761,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fieldPrepProgress = str(R.string.field_prep_listing)
         working = str(R.string.field_prep_listing)
         try {
+            Releases.apiToken = tokens.get()
             val listing = withContext(Dispatchers.IO) { Releases.listDetailed(repo, ctx.filesDir) }
             releases = listing.files
             releasesLoadedAt = System.currentTimeMillis()
@@ -2775,29 +2779,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ?.let { knownEnvs.add(it.env) }
             }
             val latestRel = all.first().release
-            val toDownload = if (knownEnvs.isNotEmpty()) {
-                knownEnvs.mapNotNull { env -> all.firstOrNull { it.env == env } }
-            } else {
+            val matched = knownEnvs.mapNotNull { env -> all.firstOrNull { it.env == env } }
+            val toDownload = matched.ifEmpty {
                 all.filter { it.release == latestRel && it.hasLoraOta }.take(6)
             }
+            if (toDownload.isEmpty()) throw Exception(str(R.string.field_prep_empty))
             var downloaded = 0
+            var failed = 0
             for ((i, f) in toDownload.withIndex()) {
                 val stepText = str(R.string.field_prep_downloading, i + 1, toDownload.size, f.env.replace('_', ' '))
                 fieldPrepProgress = stepText
                 working = stepText
                 withContext(Dispatchers.IO) {
                     if (f.hasLoraOta) {
-                        Releases.download(f, ctx.filesDir)
-                        downloaded++
+                        runCatching { Releases.download(f, ctx.filesDir) }
+                            .onSuccess { downloaded++ }
+                            .onFailure { if (it is CancellationException) throw it else failed++ }
                     }
                     if (f.hasDfu) {
-                        Releases.downloadDfu(f, ctx.filesDir)
-                        downloaded++
+                        runCatching { Releases.downloadDfu(f, ctx.filesDir) }
+                            .onSuccess { downloaded++ }
+                            .onFailure { if (it is CancellationException) throw it else failed++ }
                     }
                 }
             }
             refreshCacheStats()
-            message = str(R.string.field_prep_done, downloaded, toDownload.size)
+            message = if (failed == 0) str(R.string.field_prep_done, downloaded, toDownload.size)
+            else str(R.string.field_prep_done_partial, downloaded, toDownload.size, failed)
+            messageIsError = downloaded == 0 && failed > 0
         } finally {
             fieldPrepProgress = null
         }

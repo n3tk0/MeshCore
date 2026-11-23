@@ -435,10 +435,9 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
     val ctx = LocalContext.current
     var historyOpen by rememberSaveable(vm.healthDeviceName, defaultExpanded) { mutableStateOf(defaultExpanded) }
     val expandedFields = remember(vm.healthDeviceName, vm.healthGeneration) { mutableStateMapOf<Int, Boolean>() }
-    var csvExportPending by remember { mutableStateOf<Pair<HistorySeries, String>?>(null) }
     val createCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
-        val pending = csvExportPending
-        csvExportPending = null
+        val pending = vm.pendingCsvExport
+        vm.pendingCsvExport = null
         if (uri != null && pending != null) {
             val (s, label) = pending
             val csv = TelemetryCsv.export(vm.healthDeviceName, label, unit(s.field), s)
@@ -591,7 +590,7 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
                                     TextButton(onClick = {
                                         val dev = vm.healthDeviceName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "device" }
                                         val ringTag = if (series.ring == HistorySeries.RING_DAY) "24h" else "7d"
-                                        csvExportPending = series to metricLabel
+                                        vm.pendingCsvExport = series to metricLabel
                                         createCsv.launch("${dev}_f${series.field}_$ringTag.csv")
                                     }) {
                                         Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))

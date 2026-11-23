@@ -228,10 +228,12 @@ fun NeighborsCard(vm: AppViewModel) {
 
 @Composable
 private fun formatSecsAgo(secs: Long): String = when {
-    secs < 60 -> stringResource(R.string.ago_secs, secs.toInt())
-    secs < 3600 -> stringResource(R.string.ago_mins, (secs / 60).toInt())
-    secs < 86400 -> stringResource(R.string.ago_hours, (secs / 3600).toInt())
-    else -> stringResource(R.string.ago_days, (secs / 86400).toInt())
+    secs < 0L || secs > 365L * 86400L -> stringResource(R.string.ago_unknown)
+    secs < 5L -> stringResource(R.string.ago_just_now)
+    secs < 60L -> stringResource(R.string.ago_secs, secs.toInt())
+    secs < 3600L -> stringResource(R.string.ago_mins, (secs / 60L).toInt())
+    secs < 86400L -> stringResource(R.string.ago_hours, (secs / 3600L).toInt())
+    else -> stringResource(R.string.ago_days, (secs / 86400L).toInt())
 }
 
 /** Tools tab inside a logged-in repeater: CLI Console | Visual Settings | Backup/Restore. */
@@ -434,6 +436,8 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
         }
     }
 
+    var confirmRadioChange by remember { mutableStateOf(false) }
+
     if (changed.isNotEmpty()) {
         Card(
             Modifier.fillMaxWidth(),
@@ -445,7 +449,10 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    onClick = { vm.saveRepeaterSettings() },
+                    onClick = {
+                        if ("radio" in changed) confirmRadioChange = true
+                        else vm.saveRepeaterSettings()
+                    },
                     enabled = !vm.busy,
                     modifier = Modifier.weight(1f),
                 ) {
@@ -456,5 +463,24 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                 }
             }
         }
+    }
+
+    if (confirmRadioChange) {
+        AlertDialog(
+            onDismissRequest = { confirmRadioChange = false },
+            title = { Text(stringResource(R.string.rset_radio_confirm_title)) },
+            text = { Text(stringResource(R.string.rset_radio_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRadioChange = false
+                    vm.saveRepeaterSettings()
+                }) {
+                    Text(stringResource(R.string.rset_save_changes, changed.size), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRadioChange = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 }
