@@ -133,6 +133,7 @@ class ToolsLogicTest {
 
     @Test
     fun diagnosticReportRedactsSecretsInCliAndLogs() {
+        val padding = (1..49).map { "[REPLY] ok-$it" }
         val report = DiagnosticReport.build(
             appVersion = "0.2.0",
             versionCode = 142,
@@ -148,18 +149,28 @@ class ToolsLogicTest {
             repeaterIdent = "heltec|v1.18",
             logs = listOf("Bearer ghp_secretvalue123456"),
             cliHistory = listOf(
-                "[COMMAND] password my admin pass",
                 "[COMMAND] get guest.password",
-                "[REPLY] > secretGuestValue",
-                "[COMMAND] ver",
-                "[REPLY] v1.18",
+                "[REPLY] > boundarySecretMustNotLeak",
+            ) + padding.take(44) + listOf(
+                "[COMMAND] ab|password my admin pass",
+                "[COMMAND] set prv.key deadbeefcafebabe",
+                "[COMMAND] set bridge.secret topbridgepw",
+                "[COMMAND] set pin 654321",
+                "[REPLY] > pin is now 654321",
             ),
         )
         assertFalse("ghp_secretvalue123456" in report)
         assertFalse("my admin pass" in report)
-        assertFalse("secretGuestValue" in report)
+        assertFalse("boundarySecretMustNotLeak" in report)
+        assertFalse("deadbeefcafebabe" in report)
+        assertFalse("topbridgepw" in report)
+        assertFalse("654321" in report)
         assertTrue("[REPLY] [REDACTED]" in report)
-        assertTrue("[REPLY] v1.18" in report)
+        assertTrue(CliHelper.isDangerous("ota rollback"))
+        assertTrue(CliHelper.isDangerous("ab|set prv.key 001122"))
+        assertTrue(CliHelper.isSecretWriteCommand("ab|set pin 123456"))
+        assertTrue(CliHelper.isSecretReadCommand("ab|get bridge.secret"))
+        assertTrue(CliHelper.isSecretReadCommand("get guest.password extra"))
         assertTrue("LoRa OTA Diagnostic Report" in report)
     }
 

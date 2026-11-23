@@ -115,6 +115,7 @@ fun OfflineScreen(vm: AppViewModel) {
         0 -> OfflineHealthList(vm)
         1 -> OfflineBackupsList(
             backups = vm.offlineBackups,
+            enabled = !vm.busy,
             onExport = { b ->
                 vm.exportingBackup = b
                 vm.exportPassword = ""
@@ -321,6 +322,7 @@ private fun OfflineHealthDeviceCard(
 @Composable
 private fun OfflineBackupsList(
     backups: List<Backup>,
+    enabled: Boolean,
     onExport: (Backup) -> Unit,
     onDelete: (Backup) -> Unit,
 ) {
@@ -333,13 +335,14 @@ private fun OfflineBackupsList(
     }
 
     for (b in backups) {
-        OfflineBackupCard(b = b, fmt = fmt, onExport = onExport, onDelete = onDelete)
+        OfflineBackupCard(b = b, enabled = enabled, fmt = fmt, onExport = onExport, onDelete = onDelete)
     }
 }
 
 @Composable
 private fun OfflineBackupCard(
     b: Backup,
+    enabled: Boolean,
     fmt: DateFormat,
     onExport: (Backup) -> Unit,
     onDelete: (Backup) -> Unit,
@@ -431,11 +434,11 @@ private fun OfflineBackupCard(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TextButton(onClick = { onExport(b) }) {
+                TextButton(onClick = { onExport(b) }, enabled = enabled) {
                     Text(stringResource(R.string.backup_export))
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { onDelete(b) }) {
+                TextButton(onClick = { onDelete(b) }, enabled = enabled) {
                     Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error)
@@ -448,7 +451,8 @@ private fun OfflineBackupCard(
 /**
  * Offline Firmware Hub:
  * 1) Download/prepare ready firmwares from GitHub releases for any board/role
- * 2) Trigger a custom GitHub build for any device (Repeater, Companion, or Room server)
+ * 2) Trigger a custom GitHub build for any device (Repeater, Companion, or Room server) — collapsed until opened
+ *    so entering Offline without internet never blocks the UI or throws a network error
  * 3) Inspect, export (.bin / DFU .zip), or remove cached firmwares already on the phone.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -458,6 +462,8 @@ private fun OfflineFirmwareTab(
     onExportFirmware: (FirmwareFile, Boolean) -> Unit,
     onDeleteFirmware: (FirmwareFile) -> Unit,
 ) {
+    var buildExpanded by rememberSaveable { mutableStateOf(vm.buildJob != null) }
+
     // 1. Download / prepare ready firmwares for field use
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -486,35 +492,53 @@ private fun OfflineFirmwareTab(
         }
     }
 
-    // 2. Build custom firmware on GitHub for any device role (Repeater / Companion / Room server)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            stringResource(R.string.offline_fw_build_title),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            stringResource(R.string.offline_fw_build_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        val roles = listOf(
-            "repeater" to R.string.role_repeater,
-            "companion" to R.string.role_companion,
-            "room_server" to R.string.role_room_server,
-        )
-        val buildRunning = vm.buildJob?.finished == false
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for ((roleKey, labelRes) in roles) {
-                FilterChip(
-                    selected = vm.offlineBuildRole == roleKey,
-                    onClick = { vm.selectOfflineBuildRole(roleKey) },
-                    enabled = !vm.busy && !buildRunning,
-                    label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelMedium) },
+    // 2. Build custom firmware on GitHub for any device role (collapsed by default to stay truly offline-safe)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { buildExpanded = !buildExpanded }
+                    .padding(12.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(stringResource(R.string.offline_fw_build_title), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.offline_fw_build_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    if (buildExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (buildExpanded || vm.buildJob != null) {
+                HorizontalDivider()
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val roles = listOf(
+                        "repeater" to R.string.role_repeater,
+                        "companion" to R.string.role_companion,
+                        "room_server" to R.string.role_room_server,
+                    )
+                    val buildRunning = vm.buildJob?.finished == false
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        for ((roleKey, labelRes) in roles) {
+                            FilterChip(
+                                selected = vm.offlineBuildRole == roleKey,
+                                onClick = { vm.selectOfflineBuildRole(roleKey) },
+                                enabled = !vm.busy && !buildRunning,
+                                label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelMedium) },
+                            )
+                        }
+                    }
+                    BuildPanel(vm)
+                }
+            }
         }
-        BuildPanel(vm)
     }
 
     // 3. Cached / built firmwares ready on this phone
@@ -552,8 +576,10 @@ private fun CachedFirmwareCard(
         Role.ROOM_SERVER -> R.string.role_room_server
         Role.OTHER -> null
     }
+    // ESP32 repeaters use the same .bin for both LoRa OTA and Wi-Fi DFU (sha256 == dfuSha256): avoid double-counting
+    val distinctDfu = item.hasCachedDfu && (!item.hasCachedOta || f.dfuSha256 != f.sha256)
     val totalBytes = (if (item.hasCachedOta) f.size.toLong() else 0L) +
-        (if (item.hasCachedDfu) f.dfuSize.toLong() else 0L)
+        (if (distinctDfu) f.dfuSize.toLong() else 0L)
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth()) {
@@ -620,7 +646,7 @@ private fun CachedFirmwareCard(
                         Text(stringResource(R.string.offline_fw_export_ota))
                     }
                 }
-                if (item.hasCachedDfu) {
+                if (distinctDfu) {
                     TextButton(onClick = { onExport(true) }, enabled = enabled) {
                         Text(stringResource(R.string.offline_fw_export_dfu))
                     }

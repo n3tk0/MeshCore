@@ -324,6 +324,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val offlineHealth get() = fleetState.offlineHealth
     val offlineBackups get() = fleetState.offlineBackups
     val offlineFirmwares get() = fleetState.offlineFirmwares
+    val offlineLoading get() = fleetState.offlineLoading
     val offlineBuildRole get() = fleetState.offlineBuildRole
     var exportingFirmware: Pair<FirmwareFile, Boolean>?
         get() = fleetState.exportingFirmware
@@ -336,8 +337,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         get() = fleetState.showFieldPrepDialog
         set(v) { fleetState.showFieldPrepDialog = v }
 
+    /** One-shot APK ready to hand to Android's package installer using the live Activity Context. */
+    var pendingInstallApk by mutableStateOf<java.io.File?>(null)
+        private set
+
+    fun consumePendingInstallApk() {
+        pendingInstallApk = null
+    }
+
     /** Survives configuration changes while the system CSV file picker is open. */
     var pendingCsvExport: Pair<HistorySeries, String>? = null
+
+    /** Guards against concurrent onDisconnect coroutines during job.join() / cancelAndJoin(). */
+    private var handlingDisconnect = false
+
+    private fun clearDeviceSession() {
+        companionDevice = null
+        companionName = ""
+        companionModel = ""
+        companionVersion = ""
+        companionOta = false
+        canReadRepeater = null
+        repeater = null
+        info = null
+        status = null
+        sensorBattery = null
+        otaChecked = false
+        oldImage = null
+        newImage = null
+        patch = null
+        flashImage = null
+        repeaterHealthLoadedFor = null
+    }
 
     private fun finishDisconnect(flashMsg: String?) {
         reconnecting = false
@@ -349,6 +380,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         queueAsk = false
         loginSheet = null
         fleetState.sweepRunning = false
+        clearDeviceSession()
         message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
         messageIsError = true
         when (step) {
@@ -370,8 +402,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             BuildWatcher.state.collect { j ->
                 val before = buildJob
                 buildJob = j
-                if (j?.finished == true && before != null && !before.finished) buildFinished(j)
-                else if (j?.finished == true) builds = Releases.builds(ctx.filesDir)
+                if (j?.finished == true && before != null && !before.finished) {
+                    buildFinished(j)
+                } else if (j?.finished == true) {
+                    builds = withContext(Dispatchers.IO) { Releases.builds(ctx.filesDir) }
+                }
             }
         }
         if (autoUpdateCheck && System.currentTimeMillis() - AppPrefs.lastUpdateCheck(app) > AppUpdater.AUTO_CHECK_INTERVAL_MS) {
@@ -379,16 +414,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         link.onDisconnect = {
             viewModelScope.launch {
-                val activeConnection = step != Step.COMPANION &&
+                fun isActiveConnection() = step != Step.COMPANION &&
                     !(step == Step.OFFLINE && offlineReturn == Step.COMPANION) &&
                     !(step == Step.SETTINGS && settingsReturn == Step.COMPANION)
-                if (activeConnection && !flashingCompanion && !disconnectingIntentionally && !reconnecting) {
+
+                if (!isActiveConnection() || flashingCompanion || disconnectingIntentionally || reconnecting || handlingDisconnect) {
+                    return@launch
+                }
+                handlingDisconnect = true
+                try {
                     val wasUpdating = phase != null
                     val wasFlashingRepeater = flashPercent >= 0
                     // a repeater's Bluetooth / Wi-Fi flash does not need the companion: let it finish on screen first;
                     // a LoRa update (even while sleeping in WAIT_AIR / PAUSE / RESTART) or other work is cancelled now
                     // (the link is already gone so no ABORT is sent, and resumable is kept below)
                     if (wasFlashingRepeater) job?.join() else job?.cancelAndJoin()
+                    // Re-check after suspension in case user intentionally disconnected while we waited
+                    if (!isActiveConnection() || disconnectingIntentionally) return@launch
                     if (wasUpdating) resumable = true
                     val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
                     val dev = companionDevice
@@ -401,14 +443,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 for (attempt in 1..2) {
                                     reconnectAttempt = attempt
                                     delay(if (attempt == 1) 1200L else 2200L)
-                                    val connected = runCatching { link.connect(dev) }.getOrDefault(false)
+                                    val connected = try {
+                                        link.connect(dev)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        false
+                                    }
                                     if (connected) {
-                                        val started = runCatching {
+                                        val started = try {
                                             companion.start()
-                                            companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
-                                            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+                                            companionOta = try {
+                                                companion.cli("tempradio off")
+                                                true
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (_: Exception) {
+                                                false
+                                            }
+                                            canReadRepeater = try {
+                                                RepeaterBackup.supported(companion)
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (_: Exception) {
+                                                false
+                                            }
                                             true
-                                        }.getOrDefault(false)
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (_: Exception) {
+                                            false
+                                        }
                                         if (started) {
                                             ok = true
                                             break
@@ -434,6 +499,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         finishDisconnect(flashMsg)
                     }
+                } finally {
+                    handlingDisconnect = false
                 }
             }
         }
@@ -684,6 +751,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 restorePath()
                 link.closeAndRefresh()
             } finally {
+                clearDeviceSession()
                 busy = false
                 disconnectingIntentionally = false
             }
@@ -767,6 +835,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     } finally {
                         withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
                     }
+                }
+                repeaterHealthLoadedFor = dev
+            } else if (canReadRepeater == true) {
+                // No prior health record (e.g. opened a failed Sweep row): fetch live selftest + battery
+                working = str(R.string.working_selftest)
+                val line = try {
+                    val l = RepeaterBackup.ask(companion, target, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
+                    SelfTest.parse(l ?: "")?.let { readBattery(target, hasGauge = "day" in it.values) }
+                    l
+                } finally {
+                    withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+                }
+                val parsed = line?.let { SelfTest.parse(it) }
+                if (line != null && parsed != null) {
+                    selfTest = parsed
+                    healthRecords = withContext(Dispatchers.IO) {
+                        healthStore.add(dev, line)
+                        healthStore.records(dev)
+                    }
+                    healthRecords.lastOrNull()?.let { fleetState.fleetHealth[dev] = it }
+                    healthWarnings = HealthCheck.warnings(parsed, null)
+                } else if (line != null) {
+                    selfTestMissing = true
+                    historyMissing = true
                 }
                 repeaterHealthLoadedFor = dev
             }
@@ -1810,8 +1902,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadHistoryField(ring: Int, field: Int) {
         val key = ring to field
         if (historyMissing || historyCache.containsKey(key) || loadingHistoryKey == key) return
+        if (busy && loadingHistoryKey == null) return
         if (key !in queuedHistoryKeys) queuedHistoryKeys.add(key)
         if (!busy) drainHistoryQueue()
+    }
+
+    /** Writes a telemetry CSV export on Dispatchers.IO with truncate mode ("wt"), failing explicitly on null stream. */
+    fun exportHistoryCsv(series: HistorySeries, label: String, unit: String, uri: android.net.Uri) = work {
+        val csv = io.github.n3tk0.loraota.tools.TelemetryCsv.export(healthDeviceName, label, unit, series)
+        withContext(Dispatchers.IO) {
+            ctx.contentResolver.openOutputStream(uri, "wt")?.use { it.write(csv.toByteArray(Charsets.UTF_8)) }
+                ?: throw Exception(str(R.string.offline_fw_export_failed))
+        }
+        message = str(R.string.health_csv_saved)
     }
 
     /** Switches 24h / week ring and fetches any currently expanded charts that are not yet cached. */
@@ -2100,6 +2203,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun selectOfflineBuildRole(role: String) {
         if (fleetState.offlineBuildRole == role) return
         fleetState.offlineBuildRole = role
+        buildBoard = ""
+        buildBoardAuto = false
         if (buildInputs.any { it.name == role }) {
             buildInputsRole = role
             pickAutoBoard()
@@ -2251,8 +2356,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun forgetBuild() = BuildWatcher.forget(ctx)
 
     /** Its files are on the phone now: in the releases list, and chosen when this screen asked for them. */
-    private fun buildFinished(j: BuildJob) {
-        builds = Releases.builds(ctx.filesDir)
+    private suspend fun buildFinished(j: BuildJob) {
+        builds = withContext(Dispatchers.IO) { Releases.builds(ctx.filesDir) }
         refreshCacheStats()
         if (step == Step.OFFLINE) loadOfflineData()
         val made = builds.filter { it.release == FirmwareFile.BUILD_PREFIX + j.runNumber && it.env == j.board }
@@ -2321,11 +2426,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Downloads the available APK into cache/updates/ and invokes [onReady] when finished.
-     * Applies the group token keep/clear choice only after the download succeeds so a failed download
-     * never loses a saved group token.
+     * Downloads the available APK into cache/updates/, verifies its versionCode is not a downgrade,
+     * synchronously flushes the group token preference on IO, and sets [pendingInstallApk] so
+     * SettingsScreen launches the installer with the live Activity Context (safe across rotation).
      */
-    fun downloadAppUpdate(keepGroupToken: Boolean, onReady: (java.io.File) -> Unit) {
+    fun downloadAppUpdate(keepGroupToken: Boolean) {
         val rel = availableUpdate ?: latestAppRelease ?: return
         if (appUpdateDownloading) return
         updateDownloadJob?.cancel()
@@ -2333,6 +2438,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         appUpdateProgress = 0
         appUpdateError = null
         downloadedApk = null
+        pendingInstallApk = null
         updateDownloadJob = viewModelScope.launch {
             try {
                 val dir = java.io.File(ctx.cacheDir, "updates")
@@ -2342,13 +2448,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     AppUpdater.downloadApk(rel, dest, tokens.get()) { pct ->
                         viewModelScope.launch(Dispatchers.Main) { appUpdateProgress = pct }
                     }
+                    @Suppress("DEPRECATION")
+                    val pkgInfo = ctx.packageManager.getPackageArchiveInfo(dest.absolutePath, 0)
+                    val archiveCode = pkgInfo?.let { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it) }
+                    if (archiveCode != null && archiveCode < BuildConfig.VERSION_CODE.toLong()) {
+                        dest.delete()
+                        throw Exception("APK versionCode ($archiveCode) < installed (${BuildConfig.VERSION_CODE})")
+                    }
+                    if (tokens.hasBuiltInGroup || tokens.hasSavedGroup) {
+                        if (keepGroupToken) tokens.persistGroupToken() else tokens.clearSavedGroup()
+                    }
                 }
-                if (tokens.hasBuiltInGroup || tokens.hasSavedGroup) {
-                    if (keepGroupToken) tokens.persistGroupToken() else tokens.clearSavedGroup()
-                    syncTokenFlags()
-                }
+                syncTokenFlags()
                 downloadedApk = dest
-                onReady(dest)
+                pendingInstallApk = dest
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -2373,6 +2486,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             java.io.File(ctx.cacheDir, "updates").deleteRecursively()
         }
         downloadedApk = null
+        pendingInstallApk = null
         builds = emptyList()
         releases = emptyList()
         olderFound = emptyList()
@@ -2430,7 +2544,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         if (isCompanion) {
             if (CliHelper.expectsNoReply(cmd)) {
-                runCatching { companion.cli(cmd) }
+                try {
+                    companion.cli(cmd)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // no-reply commands (reboot/poweroff) disconnect before answering
+                }
                 toolsState.appendCli(true, str(R.string.cli_sent_no_reply), CliLineKind.INFO)
                 return@work
             }
@@ -2756,10 +2876,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runSweepIndices(fleetState.sweepEntries.indices.toList())
     }
 
-    /** Re-runs Health Sweep only on entries that previously failed (timeout / unreachable). */
+    /** Re-runs Health Sweep on entries that failed or remained pending after a stopped sweep. */
     fun retryFailedSweep() = work {
         if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
-        val failedIndices = fleetState.sweepEntries.indices.filter { fleetState.sweepEntries[it].status == SweepStatus.FAILED }
+        val failedIndices = fleetState.sweepEntries.indices.filter {
+            val st = fleetState.sweepEntries[it].status
+            st == SweepStatus.FAILED || st == SweepStatus.PENDING
+        }
         if (failedIndices.isEmpty()) return@work
         for (i in failedIndices) {
             fleetState.sweepEntries[i] = fleetState.sweepEntries[i].copy(status = SweepStatus.PENDING, detail = "")
@@ -2843,7 +2966,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ---- offline viewer (saved backups & past health checks without companion) ----
+    // ---- offline viewer (saved backups, past health checks & offline firmware hub without companion) ----
+
+    private var offlineLoadJob: Job? = null
 
     fun openOffline() {
         if (step != Step.OFFLINE) offlineReturn = step
@@ -2858,35 +2983,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadOfflineData() {
-        viewModelScope.launch {
-            val (healthMap, allBackups, cachedFw) = withContext(Dispatchers.IO) {
-                val h = healthStore.allRecords()
-                val b = backupStore.all()
-                val fw = Releases.cachedFirmwares(repo, ctx.filesDir).map { f ->
-                    CachedFirmwareItem(
-                        firmware = f,
-                        hasCachedOta = Releases.isFileCached(f, ctx.filesDir),
-                        hasCachedDfu = Releases.isDfuCached(f, ctx.filesDir),
-                    )
+        offlineLoadJob?.cancel()
+        fleetState.offlineLoading = true
+        offlineLoadJob = viewModelScope.launch {
+            try {
+                val (healthMap, allBackups, cachedFw) = withContext(Dispatchers.IO) {
+                    val h = healthStore.allRecords()
+                    val b = backupStore.all()
+                    val fw = Releases.cachedFirmwares(repo, ctx.filesDir).map { f ->
+                        CachedFirmwareItem(
+                            firmware = f,
+                            hasCachedOta = Releases.isFileCached(f, ctx.filesDir),
+                            hasCachedDfu = Releases.isDfuCached(f, ctx.filesDir),
+                        )
+                    }
+                    Triple(h, b, fw)
                 }
-                Triple(h, b, fw)
-            }
-            fleetState.offlineHealth.clear()
-            fleetState.offlineHealth.putAll(healthMap)
-            fleetState.offlineBackups.clear()
-            fleetState.offlineBackups.addAll(allBackups)
-            fleetState.offlineFirmwares.clear()
-            fleetState.offlineFirmwares.addAll(cachedFw)
-            for (b in allBackups) {
-                if (b.deviceKey.isNotEmpty() && b.deviceName.isNotBlank() && b.deviceKey !in fleetState.knownDeviceNames) {
-                    fleetState.knownDeviceNames[b.deviceKey] = b.deviceName
+                fleetState.offlineHealth.clear()
+                fleetState.offlineHealth.putAll(healthMap)
+                fleetState.offlineBackups.clear()
+                fleetState.offlineBackups.addAll(allBackups)
+                fleetState.offlineFirmwares.clear()
+                fleetState.offlineFirmwares.addAll(cachedFw)
+                for (b in allBackups) {
+                    if (b.deviceKey.isNotEmpty() && b.deviceName.isNotBlank() && b.deviceKey !in fleetState.knownDeviceNames) {
+                        fleetState.knownDeviceNames[b.deviceKey] = b.deviceName
+                    }
                 }
+                refreshCacheStats()
+            } finally {
+                if (offlineLoadJob === coroutineContext[Job]) fleetState.offlineLoading = false
             }
-            refreshCacheStats()
         }
     }
 
     fun deleteOfflineBackup(b: Backup) {
+        offlineLoadJob?.cancel()
         viewModelScope.launch {
             withContext(Dispatchers.IO) { backupStore.delete(b) }
             fleetState.offlineBackups.remove(b)
@@ -2894,6 +3026,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteOfflineFirmware(f: FirmwareFile) {
+        offlineLoadJob?.cancel()
         viewModelScope.launch {
             withContext(Dispatchers.IO) { Releases.removeCachedFirmware(ctx.filesDir, f) }
             builds = withContext(Dispatchers.IO) { Releases.builds(ctx.filesDir) }
@@ -2987,20 +3120,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             .onSuccess { downloaded++ }
                             .onFailure { if (it is CancellationException) throw it else failed++ }
                     }
-                    if (f.hasDfu) {
+                    // ESP32 repeaters share the same .bin for LoRa OTA and Wi-Fi DFU (sha256 == dfuSha256)
+                    if (f.hasDfu && (!f.hasLoraOta || f.dfuSha256 != f.sha256)) {
                         runCatching { Releases.downloadDfu(f, ctx.filesDir) }
                             .onSuccess { downloaded++ }
                             .onFailure { if (it is CancellationException) throw it else failed++ }
                     }
                 }
             }
-            refreshCacheStats()
-            if (step == Step.OFFLINE) loadOfflineData()
             message = if (failed == 0) str(R.string.field_prep_done, downloaded, toDownload.size)
             else str(R.string.field_prep_done_partial, downloaded, toDownload.size, failed)
             messageIsError = downloaded == 0 && failed > 0
         } finally {
             fleetState.fieldPrepProgress = null
+            refreshCacheStats()
+            if (step == Step.OFFLINE) loadOfflineData()
         }
     }
 

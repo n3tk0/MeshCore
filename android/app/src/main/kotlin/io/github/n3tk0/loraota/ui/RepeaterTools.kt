@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -138,17 +139,19 @@ fun NeighborsCard(vm: AppViewModel) {
     var removeCandidate by remember { mutableStateOf<NeighborEntry?>(null) }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
+    LaunchedEffect(expanded, vm.neighborsLoaded, vm.busy, vm.neighborsError) {
+        if (expanded && !vm.neighborsLoaded && vm.neighborsError == null && !vm.busy) {
+            vm.loadNeighbors()
+        }
+    }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        val next = !expanded
-                        expanded = next
-                        if (next && !vm.neighborsLoaded && !vm.busy) vm.loadNeighbors()
-                    }
+                    .clickable { expanded = !expanded }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Column(Modifier.weight(1f)) {

@@ -66,19 +66,27 @@ jobs:
             echo "::warning::No LORAOTA_KEYSTORE_BASE64 secret: the APK is signed with a debug key"
           fi
 
-      # Note: after tagging lora-ota-app-vX.Y.Z, bump appVersionName in android/gradle.properties
-      # to the next version so subsequent main builds do not have a higher versionCode than the release.
       - name: Compute Version
         run: |
           BASE_VER=$(grep -E '^appVersionName=' gradle.properties 2>/dev/null | cut -d= -f2 || echo "0.2.0")
           if [ -z "$BASE_VER" ]; then BASE_VER="0.2.0"; fi
+          IS_TAG=0
           if [[ "${GITHUB_REF}" == refs/tags/lora-ota-app-* ]]; then
             VER="${GITHUB_REF_NAME#lora-ota-app-}"
             VER="${VER#v}"
+            IS_TAG=1
           else
             VER="${BASE_VER}-build.${GITHUB_RUN_NUMBER}"
           fi
-          CODE=$((100 + GITHUB_RUN_NUMBER))
+          CORE="${VER%%-*}"
+          IFS='.' read -r MAJ MIN PAT <<< "$CORE"
+          MAJ=${MAJ:-0}; MIN=${MIN:-0}; PAT=${PAT:-0}
+          if [ "$IS_TAG" -eq 1 ]; then
+            SUFFIX=999
+          else
+            SUFFIX=$((GITHUB_RUN_NUMBER > 998 ? 998 : GITHUB_RUN_NUMBER))
+          fi
+          CODE=$((10#$MAJ * 10000000 + 10#$MIN * 100000 + 10#$PAT * 1000 + SUFFIX))
           echo "LORAOTA_VERSION_NAME=${VER}" >> "$GITHUB_ENV"
           echo "LORAOTA_VERSION_CODE=${CODE}" >> "$GITHUB_ENV"
           echo "App version: ${VER} (code ${CODE})"

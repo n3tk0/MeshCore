@@ -56,6 +56,9 @@ class RepeaterValidationTest {
         assertNotNull(cmd)
         assertEquals("tempradio 869.525,250.0,7,5,5", cmd)
 
+        val narrow = RepeaterSettingsValidator.buildTempRadioCommand("869.525", "31.25", "10", "5", "5")
+        assertEquals("tempradio 869.525,31.25,10,5,5", narrow)
+
         assertNull(RepeaterSettingsValidator.buildTempRadioCommand("50", "250", "7", "5", "5"))
         assertNull(RepeaterSettingsValidator.buildTempRadioCommand("869.5", "250", "13", "5", "5"))
         assertNull(RepeaterSettingsValidator.buildTempRadioCommand("869.5", "250", "7", "9", "5"))

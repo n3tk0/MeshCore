@@ -25,6 +25,8 @@ class AppUpdaterTest {
         assertTrue(AppUpdater.isNewer("0.2.1", "0.2.0"))
         assertTrue(AppUpdater.isNewer("0.2.0", "0.2.0-build.42"))
         assertTrue(AppUpdater.isNewer("0.2.0-build.10", "0.2.0-build.2"))
+        assertTrue(AppUpdater.isNewer("0.2.0-rc.1", "0.2.0-beta.2"))
+        assertTrue(AppUpdater.isNewer("0.2.0-rc.2", "0.2.0-alpha.2"))
         assertFalse(AppUpdater.isNewer("0.2.0", "0.2.0"))
         assertFalse(AppUpdater.isNewer("0.1.9", "0.2.0"))
         assertFalse(AppUpdater.isNewer("0.2.0-build.5", "0.2.0"))
@@ -60,7 +62,7 @@ class AppUpdaterTest {
                 "published_at": "2026-11-20T12:00:00Z",
                 "assets": [
                   {"name": "LoraOta-group-v0.2.0.apk", "browser_download_url": "https://example.com/group.apk", "size": 5000001},
-                  {"name": "LoraOta-lora-ota-app-v0.2.0.apk", "browser_download_url": "https://example.com/020.apk", "size": 5242880}
+                  {"name": "LoraOta-lora-ota-app-v0.2.0.apk", "browser_download_url": "https://example.com/020.apk", "size": 5242880, "digest": "sha256:ABCDEF0123456789"}
                 ]
               },
               {
@@ -81,6 +83,7 @@ class AppUpdaterTest {
         assertEquals("LoraOta-lora-ota-app-v0.2.0.apk", latest.apkName)
         assertEquals("https://example.com/020.apk", latest.apkUrl)
         assertEquals(5242880L, latest.apkSize)
+        assertEquals("abcdef0123456789", latest.apkSha256)
         assertEquals("Settings and theme support", latest.notes)
     }
 

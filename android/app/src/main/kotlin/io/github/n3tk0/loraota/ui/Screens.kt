@@ -132,7 +132,7 @@ fun AppScreen(
     var askStop by remember { mutableStateOf(false) }      // Back during an update
     var flashNoStop by remember { mutableStateOf(false) }  // Back during a flash
     fun back() = when {
-        vm.step == Step.SETTINGS -> vm.closeSettings()
+        vm.step == Step.SETTINGS && !vm.busy -> vm.closeSettings()
         vm.step == Step.OFFLINE && !vm.busy -> vm.closeOffline()
         vm.running && vm.flashPercent >= 0 -> flashNoStop = true
         vm.running -> askStop = true
@@ -184,7 +184,7 @@ fun AppScreen(
                     if (vm.step == Step.HEALTH || isRepeaterHealthTab) IconButton(onClick = { vm.refreshHealth() }, enabled = !vm.busy) {
                         Icon(Icons.Default.Refresh, stringResource(R.string.health_refresh))
                     }
-                    if (vm.step == Step.OFFLINE) IconButton(onClick = { vm.loadOfflineData() }) {
+                    if (vm.step == Step.OFFLINE) IconButton(onClick = { vm.loadOfflineData() }, enabled = !vm.busy && !vm.offlineLoading) {
                         Icon(Icons.Default.Refresh, stringResource(R.string.refresh))
                     }
                     if (vm.step != Step.SETTINGS) {
@@ -200,12 +200,9 @@ fun AppScreen(
             }
         },
     ) { pad ->
-        val pullAction: (() -> Unit)? = when {
-            vm.step == Step.REPEATER && !vm.busy -> { { vm.refreshRepeaters() } }
-            (vm.step == Step.HEALTH || isRepeaterHealthTab) && !vm.busy -> { { vm.refreshHealth() } }
-            vm.step == Step.OFFLINE -> { { vm.loadOfflineData() } }
-            else -> null
-        }
+        // Keep PullToRefreshBox permanently mounted on pull-capable steps (never toggle on vm.busy),
+        // otherwise changing vm.busy moves body() across composition slots and destroys screen state.
+        val supportsPull = vm.step == Step.REPEATER || vm.step == Step.HEALTH || isRepeaterHealthTab || vm.step == Step.OFFLINE
 
         Surface(modifier = Modifier.fillMaxSize().padding(pad), color = MaterialTheme.colorScheme.background) {
             val body: @Composable () -> Unit = {
@@ -220,6 +217,7 @@ fun AppScreen(
                         vm.availableUpdate?.let { rel ->
                             UpdateAvailableBanner(
                                 version = rel.version,
+                                enabled = !vm.busy,
                                 onOpen = { vm.openSettings(checkNow = false) },
                                 onDismiss = { vm.updateBannerDismissed = true },
                             )
@@ -241,11 +239,22 @@ fun AppScreen(
                     Spacer(Modifier.height(24.dp))
                 }
             }
-            if (pullAction != null) {
+            if (supportsPull) {
+                val refreshing = when {
+                    vm.step == Step.OFFLINE -> vm.offlineLoading
+                    vm.step == Step.REPEATER || vm.step == Step.HEALTH || isRepeaterHealthTab ->
+                        vm.busy && vm.loadingHistoryKey == null
+                    else -> false
+                }
                 PullToRefreshBox(
-                    isRefreshing = vm.busy && vm.loadingHistoryKey == null &&
-                        (vm.step == Step.REPEATER || vm.step == Step.HEALTH || isRepeaterHealthTab),
-                    onRefresh = pullAction,
+                    isRefreshing = refreshing,
+                    onRefresh = {
+                        when {
+                            vm.step == Step.OFFLINE && !vm.busy && !vm.offlineLoading -> vm.loadOfflineData()
+                            vm.step == Step.REPEATER && !vm.busy -> vm.refreshRepeaters()
+                            (vm.step == Step.HEALTH || isRepeaterHealthTab) && !vm.busy -> vm.refreshHealth()
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     body()
@@ -369,7 +378,7 @@ private fun AppMenu(vm: AppViewModel, enabled: Boolean) {
 }
 
 @Composable
-private fun UpdateAvailableBanner(version: String, onOpen: () -> Unit, onDismiss: () -> Unit) {
+private fun UpdateAvailableBanner(version: String, enabled: Boolean, onOpen: () -> Unit, onDismiss: () -> Unit) {
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -385,7 +394,7 @@ private fun UpdateAvailableBanner(version: String, onOpen: () -> Unit, onDismiss
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
-            TextButton(onClick = onOpen) { Text(stringResource(R.string.update)) }
+            TextButton(onClick = onOpen, enabled = enabled) { Text(stringResource(R.string.update)) }
             IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Default.Close, stringResource(R.string.build_close), modifier = Modifier.size(18.dp))
             }
@@ -1422,9 +1431,10 @@ internal fun BuildPanel(vm: AppViewModel) {
                     if (vm.buildRole == "repeater" && vm.buildOptions["lora_ota"] == false) {
                         Text(stringResource(R.string.build_note_no_ota), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
+                    val validBoard = vm.buildBoard.isNotEmpty() && vm.buildBoard in vm.boardChoices()
                     Button(
                         onClick = { vm.startBuild() },
-                        enabled = vm.buildBoard.isNotEmpty() && controlsEnabled,
+                        enabled = validBoard && controlsEnabled,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(stringResource(R.string.build_start))
@@ -1469,8 +1479,8 @@ private fun optionLabel(input: WorkflowInput): String {
 @Composable
 internal fun TokenForm(vm: AppViewModel) {
     val uri = LocalUriHandler.current
-    var token by remember { mutableStateOf("") }
-    var showToken by remember { mutableStateOf(false) }
+    var token by rememberSaveable { mutableStateOf("") }
+    var showToken by rememberSaveable { mutableStateOf(false) }
     Hint(stringResource(R.string.build_token_short), stringResource(R.string.build_token_long, vm.repo))
     TextButton(onClick = { runCatching { uri.openUri(GitHubApi.NEW_TOKEN_URL) } }) { Text(stringResource(R.string.build_token_make)) }
     OutlinedTextField(

@@ -11,10 +11,17 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/** Outcome of decrypting a stored password: distinguishes permanent key loss from transient Keystore errors. */
+sealed class DecryptResult {
+    data class Ok(val plain: String) : DecryptResult()
+    data object PermanentFailure : DecryptResult()
+    data object TransientFailure : DecryptResult()
+}
+
 /** Abstraction for encrypting/decrypting password strings so migration logic is JVM-testable. */
 interface PasswordCipher {
     fun encrypt(plain: String): String
-    fun decrypt(encoded: String): String?
+    fun decrypt(encoded: String): DecryptResult
 }
 
 /**
@@ -62,11 +69,10 @@ class PasswordStore private constructor(
 
     fun get(key: String): String? {
         encryptedPrefs.getString(key)?.let { enc ->
-            val plain = cipher.decrypt(enc)
-            if (plain != null) return plain
-            // Only remove undecryptable ciphertext if the key was permanently invalidated
-            if (cipher is AndroidKeystoreCipher && cipher.lastFailureWasPermanent) {
-                encryptedPrefs.remove(key)
+            when (val res = cipher.decrypt(enc)) {
+                is DecryptResult.Ok -> return res.plain
+                DecryptResult.PermanentFailure -> encryptedPrefs.remove(key)
+                DecryptResult.TransientFailure -> {}
             }
         }
         // Fallback if an entry could not be migrated yet
@@ -80,7 +86,9 @@ class PasswordStore private constructor(
             true
         }.getOrDefault(false)
         if (!ok) {
-            // If Keystore is transiently unavailable, do not lose the user's save
+            // If Keystore is transiently unavailable, drop any stale encrypted entry so the newer
+            // fallback is returned on get() and cleanly re-encrypted on next startup migration.
+            encryptedPrefs.remove(key)
             legacyPrefs?.putString(key, password)
         }
     }
@@ -109,9 +117,7 @@ class PasswordStore private constructor(
     }
 
     private class AndroidKeystoreCipher(private val alias: String) : PasswordCipher {
-        @Volatile var lastFailureWasPermanent: Boolean = false
-            private set
-
+        @Synchronized
         private fun key(): SecretKey {
             val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
             (ks.getKey(alias, null) as? SecretKey)?.let { return it }
@@ -133,20 +139,18 @@ class PasswordStore private constructor(
             return Base64.encodeToString(iv + c.doFinal(plain.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
         }
 
-        override fun decrypt(encoded: String): String? {
-            lastFailureWasPermanent = false
-            return runCatching {
-                val bytes = Base64.decode(encoded, Base64.NO_WRAP)
-                val c = Cipher.getInstance(TRANSFORM)
-                c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV))
-                String(c.doFinal(bytes, IV, bytes.size - IV), Charsets.UTF_8)
-            }.onFailure {
-                lastFailureWasPermanent =
-                    it is android.security.keystore.KeyPermanentlyInvalidatedException ||
-                    it is javax.crypto.AEADBadTagException ||
-                    it is java.security.UnrecoverableKeyException ||
-                    it is IllegalArgumentException
-            }.getOrNull()
+        override fun decrypt(encoded: String): DecryptResult = try {
+            val bytes = Base64.decode(encoded, Base64.NO_WRAP)
+            val c = Cipher.getInstance(TRANSFORM)
+            c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV))
+            DecryptResult.Ok(String(c.doFinal(bytes, IV, bytes.size - IV), Charsets.UTF_8))
+        } catch (it: Throwable) {
+            val permanent =
+                it is android.security.keystore.KeyPermanentlyInvalidatedException ||
+                it is javax.crypto.AEADBadTagException ||
+                it is java.security.UnrecoverableKeyException ||
+                it is IllegalArgumentException
+            if (permanent) DecryptResult.PermanentFailure else DecryptResult.TransientFailure
         }
     }
 

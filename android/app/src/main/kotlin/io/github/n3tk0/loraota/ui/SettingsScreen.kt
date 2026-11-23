@@ -48,7 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,10 +77,10 @@ fun SettingsScreen(
 ) {
     val ctx = LocalContext.current
     val uri = LocalUriHandler.current
-    var showGroupUpdateDialog by remember { mutableStateOf(false) }
-    var keepGroupToken by remember { mutableStateOf(true) }
-    var showUnknownSourcesDialog by remember { mutableStateOf(false) }
-    var showTokenForm by remember { mutableStateOf(false) }
+    var showGroupUpdateDialog by rememberSaveable { mutableStateOf(false) }
+    var keepGroupToken by rememberSaveable { mutableStateOf(true) }
+    var showUnknownSourcesDialog by rememberSaveable { mutableStateOf(false) }
+    var showTokenForm by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(vm.hasOwnToken) {
         if (vm.hasOwnToken) showTokenForm = false
     }
@@ -94,12 +94,18 @@ fun SettingsScreen(
             .onFailure { vm.appUpdateError = it.message ?: it.toString() }
     }
 
+    LaunchedEffect(vm.pendingInstallApk) {
+        val apk = vm.pendingInstallApk ?: return@LaunchedEffect
+        vm.consumePendingInstallApk()
+        launchInstall(apk)
+    }
+
     fun startDownloadOrAskGroup() {
         if (vm.hasBuiltInGroupToken || vm.hasSavedGroupToken) {
             keepGroupToken = true
             showGroupUpdateDialog = true
         } else {
-            vm.downloadAppUpdate(keepGroupToken = false) { launchInstall(it) }
+            vm.downloadAppUpdate(keepGroupToken = false)
         }
     }
 
@@ -431,7 +437,7 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showGroupUpdateDialog = false
-                    vm.downloadAppUpdate(keepGroupToken = keepGroupToken) { launchInstall(it) }
+                    vm.downloadAppUpdate(keepGroupToken = keepGroupToken)
                 }) {
                     Text(stringResource(R.string.settings_download_install))
                 }
@@ -479,8 +485,8 @@ fun SettingsScreen(
 @Composable
 internal fun FieldPrepDialog(vm: AppViewModel) {
     if (!vm.showFieldPrepDialog) return
-    var query by remember { mutableStateOf("") }
-    var roleFilter by remember { mutableStateOf<Role?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var roleFilter by rememberSaveable { mutableStateOf<Role?>(null) }
 
     val filtered = vm.fieldPrepCandidates.filter { f ->
         (roleFilter == null || BoardCheck.role(f.env) == roleFilter) &&

@@ -45,8 +45,15 @@ object NeighborsParser {
 }
 
 object CliHelper {
-    private val DANGEROUS_EXACT = setOf("reboot", "poweroff", "shutdown", "clkreboot", "erase", "clear stats")
+    private val DANGEROUS_EXACT = setOf("reboot", "poweroff", "shutdown", "clkreboot", "erase", "clear stats", "ota rollback")
     private val NO_REPLY_EXACT = setOf("reboot", "poweroff", "shutdown", "clkreboot")
+    /** Firmware (`CommonCLI` / `MyMesh`) strips an optional `xx|` tag prefix before dispatching commands. */
+    private val TAG_PREFIX = Regex("""^[A-Za-z0-9]{2}\|""")
+
+    private fun normalizeCommand(command: String): String {
+        val trimmed = command.trim()
+        return TAG_PREFIX.replaceFirst(trimmed, "").trimStart().lowercase(Locale.ROOT)
+    }
 
     val REPEATER_QUICK_COMMANDS = listOf(
         "ver",
@@ -85,19 +92,20 @@ object CliHelper {
         "set wifi.enabled ", "set wifi.ssid ", "tempradio off", "reboot",
     )
 
-    /** True when the command restarts, shuts down, erases, resets stats, or changes passwords. */
+    /** True when the command restarts, shuts down, erases, rolls back OTA, resets stats, or changes passwords/keys. */
     fun isDangerous(command: String): Boolean {
-        val c = command.trim().lowercase(Locale.ROOT)
+        val c = normalizeCommand(command)
         if (c.isEmpty()) return false
         if (c in DANGEROUS_EXACT) return true
         if (c.startsWith("password ") || c == "password") return true
         if (c.startsWith("set guest.password ") || c.startsWith("set wifi.clear")) return true
+        if (c.startsWith("set prv.key ")) return true
         return false
     }
 
     /** True when the firmware executes the command immediately without returning a CLI reply. */
     fun expectsNoReply(command: String): Boolean {
-        val c = command.trim().lowercase(Locale.ROOT)
+        val c = normalizeCommand(command)
         return c in NO_REPLY_EXACT
     }
 
@@ -129,30 +137,42 @@ object CliHelper {
         return base.filter { it.startsWith(lower) && it.trim() != lower.trim() }.take(limit)
     }
 
-    /** True when the command embeds a secret value (so it should not be saved to command history). */
+    /** True when the command embeds a secret value (so it should not be saved to history or snippets). */
     fun isSecretWriteCommand(command: String): Boolean {
-        val c = command.trim().lowercase(Locale.ROOT)
-        return c.startsWith("password ") || c.startsWith("set guest.password ") || c.startsWith("set wifi.pwd ")
+        val c = normalizeCommand(command)
+        return c.startsWith("password ") ||
+            c.startsWith("set guest.password ") ||
+            c.startsWith("set wifi.pwd ") ||
+            c.startsWith("set prv.key ") ||
+            c.startsWith("set bridge.secret ") ||
+            c.startsWith("set pin ")
     }
 
     /** True when the command's reply contains a secret value that must be redacted in exported transcripts. */
     fun isSecretReadCommand(command: String): Boolean {
-        val c = command.trim().lowercase(Locale.ROOT)
-        return c == "get guest.password" || c == "get wifi.pwd"
+        val c = normalizeCommand(command)
+        return c.startsWith("get guest.password") ||
+            c.startsWith("get wifi.pwd") ||
+            c.startsWith("get prv.key") ||
+            c.startsWith("get bridge.secret")
     }
 
     private val REDACT_RULES = listOf(
         Regex("""(?i)(password[ \t]+now:[ \t]*)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(pin[ \t]+is[ \t]+now[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
         Regex("""(?i)(\bpassword[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
         Regex("""(?i)(\bguest\.password[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
         Regex("""(?i)(\bwifi\.pwd[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(\bprv\.key[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(\bbridge\.secret[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
+        Regex("""(?i)(\bset[ \t]+pin[ \t]+)[^\r\n]+""") to "$1[REDACTED]",
         Regex("""(?i)(Authorization:[ \t]*Bearer[ \t]+)\S+""") to "$1[REDACTED]",
         Regex("""(?i)(Bearer[ \t]+)[A-Za-z0-9_\-\.]{8,}""") to "$1[REDACTED]",
         Regex("""\bgh[pousr]_[A-Za-z0-9_]{10,}\b""") to "[REDACTED_TOKEN]",
         Regex("""\bgithub_pat_[A-Za-z0-9_]{10,}\b""") to "[REDACTED_TOKEN]",
     )
 
-    /** Strips admin/guest/Wi-Fi passwords (including spaces) and GitHub tokens from logs or shared diagnostics. */
+    /** Strips admin/guest/Wi-Fi/bridge passwords, private keys, BLE PINs, and GitHub tokens from logs or diagnostics. */
     fun redactSecrets(text: String): String {
         var out = text
         for ((regex, replacement) in REDACT_RULES) {
@@ -163,7 +183,8 @@ object CliHelper {
 
     /**
      * Redacts both inline secrets and reply lines immediately following secret-reading commands
-     * (`get guest.password`, `get wifi.pwd`). Each entry is `(isCommand, text)`.
+     * (`get guest.password`, `get wifi.pwd`, `get prv.key`, `get bridge.secret`).
+     * Each entry is `(isCommand, text)`.
      */
     fun redactCliEntries(entries: List<Pair<Boolean, String>>): List<String> {
         val out = ArrayList<String>(entries.size)
@@ -263,25 +284,30 @@ object DiagnosticReport {
             for (line in logs.takeLast(80)) sb.append(line).append('\n')
         }
         if (cliHistory.isNotEmpty()) {
-            sb.append("\n--- CLI Transcript (last ").append(minOf(cliHistory.size, 50)).append(") ---\n")
+            // Redact across the entire history BEFORE taking last 50 so a secret-read command at index N-51
+            // still redacts its reply at index N-50.
             var hideNextReply = false
-            for (line in cliHistory.takeLast(50)) {
+            val redactedHistory = ArrayList<String>(cliHistory.size)
+            for (line in cliHistory) {
                 val cmdBody = line.removePrefix("[COMMAND] ").takeIf { line.startsWith("[COMMAND] ") }
                 when {
                     cmdBody != null -> {
                         hideNextReply = CliHelper.isSecretReadCommand(cmdBody)
-                        sb.append(line).append('\n')
+                        redactedHistory.add(line)
                     }
                     hideNextReply && line.startsWith("[REPLY]") -> {
                         hideNextReply = false
-                        sb.append("[REPLY] [REDACTED]\n")
+                        redactedHistory.add("[REPLY] [REDACTED]")
                     }
                     else -> {
                         hideNextReply = false
-                        sb.append(line).append('\n')
+                        redactedHistory.add(line)
                     }
                 }
             }
+            val tail = redactedHistory.takeLast(50)
+            sb.append("\n--- CLI Transcript (last ").append(tail.size).append(") ---\n")
+            for (line in tail) sb.append(line).append('\n')
         }
         return CliHelper.redactSecrets(sb.toString())
     }

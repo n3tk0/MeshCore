@@ -17,6 +17,7 @@ import javax.crypto.spec.GCMParameterSpec
 class TokenStore(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("github", Context.MODE_PRIVATE)
 
+    @Synchronized
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
         (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
@@ -63,16 +64,16 @@ class TokenStore(ctx: Context) {
     /** The user's own, else the group's; null: none (or the key is gone, e.g. the lock screen was reset). */
     fun get(): String? = own() ?: group
 
-    /** Ensures the built-in group token is saved encrypted before installing an update. Returns true if saved/present. */
+    /** Ensures the built-in group token is flushed encrypted to disk before installing an update. */
     fun persistGroupToken(): Boolean {
-        prefs.edit().remove(KEY_GROUP_OPT_OUT).apply()
+        prefs.edit().remove(KEY_GROUP_OPT_OUT).commit()
         val g = builtInGroup ?: return savedGroup() != null
-        return runCatching { saveEncrypted(KEY_GROUP, g); true }.getOrDefault(false)
+        return runCatching { saveEncrypted(KEY_GROUP, g, sync = true); true }.getOrDefault(false)
     }
 
-    /** Removes a preserved group token and records opt-out so init does not silently re-save it. */
+    /** Removes a preserved group token and synchronously records opt-out before APK install. */
     fun clearSavedGroup() {
-        prefs.edit().remove(KEY_GROUP).putBoolean(KEY_GROUP_OPT_OUT, true).apply()
+        prefs.edit().remove(KEY_GROUP).putBoolean(KEY_GROUP_OPT_OUT, true).commit()
     }
 
     private fun own(): String? = readEncrypted(KEY)
@@ -99,12 +100,13 @@ class TokenStore(ctx: Context) {
         }.getOrNull()
     }
 
-    private fun saveEncrypted(prefKey: String, token: String) {
+    private fun saveEncrypted(prefKey: String, token: String, sync: Boolean = false) {
         val c = Cipher.getInstance(TRANSFORM)
         c.init(Cipher.ENCRYPT_MODE, key())
         val iv = c.iv
         check(iv.size == IV)
-        prefs.edit().putString(prefKey, Base64.encodeToString(iv + c.doFinal(token.toByteArray()), Base64.NO_WRAP)).apply()
+        val editor = prefs.edit().putString(prefKey, Base64.encodeToString(iv + c.doFinal(token.toByteArray()), Base64.NO_WRAP))
+        if (sync) editor.commit() else editor.apply()
     }
 
     fun set(token: String) {

@@ -91,7 +91,10 @@ object RepeaterSettingsValidator {
         if (sf !in 5..12) return null
         if (cr !in 5..8) return null
         if (mins !in 1..60) return null
-        return String.format(Locale.ROOT, "tempradio %.3f,%.1f,%d,%d,%d", freq, bw, sf, cr, mins)
+        val bwFmt = String.format(Locale.ROOT, "%.3f", bw).trimEnd('0').let {
+            if (it.endsWith('.')) "${it}0" else it
+        }
+        return String.format(Locale.ROOT, "tempradio %.3f,%s,%d,%d,%d", freq, bwFmt, sf, cr, mins)
     }
 }
 

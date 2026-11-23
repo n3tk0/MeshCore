@@ -39,7 +39,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,7 +52,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -68,7 +66,6 @@ import io.github.n3tk0.loraota.ota.HealthSeverity
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.HistorySeries
 import io.github.n3tk0.loraota.ota.SelfTest
-import io.github.n3tk0.loraota.tools.TelemetryCsv
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -432,24 +429,14 @@ private fun format(field: Int, v: Int): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
-    val ctx = LocalContext.current
     var historyOpen by rememberSaveable(vm.healthDeviceName, defaultExpanded) { mutableStateOf(defaultExpanded) }
-    val expandedFields = remember(vm.healthDeviceName, vm.healthGeneration) { mutableStateMapOf<Int, Boolean>() }
+    var expandedFields by rememberSaveable(vm.healthDeviceName, vm.healthGeneration) { mutableStateOf(emptyList<Int>()) }
     val createCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         val pending = vm.pendingCsvExport
         vm.pendingCsvExport = null
         if (uri != null && pending != null) {
             val (s, label) = pending
-            val csv = TelemetryCsv.export(vm.healthDeviceName, label, unit(s.field), s)
-            runCatching {
-                ctx.contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray(Charsets.UTF_8)) }
-            }.onSuccess {
-                vm.message = ctx.getString(R.string.health_csv_saved)
-                vm.messageIsError = false
-            }.onFailure {
-                vm.message = it.message ?: it.toString()
-                vm.messageIsError = true
-            }
+            vm.exportHistoryCsv(s, label, unit(s.field), uri)
         }
     }
 
@@ -489,10 +476,7 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
             val (ring, labelRes) = pair
             SegmentedButton(
                 selected = vm.historyRing == ring,
-                onClick = {
-                    val open = expandedFields.filterValues { it }.keys
-                    vm.setHistoryRing(ring, open)
-                },
+                onClick = { vm.setHistoryRing(ring, expandedFields) },
                 enabled = !vm.busy,
                 shape = SegmentedButtonDefaults.itemShape(i, rings.size),
             ) {
@@ -506,11 +490,12 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
     val hasMask = masks.fold(0) { a, m -> a or m }.takeIf { it != 0 }
 
     for ((field, nameRes) in FIELDS) {
-        val isExpanded = expandedFields[field] == true
+        val isExpanded = field in expandedFields
         if (hasMask != null && hasMask and (1 shl field) == 0 && !isExpanded) continue
         val key = vm.historyRing to field
         val series = vm.historyCache[key]
         val isLoading = vm.loadingHistoryKey == key || key in vm.queuedHistoryKeys
+        val canStartLoad = !vm.busy || vm.loadingHistoryKey != null
         val lastVal = series?.values?.lastOrNull { it != null }
         val metricLabel = stringResource(nameRes)
 
@@ -522,8 +507,8 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
                         .fillMaxWidth()
                         .clickable {
                             val next = !isExpanded
-                            expandedFields[field] = next
-                            if (next && series == null) {
+                            expandedFields = if (next) expandedFields + field else expandedFields - field
+                            if (next && series == null && canStartLoad) {
                                 vm.loadHistoryField(vm.historyRing, field)
                             }
                         }

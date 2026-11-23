@@ -22,8 +22,9 @@ class PasswordStoreTest {
             if (failEncrypt) throw RuntimeException("keystore unavailable")
             return "ENC:$plain"
         }
-        override fun decrypt(encoded: String): String? =
-            if (encoded.startsWith("ENC:")) encoded.removePrefix("ENC:") else null
+        override fun decrypt(encoded: String): DecryptResult =
+            if (encoded.startsWith("ENC:")) DecryptResult.Ok(encoded.removePrefix("ENC:"))
+            else DecryptResult.PermanentFailure
     }
 
     @Test
@@ -55,6 +56,30 @@ class PasswordStoreTest {
         assertEquals("keepme", store.get("node1"))
         assertEquals("keepme", legacy.getString("node1"))
         assertTrue(enc.map.isEmpty())
+    }
+
+    @Test
+    fun setFallbackRemovesStaleEncryptedEntrySoNewPasswordIsPreserved() {
+        val enc = MemoryStore()
+        val legacy = MemoryStore()
+        val cipher = FakeCipher(failEncrypt = false)
+        val store = PasswordStore.createForTest(enc, legacy, cipher)
+
+        store.set("r1", "oldpw")
+        assertEquals("oldpw", store.get("r1"))
+
+        // Transient Keystore failure while updating password: old ciphertext must be dropped
+        cipher.failEncrypt = true
+        store.set("r1", "newpw")
+        assertEquals("newpw", store.get("r1"))
+        assertNull(enc.getString("r1"))
+
+        // On next startup after Keystore recovers, newpw migrates to encrypted store instead of reverting to oldpw
+        cipher.failEncrypt = false
+        val restarted = PasswordStore.createForTest(enc, legacy, cipher)
+        assertEquals("newpw", restarted.get("r1"))
+        assertEquals("ENC:newpw", enc.getString("r1"))
+        assertTrue(legacy.map.isEmpty())
     }
 
     @Test

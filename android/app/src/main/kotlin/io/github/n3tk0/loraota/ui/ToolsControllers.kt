@@ -128,6 +128,7 @@ class FleetToolsState(ctx: Context) {
     val offlineHealth = mutableStateMapOf<String, List<HealthStore.Record>>()
     val offlineBackups = mutableStateListOf<Backup>()
     val offlineFirmwares = mutableStateListOf<CachedFirmwareItem>()
+    var offlineLoading by mutableStateOf(false)
     /** Selected device role ("repeater", "companion", "room_server") for offline GitHub builds. */
     var offlineBuildRole by mutableStateOf("repeater")
     /** Rotation-safe holder for exporting a cached firmware file via SAF CreateDocument. */

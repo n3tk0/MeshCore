@@ -11,6 +11,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 /** A LoRa OTA Android app release published on GitHub (tags starting with `lora-ota-app-`). */
 data class AppRelease(
@@ -23,6 +24,7 @@ data class AppRelease(
     val apkSize: Long,
     val htmlUrl: String,
     val publishedAt: String,
+    val apkSha256: String = "",
 )
 
 /**
@@ -42,7 +44,7 @@ object AppUpdater {
     }
 
     /**
-     * Compares two version strings (`major.minor.patch` with optional `-build.N` or pre-release suffix).
+     * Compares two version strings (`major.minor.patch` with optional `-build.N` or SemVer pre-release suffix).
      * Returns > 0 if [a] is newer than [b], < 0 if older, 0 if equal.
      * Release `0.2.0` is considered newer than pre-release `0.2.0-build.5`.
      */
@@ -54,24 +56,37 @@ object AppUpdater {
             val diff = pa.core.getOrElse(i) { 0 } - pb.core.getOrElse(i) { 0 }
             if (diff != 0) return diff
         }
-        if (pa.pre == null && pb.pre == null) return 0
-        if (pa.pre == null) return 1
-        if (pb.pre == null) return -1
-        if (pa.preBuild != null && pb.preBuild != null) return pa.preBuild.compareTo(pb.preBuild)
-        return pa.pre.compareTo(pb.pre)
+        if (pa.preParts.isEmpty() && pb.preParts.isEmpty()) return 0
+        if (pa.preParts.isEmpty()) return 1
+        if (pb.preParts.isEmpty()) return -1
+        val preLen = minOf(pa.preParts.size, pb.preParts.size)
+        for (i in 0 until preLen) {
+            val x = pa.preParts[i]
+            val y = pb.preParts[i]
+            val xn = x.toLongOrNull()
+            val yn = y.toLongOrNull()
+            val cmp = when {
+                xn != null && yn != null -> xn.compareTo(yn)
+                xn != null -> -1 // numeric identifiers have lower precedence than non-numeric (SemVer §11)
+                yn != null -> 1
+                else -> x.compareTo(y)
+            }
+            if (cmp != 0) return cmp
+        }
+        return pa.preParts.size.compareTo(pb.preParts.size)
     }
 
     fun isNewer(candidate: String, current: String): Boolean = compareVersions(candidate, current) > 0
 
-    private data class ParsedVersion(val core: List<Int>, val pre: String?, val preBuild: Int?)
+    private data class ParsedVersion(val core: List<Int>, val preParts: List<String>)
 
     private fun parseVersion(raw: String): ParsedVersion {
         val clean = cleanVersion(raw)
         val mainPart = clean.substringBefore('-').substringBefore('+')
         val prePart = clean.substringAfter('-', "").substringBefore('+').ifEmpty { null }
         val nums = mainPart.split('.').mapNotNull { it.toIntOrNull() }
-        val preBuild = prePart?.let { Regex("(\\d+)$").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-        return ParsedVersion(nums.ifEmpty { listOf(0) }, prePart, preBuild)
+        val preParts = prePart?.split('.')?.filter { it.isNotEmpty() }.orEmpty()
+        return ParsedVersion(nums.ifEmpty { listOf(0) }, preParts)
     }
 
     /** Parses GitHub releases JSON array and returns the newest app release (by version, then list order). */
@@ -93,6 +108,13 @@ object AppUpdater {
                 if (name.startsWith("LoraOta", ignoreCase = true)) break
             }
             if (apk == null) continue
+            val url = apk.optString("browser_download_url")
+            if (!url.startsWith("https://", ignoreCase = true)) continue
+            val sha = apk.optString("digest")
+                .takeIf { it.startsWith("sha256:", ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.lowercase()
+                .orEmpty()
             found.add(
                 AppRelease(
                     tag = tag,
@@ -100,10 +122,11 @@ object AppUpdater {
                     name = rel.optString("name").ifEmpty { tag },
                     notes = rel.optString("body").trim(),
                     apkName = apk.optString("name"),
-                    apkUrl = apk.optString("browser_download_url"),
+                    apkUrl = url,
                     apkSize = apk.optLong("size", 0L),
                     htmlUrl = rel.optString("html_url"),
                     publishedAt = rel.optString("published_at").ifEmpty { rel.optString("created_at") },
+                    apkSha256 = sha,
                 )
             )
         }
@@ -130,13 +153,15 @@ object AppUpdater {
             JSONArray(String(getBytes(url, token)))
         }
 
-    /** Downloads the release APK into [destFile], reporting 0..100% progress. */
+    /** Downloads the release APK into [destFile] over HTTPS only, verifying byte count and SHA-256 digest. */
     fun downloadApk(release: AppRelease, destFile: File, token: String? = null, onProgress: (Int) -> Unit) {
         destFile.parentFile?.mkdirs()
         val tmp = File(destFile.parentFile, "${destFile.name}.part")
         var target = release.apkUrl
         for (hop in 0..MAX_REDIRECTS) {
-            val c = URL(target).openConnection() as HttpURLConnection
+            val parsedUrl = URL(target)
+            if (parsedUrl.protocol != "https") throw IOException("refusing non-HTTPS APK URL: ${parsedUrl.protocol}")
+            val c = parsedUrl.openConnection() as HttpURLConnection
             Releases.authFor(target, token)?.let { c.setRequestProperty("Authorization", it) }
             c.instanceFollowRedirects = false
             c.connectTimeout = 15_000
@@ -147,15 +172,17 @@ object AppUpdater {
                 val code = c.responseCode
                 if (code in 300..399 && code != 304) {
                     val loc = c.getHeaderField("Location") ?: throw HttpError(code, target)
-                    val next = URL(URL(target), loc)
+                    val next = URL(parsedUrl, loc)
                     if (next.protocol != "https") throw IOException("redirect to ${next.protocol}")
                     target = next.toString()
                     continue
                 }
                 if (code !in 200..299) throw HttpError(code, target)
-                val total = c.contentLengthLong.takeIf { it > 0 } ?: release.apkSize
+                val contentLen = c.contentLengthLong
+                val total = contentLen.takeIf { it > 0 } ?: release.apkSize
                 var read = 0L
                 var lastPct = -1
+                val digest = MessageDigest.getInstance("SHA-256")
                 c.inputStream.use { input ->
                     tmp.outputStream().use { out ->
                         val buf = ByteArray(16 * 1024)
@@ -163,6 +190,7 @@ object AppUpdater {
                             val n = input.read(buf)
                             if (n < 0) break
                             out.write(buf, 0, n)
+                            digest.update(buf, 0, n)
                             read += n
                             if (total > 0) {
                                 val pct = ((read * 100) / total).toInt().coerceIn(0, 100)
@@ -173,6 +201,13 @@ object AppUpdater {
                             }
                         }
                     }
+                }
+                if (read <= 0L) throw IOException("empty APK download")
+                if (contentLen > 0L && read != contentLen) throw IOException("truncated APK download ($read / $contentLen bytes)")
+                if (release.apkSize > 0L && read != release.apkSize) throw IOException("APK size mismatch ($read / ${release.apkSize} bytes)")
+                if (release.apkSha256.isNotEmpty()) {
+                    val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+                    if (actualSha != release.apkSha256) throw IOException("APK SHA-256 checksum mismatch")
                 }
                 if (destFile.exists()) destFile.delete()
                 if (!tmp.renameTo(destFile)) {
@@ -194,7 +229,9 @@ object AppUpdater {
     private fun getBytes(url: String, token: String?): ByteArray {
         var target = url
         for (hop in 0..MAX_REDIRECTS) {
-            val c = URL(target).openConnection() as HttpURLConnection
+            val parsedUrl = URL(target)
+            if (parsedUrl.protocol != "https") throw IOException("refusing non-HTTPS URL: ${parsedUrl.protocol}")
+            val c = parsedUrl.openConnection() as HttpURLConnection
             Releases.authFor(target, token)?.let { c.setRequestProperty("Authorization", it) }
             c.instanceFollowRedirects = false
             c.connectTimeout = 15_000

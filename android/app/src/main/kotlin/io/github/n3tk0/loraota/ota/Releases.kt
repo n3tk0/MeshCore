@@ -445,13 +445,19 @@ object Releases {
     fun isAnyCached(f: FirmwareFile, cache: File): Boolean = isFileCached(f, cache) || isDfuCached(f, cache)
 
     /**
-     * All firmware entries (app builds + cached releases + older cached) that currently have at least
-     * one verified binary saved on disk, deduplicated with builds first and newest releases next.
+     * All firmware entries (app builds + cached releases across all repos + older cached) that currently
+     * have at least one binary saved on disk, deduplicated with builds first and newest releases next.
      */
     fun cachedFirmwares(repo: String, cache: File): List<FirmwareFile> {
         val seen = HashSet<Triple<String, String, String>>()
         val out = ArrayList<FirmwareFile>()
-        val all = builds(cache) + cached(repo, cache) + olderCached(repo, cache)
+        val repoFiles = cache.listFiles { f -> f.isFile && f.name.startsWith("releases-") && f.name.endsWith(".json") }
+            .orEmpty()
+            .sortedBy { if (it.name == listFile(cache, repo).name) 0 else 1 }
+        val releaseEntries = repoFiles.flatMap { f ->
+            runCatching { fromJson(JSONArray(String(f.readBytes()))) }.getOrDefault(emptyList())
+        }
+        val all = builds(cache) + releaseEntries
         for (f in all) {
             if (!isAnyCached(f, cache)) continue
             val key = Triple(f.env, f.sha256, f.dfuSha256)
@@ -479,9 +485,17 @@ object Releases {
             }
             writeAtomic(buildsFile(cache), toJson(remaining).toString().toByteArray())
         }
-        val stillUsedByBuilds = builds(cache).flatMap { listOf(it.sha256, it.dfuSha256) }.filter { it.isNotEmpty() }.toSet()
+        val otherEntries = builds(cache) +
+            cache.listFiles { file -> file.isFile && file.name.startsWith("releases-") && file.name.endsWith(".json") }
+                .orEmpty()
+                .flatMap { file -> runCatching { fromJson(JSONArray(String(file.readBytes()))) }.getOrDefault(emptyList()) }
+                .filterNot { it.env == f.env && it.sha256 == f.sha256 && it.dfuSha256 == f.dfuSha256 }
+        val stillUsed = otherEntries.filter { isAnyCached(it, cache) }
+            .flatMap { listOf(it.sha256, it.dfuSha256) }
+            .filter { it.isNotEmpty() }
+            .toSet()
         for (sha in listOf(f.sha256, f.dfuSha256)) {
-            if (sha.isNotEmpty() && sha !in stillUsedByBuilds) {
+            if (sha.isNotEmpty() && sha !in stillUsed) {
                 File(binDir(cache), "$sha.bin").delete()
             }
         }

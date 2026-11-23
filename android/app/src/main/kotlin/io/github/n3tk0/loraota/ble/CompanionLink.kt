@@ -18,7 +18,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
@@ -54,6 +53,8 @@ class CompanionLink(private val context: Context) {
     @Volatile private var connected: CompletableDeferred<Boolean>? = null
     @Volatile private var written: CompletableDeferred<Boolean>? = null
     @Volatile private var servicesDiscovered = false
+    /** True only after CCCD enable succeeded; prevents firing onDisconnect on failed initial connects. */
+    @Volatile private var established = false
     private val writeLock = Mutex()
     /** The link being closed by [closeAndRefresh]: its disconnect is awaited there, not closed here. */
     @Volatile private var closing: Pair<BluetoothGatt, CompletableDeferred<Unit>>? = null
@@ -82,13 +83,15 @@ class CompanionLink(private val context: Context) {
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             val isCurrent: Boolean
-            val isClosing: Boolean
+            val closingMatch: CompletableDeferred<Unit>?
             synchronized(gattLock) {
                 isCurrent = (g == gatt)
-                isClosing = (closing?.first == g)
+                closingMatch = closing?.takeIf { it.first == g }?.second
             }
-            if (!isCurrent && !isClosing) {
-                if (newState == BluetoothProfile.STATE_DISCONNECTED) runCatching { g.close() }
+            if (!isCurrent) {
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    if (closingMatch != null) closingMatch.complete(Unit) else runCatching { g.close() }
+                }
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -110,18 +113,15 @@ class CompanionLink(private val context: Context) {
                     failConnect(if (status != BluetoothGatt.GATT_SUCCESS) "GATT $status" else "disconnected", status)
                 }
                 written?.complete(false)
-                val c = closing
-                if (c != null && c.first == g) {
-                    c.second.complete(Unit)
-                } else {
-                    runCatching { g.close() }
-                }
+                runCatching { g.close() }
                 val notify = synchronized(gattLock) {
                     if (gatt == g) {
+                        val wasEstablished = established
                         gatt = null
                         rx = null
                         servicesDiscovered = false
-                        true
+                        established = false
+                        wasEstablished
                     } else false
                 }
                 if (notify) onDisconnect?.invoke()
@@ -167,6 +167,9 @@ class CompanionLink(private val context: Context) {
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             if (synchronized(gattLock) { g != gatt }) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                synchronized(gattLock) {
+                    if (g == gatt) established = true
+                }
                 lastError = ""
                 lastStatus = 0
                 connected?.complete(true)
@@ -216,6 +219,7 @@ class CompanionLink(private val context: Context) {
         connected = done
         synchronized(gattLock) {
             servicesDiscovered = false
+            established = false
             val created = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             gatt = created
             created
@@ -224,19 +228,20 @@ class CompanionLink(private val context: Context) {
             lastError = "connectGatt null"
             return false
         }
-        // pairing with the companion's PIN may take a while
+        // pairing with the companion's PIN may take a while; timeout must NOT throw CancellationException
         return try {
-            val ok = withTimeout(60_000) { done.await() }
-            if (!ok) close()
-            ok
-        } catch (e: Exception) {
-            if (e is CancellationException) {
+            val ok = withTimeoutOrNull(60_000) { done.await() }
+            if (ok == null) {
+                lastError = "timeout"
                 close()
-                throw e
+                false
+            } else {
+                if (!ok) close()
+                ok
             }
-            lastError = "timeout"
+        } catch (e: CancellationException) {
             close()
-            false
+            throw e
         }
     }
 
@@ -265,6 +270,7 @@ class CompanionLink(private val context: Context) {
             gatt = null
             rx = null
             servicesDiscovered = false
+            established = false
             cur
         }
         connected?.complete(false)
@@ -293,6 +299,7 @@ class CompanionLink(private val context: Context) {
             gatt = null
             rx = null
             servicesDiscovered = false
+            established = false
             closing = cur to done
             cur
         }

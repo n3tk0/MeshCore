@@ -142,7 +142,7 @@ private fun SweepReport(vm: AppViewModel) {
     val ctx = LocalContext.current
     val entries = vm.sweepEntries
     val done = entries.count { it.status != SweepStatus.PENDING && it.status != SweepStatus.RUNNING }
-    val failedCount = entries.count { it.status == SweepStatus.FAILED }
+    val failedCount = entries.count { it.status == SweepStatus.FAILED || it.status == SweepStatus.PENDING }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val warnTint = if (dark) Color(0xFFFFB74D) else Color(0xFF9A5B00)
 
