@@ -17,27 +17,12 @@
 #endif
 
 #ifdef DISPLAY_CYRILLIC
-// Adafruit_SSD1306 that decodes UTF-8 in write() and draws Cyrillic (U+0401, U+0410..U+044F,
-// U+0451) from a built-in 5x8 table; other non-ASCII code points become a CP437 block.
-class SSD1306Utf8 : public Adafruit_SSD1306 {
-  uint8_t _lead = 0;       // pending UTF-8 lead byte
-  uint8_t _skip = 0;       // continuation bytes still to skip (3/4-byte sequences)
-  const TextFont* _font = NULL;   // NULL: the built-in 5x8 font (scaled by the text size)
-  void drawGlyph(const uint8_t* cols);
-  void drawBlock();
-  void drawCodepoint(uint16_t cp);
-public:
-  SSD1306Utf8(uint8_t w, uint8_t h, TwoWire* twi, int8_t rst) : Adafruit_SSD1306(w, h, twi, rst) { }
-  size_t write(uint8_t c) override;
-  void flushUtf8() { if (_lead) { _lead = 0; drawBlock(); } _skip = 0; }
-  void setTextFont(const TextFont* f) { _font = f; }
-  const TextFont* textFont() const { return _font; }
-};
+#include "AdafruitGfxUtf8.h"
 #endif
 
 class SSD1306Display : public DisplayDriver {
 #ifdef DISPLAY_CYRILLIC
-  SSD1306Utf8 display;
+  AdafruitGfxUtf8<Adafruit_SSD1306> display;
   uint8_t _text_size = 1;
 #else
   Adafruit_SSD1306 display;

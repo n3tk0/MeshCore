@@ -677,6 +677,12 @@ public:
       sprintf(p->origin, "(%d) %s:", (uint32_t) path_len, from_name);
     }
     StrHelper::strncpy(p->msg, msg, sizeof(p->msg));
+    size_t n = strlen(p->msg);
+    if (n == sizeof(p->msg) - 1 && ((unsigned char)msg[n] & 0xC0) == 0x80) {
+      while (n > 0 && ((unsigned char)p->msg[n - 1] & 0xC0) == 0x80) n--;
+      if (n > 0) n--;
+      p->msg[n] = 0;
+    }
   }
 
   int render(DisplayDriver& display) override {

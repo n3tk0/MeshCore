@@ -93,11 +93,19 @@ void ST7789LCDDisplay::startFrame(ColorVal bkg) {
   display.fillScreen(bkg);
   display.setTextColor(_color = UIColor::primary_txt);
   display.setTextSize(1 * DISPLAY_SCALE_X); // This one affects size of Please wait... message
+#ifdef DISPLAY_CYRILLIC
+  _text_size = 1;
+  display.setTextFont(NULL);
+#endif
   display.cp437(true); // Use full 256 char 'Code Page 437' font
 }
 
 void ST7789LCDDisplay::setTextSize(int sz) {
   display.setTextSize(sz * DISPLAY_SCALE_X);
+#ifdef DISPLAY_CYRILLIC
+  _text_size = sz;
+  display.setTextFont(NULL);
+#endif
 }
 
 void ST7789LCDDisplay::setColor(ColorVal c) {
@@ -110,6 +118,9 @@ void ST7789LCDDisplay::setCursor(int x, int y) {
 
 void ST7789LCDDisplay::print(const char* str) {
   display.print(str);
+#ifdef DISPLAY_CYRILLIC
+  display.flushUtf8();
+#endif
 }
 
 void ST7789LCDDisplay::fillRect(int x, int y, int w, int h) {
@@ -140,12 +151,24 @@ void ST7789LCDDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) 
 }
 
 uint16_t ST7789LCDDisplay::getTextWidth(const char* str) {
+#ifdef DISPLAY_CYRILLIC
+  uint8_t px_scale = (uint8_t)(_text_size * DISPLAY_SCALE_X);
+  if (px_scale < 1) px_scale = 1;
+  return (uint16_t)((utf8CharCount(str) * 6 * px_scale) / DISPLAY_SCALE_X);
+#else
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(str, 0, 0, &x1, &y1, &w, &h);
 
   return w / DISPLAY_SCALE_X;
+#endif
 }
+
+#ifdef DISPLAY_CYRILLIC
+void ST7789LCDDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
+  translateUTF8ForDisplay(dest, src, dest_size, true);
+}
+#endif
 
 void ST7789LCDDisplay::endFrame() {
   // display.display();

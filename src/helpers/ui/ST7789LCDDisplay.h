@@ -7,11 +7,20 @@
 #include <Adafruit_ST7789.h>
 #include <helpers/RefCountedDigitalPin.h>
 
+#ifdef DISPLAY_CYRILLIC
+#include "AdafruitGfxUtf8.h"
+#endif
+
 class ST7789LCDDisplay : public DisplayDriver {
   #if defined(LILYGO_TDECK) || defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_V4_R8_TFT)
     SPIClass displaySPI;
   #endif
+#ifdef DISPLAY_CYRILLIC
+  AdafruitGfxUtf8<Adafruit_ST7789> display;
+  uint8_t _text_size = 1;
+#else
   Adafruit_ST7789 display;
+#endif
   bool _isOn;
   uint16_t _color;
   RefCountedDigitalPin* _peripher_power;
@@ -56,5 +65,8 @@ public:
   void drawRect(int x, int y, int w, int h) override;
   void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override;
   uint16_t getTextWidth(const char* str) override;
+#ifdef DISPLAY_CYRILLIC
+  void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override;
+#endif
   void endFrame() override;
 };

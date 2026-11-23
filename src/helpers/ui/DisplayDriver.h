@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "Utf8DisplayText.h"
 
 using ColorVal = uint16_t;
 
@@ -59,31 +60,27 @@ public:
     print(str);
   }
   
-  // convert UTF-8 characters to displayable block characters for compatibility
+  // convert UTF-8 characters to displayable ASCII/block characters for compatibility
   virtual void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
-    size_t j = 0;
-    for (size_t i = 0; src[i] != 0 && j < dest_size - 1; i++) {
-      unsigned char c = (unsigned char)src[i];
-      if (c >= 32 && c <= 126) {
-        dest[j++] = c;  // ASCII printable
-      } else if (c >= 0x80) {
-        dest[j++] = '\xDB';  // CP437 full block █
-        while (src[i+1] && (src[i+1] & 0xC0) == 0x80) 
-          i++;  // skip UTF-8 continuation bytes
-      }
-    }
-    dest[j] = 0;
+    translateUTF8ForDisplay(dest, src, dest_size, false);
   }
   
   // draw text with ellipsis if it exceeds max_width
   virtual void drawTextEllipsized(int x, int y, int max_width, const char* str) {
     char temp_str[256];  // reasonable buffer size
     size_t len = strlen(str);
-    if (len >= sizeof(temp_str)) len = sizeof(temp_str) - 1;
+    bool truncated = false;
+    // Leave headroom for ellipsis ("... " = 4 bytes + NUL)
+    const size_t max_copy = sizeof(temp_str) - 5;
+    if (len > max_copy) {
+      len = max_copy;
+      while (len > 0 && ((unsigned char)str[len] & 0xC0) == 0x80) len--;
+      truncated = true;
+    }
     memcpy(temp_str, str, len);
     temp_str[len] = 0;
     
-    if (getTextWidth(temp_str) <= max_width) {
+    if (!truncated && getTextWidth(temp_str) <= max_width) {
       setCursor(x, y);
       print(temp_str);
       return;
@@ -105,6 +102,9 @@ public:
     int str_len = strlen(temp_str);
     
     while (str_len > 0 && getTextWidth(temp_str) > max_width - ellipsis_width) {
+      while (str_len > 1 && ((unsigned char)temp_str[str_len - 1] & 0xC0) == 0x80) {
+        str_len--;
+      }
       temp_str[--str_len] = 0;
     }
     strcat(temp_str, ellipsis);

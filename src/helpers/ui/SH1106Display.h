@@ -14,9 +14,18 @@
 #define DISPLAY_ADDRESS 0x3C
 #endif
 
+#ifdef DISPLAY_CYRILLIC
+#include "AdafruitGfxUtf8.h"
+#endif
+
 class SH1106Display : public DisplayDriver
 {
+#ifdef DISPLAY_CYRILLIC
+  AdafruitGfxUtf8<Adafruit_SH1106G> display;
+  uint8_t _text_size = 1;
+#else
   Adafruit_SH1106G display;
+#endif
   bool _isOn;
   uint8_t _color;
 
@@ -32,6 +41,9 @@ public:
   void clear() override;
   void startFrame(ColorVal bkg = UIColor::window_bkg) override;
   void setTextSize(int sz) override;
+#ifdef DISPLAY_CYRILLIC
+  void setTextFont(const TextFont* font) override;
+#endif
   void setColor(ColorVal c) override;
   void setCursor(int x, int y) override;
   void print(const char *str) override;
@@ -39,5 +51,8 @@ public:
   void drawRect(int x, int y, int w, int h) override;
   void drawXbm(int x, int y, const uint8_t *bits, int w, int h) override;
   uint16_t getTextWidth(const char *str) override;
+#ifdef DISPLAY_CYRILLIC
+  void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override;
+#endif
   void endFrame() override;
 };
