@@ -340,13 +340,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            deviceRssi[result.device.address] = result.rssi
-            if (devices.none { it.address == result.device.address }) devices.add(result.device)
+            val dev = result.device
+            val rssi = result.rssi
+            viewModelScope.launch(Dispatchers.Main) {
+                if (!scanning) return@launch
+                deviceRssi[dev.address] = rssi
+                if (devices.none { it.address == dev.address }) devices.add(dev)
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            viewModelScope.launch(Dispatchers.Main) {
+                scanJob?.cancel()
+                scanning = false
+                message = str(R.string.msg_scan_failed, errorCode)
+                messageIsError = true
+            }
+        }
+    }
+
+    /** Called by MainActivity after the user grants Bluetooth / Location permissions. */
+    fun onPermissionsGranted() {
+        if (step == Step.COMPANION && !busy && !scanning) {
+            message = ""
+            messageIsError = false
+            scan()
         }
     }
 
     fun scan() {
-        val scanner = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner
+        val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        val scanner = if (adapter?.isEnabled == true) adapter.bluetoothLeScanner else null
         if (scanner == null) {
             message = str(R.string.msg_bluetooth_off)
             messageIsError = true
@@ -386,39 +410,70 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun connectByAddress(address: String) {
+        val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        if (adapter == null || !adapter.isEnabled) {
+            message = str(R.string.msg_bluetooth_off)
+            messageIsError = true
+            return
+        }
         val dev = devices.firstOrNull { it.address.equals(address, ignoreCase = true) }
-            ?: runCatching {
-                (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.getRemoteDevice(address)
-            }.getOrNull() ?: return
+            ?: runCatching { adapter.getRemoteDevice(address) }.getOrNull()
+            ?: run {
+                message = str(R.string.msg_connect_failed)
+                messageIsError = true
+                return
+            }
         connect(dev)
     }
 
     fun connect(device: BluetoothDevice) = work {
+        val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        if (adapter == null || !adapter.isEnabled) throw Exception(str(R.string.msg_bluetooth_off))
         if (scanning) {
             scanJob?.cancel()
-            runCatching {
-                (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner?.stopScan(scanCallback)
-            }
+            runCatching { adapter.bluetoothLeScanner?.stopScan(scanCallback) }
             scanning = false
+            // let the BLE controller finish tearing down the low-latency scan before connectGatt (avoids GATT 133)
+            delay(250)
         }
+        working = str(R.string.working_connect)
         companionModel = ""
         companionVersion = ""
         canReadRepeater = null   // another companion: asked again
-        if (!link.connect(device)) throw Exception(str(R.string.msg_connect_failed))
-        companion.start()
-        companionDevice = device
-        // left on the side channel by an update cut short; a stock companion has no such command
-        companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
-        companionName = companion.nodeName.ifEmpty { device.name ?: device.address }
-        lastCompanionAddress = device.address
-        lastCompanionName = companionName
-        companionPrefs.edit().putString("address", device.address).putString("name", companionName).apply()
-        runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
-            companionModel = model
-            companionVersion = version
+        val connectedOk = try {
+            link.connect(device)
+        } catch (e: SecurityException) {
+            throw Exception(str(scanPermissionMessage()))
         }
-        loadRepeaters()
-        step = Step.REPEATER
+        if (!connectedOk) {
+            val detail = link.lastError
+            throw Exception(
+                if (detail.isNotEmpty()) str(R.string.msg_connect_failed_detail, detail)
+                else str(R.string.msg_connect_failed)
+            )
+        }
+        try {
+            companion.start()
+            companionDevice = device
+            // left on the side channel by an update cut short; a stock companion has no such command
+            companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
+            companionName = companion.nodeName.ifEmpty {
+                runCatching { device.name }.getOrNull() ?: device.address
+            }
+            lastCompanionAddress = device.address
+            lastCompanionName = companionName
+            companionPrefs.edit().putString("address", device.address).putString("name", companionName).apply()
+            runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
+                companionModel = model
+                companionVersion = version
+            }
+            loadRepeaters()
+            step = Step.REPEATER
+        } catch (e: Throwable) {
+            // do not leave a half-open GATT link behind (the companion stops advertising while connected)
+            withContext(NonCancellable) { link.closeAndRefresh() }
+            throw e
+        }
     }
 
     fun refreshRepeaters() = work { loadRepeaters() }
@@ -450,17 +505,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() {
         loginSheet = null
+        busy = true
         step = Step.COMPANION
         devices.clear()   // a new connect waits for a new scan, after the clean-up
         viewModelScope.launch {
-            job?.cancelAndJoin()   // the update's own clean-up (ABORT, normal radio) goes first
-            busy = true
             try {
+                job?.cancelAndJoin()   // the update's own clean-up (ABORT, normal radio) goes first
+                busy = true
                 restorePath()
-                link.close()
+                link.closeAndRefresh()
             } finally {
                 busy = false
             }
+            if (step == Step.COMPANION && !scanning && devices.isEmpty()) scan()
         }
     }
 

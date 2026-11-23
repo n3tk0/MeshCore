@@ -583,4 +583,7 @@
     <string name="settings_open_android_settings">Open settings</string>
     <string name="settings_redownload">Download again</string>
     <string name="build_options_badge">Options</string>
+    <string name="working_connect">Connecting to the companion…</string>
+    <string name="msg_connect_failed_detail">Could not connect to the companion (%1$s).</string>
+    <string name="msg_scan_failed">Bluetooth scan failed (code %1$d). Try again in a few seconds.</string>
 </resources>

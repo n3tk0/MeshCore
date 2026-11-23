@@ -27,7 +27,9 @@ import io.github.n3tk0.loraota.ui.AppViewModel
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
 
-    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        if (results.values.any { it }) vm.onPermissionsGranted()
+    }
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(Lang.wrap(base))

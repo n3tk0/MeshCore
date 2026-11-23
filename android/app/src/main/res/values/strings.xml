@@ -584,4 +584,7 @@
     <string name="settings_open_android_settings">Отвори настройки</string>
     <string name="settings_redownload">Свали отново</string>
     <string name="build_options_badge">Опции</string>
+    <string name="working_connect">Свързвам се с companion-а…</string>
+    <string name="msg_connect_failed_detail">Не успях да се свържа с companion-а (%1$s).</string>
+    <string name="msg_scan_failed">Bluetooth търсенето не тръгна (код %1$d). Опитай след няколко секунди.</string>
 </resources>
