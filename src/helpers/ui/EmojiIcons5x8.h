@@ -51,6 +51,8 @@ enum EmojiIconId : int8_t {
   EMOJI_ICON_COUNT
 };
 
+static_assert(EMOJI_ICON_COUNT <= 64, "3-byte PUA UTF-8 encoding supports up to 64 icons");
+
 extern const uint8_t emoji_icons_5x8[EMOJI_ICON_COUNT][5];
 
 static inline int emojiIconIndex(uint16_t cp) {
