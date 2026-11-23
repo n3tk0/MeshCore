@@ -52,6 +52,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -115,6 +116,8 @@ import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.Phase
 import io.github.n3tk0.loraota.ota.SelfTest
 import io.github.n3tk0.loraota.ota.hex
+import io.github.n3tk0.loraota.tools.FleetFilter
+import io.github.n3tk0.loraota.tools.FleetFilterLogic
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -509,6 +512,7 @@ private fun CompanionStep(vm: AppViewModel) {
 @Composable
 private fun RepeaterStep(vm: AppViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf(FleetFilter.ALL) }
 
     CompanionCard(vm)
     // a queue cut short: it goes on from where it was
@@ -555,8 +559,40 @@ private fun RepeaterStep(vm: AppViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
     }
+    if (vm.repeaters.size > 1) {
+        val filters = listOf(
+            FleetFilter.ALL to R.string.filter_all,
+            FleetFilter.DIRECT to R.string.filter_direct,
+            FleetFilter.ISSUES to R.string.filter_issues,
+            FleetFilter.PINNED to R.string.filter_pinned,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for ((f, labelRes) in filters) {
+                FilterChip(
+                    selected = filter == f,
+                    onClick = { filter = f },
+                    label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelMedium) },
+                )
+            }
+        }
+    }
     if (vm.repeaters.isEmpty()) Text(stringResource(R.string.no_repeaters))
-    val shown = vm.repeaters.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+    val shown = vm.repeaters.filter { c ->
+        (query.isBlank() || c.name.contains(query.trim(), ignoreCase = true)) &&
+            FleetFilterLogic.matches(
+                filter = filter,
+                hops = c.hops,
+                isPinned = vm.isPinned(c),
+                latestHealthLine = vm.fleetHealth[hex(c.publicKey)]?.line,
+            )
+    }
+    if (vm.repeaters.isNotEmpty() && shown.isEmpty()) {
+        Text(
+            stringResource(R.string.filter_empty),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     val pinned = shown.filter { vm.isPinned(it) }
     val unpinned = shown.filter { !vm.isPinned(it) }
     // pinned first, then direct (next to you: only those can be updated over LoRa), multi-hop, unknown
@@ -764,7 +800,37 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
 // ---- one repeater ----
 
 @Composable
+private fun ReloginBanner(vm: AppViewModel) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                stringResource(R.string.relogin_banner),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { vm.reloginCurrentRepeater() }, enabled = !vm.busy) {
+                Text(stringResource(R.string.relogin_now))
+            }
+            IconButton(onClick = { vm.needsRelogin = false }, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Default.Close, stringResource(R.string.build_close), modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
 private fun RepeaterHome(vm: AppViewModel) {
+    if (vm.needsRelogin) {
+        ReloginBanner(vm)
+    }
     when (vm.repeaterTab) {
         RepeaterTab.OVERVIEW -> {
             StatusCard(vm)

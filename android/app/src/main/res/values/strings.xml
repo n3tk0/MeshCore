@@ -714,4 +714,57 @@
     <string name="rset_radio_confirm_title">Промяна на радио параметри?</string>
     <string name="rset_radio_confirm_body">Промяната на „radio“ влиза в сила след рестарт. Невалидни или несъвпадащи параметри могат да прекъснат отдалечения достъп до рипитъра. Сигурен ли си?</string>
     <string name="field_prep_done_partial">Готово за терен: кеширани %1$d файла за %2$d платки (%3$d пропуснати при сваляне).</string>
+    <!-- CLI RTT, snippets & tap-to-copy -->
+    <string name="cli_add_snippet">Добави</string>
+    <string name="cli_remove_snippet">Премахни</string>
+    <string name="cli_add_snippet_title">Нова бърза команда</string>
+    <string name="cli_add_snippet_hint">Напр. sensor list, region, get flood.max</string>
+    <string name="cli_tap_line_hint">Докосни команда за редакция или отговор за копиране на реда.</string>
+    <string name="cli_line_copied">Редът е копиран.</string>
+    <!-- Health Sweep retry, share & open -->
+    <string name="sweep_retry_failed">Повтори неуспешните (%1$d)</string>
+    <string name="sweep_share">Сподели отчет</string>
+    <string name="sweep_tap_open_hint">Докосни рипитър от списъка, за да отвориш директно неговия таб Здраве.</string>
+    <!-- Neighbors remove -->
+    <string name="neighbors_remove">Премахни</string>
+    <string name="neighbors_remove_title">Премахни съсед?</string>
+    <string name="neighbors_remove_body">Ще изтриеш „%1$s“ от таблицата със съседи на рипитъра.</string>
+    <string name="neighbors_removed">Съседът е премахнат.</string>
+    <!-- Settings validation, phone GPS & tempradio -->
+    <string name="rset_err_name_empty">Името не може да е празно.</string>
+    <string name="rset_err_name_long">Максимум 31 байта (UTF-8).</string>
+    <string name="rset_err_name_chars">Забранени символи: [ ] \\ : , ? *</string>
+    <string name="rset_err_tx">Допустим диапазон: -9 до 30 dBm.</string>
+    <string name="rset_err_lat">Ширината трябва да е между -90 и 90.</string>
+    <string name="rset_err_lon">Дължината трябва да е между -180 и 180.</string>
+    <string name="rset_err_advert">0 (изкл.) или между 60 и 240 мин.</string>
+    <string name="rset_err_flood_advert">0 (изкл.) или между 3 и 168 часа.</string>
+    <string name="rset_err_af">Стойност между 0.0 и 9.0.</string>
+    <string name="rset_use_phone_gps">Вземи координати от телефона</string>
+    <string name="rset_gps_filled">Координатите от телефона са попълнени.</string>
+    <string name="rset_gps_unavailable">Няма налична GPS позиция на телефона. Включи местоположението.</string>
+    <string name="rset_gps_denied">Няма разрешение за местоположение.</string>
+    <string name="tempradio_title">Временен радио тест (tempradio)</string>
+    <string name="tempradio_subtitle">Тества нови радио параметри за N мин — връща старите автоматично</string>
+    <string name="tempradio_mins">Мин (1-60)</string>
+    <string name="tempradio_apply">Приложи временно</string>
+    <string name="tempradio_sent">Командата tempradio е изпратена.</string>
+    <!-- Fleet filter chips & relogin banner -->
+    <string name="filter_all">Всички</string>
+    <string name="filter_direct">Директни</string>
+    <string name="filter_issues">С проблем</string>
+    <string name="filter_pinned">Закачени</string>
+    <string name="filter_empty">Няма рипитъри по избрания филтър.</string>
+    <string name="relogin_banner">Рипитърът се рестартира — влез отново за активна админ сесия.</string>
+    <string name="relogin_now">Влез отново</string>
+    <string name="relogin_done">Сесията е подновена.</string>
+    <string name="relogin_no_password">Няма запазена парола за този рипитър.</string>
+    <!-- Offline backup inspector & Field Prep board picker -->
+    <string name="offline_backup_channels">Канали: %1$s</string>
+    <plurals name="offline_backup_contacts">
+        <item quantity="one">%1$d запазен контакт</item>
+        <item quantity="other">%1$d запазени контакта</item>
+    </plurals>
+    <string name="field_prep_pick_title">Избери платки за офлайн кеш</string>
+    <string name="field_prep_cache_selected">Кеширай (%1$d)</string>
 </resources>

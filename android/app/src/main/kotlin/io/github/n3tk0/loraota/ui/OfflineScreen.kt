@@ -286,42 +286,111 @@ private fun OfflineBackupsList(
     }
 
     for (b in backups) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text(b.deviceName.ifEmpty { b.deviceKey.take(12) }, style = MaterialTheme.typography.titleMedium)
+        OfflineBackupCard(b = b, fmt = fmt, onExport = onExport, onDelete = onDelete)
+    }
+}
+
+@Composable
+private fun OfflineBackupCard(
+    b: Backup,
+    fmt: DateFormat,
+    onExport: (Backup) -> Unit,
+    onDelete: (Backup) -> Unit,
+) {
+    var expanded by rememberSaveable(b.file.ifEmpty { "${b.deviceKey}_${b.time}" }) { mutableStateOf(false) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(12.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(b.deviceName.ifEmpty { b.deviceKey.take(12) }, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${fmt.format(Date(b.time))} · ${pluralStringResource(R.plurals.offline_backup_items, b.items.size, b.items.size)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (b.firmware.isNotEmpty()) {
+                        Text(b.firmware, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Text(
+                        stringResource(if (b.kind == DeviceKind.COMPANION) R.string.companion else R.string.offline_kind_repeater),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (expanded) {
+                HorizontalDivider()
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val settings = b.items.filter {
+                        it.group == io.github.n3tk0.loraota.backup.BackupItem.GROUP_SETTING &&
+                            it.id !in io.github.n3tk0.loraota.backup.PasswordBox.SECRET_SETTINGS
+                    }
+                    val channels = b.items.filter { it.group == io.github.n3tk0.loraota.backup.BackupItem.GROUP_CHANNEL }
+                    val contacts = b.items.count { it.group == io.github.n3tk0.loraota.backup.BackupItem.GROUP_CONTACT }
+
+                    for (s in settings) {
+                        Row(Modifier.fillMaxWidth()) {
+                            Text(
+                                s.id,
+                                modifier = Modifier.weight(0.42f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                s.value,
+                                modifier = Modifier.weight(0.58f),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    if (channels.isNotEmpty()) {
                         Text(
-                            "${fmt.format(Date(b.time))} · ${pluralStringResource(R.plurals.offline_backup_items, b.items.size, b.items.size)}",
+                            stringResource(R.string.offline_backup_channels, channels.joinToString(", ") { it.label.ifEmpty { "#${it.id}" } }),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = MaterialTheme.shapes.small,
-                    ) {
+                    if (contacts > 0) {
                         Text(
-                            stringResource(if (b.kind == DeviceKind.COMPANION) R.string.companion else R.string.offline_kind_repeater),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            pluralStringResource(R.plurals.offline_backup_contacts, contacts, contacts),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                if (b.firmware.isNotEmpty()) {
-                    Text(b.firmware, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(onClick = { onExport(b) }) {
+                    Text(stringResource(R.string.backup_export))
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onExport(b) }) {
-                        Text(stringResource(R.string.backup_export))
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { onDelete(b) }) {
-                        Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
-                        Spacer(Modifier.width(4.dp))
-                        Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error)
-                    }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { onDelete(b) }) {
+                    Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error)
                 }
             }
         }

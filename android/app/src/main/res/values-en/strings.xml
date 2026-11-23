@@ -713,4 +713,57 @@
     <string name="rset_radio_confirm_title">Change radio parameters?</string>
     <string name="rset_radio_confirm_body">Changes to “radio” take effect after a reboot. Mismatched radio parameters can disconnect a remote repeater from the mesh. Are you sure?</string>
     <string name="field_prep_done_partial">Ready for field: cached %1$d files for %2$d boards (%3$d skipped due to download errors).</string>
+    <!-- CLI RTT, snippets & tap-to-copy -->
+    <string name="cli_add_snippet">Add</string>
+    <string name="cli_remove_snippet">Remove</string>
+    <string name="cli_add_snippet_title">New quick command</string>
+    <string name="cli_add_snippet_hint">E.g. sensor list, region, get flood.max</string>
+    <string name="cli_tap_line_hint">Tap a command to edit it, or tap a reply to copy that line.</string>
+    <string name="cli_line_copied">Line copied.</string>
+    <!-- Health Sweep retry, share & open -->
+    <string name="sweep_retry_failed">Retry failed (%1$d)</string>
+    <string name="sweep_share">Share report</string>
+    <string name="sweep_tap_open_hint">Tap any repeater in the list to jump straight to its Health tab.</string>
+    <!-- Neighbors remove -->
+    <string name="neighbors_remove">Remove</string>
+    <string name="neighbors_remove_title">Remove neighbor?</string>
+    <string name="neighbors_remove_body">This will remove “%1$s” from the repeater’s neighbor table.</string>
+    <string name="neighbors_removed">Neighbor removed.</string>
+    <!-- Settings validation, phone GPS & tempradio -->
+    <string name="rset_err_name_empty">Name cannot be empty.</string>
+    <string name="rset_err_name_long">Maximum 31 bytes (UTF-8).</string>
+    <string name="rset_err_name_chars">Forbidden characters: [ ] \\ : , ? *</string>
+    <string name="rset_err_tx">Allowed range: -9 to 30 dBm.</string>
+    <string name="rset_err_lat">Latitude must be between -90 and 90.</string>
+    <string name="rset_err_lon">Longitude must be between -180 and 180.</string>
+    <string name="rset_err_advert">0 (off) or 60 to 240 minutes.</string>
+    <string name="rset_err_flood_advert">0 (off) or 3 to 168 hours.</string>
+    <string name="rset_err_af">Value must be between 0.0 and 9.0.</string>
+    <string name="rset_use_phone_gps">Use phone GPS coordinates</string>
+    <string name="rset_gps_filled">Filled coordinates from phone GPS.</string>
+    <string name="rset_gps_unavailable">No GPS fix available on this phone. Turn on Location.</string>
+    <string name="rset_gps_denied">Location permission denied.</string>
+    <string name="tempradio_title">Temporary radio test (tempradio)</string>
+    <string name="tempradio_subtitle">Tests new radio params for N mins — reverts automatically</string>
+    <string name="tempradio_mins">Mins (1-60)</string>
+    <string name="tempradio_apply">Apply temporarily</string>
+    <string name="tempradio_sent">tempradio command sent.</string>
+    <!-- Fleet filter chips & relogin banner -->
+    <string name="filter_all">All</string>
+    <string name="filter_direct">Direct</string>
+    <string name="filter_issues">Issues</string>
+    <string name="filter_pinned">Pinned</string>
+    <string name="filter_empty">No repeaters match the selected filter.</string>
+    <string name="relogin_banner">Repeater rebooted — log in again to resume an active admin session.</string>
+    <string name="relogin_now">Log in again</string>
+    <string name="relogin_done">Session refreshed.</string>
+    <string name="relogin_no_password">No saved password for this repeater.</string>
+    <!-- Offline backup inspector & Field Prep board picker -->
+    <string name="offline_backup_channels">Channels: %1$s</string>
+    <plurals name="offline_backup_contacts">
+        <item quantity="one">%1$d saved contact</item>
+        <item quantity="other">%1$d saved contacts</item>
+    </plurals>
+    <string name="field_prep_pick_title">Choose boards to cache offline</string>
+    <string name="field_prep_cache_selected">Cache (%1$d)</string>
 </resources>

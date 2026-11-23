@@ -1,5 +1,13 @@
 package io.github.n3tk0.loraota.ui
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,9 +19,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -46,11 +57,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.DeviceKind
+import io.github.n3tk0.loraota.tools.NeighborEntry
+import io.github.n3tk0.loraota.tools.RepeaterSettingsValidator
+import io.github.n3tk0.loraota.tools.SettingValidationError
 import java.util.Locale
 
 /** Quick one-tap repeater maintenance actions on the Overview tab. */
@@ -109,10 +126,11 @@ fun QuickActionsCard(vm: AppViewModel) {
     }
 }
 
-/** Expandable neighbors list on the Overview tab (loads via `neighbors` CLI on tap/refresh). */
+/** Expandable neighbors list on the Overview tab (loads via `neighbors` CLI; supports `neighbor.remove`). */
 @Composable
 fun NeighborsCard(vm: AppViewModel) {
     var expanded by rememberSaveable(vm.repeater?.name) { mutableStateOf(false) }
+    var removeCandidate by remember { mutableStateOf<NeighborEntry?>(null) }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     Card(Modifier.fillMaxWidth()) {
@@ -216,6 +234,18 @@ fun NeighborsCard(vm: AppViewModel) {
                                             color = snrColor,
                                         )
                                     }
+                                    IconButton(
+                                        onClick = { removeCandidate = n },
+                                        enabled = !vm.busy,
+                                        modifier = Modifier.size(34.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = stringResource(R.string.neighbors_remove),
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -223,6 +253,24 @@ fun NeighborsCard(vm: AppViewModel) {
                 }
             }
         }
+    }
+
+    removeCandidate?.let { n ->
+        val display = n.resolvedName ?: n.prefixHex.uppercase(Locale.ROOT)
+        AlertDialog(
+            onDismissRequest = { removeCandidate = null },
+            title = { Text(stringResource(R.string.neighbors_remove_title)) },
+            text = { Text(stringResource(R.string.neighbors_remove_body, display)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    removeCandidate = null
+                    vm.removeNeighbor(n.prefixHex)
+                }) { Text(stringResource(R.string.neighbors_remove), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeCandidate = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 }
 
@@ -284,17 +332,22 @@ fun RepeaterToolsTab(vm: AppViewModel) {
     }
 }
 
-private data class SettingFieldSpec(val key: String, val labelRes: Int, val isBool: Boolean = false)
+private data class SettingFieldSpec(
+    val key: String,
+    val labelRes: Int,
+    val isBool: Boolean = false,
+    val keyboard: KeyboardType = KeyboardType.Text,
+)
 
 private val CORE_SETTING_SPECS = listOf(
     SettingFieldSpec("name", R.string.rset_name),
     SettingFieldSpec("owner.info", R.string.rset_owner),
     SettingFieldSpec("repeat", R.string.rset_repeat, isBool = true),
-    SettingFieldSpec("tx", R.string.rset_tx),
-    SettingFieldSpec("advert.interval", R.string.rset_advert_int),
-    SettingFieldSpec("flood.advert.interval", R.string.rset_flood_advert_int),
-    SettingFieldSpec("lat", R.string.rset_lat),
-    SettingFieldSpec("lon", R.string.rset_lon),
+    SettingFieldSpec("tx", R.string.rset_tx, keyboard = KeyboardType.Number),
+    SettingFieldSpec("advert.interval", R.string.rset_advert_int, keyboard = KeyboardType.Number),
+    SettingFieldSpec("flood.advert.interval", R.string.rset_flood_advert_int, keyboard = KeyboardType.Number),
+    SettingFieldSpec("lat", R.string.rset_lat, keyboard = KeyboardType.Decimal),
+    SettingFieldSpec("lon", R.string.rset_lon, keyboard = KeyboardType.Decimal),
     SettingFieldSpec("guest.password", R.string.rset_guest_pw),
     SettingFieldSpec("allow.read.only", R.string.rset_allow_ro, isBool = true),
     SettingFieldSpec("multi.acks", R.string.rset_multi_acks, isBool = true),
@@ -302,11 +355,57 @@ private val CORE_SETTING_SPECS = listOf(
 )
 
 @Composable
+private fun validationMessage(err: SettingValidationError): String = when (err) {
+    SettingValidationError.NAME_EMPTY -> stringResource(R.string.rset_err_name_empty)
+    SettingValidationError.NAME_TOO_LONG -> stringResource(R.string.rset_err_name_long)
+    SettingValidationError.NAME_BAD_CHARS -> stringResource(R.string.rset_err_name_chars)
+    SettingValidationError.TX_RANGE -> stringResource(R.string.rset_err_tx)
+    SettingValidationError.LAT_RANGE -> stringResource(R.string.rset_err_lat)
+    SettingValidationError.LON_RANGE -> stringResource(R.string.rset_err_lon)
+    SettingValidationError.ADVERT_RANGE -> stringResource(R.string.rset_err_advert)
+    SettingValidationError.FLOOD_ADVERT_RANGE -> stringResource(R.string.rset_err_flood_advert)
+    SettingValidationError.AF_RANGE -> stringResource(R.string.rset_err_af)
+}
+
+@SuppressLint("MissingPermission")
+private fun readBestPhoneLocation(ctx: Context): Location? {
+    val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+    return providers.mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
+        .maxByOrNull { it.time }
+}
+
+@Composable
 private fun RepeaterSettingsEditor(vm: AppViewModel) {
+    val ctx = LocalContext.current
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    var confirmRadioChange by remember { mutableStateOf(false) }
+
+    fun applyPhoneGps() {
+        val loc = readBestPhoneLocation(ctx)
+        if (loc == null) {
+            vm.message = ctx.getString(R.string.rset_gps_unavailable)
+            vm.messageIsError = true
+        } else {
+            vm.updateRepeaterSettingDraft("lat", String.format(Locale.ROOT, "%.5f", loc.latitude))
+            vm.updateRepeaterSettingDraft("lon", String.format(Locale.ROOT, "%.5f", loc.longitude))
+            vm.message = ctx.getString(R.string.rset_gps_filled)
+            vm.messageIsError = false
+        }
+    }
+
+    val gpsPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            applyPhoneGps()
+        } else {
+            vm.message = ctx.getString(R.string.rset_gps_denied)
+            vm.messageIsError = true
+        }
+    }
 
     if (vm.canReadRepeater == false) {
         InfoCard(stringResource(R.string.health_no_capture))
+        TempRadioCard(vm)
         return
     }
 
@@ -336,151 +435,259 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
         }
     }
 
-    if (!vm.repeaterSettingsLoaded) return
+    if (vm.repeaterSettingsLoaded) {
+        val changed = vm.changedRepeaterSettings()
+        val coreKeys = remember { CORE_SETTING_SPECS.map { it.key }.toSet() }
+        val validationErrors = changed.mapNotNull { (k, v) ->
+            RepeaterSettingsValidator.validate(k, v)?.let { k to it }
+        }.toMap()
 
-    val changed = vm.changedRepeaterSettings()
-    val coreKeys = remember { CORE_SETTING_SPECS.map { it.key }.toSet() }
-
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            for (spec in CORE_SETTING_SPECS) {
-                if (spec.key !in vm.repeaterSettings) continue
-                val current = vm.repeaterSettingsDraft[spec.key] ?: ""
-                val dirty = vm.repeaterSettings[spec.key] != current
-                if (spec.isBool) {
-                    val on = current.equals("on", ignoreCase = true) || current == "1" || current.equals("true", ignoreCase = true)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                stringResource(spec.labelRes) + if (dirty) " *" else "",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (dirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (spec in CORE_SETTING_SPECS) {
+                    if (spec.key !in vm.repeaterSettings) continue
+                    val current = vm.repeaterSettingsDraft[spec.key] ?: ""
+                    val dirty = vm.repeaterSettings[spec.key] != current
+                    val err = if (dirty) validationErrors[spec.key] else null
+                    if (spec.isBool) {
+                        val on = current.equals("on", ignoreCase = true) || current == "1" || current.equals("true", ignoreCase = true)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(spec.labelRes) + if (dirty) " *" else "",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (dirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(spec.key, style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = on,
+                                onCheckedChange = { checked ->
+                                    val orig = vm.repeaterSettings[spec.key] ?: ""
+                                    val nextVal = if (orig == "0" || orig == "1") {
+                                        if (checked) "1" else "0"
+                                    } else {
+                                        if (checked) "on" else "off"
+                                    }
+                                    vm.updateRepeaterSettingDraft(spec.key, nextVal)
+                                },
+                                enabled = !vm.busy,
                             )
-                            Text(spec.key, style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(
-                            checked = on,
-                            onCheckedChange = { checked ->
-                                val orig = vm.repeaterSettings[spec.key] ?: ""
-                                val nextVal = if (orig == "0" || orig == "1") {
-                                    if (checked) "1" else "0"
-                                } else {
-                                    if (checked) "on" else "off"
-                                }
-                                vm.updateRepeaterSettingDraft(spec.key, nextVal)
+                    } else {
+                        OutlinedTextField(
+                            value = current,
+                            onValueChange = { vm.updateRepeaterSettingDraft(spec.key, it) },
+                            label = {
+                                Text(stringResource(spec.labelRes) + " (${spec.key})" + if (dirty) " *" else "")
                             },
+                            isError = err != null,
+                            supportingText = err?.let { e -> { Text(validationMessage(e)) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = spec.keyboard),
+                            singleLine = true,
                             enabled = !vm.busy,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                } else {
-                    OutlinedTextField(
-                        value = current,
-                        onValueChange = { vm.updateRepeaterSettingDraft(spec.key, it) },
-                        label = {
-                            Text(stringResource(spec.labelRes) + " (${spec.key})" + if (dirty) " *" else "")
-                        },
-                        singleLine = true,
-                        enabled = !vm.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-    }
-
-    // Other loaded keys (radio, af, flood.max, delays, etc.)
-    val otherKeys = vm.repeaterSettings.keys.filter { it !in coreKeys }.sorted()
-    if (otherKeys.isNotEmpty()) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showAdvanced = !showAdvanced }
-                        .padding(12.dp),
-                ) {
-                    Text(
-                        stringResource(R.string.rset_advanced, otherKeys.size),
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(
-                        if (showAdvanced) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (showAdvanced) {
-                    HorizontalDivider()
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (k in otherKeys) {
-                            val current = vm.repeaterSettingsDraft[k] ?: ""
-                            val dirty = vm.repeaterSettings[k] != current
-                            OutlinedTextField(
-                                value = current,
-                                onValueChange = { vm.updateRepeaterSettingDraft(k, it) },
-                                label = { Text(if (dirty) "$k *" else k, fontFamily = FontFamily.Monospace) },
-                                singleLine = true,
-                                enabled = !vm.busy,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                    // Phone GPS button right after lon when lat & lon exist
+                    if (spec.key == "lon" && "lat" in vm.repeaterSettings) {
+                        OutlinedButton(
+                            onClick = {
+                                val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                                if (granted) applyPhoneGps() else gpsPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                            },
+                            enabled = !vm.busy,
+                        ) {
+                            Icon(Icons.Default.LocationOn, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(stringResource(R.string.rset_use_phone_gps))
                         }
                     }
                 }
             }
         }
-    }
 
-    var confirmRadioChange by remember { mutableStateOf(false) }
-
-    if (changed.isNotEmpty()) {
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Button(
-                    onClick = {
-                        if ("radio" in changed) confirmRadioChange = true
-                        else vm.saveRepeaterSettings()
-                    },
-                    enabled = !vm.busy,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(stringResource(R.string.rset_save_changes, changed.size))
-                }
-                TextButton(onClick = { vm.resetRepeaterSettingsDraft() }, enabled = !vm.busy) {
-                    Text(stringResource(R.string.rset_reset))
+        // Other loaded keys (radio, af, flood.max, delays, etc.)
+        val otherKeys = vm.repeaterSettings.keys.filter { it !in coreKeys }.sorted()
+        if (otherKeys.isNotEmpty()) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showAdvanced = !showAdvanced }
+                            .padding(12.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.rset_advanced, otherKeys.size),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            if (showAdvanced) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (showAdvanced) {
+                        HorizontalDivider()
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (k in otherKeys) {
+                                val current = vm.repeaterSettingsDraft[k] ?: ""
+                                val dirty = vm.repeaterSettings[k] != current
+                                val err = if (dirty) validationErrors[k] else null
+                                OutlinedTextField(
+                                    value = current,
+                                    onValueChange = { vm.updateRepeaterSettingDraft(k, it) },
+                                    label = { Text(if (dirty) "$k *" else k, fontFamily = FontFamily.Monospace) },
+                                    isError = err != null,
+                                    supportingText = err?.let { e -> { Text(validationMessage(e)) } },
+                                    singleLine = true,
+                                    enabled = !vm.busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        if (changed.isNotEmpty()) {
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Button(
+                        onClick = {
+                            if ("radio" in changed) confirmRadioChange = true
+                            else vm.saveRepeaterSettings()
+                        },
+                        enabled = !vm.busy && validationErrors.isEmpty(),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(stringResource(R.string.rset_save_changes, changed.size))
+                    }
+                    TextButton(onClick = { vm.resetRepeaterSettingsDraft() }, enabled = !vm.busy) {
+                        Text(stringResource(R.string.rset_reset))
+                    }
+                }
+            }
+        }
+
+        if (confirmRadioChange) {
+            AlertDialog(
+                onDismissRequest = { confirmRadioChange = false },
+                title = { Text(stringResource(R.string.rset_radio_confirm_title)) },
+                text = { Text(stringResource(R.string.rset_radio_confirm_body)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmRadioChange = false
+                        vm.saveRepeaterSettings()
+                    }) {
+                        Text(stringResource(R.string.rset_save_changes, changed.size), color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmRadioChange = false }) { Text(stringResource(R.string.cancel)) }
+                },
+            )
+        }
     }
 
-    if (confirmRadioChange) {
-        AlertDialog(
-            onDismissRequest = { confirmRadioChange = false },
-            title = { Text(stringResource(R.string.rset_radio_confirm_title)) },
-            text = { Text(stringResource(R.string.rset_radio_confirm_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmRadioChange = false
-                    vm.saveRepeaterSettings()
-                }) {
-                    Text(stringResource(R.string.rset_save_changes, changed.size), color = MaterialTheme.colorScheme.error)
+    TempRadioCard(vm)
+}
+
+/** Collapsible safe temporary radio test (`tempradio`) card that auto-reverts after N minutes. */
+@Composable
+private fun TempRadioCard(vm: AppViewModel) {
+    var expanded by rememberSaveable(vm.repeater?.name) { mutableStateOf(false) }
+    var freq by rememberSaveable { mutableStateOf("869.525") }
+    var bw by rememberSaveable { mutableStateOf("250") }
+    var sf by rememberSaveable { mutableStateOf("7") }
+    var cr by rememberSaveable { mutableStateOf("5") }
+    var mins by rememberSaveable { mutableStateOf("5") }
+    val cmd = RepeaterSettingsValidator.buildTempRadioCommand(freq, bw, sf, cr, mins)
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.tempradio_title), style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        stringResource(R.string.tempradio_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmRadioChange = false }) { Text(stringResource(R.string.cancel)) }
-            },
-        )
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (expanded) {
+                HorizontalDivider()
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = freq, onValueChange = { freq = it },
+                            label = { Text("Freq (MHz)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = bw, onValueChange = { bw = it },
+                            label = { Text("BW (kHz)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = sf, onValueChange = { sf = it.filter(Char::isDigit).take(2) },
+                            label = { Text("SF (5-12)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = cr, onValueChange = { cr = it.filter(Char::isDigit).take(1) },
+                            label = { Text("CR (5-8)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = mins, onValueChange = { mins = it.filter(Char::isDigit).take(2) },
+                            label = { Text(stringResource(R.string.tempradio_mins)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Button(
+                        onClick = { if (cmd != null) vm.applyTempRadio(cmd) },
+                        enabled = !vm.busy && cmd != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.tempradio_apply))
+                    }
+                }
+            }
+        }
     }
 }

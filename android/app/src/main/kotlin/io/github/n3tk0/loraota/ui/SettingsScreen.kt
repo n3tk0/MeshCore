@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
@@ -339,7 +341,7 @@ fun SettingsScreen(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    onClick = { vm.prepareForField() },
+                    onClick = { vm.openFieldPrepPicker() },
                     enabled = !vm.busy,
                 ) {
                     Text(stringResource(R.string.field_prep_btn))
@@ -391,6 +393,59 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+
+    // Field preparation board selection dialog
+    if (vm.showFieldPrepDialog) {
+        val pickedCount = vm.fieldPrepCandidates.count { vm.fieldPrepPicked[it.env] == true }
+        AlertDialog(
+            onDismissRequest = { vm.showFieldPrepDialog = false },
+            title = { Text(stringResource(R.string.field_prep_pick_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            for (f in vm.fieldPrepCandidates) vm.fieldPrepPicked[f.env] = true
+                        }) { Text(stringResource(R.string.q_select_all)) }
+                        TextButton(onClick = { vm.fieldPrepPicked.clear() }) {
+                            Text(stringResource(R.string.q_select_none))
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        for (f in vm.fieldPrepCandidates) {
+                            val checked = vm.fieldPrepPicked[f.env] == true
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { vm.fieldPrepPicked[f.env] = !checked },
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = { vm.fieldPrepPicked[f.env] = it })
+                                Column(Modifier.weight(1f)) {
+                                    Text(f.env.replace('_', ' '), style = MaterialTheme.typography.bodyMedium)
+                                    Text(f.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.runFieldPrepDownload() },
+                    enabled = pickedCount > 0,
+                ) { Text(stringResource(R.string.field_prep_cache_selected, pickedCount)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.showFieldPrepDialog = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 
     // Group APK warning & token preservation dialog

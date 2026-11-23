@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -33,6 +36,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -64,6 +68,8 @@ import java.util.Locale
 
 /**
  * Interactive CLI console for both the logged-in repeater (remote tagged CLI) and the connected companion (local CLI).
+ * Features RTT badges, tap-to-copy/refill transcript lines, custom pinned snippets, history, autocomplete,
+ * dangerous-command confirmation, and redacted copy/share.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -73,6 +79,9 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
     var historyIdx by remember { mutableIntStateOf(-1) }
     var pendingConfirm by remember { mutableStateOf<String?>(null) }
     var copiedNotice by remember { mutableStateOf(false) }
+    var copiedLineNotice by remember { mutableStateOf(false) }
+    var showAddSnippet by remember { mutableStateOf(false) }
+    var newSnippetText by remember { mutableStateOf("") }
 
     val lines = if (isCompanion) vm.companionCliLog else vm.repeaterCliLog
     val quickCmds = if (isCompanion) CliHelper.COMPANION_QUICK_COMMANDS else CliHelper.REPEATER_QUICK_COMMANDS
@@ -82,6 +91,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
 
     LaunchedEffect(lines.size) {
         copiedNotice = false
+        copiedLineNotice = false
         if (lines.isNotEmpty()) transcriptScroll.animateScrollTo(transcriptScroll.maxValue)
     }
 
@@ -97,6 +107,12 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         }
     }
 
+    fun formatRtt(ms: Long?): String = when {
+        ms == null -> ""
+        ms >= 1000L -> String.format(Locale.ROOT, " (%.1fs)", ms / 1000.0)
+        else -> " (${ms}ms)"
+    }
+
     fun transcriptText(): String {
         val redacted = CliHelper.redactCliEntries(lines.map { (it.kind == CliLineKind.COMMAND) to it.text })
         return lines.zip(redacted).joinToString("\n") { (line, safeText) ->
@@ -106,7 +122,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                 CliLineKind.INFO -> "# "
                 CliLineKind.ERROR -> "! "
             }
-            "[${timeFmt.format(Date(line.timeMs))}] $prefix$safeText"
+            "[${timeFmt.format(Date(line.timeMs))}] $prefix$safeText${formatRtt(line.durationMs)}"
         }
     }
 
@@ -142,18 +158,46 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         }
     }
 
-    // Quick command chips
-    Text(
-        stringResource(R.string.cli_quick_commands),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    // Quick command chips + custom pinned snippets
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.cli_quick_commands),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = { newSnippetText = input.trim(); showAddSnippet = true }) {
+            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(2.dp))
+            Text(stringResource(R.string.cli_add_snippet), style = MaterialTheme.typography.labelSmall)
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        for (snip in vm.customCliSnippets) {
+            InputChip(
+                selected = true,
+                onClick = { submit(snip) },
+                enabled = !vm.busy,
+                label = { Text(snip, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelMedium) },
+                trailingIcon = {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = stringResource(R.string.cli_remove_snippet),
+                        modifier = Modifier
+                            .size(15.dp)
+                            .clickable { vm.removeCliSnippet(snip) },
+                    )
+                },
+            )
+        }
         for (cmd in quickCmds) {
             AssistChip(
                 onClick = { submit(cmd) },
@@ -163,7 +207,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         }
     }
 
-    // Terminal output box
+    // Terminal output box (tap command -> refill input; tap reply -> copy single redacted line)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = Color(0xFF12161C),
@@ -186,22 +230,46 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             } else {
-                for (line in lines) {
+                val redactedLines = remember(lines.toList()) {
+                    CliHelper.redactCliEntries(lines.map { (it.kind == CliLineKind.COMMAND) to it.text })
+                }
+                for ((idx, line) in lines.withIndex()) {
                     val (prefix, color) = when (line.kind) {
                         CliLineKind.COMMAND -> "> " to Color(0xFF7CC4FA)
                         CliLineKind.REPLY -> "" to Color(0xFFE6EDF3)
                         CliLineKind.INFO -> "# " to Color(0xFFFFC168)
                         CliLineKind.ERROR -> "! " to Color(0xFFFF7B72)
                     }
+                    val rttText = formatRtt(line.durationMs)
                     Text(
-                        "${timeFmt.format(Date(line.timeMs))} $prefix${line.text}",
+                        "${timeFmt.format(Date(line.timeMs))} $prefix${line.text}$rttText",
                         color = color,
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (line.kind == CliLineKind.COMMAND) {
+                                    input = line.text
+                                    historyIdx = -1
+                                } else {
+                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val safe = redactedLines.getOrElse(idx) { CliHelper.redactSecrets(line.text) }
+                                    cm.setPrimaryClip(ClipData.newPlainText("MeshCore CLI line", safe))
+                                    copiedLineNotice = true
+                                }
+                            },
                     )
                 }
             }
         }
+    }
+    if (lines.isNotEmpty()) {
+        Text(
+            stringResource(if (copiedLineNotice) R.string.cli_line_copied else R.string.cli_tap_line_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (copiedLineNotice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 
     // Live autocomplete suggestions when typing
@@ -295,13 +363,42 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         }
         Spacer(Modifier.weight(1f))
         TextButton(
-            onClick = { vm.clearCliLog(isCompanion); copiedNotice = false },
+            onClick = { vm.clearCliLog(isCompanion); copiedNotice = false; copiedLineNotice = false },
             enabled = lines.isNotEmpty(),
         ) {
             Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
             Text(stringResource(R.string.cli_clear))
         }
+    }
+
+    // Add custom pinned command dialog
+    if (showAddSnippet) {
+        AlertDialog(
+            onDismissRequest = { showAddSnippet = false },
+            title = { Text(stringResource(R.string.cli_add_snippet_title)) },
+            text = {
+                OutlinedTextField(
+                    value = newSnippetText,
+                    onValueChange = { newSnippetText = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.cli_add_snippet_hint)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.addCliSnippet(newSnippetText)
+                        showAddSnippet = false
+                    },
+                    enabled = newSnippetText.isNotBlank(),
+                ) { Text(stringResource(R.string.cli_add_snippet)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSnippet = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 
     // Confirmation dialog for dangerous commands
