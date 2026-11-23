@@ -1568,12 +1568,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (historyCache.containsKey(key)) continue
                 loadingHistoryKey = key
                 val s = loadSeries(key.first, key.second)
-                if (s == null && historyCache.isEmpty()) {
-                    historyMissing = true
-                    queuedHistoryKeys.clear()
-                    break
-                }
-                checkFasterDrain()
+                if (s != null) checkFasterDrain()
             }
         } finally {
             loadingHistoryKey = null
