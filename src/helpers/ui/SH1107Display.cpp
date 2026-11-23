@@ -60,13 +60,30 @@ void SH1107Display::startFrame(ColorVal bkg)
   _color = SH110X_WHITE;
   display.setTextColor(_color);
   display.setTextSize(1);
+#ifdef DISPLAY_CYRILLIC
+  _text_size = 1;
+  display.setTextFont(NULL);
+#endif
   display.cp437(true); // Use full 256 char 'Code Page 437' font
 }
 
 void SH1107Display::setTextSize(int sz)
 {
   display.setTextSize(sz);
+#ifdef DISPLAY_CYRILLIC
+  _text_size = sz;
+  display.setTextFont(NULL);
+#endif
 }
+
+#ifdef DISPLAY_CYRILLIC
+void SH1107Display::setTextFont(const TextFont* font)
+{
+  display.setTextSize(1);
+  _text_size = 1;
+  display.setTextFont(font);
+}
+#endif
 
 void SH1107Display::setColor(ColorVal c)
 {
@@ -82,6 +99,9 @@ void SH1107Display::setCursor(int x, int y)
 void SH1107Display::print(const char *str)
 {
   display.print(str);
+#ifdef DISPLAY_CYRILLIC
+  display.flushUtf8();
+#endif
 }
 
 void SH1107Display::fillRect(int x, int y, int w, int h)
@@ -101,11 +121,23 @@ void SH1107Display::drawXbm(int x, int y, const uint8_t *bits, int w, int h)
 
 uint16_t SH1107Display::getTextWidth(const char *str)
 {
+#ifdef DISPLAY_CYRILLIC
+  const TextFont* f = display.textFont();
+  return utf8CharCount(str) * (f ? f->w : 6 * _text_size);
+#else
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(str, 0, 0, &x1, &y1, &w, &h);
   return w;
+#endif
 }
+
+#ifdef DISPLAY_CYRILLIC
+void SH1107Display::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size)
+{
+  translateUTF8ForDisplay(dest, src, dest_size, true, true);
+}
+#endif
 
 void SH1107Display::endFrame()
 {
