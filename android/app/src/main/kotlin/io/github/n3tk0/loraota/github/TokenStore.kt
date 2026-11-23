@@ -28,19 +28,61 @@ class TokenStore(ctx: Context) {
         return gen.generateKey()
     }
 
-    /** The user entered one (it can be forgotten; the group's cannot). */
+    private val builtInGroup: String? by lazy {
+        val a = unhex(io.github.n3tk0.loraota.BuildConfig.GROUP_TOKEN_A)
+        val b = unhex(io.github.n3tk0.loraota.BuildConfig.GROUP_TOKEN_B)
+        if (a.isEmpty() || a.size != b.size) null else String(ByteArray(a.size) { (a[it].toInt() xor b[it].toInt()).toByte() })
+    }
+
+    init {
+        // Persist the built-in group token encrypted in Keystore so updating from a Group APK
+        // to a Public APK (same signing key) preserves the group token automatically,
+        // unless the user explicitly opted out.
+        if (builtInGroup != null && !prefs.getBoolean(KEY_GROUP_OPT_OUT, false)) {
+            runCatching { saveEncrypted(KEY_GROUP, builtInGroup!!) }
+        }
+    }
+
+    /** The user entered one (it can be forgotten; the built-in group's cannot). */
     val hasOwn get() = prefs.contains(KEY)
+
+    /** True when this APK binary itself contains the built-in group token. */
+    val hasBuiltInGroup get() = builtInGroup != null
+
+    /** True when a group token was saved from an earlier Group APK install. */
+    val hasSavedGroup get() = prefs.contains(KEY_GROUP)
+
+    /** True when either a built-in or preserved group token is available. */
+    val hasGroup get() = group != null
 
     val has get() = hasOwn || group != null
 
-    /** Only the group's token, built into the group APK (see build.gradle.kts). */
+    /** Only the group's token (built-in or preserved across update). */
     val usesGroup get() = !hasOwn && group != null
 
     /** The user's own, else the group's; null: none (or the key is gone, e.g. the lock screen was reset). */
     fun get(): String? = own() ?: group
 
-    private fun own(): String? {
-        val stored = prefs.getString(KEY, null) ?: return null
+    /** Ensures the built-in group token is saved encrypted before installing an update. Returns true if saved/present. */
+    fun persistGroupToken(): Boolean {
+        prefs.edit().remove(KEY_GROUP_OPT_OUT).apply()
+        val g = builtInGroup ?: return savedGroup() != null
+        return runCatching { saveEncrypted(KEY_GROUP, g); true }.getOrDefault(false)
+    }
+
+    /** Removes a preserved group token and records opt-out so init does not silently re-save it. */
+    fun clearSavedGroup() {
+        prefs.edit().remove(KEY_GROUP).putBoolean(KEY_GROUP_OPT_OUT, true).apply()
+    }
+
+    private fun own(): String? = readEncrypted(KEY)
+
+    private fun savedGroup(): String? = readEncrypted(KEY_GROUP)
+
+    private val group: String? get() = builtInGroup ?: savedGroup()
+
+    private fun readEncrypted(prefKey: String): String? {
+        val stored = prefs.getString(prefKey, null) ?: return null
         return runCatching {
             val bytes = Base64.decode(stored, Base64.NO_WRAP)
             val c = Cipher.getInstance(TRANSFORM)
@@ -52,27 +94,25 @@ class TokenStore(ctx: Context) {
             if (it is android.security.keystore.KeyPermanentlyInvalidatedException ||
                 it is javax.crypto.AEADBadTagException || it is java.security.UnrecoverableKeyException ||
                 it is IllegalArgumentException) {
-                prefs.edit().remove(KEY).apply()
+                prefs.edit().remove(prefKey).apply()
             }
         }.getOrNull()
     }
 
-    fun set(token: String) {
+    private fun saveEncrypted(prefKey: String, token: String) {
         val c = Cipher.getInstance(TRANSFORM)
         c.init(Cipher.ENCRYPT_MODE, key())
         val iv = c.iv
         check(iv.size == IV)
-        prefs.edit().putString(KEY, Base64.encodeToString(iv + c.doFinal(token.toByteArray()), Base64.NO_WRAP)).apply()
+        prefs.edit().putString(prefKey, Base64.encodeToString(iv + c.doFinal(token.toByteArray()), Base64.NO_WRAP)).apply()
+    }
+
+    fun set(token: String) {
+        saveEncrypted(KEY, token)
     }
 
     fun clear() {
         prefs.edit().remove(KEY).apply()
-    }
-
-    private val group: String? by lazy {
-        val a = unhex(io.github.n3tk0.loraota.BuildConfig.GROUP_TOKEN_A)
-        val b = unhex(io.github.n3tk0.loraota.BuildConfig.GROUP_TOKEN_B)
-        if (a.isEmpty() || a.size != b.size) null else String(ByteArray(a.size) { (a[it].toInt() xor b[it].toInt()).toByte() })
     }
 
     private fun unhex(s: String) = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
@@ -81,6 +121,8 @@ class TokenStore(ctx: Context) {
         const val KEYSTORE = "AndroidKeyStore"
         const val ALIAS = "github-token"
         const val KEY = "token"
+        const val KEY_GROUP = "group_token"
+        const val KEY_GROUP_OPT_OUT = "group_token_opt_out"
         const val TRANSFORM = "AES/GCM/NoPadding"
         const val IV = 12
     }

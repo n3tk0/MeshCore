@@ -413,6 +413,25 @@ object Releases {
         binDir(cache).listFiles()?.forEach { if (it.name !in keep && !it.name.endsWith(".tmp")) it.delete() }
     }
 
+    /** Count and total bytes of cached firmware binaries and release lists (excludes backups and health). */
+    fun cacheStats(cache: File): Pair<Int, Long> {
+        val bins = File(cache, "firmware").listFiles().orEmpty().filter { it.isFile }
+        val jsons = cache.listFiles { f ->
+            f.isFile && (f.name.startsWith("releases-") && f.name.endsWith(".json") || f.name == "builds.json")
+        }.orEmpty()
+        val bytes = bins.sumOf { it.length() } + jsons.sumOf { it.length() }
+        return bins.size to bytes
+    }
+
+    /** Clears all cached firmware binaries, cached release lists, and downloaded build artifacts. */
+    @Synchronized
+    fun clearCache(cache: File) {
+        File(cache, "firmware").listFiles()?.forEach { it.delete() }
+        cache.listFiles { f ->
+            f.isFile && (f.name.startsWith("releases-") && f.name.endsWith(".json") || f.name == "builds.json")
+        }?.forEach { it.delete() }
+    }
+
     /** The firmware the app's builds made (newest first), kept on the phone (see [addBuild]). */
     fun builds(cache: File): List<FirmwareFile> = runCatching { fromJson(JSONArray(String(buildsFile(cache).readBytes()))) }
         .getOrDefault(emptyList())

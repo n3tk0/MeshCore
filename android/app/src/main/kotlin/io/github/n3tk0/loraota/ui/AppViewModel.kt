@@ -19,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.n3tk0.loraota.AppPrefs
+import io.github.n3tk0.loraota.BuildConfig
 import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.OtaService
 import io.github.n3tk0.loraota.R
@@ -53,6 +55,8 @@ import io.github.n3tk0.loraota.flash.FlashFailed
 import io.github.n3tk0.loraota.flash.PickedImage
 import io.github.n3tk0.loraota.flash.Role
 import io.github.n3tk0.loraota.flash.WifiOta
+import io.github.n3tk0.loraota.github.AppRelease
+import io.github.n3tk0.loraota.github.AppUpdater
 import io.github.n3tk0.loraota.github.BuildJob
 import io.github.n3tk0.loraota.github.BuildPhase
 import io.github.n3tk0.loraota.github.BuildWatcher
@@ -86,7 +90,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE }
+enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE, SETTINGS }
 
 /** What the flash screen writes: the repeater the app is logged in to, or the companion itself. */
 enum class FlashTarget { REPEATER, COMPANION }
@@ -177,7 +181,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // a new build on GitHub ("Build Firmware for Boards")
     private val tokens = TokenStore(app)
     var hasToken by mutableStateOf(tokens.has)
-    var groupToken by mutableStateOf(tokens.usesGroup)   // the group APK's own token: nothing to enter
+    var groupToken by mutableStateOf(tokens.usesGroup)   // the group APK's own or preserved token: nothing to enter
+    var hasOwnToken by mutableStateOf(tokens.hasOwn)
+    var hasBuiltInGroupToken by mutableStateOf(tokens.hasBuiltInGroup)
+    var hasSavedGroupToken by mutableStateOf(tokens.hasSavedGroup)
     var buildInputs by mutableStateOf<List<WorkflowInput>>(emptyList())
     private var buildInputsRole = ""   // the board list the form shows: repeater or companion
     private var buildFormFor = ""      // the device the board was picked for
@@ -237,6 +244,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var backupReturn = Step.REPEATER
     private var scanJob: Job? = null
 
+    // settings & app self-update
+    private var settingsReturn = Step.COMPANION
+    var autoUpdateCheck by mutableStateOf(AppPrefs.autoUpdateCheck(app))
+    var checkingAppUpdate by mutableStateOf(false)
+    var appUpdateChecked by mutableStateOf(false)
+    var latestAppRelease by mutableStateOf<AppRelease?>(null)
+    var availableUpdate by mutableStateOf<AppRelease?>(null)
+    var updateBannerDismissed by mutableStateOf(false)
+    var appUpdateError by mutableStateOf<String?>(null)
+    var appUpdateDownloading by mutableStateOf(false)
+    var appUpdateProgress by mutableStateOf(0)
+    var downloadedApk by mutableStateOf<java.io.File?>(null)
+    var cacheFileCount by mutableStateOf(0)
+    var cacheBytes by mutableStateOf(0L)
+
     init {
         BuildWatcher.resume(app)
         viewModelScope.launch {
@@ -246,6 +268,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (j?.finished == true && before != null && !before.finished) buildFinished(j)
                 else if (j?.finished == true) builds = Releases.builds(ctx.filesDir)
             }
+        }
+        if (autoUpdateCheck && System.currentTimeMillis() - AppPrefs.lastUpdateCheck(app) > AppUpdater.AUTO_CHECK_INTERVAL_MS) {
+            checkAppUpdate(manual = false)
         }
         link.onDisconnect = {
             viewModelScope.launch {
@@ -266,7 +291,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
                     message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
                     messageIsError = true
-                    step = Step.COMPANION
+                    if (step == Step.SETTINGS) {
+                        settingsReturn = Step.COMPANION
+                    } else {
+                        step = Step.COMPANION
+                    }
                 }
             }
         }
@@ -408,6 +437,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The phone's Back and the arrow in the top bar. */
     fun back() {
         when (step) {
+            Step.SETTINGS -> closeSettings()
             Step.FLASH -> closeFlash()
             Step.BACKUP -> closeBackup()
             Step.HEALTH -> closeHealth()
@@ -1369,6 +1399,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var historyRing by mutableStateOf(HistorySeries.RING_DAY)
     /** Series read since the page opened, by (ring, field); a field the node does not measure has only nulls. */
     val historyCache = mutableStateMapOf<Pair<Int, Int>, HistorySeries>()
+    /** Currently loading (ring, field) pair, null when idle. */
+    var loadingHistoryKey by mutableStateOf<Pair<Int, Int>?>(null)
+    /** Pending (ring, field) pairs queued while another chart is loading. */
+    val queuedHistoryKeys = mutableStateListOf<Pair<Int, Int>>()
+    /** Incremented on openHealth/refreshHealth so UI resets expanded chart cards. */
+    var healthGeneration by mutableStateOf(0)
     var historyMissing by mutableStateOf(false)    // the node keeps no history (stock or older firmware)
     var battSave by mutableStateOf<BattSave?>(null)        // the repeater's `battsave` (null: not read / older firmware)
     var battCapacity by mutableStateOf<BattCapacity?>(null)
@@ -1385,6 +1421,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         selfTestMissing = false
         healthWarnings = emptyList()
         historyCache.clear()
+        queuedHistoryKeys.clear()
+        loadingHistoryKey = null
+        healthGeneration++
         historyMissing = false
         historyField = HistorySeries.F_BATT_PCT
         historyRing = HistorySeries.RING_DAY
@@ -1400,10 +1439,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeHealth() {
         job?.cancel()
+        queuedHistoryKeys.clear()
+        loadingHistoryKey = null
         step = healthReturn
     }
 
-    /** The self test (a repeater), then the battery's day and week (for 'drains faster than usual') and the series shown. */
+    /** The self test and battery config (for a repeater); telemetry charts are fetched on demand when opened. */
     fun refreshHealth() = work {
         val kind = healthKind
         val dev = deviceKey(kind)
@@ -1439,29 +1480,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-        healthWarnings = warnings.toList()   // shown at once; the graphs below take a while over LoRa
+        healthWarnings = warnings.toList()
         historyCache.clear()
-        historyMissing = false
-        // a repeater without `selftest` (older or stock firmware) has no history either: no 2 x 12 s wait
-        if (selfTestMissing) {
-            historyMissing = true
-            return@work
-        }
-        working = str(R.string.working_history)
-        val day = loadSeries(HistorySeries.RING_DAY, HistorySeries.F_BATT_PCT)
-        if (day != null) {
-            // the week only when the last 6 h have enough samples for 'falls faster' (saves 1-3 packets)
-            if (day.values.takeLast(36).count { it != null } >= 7) {
-                val week = loadSeries(HistorySeries.RING_WEEK, HistorySeries.F_BATT_PCT)
-                if (week != null && HealthCheck.fasterDrain(day.values, week.values)) warnings.add(HealthWarning.FAST_DRAIN)
-            }
-            // a node that does not measure the battery %: the first value it does measure
-            historyField = HistorySeries.pick(historyField, day.fields)
-            loadSeries(historyRing, historyField)
-        } else {
-            historyMissing = true
-        }
-        if (HealthWarning.FAST_DRAIN in warnings) healthWarnings = warnings
+        queuedHistoryKeys.clear()
+        loadingHistoryKey = null
+        healthGeneration++
+        // a repeater without `selftest` (older or stock firmware) has no history either
+        historyMissing = selfTestMissing
     }
 
     /** `battsave` and `battery capacity`, with the console capture already on. */
@@ -1510,10 +1535,58 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun showHistory(ring: Int, field: Int) {
         historyRing = ring
         historyField = field
-        if (historyMissing || historyCache.containsKey(ring to field)) return
-        work {
-            working = str(R.string.working_history)
-            loadSeries(ring, field)
+        loadHistoryField(ring, field)
+    }
+
+    /** Enqueues a chart series to be fetched from the device; runs sequentially if another chart is already loading. */
+    fun loadHistoryField(ring: Int, field: Int) {
+        val key = ring to field
+        if (historyMissing || historyCache.containsKey(key) || loadingHistoryKey == key) return
+        if (key !in queuedHistoryKeys) queuedHistoryKeys.add(key)
+        if (!busy) drainHistoryQueue()
+    }
+
+    /** Switches 24h / week ring and fetches any currently expanded charts that are not yet cached. */
+    fun setHistoryRing(ring: Int, openFields: Collection<Int>) {
+        historyRing = ring
+        if (historyMissing) return
+        queuedHistoryKeys.removeAll { it.first != ring }
+        for (f in openFields) {
+            val key = ring to f
+            if (!historyCache.containsKey(key) && loadingHistoryKey != key && key !in queuedHistoryKeys) {
+                queuedHistoryKeys.add(key)
+            }
+        }
+        if (queuedHistoryKeys.isNotEmpty() && !busy) drainHistoryQueue()
+    }
+
+    private fun drainHistoryQueue() = work {
+        working = str(R.string.working_history)
+        try {
+            while (queuedHistoryKeys.isNotEmpty() && !historyMissing) {
+                val key = queuedHistoryKeys.removeAt(0)
+                if (historyCache.containsKey(key)) continue
+                loadingHistoryKey = key
+                val s = loadSeries(key.first, key.second)
+                if (s == null && historyCache.isEmpty()) {
+                    historyMissing = true
+                    queuedHistoryKeys.clear()
+                    break
+                }
+                checkFasterDrain()
+            }
+        } finally {
+            loadingHistoryKey = null
+            queuedHistoryKeys.clear()
+        }
+    }
+
+    private fun checkFasterDrain() {
+        if (HealthWarning.FAST_DRAIN in healthWarnings) return
+        val day = historyCache[HistorySeries.RING_DAY to HistorySeries.F_BATT_PCT] ?: return
+        val week = historyCache[HistorySeries.RING_WEEK to HistorySeries.F_BATT_PCT] ?: return
+        if (HealthCheck.fasterDrain(day.values, week.values)) {
+            healthWarnings = healthWarnings + HealthWarning.FAST_DRAIN
         }
     }
 
@@ -1761,6 +1834,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         throw Exception(str(R.string.build_err_token))
     }, repo)
 
+    private fun syncTokenFlags() {
+        hasToken = tokens.has
+        groupToken = tokens.usesGroup
+        hasOwnToken = tokens.hasOwn
+        hasBuiltInGroupToken = tokens.hasBuiltInGroup
+        hasSavedGroupToken = tokens.hasSavedGroup
+    }
+
     /** Checks the token with GitHub (it must read the workflow and its runs), then keeps it encrypted. */
     fun saveToken(token: String) = work {
         val t = token.trim()
@@ -1776,16 +1857,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             throw Exception(str(R.string.build_err_access, e.message ?: ""))
         }
         tokens.set(t)
-        hasToken = true
-        groupToken = false
+        syncTokenFlags()
         message = str(R.string.msg_token_saved)
-        readBuildForm()
+        if (step != Step.SETTINGS) readBuildForm()
     }
 
     fun forgetToken() {
         tokens.clear()
-        hasToken = tokens.has   // the group's token stays
-        groupToken = tokens.usesGroup
+        syncTokenFlags()
+        buildInputs = emptyList()
+    }
+
+    fun forgetSavedGroupToken() {
+        tokens.clearSavedGroup()
+        syncTokenFlags()
         buildInputs = emptyList()
     }
 
@@ -1894,6 +1979,117 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- settings, app self-update, and cache ----
+
+    fun openSettings(checkNow: Boolean = false) {
+        if (step != Step.SETTINGS) settingsReturn = step
+        message = ""
+        step = Step.SETTINGS
+        refreshCacheStats()
+        if (checkNow) checkAppUpdate(manual = true)
+    }
+
+    fun closeSettings() {
+        step = settingsReturn
+    }
+
+    fun updateAutoCheck(enabled: Boolean) {
+        autoUpdateCheck = enabled
+        AppPrefs.setAutoUpdateCheck(ctx, enabled)
+    }
+
+    private var updateCheckJob: Job? = null
+    private var updateDownloadJob: Job? = null
+
+    fun checkAppUpdate(manual: Boolean = true) {
+        if (checkingAppUpdate) return
+        updateCheckJob?.cancel()
+        checkingAppUpdate = true
+        if (manual) appUpdateError = null
+        updateCheckJob = viewModelScope.launch {
+            try {
+                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get()) }
+                val prevTag = availableUpdate?.tag
+                latestAppRelease = rel
+                val newer = rel != null && AppUpdater.isNewer(rel.version, BuildConfig.VERSION_NAME)
+                availableUpdate = if (newer) rel else null
+                if (rel?.tag != prevTag) downloadedApk = null
+                if (newer) updateBannerDismissed = false
+                appUpdateChecked = true
+                appUpdateError = null
+                AppPrefs.setLastUpdateCheck(ctx)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (manual) appUpdateError = releasesWhy(e)
+            } finally {
+                checkingAppUpdate = false
+            }
+        }
+    }
+
+    /**
+     * Downloads the available APK into cache/updates/ and invokes [onReady] when finished.
+     * Applies the group token keep/clear choice only after the download succeeds so a failed download
+     * never loses a saved group token.
+     */
+    fun downloadAppUpdate(keepGroupToken: Boolean, onReady: (java.io.File) -> Unit) {
+        val rel = availableUpdate ?: latestAppRelease ?: return
+        if (appUpdateDownloading) return
+        updateDownloadJob?.cancel()
+        appUpdateDownloading = true
+        appUpdateProgress = 0
+        appUpdateError = null
+        downloadedApk = null
+        updateDownloadJob = viewModelScope.launch {
+            try {
+                val dir = java.io.File(ctx.cacheDir, "updates")
+                val safeName = rel.apkName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "LoraOta-update.apk" }
+                val dest = java.io.File(dir, safeName)
+                withContext(Dispatchers.IO) {
+                    AppUpdater.downloadApk(rel, dest, tokens.get()) { pct ->
+                        viewModelScope.launch(Dispatchers.Main) { appUpdateProgress = pct }
+                    }
+                }
+                if (tokens.hasBuiltInGroup || tokens.hasSavedGroup) {
+                    if (keepGroupToken) tokens.persistGroupToken() else tokens.clearSavedGroup()
+                    syncTokenFlags()
+                }
+                downloadedApk = dest
+                onReady(dest)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appUpdateError = releasesWhy(e)
+            } finally {
+                appUpdateDownloading = false
+            }
+        }
+    }
+
+    fun refreshCacheStats() {
+        viewModelScope.launch {
+            val (count, bytes) = withContext(Dispatchers.IO) { Releases.cacheStats(ctx.filesDir) }
+            cacheFileCount = count
+            cacheBytes = bytes
+        }
+    }
+
+    fun clearFirmwareCache() = work {
+        withContext(Dispatchers.IO) {
+            Releases.clearCache(ctx.filesDir)
+            java.io.File(ctx.cacheDir, "updates").deleteRecursively()
+        }
+        downloadedApk = null
+        builds = emptyList()
+        releases = emptyList()
+        olderFound = emptyList()
+        releasesLoadedAt = 0L
+        upstreamLoadedAt = 0L
+        refreshCacheStats()
+        message = str(R.string.settings_cache_cleared)
+    }
+
     companion object {
         // 250 kHz fits the 869.4-869.65 MHz sub-band (10 % duty) only centred on 869.525
         val SIDE_PRESETS = listOf(
@@ -1919,6 +2115,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         scanJob?.cancel()
+        updateCheckJob?.cancel()
+        updateDownloadJob?.cancel()
         runCatching {
             (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.bluetoothLeScanner?.stopScan(scanCallback)
         }

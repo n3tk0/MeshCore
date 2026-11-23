@@ -3,6 +3,8 @@ package io.github.n3tk0.loraota.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -60,6 +62,7 @@ fun QueueScreen(vm: AppViewModel) {
     QueuePick(vm)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun QueuePick(vm: AppViewModel) {
     Hint(stringResource(R.string.q_hint_short), stringResource(R.string.q_hint))
@@ -80,10 +83,13 @@ private fun QueuePick(vm: AppViewModel) {
         }
     }
     val list = vm.queueCandidates()
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.q_pick_repeaters), style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-        if (list.isNotEmpty()) {
+    Text(
+        stringResource(R.string.q_pick_repeaters),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
+    if (list.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton(onClick = {
                 for (c in list) vm.queuePicked[hex(c.publicKey)] = (c.hops == 0)
             }, enabled = !vm.busy) { Text(stringResource(R.string.q_select_direct)) }

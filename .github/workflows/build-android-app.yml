@@ -66,6 +66,23 @@ jobs:
             echo "::warning::No LORAOTA_KEYSTORE_BASE64 secret: the APK is signed with a debug key"
           fi
 
+      # Note: after tagging lora-ota-app-vX.Y.Z, bump appVersionName in android/gradle.properties
+      # to the next version so subsequent main builds do not have a higher versionCode than the release.
+      - name: Compute Version
+        run: |
+          BASE_VER=$(grep -E '^appVersionName=' gradle.properties 2>/dev/null | cut -d= -f2 || echo "0.2.0")
+          if [ -z "$BASE_VER" ]; then BASE_VER="0.2.0"; fi
+          if [[ "${GITHUB_REF}" == refs/tags/lora-ota-app-* ]]; then
+            VER="${GITHUB_REF_NAME#lora-ota-app-}"
+            VER="${VER#v}"
+          else
+            VER="${BASE_VER}-build.${GITHUB_RUN_NUMBER}"
+          fi
+          CODE=$((100 + GITHUB_RUN_NUMBER))
+          echo "LORAOTA_VERSION_NAME=${VER}" >> "$GITHUB_ENV"
+          echo "LORAOTA_VERSION_CODE=${CODE}" >> "$GITHUB_ENV"
+          echo "App version: ${VER} (code ${CODE})"
+
       - name: Build APK
         env:
           LORAOTA_KEYSTORE_PASSWORD: ${{ secrets.LORAOTA_KEYSTORE_PASSWORD }}
