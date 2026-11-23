@@ -586,4 +586,127 @@
     <string name="working_connect">Connecting to the companion…</string>
     <string name="msg_connect_failed_detail">Could not connect to the companion (%1$s).</string>
     <string name="msg_scan_failed">Bluetooth scan failed (code %1$d). Try again in a few seconds.</string>
+    <!-- Auto-reconnect -->
+    <string name="ble_reconnecting">Connection lost — reconnecting (%1$d/%2$d)…</string>
+    <string name="msg_reconnected">Reconnected to the companion.</string>
+    <!-- Repeater 4-tab bottom navigation -->
+    <string name="rtab_overview">Overview</string>
+    <string name="rtab_health">Health</string>
+    <string name="rtab_firmware">Firmware</string>
+    <string name="rtab_tools">Tools</string>
+    <!-- CLI console -->
+    <string name="tools_cli">CLI</string>
+    <string name="tools_settings">Settings</string>
+    <string name="tools_backup_title">Backup &amp; Restore</string>
+    <string name="tools_backup_desc">Save the repeater’s current configuration to this phone or restore an earlier backup.</string>
+    <string name="cli_title_companion">CLI · %1$s</string>
+    <string name="cli_quick_commands">Quick commands</string>
+    <string name="cli_input_hint">Command (e.g. ver, get name, set tx 20)</string>
+    <string name="cli_send">Send</string>
+    <string name="cli_hist_prev">Previous command</string>
+    <string name="cli_hist_next">Next command</string>
+    <string name="cli_copy">Copy</string>
+    <string name="cli_copied">Copied</string>
+    <string name="cli_share">Share</string>
+    <string name="cli_clear">Clear</string>
+    <string name="cli_empty_repeater">Ready for repeater commands. Pick a quick command or type below.</string>
+    <string name="cli_empty_companion">Local companion CLI console. Pick a command or type below.</string>
+    <string name="cli_sent_no_reply">Command sent (device does not return a reply).</string>
+    <string name="cli_sent_stock_companion">Sent without reply capture (stock companion).</string>
+    <string name="cli_timeout">No reply from the repeater (timeout).</string>
+    <string name="cli_stock_warn_title">Stock companion firmware</string>
+    <string name="cli_stock_warn_body">This companion cannot capture remote CLI replies for the app. You can still send fire-and-forget commands (e.g. advert, reboot, clock sync), or flash our companion firmware for full interactive replies.</string>
+    <string name="cli_confirm_title">Confirm command</string>
+    <string name="cli_confirm_body">Are you sure you want to run “%1$s”?</string>
+    <string name="cli_confirm_run">Run</string>
+    <!-- Quick actions & Neighbors -->
+    <string name="qa_title">Quick actions</string>
+    <string name="qa_clock_sync">Sync clock</string>
+    <string name="qa_clock_sent">Clock sync request sent.</string>
+    <string name="qa_clock_already_ahead">Repeater clock is already in sync or ahead.</string>
+    <string name="qa_advert">Send Advert</string>
+    <string name="qa_advert_sent">Advert sent.</string>
+    <string name="qa_refresh_status">Refresh status</string>
+    <string name="qa_reboot">Reboot</string>
+    <string name="qa_reboot_title">Reboot repeater?</string>
+    <string name="qa_reboot_text">The repeater “%1$s” will restart immediately.</string>
+    <string name="qa_reboot_sent">Reboot command sent.</string>
+    <string name="neighbors_title">Neighbors</string>
+    <string name="neighbors_subtitle_tap">Tap to load nearby heard nodes</string>
+    <string name="neighbors_subtitle_loaded">Sorted by most recently heard</string>
+    <string name="neighbors_none">The repeater has not heard any neighbors yet.</string>
+    <string name="working_neighbors">Reading neighbors…</string>
+    <string name="ago_just_now">just now</string>
+    <string name="ago_secs">%1$ds ago</string>
+    <string name="ago_mins">%1$dm ago</string>
+    <string name="ago_hours">%1$dh ago</string>
+    <string name="ago_days">%1$dd ago</string>
+    <!-- Visual repeater settings editor -->
+    <string name="rset_title">Repeater settings</string>
+    <string name="rset_subtitle">Read and edit key repeater settings over LoRa</string>
+    <string name="rset_load">Load</string>
+    <string name="working_read_settings">Reading settings…</string>
+    <string name="working_save_settings">Saving changes…</string>
+    <string name="rset_loaded">Loaded %1$d parameters.</string>
+    <string name="rset_name">Repeater name</string>
+    <string name="rset_owner">Owner info</string>
+    <string name="rset_repeat">Packet repeating</string>
+    <string name="rset_tx">TX power (dBm)</string>
+    <string name="rset_advert_int">Local advert interval (min)</string>
+    <string name="rset_flood_advert_int">Flood advert interval (h)</string>
+    <string name="rset_lat">Latitude (lat)</string>
+    <string name="rset_lon">Longitude (lon)</string>
+    <string name="rset_guest_pw">Guest password</string>
+    <string name="rset_allow_ro">Read-only guests</string>
+    <string name="rset_multi_acks">Multi-ACKs</string>
+    <string name="rset_cad">Channel activity detection (CAD)</string>
+    <string name="rset_advanced">More parameters (%1$d)</string>
+    <string name="rset_save_changes">Save changes (%1$d)</string>
+    <string name="rset_reset">Discard</string>
+    <string name="rset_saved">Saved %1$d changes.</string>
+    <string name="rset_saved_restart">Saved %1$d changes. Some require a repeater reboot.</string>
+    <string name="rset_partial">Saved %1$d, failed %2$d (%3$s).</string>
+    <!-- Fleet view, pins & Health Sweep -->
+    <string name="section_pinned">Pinned</string>
+    <string name="pin_repeater">Pin to top</string>
+    <string name="unpin_repeater">Unpin</string>
+    <string name="sweep_open">Fleet health check</string>
+    <string name="sweep_title">Fleet health check</string>
+    <string name="sweep_hint_short">Checks the health of selected repeaters one by one.</string>
+    <string name="sweep_hint">Logs in sequentially to selected repeaters with saved passwords, runs selftest, and saves results on this phone.</string>
+    <plurals name="sweep_start">
+        <item quantity="one">Check %1$d repeater</item>
+        <item quantity="other">Check %1$d repeaters</item>
+    </plurals>
+    <string name="sweep_progress">Checking %1$d of %2$d…</string>
+    <string name="sweep_summary_title">Sweep summary</string>
+    <string name="sweep_summary_counts">OK: %1$d · Attention: %2$d · Problem/Failed: %3$d</string>
+    <string name="sweep_check_warnings">See warnings in Health</string>
+    <string name="sweep_new">New sweep</string>
+    <!-- Offline viewer -->
+    <string name="offline_short">Offline</string>
+    <string name="offline_title">Offline data</string>
+    <string name="offline_tab_health">Health</string>
+    <string name="offline_tab_backups">Backups</string>
+    <string name="offline_no_health">No saved health checks on this phone yet.</string>
+    <string name="offline_no_backups">No saved backups on this phone yet.</string>
+    <string name="offline_kind_repeater">Repeater</string>
+    <plurals name="offline_backup_items">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
+    <string name="backup_delete_text">This will remove the saved backup for “%1$s” from this phone.</string>
+    <string name="backup_export_hint">With a password the file is encrypted with all keys and passwords. Without one, secrets are omitted.</string>
+    <string name="backup_password_optional">File password (optional)</string>
+    <!-- CSV export, Field prep & Diagnostics -->
+    <string name="health_export_csv">Export CSV</string>
+    <string name="health_csv_saved">CSV file saved.</string>
+    <string name="field_prep_btn">Prepare for field</string>
+    <string name="field_prep_hint">Refreshes the release list and pre-caches the latest firmwares for known boards so they work offline in the field.</string>
+    <string name="field_prep_listing">Loading firmware release list…</string>
+    <string name="field_prep_empty">No firmwares available to cache.</string>
+    <string name="field_prep_downloading">Caching %1$d/%2$d: %3$s…</string>
+    <string name="field_prep_done">Ready for field: cached %1$d files for %2$d boards.</string>
+    <string name="diag_share">Share diagnostics</string>
+    <string name="diag_hint">Creates a text report with app version, BLE info, and logs. Passwords and tokens are redacted automatically.</string>
 </resources>

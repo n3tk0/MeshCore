@@ -587,4 +587,127 @@
     <string name="working_connect">Свързвам се с companion-а…</string>
     <string name="msg_connect_failed_detail">Не успях да се свържа с companion-а (%1$s).</string>
     <string name="msg_scan_failed">Bluetooth търсенето не тръгна (код %1$d). Опитай след няколко секунди.</string>
+    <!-- Auto-reconnect -->
+    <string name="ble_reconnecting">Връзката прекъсна — свързвам се отново (%1$d/%2$d)…</string>
+    <string name="msg_reconnected">Връзката с companion-а е възстановена.</string>
+    <!-- Repeater 4-tab bottom navigation -->
+    <string name="rtab_overview">Преглед</string>
+    <string name="rtab_health">Здраве</string>
+    <string name="rtab_firmware">Firmware</string>
+    <string name="rtab_tools">Инструменти</string>
+    <!-- CLI console -->
+    <string name="tools_cli">CLI</string>
+    <string name="tools_settings">Настройки</string>
+    <string name="tools_backup_title">Backup и възстановяване</string>
+    <string name="tools_backup_desc">Запази текущите настройки на рипитъра на телефона или възстанови от по-стар backup.</string>
+    <string name="cli_title_companion">CLI · %1$s</string>
+    <string name="cli_quick_commands">Бързи команди</string>
+    <string name="cli_input_hint">Команда (напр. ver, get name, set tx 20)</string>
+    <string name="cli_send">Изпрати</string>
+    <string name="cli_hist_prev">Предишна команда</string>
+    <string name="cli_hist_next">Следваща команда</string>
+    <string name="cli_copy">Копирай</string>
+    <string name="cli_copied">Копирано</string>
+    <string name="cli_share">Сподели</string>
+    <string name="cli_clear">Изчисти</string>
+    <string name="cli_empty_repeater">Готово за команди към рипитъра. Избери бърза команда или напиши долу.</string>
+    <string name="cli_empty_companion">Локална CLI конзола на companion-а. Избери команда или напиши долу.</string>
+    <string name="cli_sent_no_reply">Командата е изпратена (устройството не връща отговор).</string>
+    <string name="cli_sent_stock_companion">Изпратено без очакван отговор (стоков companion).</string>
+    <string name="cli_timeout">Няма отговор от рипитъра (timeout).</string>
+    <string name="cli_stock_warn_title">Стоков companion firmware</string>
+    <string name="cli_stock_warn_body">Този companion не препраща отдалечени CLI отговори към приложението. Можеш да изпращаш команди без отговор (напр. advert, reboot, clock sync), или да флашнеш нашия companion firmware за пълна конзола.</string>
+    <string name="cli_confirm_title">Потвърди командата</string>
+    <string name="cli_confirm_body">Сигурен ли си, че искаш да изпълниш „%1$s“?</string>
+    <string name="cli_confirm_run">Изпълни</string>
+    <!-- Quick actions & Neighbors -->
+    <string name="qa_title">Бързи действия</string>
+    <string name="qa_clock_sync">Синхр. час</string>
+    <string name="qa_clock_sent">Заявката за синхронизация на часа е изпратена.</string>
+    <string name="qa_clock_already_ahead">Часовникът на рипитъра вече е синхронизиран или е напред.</string>
+    <string name="qa_advert">Изпрати Advert</string>
+    <string name="qa_advert_sent">Advert е изпратен.</string>
+    <string name="qa_refresh_status">Обнови статус</string>
+    <string name="qa_reboot">Рестарт</string>
+    <string name="qa_reboot_title">Рестарт на рипитъра?</string>
+    <string name="qa_reboot_text">Рипитърът „%1$s“ ще се рестартира веднага.</string>
+    <string name="qa_reboot_sent">Командата за рестарт е изпратена.</string>
+    <string name="neighbors_title">Съседи</string>
+    <string name="neighbors_subtitle_tap">Докосни, за да заредиш чутите наоколо възли</string>
+    <string name="neighbors_subtitle_loaded">Подредени от най-скоро чутия</string>
+    <string name="neighbors_none">Рипитърът все още не е чул съседи.</string>
+    <string name="working_neighbors">Чета списъка със съседи…</string>
+    <string name="ago_just_now">току-що</string>
+    <string name="ago_secs">преди %1$d сек</string>
+    <string name="ago_mins">преди %1$d мин</string>
+    <string name="ago_hours">преди %1$d ч</string>
+    <string name="ago_days">преди %1$d д</string>
+    <!-- Visual repeater settings editor -->
+    <string name="rset_title">Настройки на рипитъра</string>
+    <string name="rset_subtitle">Четене и редакция на ключовите параметри по LoRa</string>
+    <string name="rset_load">Зареди</string>
+    <string name="working_read_settings">Чета настройките…</string>
+    <string name="working_save_settings">Записвам промените…</string>
+    <string name="rset_loaded">Заредени %1$d параметъра.</string>
+    <string name="rset_name">Име на рипитъра</string>
+    <string name="rset_owner">Информация за собственик</string>
+    <string name="rset_repeat">Препредаване (Repeat)</string>
+    <string name="rset_tx">TX мощност (dBm)</string>
+    <string name="rset_advert_int">Локален advert (мин)</string>
+    <string name="rset_flood_advert_int">Flood advert (ч)</string>
+    <string name="rset_lat">Географска ширина (lat)</string>
+    <string name="rset_lon">Географска дължина (lon)</string>
+    <string name="rset_guest_pw">Парола за гости</string>
+    <string name="rset_allow_ro">Гости само за четене</string>
+    <string name="rset_multi_acks">Multi-ACKs</string>
+    <string name="rset_cad">CAD проверка на ефира</string>
+    <string name="rset_advanced">Още параметри (%1$d)</string>
+    <string name="rset_save_changes">Запази промените (%1$d)</string>
+    <string name="rset_reset">Отмени</string>
+    <string name="rset_saved">Записани %1$d промени.</string>
+    <string name="rset_saved_restart">Записани %1$d промени. Някои изискват рестарт на рипитъра.</string>
+    <string name="rset_partial">Записани %1$d, неуспешни %2$d (%3$s).</string>
+    <!-- Fleet view, pins & Health Sweep -->
+    <string name="section_pinned">Закачени</string>
+    <string name="pin_repeater">Закачи най-отгоре</string>
+    <string name="unpin_repeater">Откачи</string>
+    <string name="sweep_open">Проверка на флота</string>
+    <string name="sweep_title">Проверка на флота</string>
+    <string name="sweep_hint_short">Проверява здравето на избраните рипитъри един по един.</string>
+    <string name="sweep_hint">Влиза последователно в избраните рипитъри със запазени пароли, пуска selftest и запазва резултатите на телефона.</string>
+    <plurals name="sweep_start">
+        <item quantity="one">Провери %1$d рипитър</item>
+        <item quantity="other">Провери %1$d рипитъра</item>
+    </plurals>
+    <string name="sweep_progress">Проверявам %1$d от %2$d…</string>
+    <string name="sweep_summary_title">Резултат от проверката</string>
+    <string name="sweep_summary_counts">ОК: %1$d · Внимание: %2$d · Проблем/Грешка: %3$d</string>
+    <string name="sweep_check_warnings">Виж предупрежденията в Здраве</string>
+    <string name="sweep_new">Нова проверка</string>
+    <!-- Offline viewer -->
+    <string name="offline_short">Офлайн</string>
+    <string name="offline_title">Офлайн данни</string>
+    <string name="offline_tab_health">Здраве</string>
+    <string name="offline_tab_backups">Backup-и</string>
+    <string name="offline_no_health">Няма запазени здравни проверки на този телефон.</string>
+    <string name="offline_no_backups">Няма запазени backup-и на този телефон.</string>
+    <string name="offline_kind_repeater">Рипитър</string>
+    <plurals name="offline_backup_items">
+        <item quantity="one">%1$d запис</item>
+        <item quantity="other">%1$d записа</item>
+    </plurals>
+    <string name="backup_delete_text">Ще изтриеш запазения backup за „%1$s“ от телефона.</string>
+    <string name="backup_export_hint">С парола файлът е криптиран с всички ключове и пароли. Без парола секретите се пропускат.</string>
+    <string name="backup_password_optional">Парола за файла (по избор)</string>
+    <!-- CSV export, Field prep & Diagnostics -->
+    <string name="health_export_csv">Експорт CSV</string>
+    <string name="health_csv_saved">CSV файлът е запазен.</string>
+    <string name="field_prep_btn">Подготви за терен</string>
+    <string name="field_prep_hint">Обновява списъка с релийзи и кешира последните фърмуери за познатите платки, за да работят без интернет на терен.</string>
+    <string name="field_prep_listing">Зареждам списъка с фърмуери…</string>
+    <string name="field_prep_empty">Няма налични фърмуери за кеширане.</string>
+    <string name="field_prep_downloading">Кеширам %1$d/%2$d: %3$s…</string>
+    <string name="field_prep_done">Готово за терен: кеширани %1$d файла за %2$d платки.</string>
+    <string name="diag_share">Сподели диагностика</string>
+    <string name="diag_hint">Подготвя текстов отчет за версията, BLE и логовете. Паролите и токените се премахват автоматично.</string>
 </resources>

@@ -319,7 +319,7 @@ fun SettingsScreen(
         }
     }
 
-    // ---- 4. Firmware cache ----
+    // ---- 4. Firmware cache & Field preparation ----
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.settings_cache), style = MaterialTheme.typography.titleMedium)
@@ -333,26 +333,63 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            OutlinedButton(
-                onClick = { vm.clearFirmwareCache() },
-                enabled = !vm.busy && vm.cacheBytes > 0L,
-            ) {
-                Text(stringResource(R.string.settings_cache_clear))
+            vm.fieldPrepProgress?.let { p ->
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(p, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { vm.prepareForField() },
+                    enabled = !vm.busy,
+                ) {
+                    Text(stringResource(R.string.field_prep_btn))
+                }
+                OutlinedButton(
+                    onClick = { vm.clearFirmwareCache() },
+                    enabled = !vm.busy && vm.cacheBytes > 0L,
+                ) {
+                    Text(stringResource(R.string.settings_cache_clear))
+                }
+            }
+            Text(
+                stringResource(R.string.field_prep_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
-    // ---- 5. About ----
+    // ---- 5. Diagnostics & About ----
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(stringResource(R.string.settings_about), style = MaterialTheme.typography.titleMedium)
             Text("LoRa OTA · v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
             Text(vm.repo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { runCatching { uri.openUri("https://github.com/${vm.repo}") } }) {
-                Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.settings_open_repo))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val report = vm.buildDiagnosticReport()
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "LoRa OTA Diagnostics v${BuildConfig.VERSION_NAME}")
+                            putExtra(Intent.EXTRA_TEXT, report)
+                        }
+                        runCatching { ctx.startActivity(Intent.createChooser(intent, ctx.getString(R.string.diag_share))) }
+                    },
+                ) {
+                    Text(stringResource(R.string.diag_share))
+                }
+                TextButton(onClick = { runCatching { uri.openUri("https://github.com/${vm.repo}") } }) {
+                    Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.settings_open_repo))
+                }
             }
+            Text(
+                stringResource(R.string.diag_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 

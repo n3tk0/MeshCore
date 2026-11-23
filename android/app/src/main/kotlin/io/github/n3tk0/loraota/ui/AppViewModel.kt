@@ -81,6 +81,11 @@ import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.HistorySeries
 import io.github.n3tk0.loraota.ota.SelfTest
+import io.github.n3tk0.loraota.security.PasswordStore
+import io.github.n3tk0.loraota.tools.CliHelper
+import io.github.n3tk0.loraota.tools.DiagnosticReport
+import io.github.n3tk0.loraota.tools.NeighborEntry
+import io.github.n3tk0.loraota.tools.NeighborsParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -90,7 +95,25 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE, SETTINGS }
+enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE, SETTINGS, CLI, SWEEP, OFFLINE }
+
+/** Bottom navigation tabs inside a logged-in repeater (Step.UPDATE). */
+enum class RepeaterTab { OVERVIEW, HEALTH, FIRMWARE, TOOLS }
+
+/** One line in the interactive CLI console transcript. */
+enum class CliLineKind { COMMAND, REPLY, INFO, ERROR }
+data class CliLine(val timeMs: Long, val text: String, val kind: CliLineKind)
+
+/** Status of one repeater inside a batch Health Sweep. */
+enum class SweepStatus { PENDING, RUNNING, OK, WARN, DANGER, FAILED }
+data class SweepEntry(
+    val key: String,
+    val name: String,
+    val status: SweepStatus = SweepStatus.PENDING,
+    val detail: String = "",
+    val batteryText: String = "",
+    val warnings: List<HealthWarning> = emptyList(),
+)
 
 /** What the flash screen writes: the repeater the app is logged in to, or the companion itself. */
 enum class FlashTarget { REPEATER, COMPANION }
@@ -258,6 +281,81 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var downloadedApk by mutableStateOf<java.io.File?>(null)
     var cacheFileCount by mutableStateOf(0)
     var cacheBytes by mutableStateOf(0L)
+    var fieldPrepProgress by mutableStateOf<String?>(null)
+
+    // BLE auto-reconnect
+    var reconnecting by mutableStateOf(false)
+    var reconnectAttempt by mutableStateOf(0)
+    private var reconnectJob: Job? = null
+    private var disconnectingIntentionally = false
+
+    // repeater 4-tab navigation & tools
+    var repeaterTab by mutableStateOf(RepeaterTab.OVERVIEW)
+    private var repeaterHealthLoadedFor: String? = null
+
+    // CLI console (repeater remote & companion local)
+    var cliKind by mutableStateOf(DeviceKind.REPEATER)
+    private var cliReturn = Step.REPEATER
+    val repeaterCliLog = mutableStateListOf<CliLine>()
+    val companionCliLog = mutableStateListOf<CliLine>()
+    val cliCommandHistory = mutableStateListOf<String>()
+
+    // quick actions & neighbors
+    val neighbors = mutableStateListOf<NeighborEntry>()
+    var neighborsLoaded by mutableStateOf(false)
+    var neighborsError by mutableStateOf<String?>(null)
+    var lastClockReply by mutableStateOf<String?>(null)
+    private val allContactsByKey = HashMap<String, String>()
+
+    // visual repeater settings editor
+    val repeaterSettings = mutableStateMapOf<String, String>()
+    val repeaterSettingsDraft = mutableStateMapOf<String, String>()
+    var repeaterSettingsLoaded by mutableStateOf(false)
+    var repeaterSettingsProgress by mutableStateOf<Pair<Int, Int>?>(null)
+
+    // fleet view (pins + latest health per device) & batch health sweep
+    private val pinPrefs get() = ctx.getSharedPreferences("pins", Context.MODE_PRIVATE)
+    val pinnedKeys = mutableStateListOf<String>().apply { addAll(pinPrefs.all.keys) }
+    val fleetHealth = mutableStateMapOf<String, HealthStore.Record>()
+    private val deviceNamePrefs get() = ctx.getSharedPreferences("device_names", Context.MODE_PRIVATE)
+    val knownDeviceNames = mutableStateMapOf<String, String>().apply {
+        for ((k, v) in deviceNamePrefs.all) if (v is String) put(k, v)
+    }
+
+    val sweepPicked = mutableStateMapOf<String, Boolean>()
+    val sweepEntries = mutableStateListOf<SweepEntry>()
+    var sweepRunning by mutableStateOf(false)
+    var sweepFinished by mutableStateOf(false)
+
+    // offline viewer (saved health checks & backups without companion)
+    private var offlineReturn = Step.COMPANION
+    val offlineHealth = mutableStateMapOf<String, List<HealthStore.Record>>()
+    val offlineBackups = mutableStateListOf<Backup>()
+
+    private fun finishDisconnect(flashMsg: String?) {
+        reconnecting = false
+        reconnectAttempt = 0
+        patchJob?.cancel()
+        calculatingPatch = false
+        confirmUpdate = false
+        flashPlan = null
+        queueAsk = false
+        loginSheet = null
+        sweepRunning = false
+        message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
+        messageIsError = true
+        when (step) {
+            Step.SETTINGS -> settingsReturn = Step.COMPANION
+            Step.OFFLINE -> offlineReturn = Step.COMPANION
+            else -> step = Step.COMPANION
+        }
+    }
+
+    fun cancelReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        if (reconnecting) finishDisconnect(null)
+    }
 
     init {
         BuildWatcher.resume(app)
@@ -274,7 +372,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         link.onDisconnect = {
             viewModelScope.launch {
-                if (step != Step.COMPANION && !flashingCompanion) {
+                val activeConnection = step != Step.COMPANION &&
+                    !(step == Step.OFFLINE && offlineReturn == Step.COMPANION) &&
+                    !(step == Step.SETTINGS && settingsReturn == Step.COMPANION)
+                if (activeConnection && !flashingCompanion && !disconnectingIntentionally && !reconnecting) {
                     val wasUpdating = phase != null
                     val wasFlashingRepeater = flashPercent >= 0
                     // a repeater's Bluetooth / Wi-Fi flash does not need the companion: let it finish on screen first;
@@ -282,19 +383,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // (the link is already gone so no ABORT is sent, and resumable is kept below)
                     if (wasFlashingRepeater) job?.join() else job?.cancelAndJoin()
                     if (wasUpdating) resumable = true
-                    patchJob?.cancel()
-                    calculatingPatch = false
-                    confirmUpdate = false
-                    flashPlan = null
-                    queueAsk = false
-                    loginSheet = null
                     val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
-                    message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_disconnected)}" else str(R.string.msg_disconnected)
-                    messageIsError = true
-                    if (step == Step.SETTINGS) {
-                        settingsReturn = Step.COMPANION
+                    val dev = companionDevice
+                    val btOn = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter?.isEnabled == true
+                    if (dev != null && btOn) {
+                        reconnecting = true
+                        reconnectJob = viewModelScope.launch {
+                            var ok = false
+                            try {
+                                for (attempt in 1..2) {
+                                    reconnectAttempt = attempt
+                                    delay(if (attempt == 1) 1200L else 2200L)
+                                    val connected = runCatching { link.connect(dev) }.getOrDefault(false)
+                                    if (connected) {
+                                        val started = runCatching {
+                                            companion.start()
+                                            companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
+                                            true
+                                        }.getOrDefault(false)
+                                        if (started) {
+                                            ok = true
+                                            break
+                                        } else {
+                                            withContext(NonCancellable) { link.closeAndRefresh() }
+                                        }
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } finally {
+                                reconnectJob = null
+                            }
+                            if (ok) {
+                                reconnecting = false
+                                reconnectAttempt = 0
+                                message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_reconnected)}" else str(R.string.msg_reconnected)
+                                messageIsError = false
+                            } else {
+                                finishDisconnect(flashMsg)
+                            }
+                        }
                     } else {
-                        step = Step.COMPANION
+                        finishDisconnect(flashMsg)
                     }
                 }
             }
@@ -302,7 +432,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun work(block: suspend () -> Unit) {
-        if (busy) return
+        if (busy || reconnecting) return
         busy = true
         message = ""
         messageIsError = false
@@ -463,6 +593,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             lastCompanionAddress = device.address
             lastCompanionName = companionName
             companionPrefs.edit().putString("address", device.address).putString("name", companionName).apply()
+            deviceKey(DeviceKind.COMPANION).takeIf { it.isNotEmpty() }?.let { rememberDeviceName(it, companionName) }
             runCatching { companion.deviceInfo() }.onSuccess { (model, version) ->
                 companionModel = model
                 companionVersion = version
@@ -478,12 +609,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshRepeaters() = work { loadRepeaters() }
 
+    private fun rememberDeviceName(keyHex: String, name: String) {
+        if (keyHex.isEmpty() || name.isBlank()) return
+        if (knownDeviceNames[keyHex] != name) {
+            knownDeviceNames[keyHex] = name
+            deviceNamePrefs.edit().putString(keyHex, name).apply()
+        }
+    }
+
+    fun refreshFleetHealth() {
+        viewModelScope.launch {
+            val latest = withContext(Dispatchers.IO) { healthStore.allLatest() }
+            fleetHealth.clear()
+            fleetHealth.putAll(latest)
+        }
+    }
+
     private suspend fun loadRepeaters() {
-        val list = companion.contacts().filter { it.isRepeater }
+        val all = companion.contacts()
+        allContactsByKey.clear()
+        val editor = deviceNamePrefs.edit()
+        var namesChanged = false
+        for (c in all) {
+            val k = hex(c.publicKey)
+            if (c.name.isNotBlank()) {
+                allContactsByKey[k] = c.name
+                if (knownDeviceNames[k] != c.name) {
+                    knownDeviceNames[k] = c.name
+                    editor.putString(k, c.name)
+                    namesChanged = true
+                }
+            }
+        }
+        if (namesChanged) editor.apply()
+        val list = all.filter { it.isRepeater }
             .sortedWith(compareBy<Contact>({ it.hops ?: Int.MAX_VALUE }, { it.name.lowercase() }))
         repeaters.clear()
         // the ones next to us first: only those can be updated
         repeaters.addAll(list)
+        val latest = withContext(Dispatchers.IO) { healthStore.allLatest() }
+        fleetHealth.clear()
+        fleetHealth.putAll(latest)
     }
 
     /** An update or a flash is writing: the screen shows only its progress, Back asks first. */
@@ -493,6 +659,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun back() {
         when (step) {
             Step.SETTINGS -> closeSettings()
+            Step.OFFLINE -> closeOffline()
+            Step.CLI -> closeCli()
+            Step.SWEEP -> closeSweep()
             Step.FLASH -> closeFlash()
             Step.BACKUP -> closeBackup()
             Step.HEALTH -> closeHealth()
@@ -505,6 +674,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() {
         loginSheet = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnecting = false
+        reconnectAttempt = 0
+        disconnectingIntentionally = true
         busy = true
         step = Step.COMPANION
         devices.clear()   // a new connect waits for a new scan, after the clean-up
@@ -516,6 +690,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 link.closeAndRefresh()
             } finally {
                 busy = false
+                disconnectingIntentionally = false
             }
             if (step == Step.COMPANION && !scanning && devices.isEmpty()) scan()
         }
@@ -570,6 +745,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         total = 0
         phase = null
         log.clear()
+        repeaterTab = RepeaterTab.OVERVIEW
+        repeaterHealthLoadedFor = null
+        neighbors.clear()
+        neighborsLoaded = false
+        neighborsError = null
+        lastClockReply = null
+        repeaterSettings.clear()
+        repeaterSettingsDraft.clear()
+        repeaterSettingsLoaded = false
+        repeaterSettingsProgress = null
+        repeaterCliLog.clear()
         firmwareTab = 0
         flashTarget = FlashTarget.REPEATER
         flashImage = null
@@ -628,25 +814,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return companion.awaitResponse(tag, 12_000)?.let { RepeaterStatus.parse(it) }
     }
 
-    // admin passwords, per repeater, only on this phone (the app has no backup)
-    private val passwords get() = ctx.getSharedPreferences("passwords", Context.MODE_PRIVATE)
+    // admin passwords, per repeater, encrypted at rest with Android Keystore (migrating legacy plaintext automatically)
+    private val passwordStore by lazy { PasswordStore(ctx) }
 
     // which repeaters have one, read once: the list asks for every row
-    private val savedKeys = mutableStateListOf<String>().apply { addAll(passwords.all.keys) }
+    private val savedKeys = mutableStateListOf<String>().apply { addAll(passwordStore.keys()) }
 
     fun hasSavedPassword(contact: Contact) = hex(contact.publicKey) in savedKeys
 
-    fun savedPassword(contact: Contact): String? = passwords.getString(hex(contact.publicKey), null)
+    fun savedPassword(contact: Contact): String? = passwordStore.get(hex(contact.publicKey))
 
     private fun savePassword(contact: Contact, password: String) {
         val key = hex(contact.publicKey)
-        passwords.edit().putString(key, password).apply()
+        passwordStore.set(key, password)
         if (key !in savedKeys) savedKeys.add(key)
     }
 
     fun forgetPassword(contact: Contact) {
         val key = hex(contact.publicKey)
-        passwords.edit().remove(key).apply()
+        passwordStore.remove(key)
         savedKeys.remove(key)
     }
 
@@ -1471,8 +1657,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val healthDeviceName get() = if (healthKind == DeviceKind.COMPANION) companionName else repeater?.name ?: ""
 
-    fun openHealth(kind: DeviceKind) {
-        healthReturn = step
+    private fun resetHealthState(kind: DeviceKind) {
         healthKind = kind
         selfTest = null
         selfTestMissing = false
@@ -1490,6 +1675,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         battChecked = false
         message = ""
         healthRecords = emptyList()
+    }
+
+    fun openHealth(kind: DeviceKind) {
+        healthReturn = step
+        resetHealthState(kind)
         step = Step.HEALTH
         refreshHealth()
     }
@@ -1498,7 +1688,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         job?.cancel()
         queuedHistoryKeys.clear()
         loadingHistoryKey = null
-        step = healthReturn
+        if (step == Step.UPDATE) {
+            repeaterTab = RepeaterTab.FIRMWARE
+        } else {
+            step = healthReturn
+        }
     }
 
     /** The self test and battery config (for a repeater); telemetry charts are fetched on demand when opened. */
@@ -1532,10 +1726,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         healthStore.add(dev, line)
                         healthStore.records(dev)
                     }
+                    healthRecords.lastOrNull()?.let { fleetHealth[dev] = it }
                     selfTest = t
                     warnings.addAll(HealthCheck.warnings(t, before))
                 }
             }
+            repeaterHealthLoadedFor = dev
         }
         healthWarnings = warnings.toList()
         historyCache.clear()
@@ -2142,6 +2338,488 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = str(R.string.settings_cache_cleared)
     }
 
+    // ---- repeater 4-tab navigation ----
+
+    fun selectRepeaterTab(tab: RepeaterTab) {
+        if (busy && tab != repeaterTab) return
+        repeaterTab = tab
+        if (tab == RepeaterTab.HEALTH) {
+            val dev = deviceKey(DeviceKind.REPEATER)
+            if (repeaterHealthLoadedFor != dev || healthKind != DeviceKind.REPEATER) {
+                resetHealthState(DeviceKind.REPEATER)
+                refreshHealth()
+            }
+        } else if (tab == RepeaterTab.TOOLS && canReadRepeater == null) {
+            viewModelScope.launch {
+                canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            }
+        }
+    }
+
+    // ---- interactive CLI console (repeater remote & companion local) ----
+
+    fun openCompanionCli() {
+        cliReturn = step
+        cliKind = DeviceKind.COMPANION
+        message = ""
+        step = Step.CLI
+    }
+
+    fun closeCli() {
+        step = cliReturn
+    }
+
+    fun clearCliLog(isCompanion: Boolean) {
+        if (isCompanion) companionCliLog.clear() else repeaterCliLog.clear()
+    }
+
+    private fun appendCli(isCompanion: Boolean, text: String, kind: CliLineKind) {
+        val list = if (isCompanion) companionCliLog else repeaterCliLog
+        list.add(CliLine(System.currentTimeMillis(), text, kind))
+        while (list.size > 200) list.removeAt(0)
+    }
+
+    fun sendCliCommand(rawCommand: String, isCompanion: Boolean) = work {
+        val cmd = rawCommand.trim()
+        if (cmd.isEmpty()) return@work
+        if (cliCommandHistory.firstOrNull() != cmd) {
+            cliCommandHistory.add(0, cmd)
+            while (cliCommandHistory.size > 50) cliCommandHistory.removeAt(cliCommandHistory.lastIndex)
+        }
+        appendCli(isCompanion, cmd, CliLineKind.COMMAND)
+        working = cmd
+
+        if (isCompanion) {
+            if (CliHelper.expectsNoReply(cmd)) {
+                runCatching { companion.cli(cmd) }
+                appendCli(true, str(R.string.cli_sent_no_reply), CliLineKind.INFO)
+                return@work
+            }
+            try {
+                val reply = companion.cli(cmd).trim()
+                appendCli(true, reply.ifEmpty { "OK" }, CliLineKind.REPLY)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appendCli(true, e.message ?: e.toString(), CliLineKind.ERROR)
+            }
+            return@work
+        }
+
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        if (CliHelper.expectsNoReply(cmd)) {
+            companion.sendRemoteCli(r, cmd)
+            appendCli(false, str(R.string.cli_sent_no_reply), CliLineKind.INFO)
+            return@work
+        }
+        if (canReadRepeater != true) {
+            // Stock companion firmware: fire-and-forget command without captured reply
+            companion.sendRemoteCli(r, cmd)
+            appendCli(false, str(R.string.cli_sent_stock_companion), CliLineKind.INFO)
+            return@work
+        }
+        val reply = try {
+            RepeaterBackup.ask(companion, r, cmd)
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+        }
+        if (reply == null) {
+            appendCli(false, str(R.string.cli_timeout), CliLineKind.ERROR)
+        } else {
+            appendCli(false, reply.trim(), CliLineKind.REPLY)
+        }
+    }
+
+    // ---- repeater quick actions & neighbors ----
+
+    fun syncRepeaterClock() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        working = str(R.string.qa_clock_sync)
+        if (canReadRepeater != true) {
+            companion.sendRemoteCli(r, "clock sync")
+            lastClockReply = str(R.string.cli_sent_stock_companion)
+            message = str(R.string.qa_clock_sent)
+            return@work
+        }
+        val reply = try {
+            RepeaterBackup.ask(companion, r, "clock sync")?.trim()
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+        }
+        when {
+            reply == null -> throw Exception(str(R.string.health_no_answer))
+            reply.contains("cannot go backwards", ignoreCase = true) -> {
+                lastClockReply = reply
+                message = str(R.string.qa_clock_already_ahead)
+            }
+            reply.startsWith("OK", ignoreCase = true) -> {
+                lastClockReply = reply
+                message = reply
+            }
+            else -> {
+                lastClockReply = reply
+                throw Exception(reply)
+            }
+        }
+    }
+
+    fun sendRepeaterAdvert(flood: Boolean = true) = work {
+        val r = repeater ?: return@work
+        val cmd = if (flood) "advert" else "advert.zerohop"
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        working = str(R.string.qa_advert)
+        if (canReadRepeater != true) {
+            companion.sendRemoteCli(r, cmd)
+            message = str(R.string.qa_advert_sent)
+            return@work
+        }
+        val reply = try {
+            RepeaterBackup.ask(companion, r, cmd)?.trim()
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+        }
+        message = reply ?: str(R.string.qa_advert_sent)
+    }
+
+    fun rebootRepeater() = work {
+        val r = repeater ?: return@work
+        working = str(R.string.qa_reboot)
+        companion.sendRemoteCli(r, "reboot")
+        message = str(R.string.qa_reboot_sent)
+    }
+
+    fun loadNeighbors() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        if (canReadRepeater != true) {
+            neighborsError = str(R.string.health_no_capture)
+            neighborsLoaded = true
+            return@work
+        }
+        working = str(R.string.working_neighbors)
+        val reply = try {
+            RepeaterBackup.ask(companion, r, "neighbors")
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+        }
+        if (reply == null) {
+            neighborsError = str(R.string.health_no_answer)
+            neighborsLoaded = true
+            return@work
+        }
+        neighborsError = null
+        neighbors.clear()
+        neighbors.addAll(NeighborsParser.parse(reply, allContactsByKey))
+        neighborsLoaded = true
+    }
+
+    // ---- visual repeater settings editor ----
+
+    fun loadRepeaterSettings() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        working = str(R.string.working_read_settings)
+        val items = try {
+            RepeaterBackup.read(companion, r, withOta = false) { i, total ->
+                repeaterSettingsProgress = i to total
+                working = "${str(R.string.working_read_settings)} ($i/$total)"
+            }
+        } finally {
+            repeaterSettingsProgress = null
+        }
+        repeaterSettings.clear()
+        repeaterSettingsDraft.clear()
+        for (item in items) {
+            repeaterSettings[item.id] = item.value
+            repeaterSettingsDraft[item.id] = item.value
+        }
+        repeaterSettingsLoaded = true
+        message = str(R.string.rset_loaded, items.size)
+    }
+
+    fun updateRepeaterSettingDraft(key: String, value: String) {
+        repeaterSettingsDraft[key] = value
+    }
+
+    fun resetRepeaterSettingsDraft() {
+        repeaterSettingsDraft.clear()
+        repeaterSettingsDraft.putAll(repeaterSettings)
+    }
+
+    fun changedRepeaterSettings(): Map<String, String> =
+        repeaterSettingsDraft.filter { (k, v) -> repeaterSettings[k] != v }
+
+    fun saveRepeaterSettings() = work {
+        val r = repeater ?: return@work
+        val changed = changedRepeaterSettings()
+        if (changed.isEmpty()) return@work
+        val items = changed.map { (k, v) -> BackupItem(GROUP_SETTING, k, k, v) }
+        val result = try {
+            RepeaterBackup.apply(companion, r, items) { i, total ->
+                repeaterSettingsProgress = i to total
+                working = "${str(R.string.working_save_settings)} ($i/$total)"
+            }
+        } finally {
+            repeaterSettingsProgress = null
+        }
+        val failedKeys = result.failed.map { it.first.id }.toSet()
+        for ((k, v) in changed) {
+            if (k !in failedKeys) repeaterSettings[k] = v
+        }
+        if (result.failed.isEmpty()) {
+            val needsRestart = changed.keys.any { it in RepeaterBackup.NEEDS_RESTART }
+            message = if (needsRestart) str(R.string.rset_saved_restart, result.done)
+            else str(R.string.rset_saved, result.done)
+        } else {
+            val firstErr = result.failed.first()
+            message = str(R.string.rset_partial, result.done, result.failed.size, "${firstErr.first.id}: ${firstErr.second}")
+            messageIsError = true
+        }
+    }
+
+    // ---- fleet view (pins) & batch health sweep ----
+
+    fun isPinned(contact: Contact) = hex(contact.publicKey) in pinnedKeys
+
+    fun togglePin(contact: Contact) {
+        val key = hex(contact.publicKey)
+        if (key in pinnedKeys) {
+            pinnedKeys.remove(key)
+            pinPrefs.edit().remove(key).apply()
+        } else {
+            pinnedKeys.add(key)
+            pinPrefs.edit().putBoolean(key, true).apply()
+        }
+    }
+
+    fun openSweep() {
+        message = ""
+        sweepEntries.clear()
+        sweepFinished = false
+        sweepRunning = false
+        for (c in repeaters) {
+            if (hasSavedPassword(c)) {
+                val k = hex(c.publicKey)
+                if (k !in sweepPicked) sweepPicked[k] = true
+            }
+        }
+        step = Step.SWEEP
+        if (canReadRepeater == null) {
+            viewModelScope.launch {
+                canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            }
+        }
+    }
+
+    fun closeSweep() {
+        job?.cancel()
+        sweepRunning = false
+        step = Step.REPEATER
+    }
+
+    fun resetSweep() {
+        sweepEntries.clear()
+        sweepFinished = false
+        sweepRunning = false
+    }
+
+    fun startSweep() = work {
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        val selected = repeaters.filter { hasSavedPassword(it) && sweepPicked[hex(it.publicKey)] == true }
+        if (selected.isEmpty()) return@work
+        sweepEntries.clear()
+        for (c in selected) sweepEntries.add(SweepEntry(hex(c.publicKey), c.name))
+        sweepRunning = true
+        sweepFinished = false
+        try {
+            for ((idx, c) in selected.withIndex()) {
+                val key = hex(c.publicKey)
+                val pw = savedPassword(c)
+                if (pw.isNullOrEmpty()) {
+                    sweepEntries[idx] = sweepEntries[idx].copy(status = SweepStatus.FAILED, detail = str(R.string.q_login_once))
+                    continue
+                }
+                sweepEntries[idx] = sweepEntries[idx].copy(status = SweepStatus.RUNNING, detail = str(R.string.working_login))
+                working = "${c.name} (${idx + 1}/${selected.size})"
+                val entry = try {
+                    val learned = signIn(c, pw) ?: c
+                    val line = try {
+                        RepeaterBackup.ask(companion, learned, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
+                    } finally {
+                        withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+                    }
+                    if (line == null) {
+                        SweepEntry(key, c.name, SweepStatus.FAILED, str(R.string.health_no_answer))
+                    } else {
+                        val parsed = SelfTest.parse(line)
+                        if (parsed == null) {
+                            SweepEntry(key, c.name, SweepStatus.WARN, str(R.string.health_no_selftest))
+                        } else {
+                            val before = withContext(Dispatchers.IO) { healthStore.records(key) }.lastOrNull()?.let { SelfTest.parse(it.line) }
+                            val updated = withContext(Dispatchers.IO) {
+                                healthStore.add(key, line)
+                                healthStore.records(key)
+                            }
+                            updated.lastOrNull()?.let { fleetHealth[key] = it }
+                            val warns = HealthCheck.warnings(parsed, before)
+                            val probs = HealthCheck.problems(warns)
+                            val st = when {
+                                probs.any { it.severity == io.github.n3tk0.loraota.ota.HealthSeverity.DANGER } -> SweepStatus.DANGER
+                                probs.any { it.severity == io.github.n3tk0.loraota.ota.HealthSeverity.WARN } || !parsed.ok -> SweepStatus.WARN
+                                else -> SweepStatus.OK
+                            }
+                            val batt = buildList {
+                                parsed.batteryMv?.let { add(String.format(java.util.Locale.ROOT, "%.2f V", it / 1000.0)) }
+                                parsed.batteryPercent?.let { add("$it%") }
+                            }.joinToString(" · ")
+                            val detail = if (st == SweepStatus.OK) str(R.string.health_ok)
+                            else parsed.problems.joinToString(", ").ifEmpty { str(R.string.sweep_check_warnings) }
+                            SweepEntry(key, c.name, st, detail, batt, warns)
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+                    throw e
+                } catch (e: Exception) {
+                    SweepEntry(key, c.name, SweepStatus.FAILED, e.message ?: e.toString())
+                } finally {
+                    withContext(NonCancellable) { runCatching { companion.restorePath(c) } }
+                }
+                sweepEntries[idx] = entry
+            }
+            sweepFinished = true
+        } finally {
+            for (i in sweepEntries.indices) {
+                if (sweepEntries[i].status == SweepStatus.RUNNING) {
+                    sweepEntries[i] = sweepEntries[i].copy(status = SweepStatus.FAILED, detail = str(R.string.msg_stopped))
+                }
+            }
+            sweepRunning = false
+        }
+    }
+
+    // ---- offline viewer (saved backups & past health checks without companion) ----
+
+    fun openOffline() {
+        if (step != Step.OFFLINE) offlineReturn = step
+        message = ""
+        step = Step.OFFLINE
+        loadOfflineData()
+    }
+
+    fun closeOffline() {
+        step = offlineReturn
+    }
+
+    fun loadOfflineData() {
+        viewModelScope.launch {
+            val (healthMap, allBackups) = withContext(Dispatchers.IO) {
+                healthStore.allRecords() to backupStore.all()
+            }
+            offlineHealth.clear()
+            offlineHealth.putAll(healthMap)
+            offlineBackups.clear()
+            offlineBackups.addAll(allBackups)
+            for (b in allBackups) {
+                if (b.deviceKey.isNotEmpty() && b.deviceName.isNotBlank() && b.deviceKey !in knownDeviceNames) {
+                    knownDeviceNames[b.deviceKey] = b.deviceName
+                }
+            }
+        }
+    }
+
+    fun deleteOfflineBackup(b: Backup) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { backupStore.delete(b) }
+            offlineBackups.remove(b)
+        }
+    }
+
+    // ---- field preparation ("Подготви за терен") & shareable diagnostics ----
+
+    fun prepareForField() = work {
+        fieldPrepProgress = str(R.string.field_prep_listing)
+        working = str(R.string.field_prep_listing)
+        try {
+            val listing = withContext(Dispatchers.IO) { Releases.listDetailed(repo, ctx.filesDir) }
+            releases = listing.files
+            releasesLoadedAt = System.currentTimeMillis()
+            val all = listing.files
+            if (all.isEmpty()) throw Exception(str(R.string.field_prep_empty))
+
+            // Identify relevant boards: previously cached/built/active boards, else latest release's repeater boards
+            val knownEnvs = LinkedHashSet<String>()
+            builds.mapTo(knownEnvs) { it.env }
+            oldImage?.env?.let { knownEnvs.add(it) }
+            newImage?.env?.let { knownEnvs.add(it) }
+            flashImage?.env?.let { knownEnvs.add(it) }
+            if (companionModel.isNotEmpty()) {
+                all.firstOrNull { BoardCheck.fitsCompanion(it.env) && BoardCheck.matches(it.env, companionModel) == true }
+                    ?.let { knownEnvs.add(it.env) }
+            }
+            val latestRel = all.first().release
+            val toDownload = if (knownEnvs.isNotEmpty()) {
+                knownEnvs.mapNotNull { env -> all.firstOrNull { it.env == env } }
+            } else {
+                all.filter { it.release == latestRel && it.hasLoraOta }.take(6)
+            }
+            var downloaded = 0
+            for ((i, f) in toDownload.withIndex()) {
+                val stepText = str(R.string.field_prep_downloading, i + 1, toDownload.size, f.env.replace('_', ' '))
+                fieldPrepProgress = stepText
+                working = stepText
+                withContext(Dispatchers.IO) {
+                    if (f.hasLoraOta) {
+                        Releases.download(f, ctx.filesDir)
+                        downloaded++
+                    }
+                    if (f.hasDfu) {
+                        Releases.downloadDfu(f, ctx.filesDir)
+                        downloaded++
+                    }
+                }
+            }
+            refreshCacheStats()
+            message = str(R.string.field_prep_done, downloaded, toDownload.size)
+        } finally {
+            fieldPrepProgress = null
+        }
+    }
+
+    fun buildDiagnosticReport(): String = DiagnosticReport.build(
+        appVersion = BuildConfig.VERSION_NAME,
+        versionCode = BuildConfig.VERSION_CODE,
+        isGroupApk = BuildConfig.IS_GROUP_APK,
+        androidVersion = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+        deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}",
+        companionName = companionName,
+        companionModel = companionModel,
+        companionVersion = companionVersion,
+        companionOta = companionOta,
+        bleLastError = link.lastError,
+        repeaterName = repeater?.name,
+        repeaterIdent = info?.ident,
+        logs = log.toList(),
+        cliHistory = (companionCliLog + repeaterCliLog).map { "[${it.kind}] ${it.text}" },
+    )
+
     companion object {
         // 250 kHz fits the 869.4-869.65 MHz sub-band (10 % duty) only centred on 869.525
         val SIDE_PRESETS = listOf(
@@ -2167,6 +2845,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         scanJob?.cancel()
+        reconnectJob?.cancel()
         updateCheckJob?.cancel()
         updateDownloadJob?.cancel()
         runCatching {

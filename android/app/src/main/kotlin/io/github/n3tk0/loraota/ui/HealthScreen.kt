@@ -1,5 +1,7 @@
 package io.github.n3tk0.loraota.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -50,6 +53,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -64,6 +68,7 @@ import io.github.n3tk0.loraota.ota.HealthSeverity
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.HistorySeries
 import io.github.n3tk0.loraota.ota.SelfTest
+import io.github.n3tk0.loraota.tools.TelemetryCsv
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -427,8 +432,27 @@ private fun format(field: Int, v: Int): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
+    val ctx = LocalContext.current
     var historyOpen by rememberSaveable(vm.healthDeviceName, defaultExpanded) { mutableStateOf(defaultExpanded) }
     val expandedFields = remember(vm.healthDeviceName, vm.healthGeneration) { mutableStateMapOf<Int, Boolean>() }
+    var csvExportPending by remember { mutableStateOf<Pair<HistorySeries, String>?>(null) }
+    val createCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        val pending = csvExportPending
+        csvExportPending = null
+        if (uri != null && pending != null) {
+            val (s, label) = pending
+            val csv = TelemetryCsv.export(vm.healthDeviceName, label, unit(s.field), s)
+            runCatching {
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray(Charsets.UTF_8)) }
+            }.onSuccess {
+                vm.message = ctx.getString(R.string.health_csv_saved)
+                vm.messageIsError = false
+            }.onFailure {
+                vm.message = it.message ?: it.toString()
+                vm.messageIsError = true
+            }
+        }
+    }
 
     Card(Modifier.fillMaxWidth()) {
         Row(
@@ -489,6 +513,7 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
         val series = vm.historyCache[key]
         val isLoading = vm.loadingHistoryKey == key || key in vm.queuedHistoryKeys
         val lastVal = series?.values?.lastOrNull { it != null }
+        val metricLabel = stringResource(nameRes)
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth()) {
@@ -506,7 +531,7 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 ) {
                     Text(
-                        stringResource(nameRes),
+                        metricLabel,
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.weight(1f),
                     )
@@ -560,7 +585,21 @@ private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
                             series.values.none { it != null } -> {
                                 Text(stringResource(R.string.health_no_values), style = MaterialTheme.typography.bodyMedium)
                             }
-                            else -> Chart(series)
+                            else -> {
+                                Chart(series)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = {
+                                        val dev = vm.healthDeviceName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "device" }
+                                        val ringTag = if (series.ring == HistorySeries.RING_DAY) "24h" else "7d"
+                                        csvExportPending = series to metricLabel
+                                        createCsv.launch("${dev}_f${series.field}_$ringTag.csv")
+                                    }) {
+                                        Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(stringResource(R.string.health_export_csv))
+                                    }
+                                }
+                            }
                         }
                     }
                 }

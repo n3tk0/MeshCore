@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,14 +22,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -37,11 +42,13 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,6 +58,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -65,6 +74,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,6 +85,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -96,10 +109,14 @@ import io.github.n3tk0.loraota.github.BuildService
 import io.github.n3tk0.loraota.github.GitHubApi
 import io.github.n3tk0.loraota.github.WorkflowInput
 import io.github.n3tk0.loraota.ota.FirmwareFile
+import io.github.n3tk0.loraota.ota.HealthCheck
+import io.github.n3tk0.loraota.ota.HealthSeverity
 import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.Phase
+import io.github.n3tk0.loraota.ota.SelfTest
 import io.github.n3tk0.loraota.ota.hex
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -113,13 +130,17 @@ fun AppScreen(
     var flashNoStop by remember { mutableStateOf(false) }  // Back during a flash
     fun back() = when {
         vm.step == Step.SETTINGS -> vm.closeSettings()
+        vm.step == Step.OFFLINE && !vm.busy -> vm.closeOffline()
         vm.running && vm.flashPercent >= 0 -> flashNoStop = true
         vm.running -> askStop = true
-        vm.canStop -> vm.stop()   // a login, a scan for the device...: just stop waiting
+        vm.canStop -> vm.stop()   // a login, a CLI command, a scan...: just stop waiting
         vm.busy -> {}             // a disconnect's clean-up: it ends on its own
         else -> vm.back()
     }
     BackHandler(enabled = vm.step != Step.COMPANION || vm.canStop) { back() }
+
+    val showRepeaterNav = vm.step == Step.UPDATE && !vm.running
+    val isRepeaterHealthTab = vm.step == Step.UPDATE && !vm.running && vm.repeaterTab == RepeaterTab.HEALTH
 
     Scaffold(
         modifier = Modifier.imePadding(),
@@ -136,6 +157,9 @@ fun AppScreen(
                             Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
                             Step.QUEUE -> stringResource(R.string.q_title)
                             Step.SETTINGS -> stringResource(R.string.settings_title)
+                            Step.CLI -> stringResource(R.string.cli_title_companion, vm.companionName)
+                            Step.SWEEP -> stringResource(R.string.sweep_title)
+                            Step.OFFLINE -> stringResource(R.string.offline_title)
                         },
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
@@ -146,11 +170,19 @@ fun AppScreen(
                     }
                 },
                 actions = {
+                    if (vm.step == Step.COMPANION) {
+                        TextButton(onClick = { vm.openOffline() }, enabled = !vm.busy) {
+                            Text(stringResource(R.string.offline_short))
+                        }
+                    }
                     if (vm.step == Step.REPEATER) IconButton(onClick = { vm.refreshRepeaters() }, enabled = !vm.busy) {
                         Icon(Icons.Default.Refresh, stringResource(R.string.refresh))
                     }
-                    if (vm.step == Step.HEALTH) IconButton(onClick = { vm.refreshHealth() }, enabled = !vm.busy) {
+                    if (vm.step == Step.HEALTH || isRepeaterHealthTab) IconButton(onClick = { vm.refreshHealth() }, enabled = !vm.busy) {
                         Icon(Icons.Default.Refresh, stringResource(R.string.health_refresh))
+                    }
+                    if (vm.step == Step.OFFLINE) IconButton(onClick = { vm.loadOfflineData() }) {
+                        Icon(Icons.Default.Refresh, stringResource(R.string.refresh))
                     }
                     if (vm.step != Step.SETTINGS) {
                         AppMenu(vm = vm, enabled = !vm.busy)
@@ -158,33 +190,65 @@ fun AppScreen(
                 },
             )
         },
-        bottomBar = { BottomStatus(vm) },
+        bottomBar = {
+            Column {
+                BottomStatus(vm, hasNavBarBelow = showRepeaterNav)
+                if (showRepeaterNav) RepeaterBottomNav(vm)
+            }
+        },
     ) { pad ->
+        val pullAction: (() -> Unit)? = when {
+            vm.step == Step.REPEATER && !vm.busy -> { { vm.refreshRepeaters() } }
+            (vm.step == Step.HEALTH || isRepeaterHealthTab) && !vm.busy -> { { vm.refreshHealth() } }
+            vm.step == Step.OFFLINE -> { { vm.loadOfflineData() } }
+            else -> null
+        }
+
         Surface(modifier = Modifier.fillMaxSize().padding(pad), color = MaterialTheme.colorScheme.background) {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if ((vm.step == Step.COMPANION || vm.step == Step.REPEATER) && !vm.updateBannerDismissed) {
-                    vm.availableUpdate?.let { rel ->
-                        UpdateAvailableBanner(
-                            version = rel.version,
-                            onOpen = { vm.openSettings(checkNow = false) },
-                            onDismiss = { vm.updateBannerDismissed = true },
-                        )
+            val body: @Composable () -> Unit = {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (vm.reconnecting) {
+                        ReconnectingBanner(vm)
                     }
+                    if ((vm.step == Step.COMPANION || vm.step == Step.REPEATER) && !vm.updateBannerDismissed) {
+                        vm.availableUpdate?.let { rel ->
+                            UpdateAvailableBanner(
+                                version = rel.version,
+                                onOpen = { vm.openSettings(checkNow = false) },
+                                onDismiss = { vm.updateBannerDismissed = true },
+                            )
+                        }
+                    }
+                    when (vm.step) {
+                        Step.COMPANION -> CompanionStep(vm)
+                        Step.REPEATER -> RepeaterStep(vm)
+                        Step.UPDATE -> if (vm.running) RunningView(vm) else RepeaterHome(vm)
+                        Step.FLASH -> if (vm.running) RunningView(vm) else FlashContent(vm)
+                        Step.BACKUP -> BackupScreen(vm)
+                        Step.HEALTH -> HealthScreen(vm)
+                        Step.QUEUE -> QueueScreen(vm)
+                        Step.SETTINGS -> SettingsScreen(vm, themeMode, setThemeMode, setLang)
+                        Step.CLI -> CliConsole(vm, isCompanion = true)
+                        Step.SWEEP -> SweepScreen(vm)
+                        Step.OFFLINE -> OfflineScreen(vm)
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
-                when (vm.step) {
-                    Step.COMPANION -> CompanionStep(vm)
-                    Step.REPEATER -> RepeaterStep(vm)
-                    Step.UPDATE -> if (vm.running) RunningView(vm) else RepeaterHome(vm)
-                    Step.FLASH -> if (vm.running) RunningView(vm) else FlashContent(vm)
-                    Step.BACKUP -> BackupScreen(vm)
-                    Step.HEALTH -> HealthScreen(vm)
-                    Step.QUEUE -> QueueScreen(vm)
-                    Step.SETTINGS -> SettingsScreen(vm, themeMode, setThemeMode, setLang)
+            }
+            if (pullAction != null) {
+                PullToRefreshBox(
+                    isRefreshing = vm.busy && vm.loadingHistoryKey == null &&
+                        (vm.step == Step.REPEATER || vm.step == Step.HEALTH || isRepeaterHealthTab),
+                    onRefresh = pullAction,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    body()
                 }
-                Spacer(Modifier.height(24.dp))
+            } else {
+                body()
             }
         }
     }
@@ -224,12 +288,65 @@ fun AppScreen(
 }
 
 @Composable
+private fun ReconnectingBanner(vm: AppViewModel) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text(
+                stringResource(R.string.ble_reconnecting, vm.reconnectAttempt, 2),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { vm.cancelReconnect() }) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    }
+}
+
+@Composable
+private fun RepeaterBottomNav(vm: AppViewModel) {
+    val tabs = listOf(
+        Triple(RepeaterTab.OVERVIEW, R.string.rtab_overview, Icons.Default.Home),
+        Triple(RepeaterTab.HEALTH, R.string.rtab_health, Icons.Default.Favorite),
+        Triple(RepeaterTab.FIRMWARE, R.string.rtab_firmware, Icons.Default.Build),
+        Triple(RepeaterTab.TOOLS, R.string.rtab_tools, Icons.Default.Settings),
+    )
+    NavigationBar {
+        for ((tab, labelRes, icon) in tabs) {
+            NavigationBarItem(
+                selected = vm.repeaterTab == tab,
+                onClick = { vm.selectRepeaterTab(tab) },
+                enabled = (!vm.busy && !vm.reconnecting) || vm.repeaterTab == tab,
+                icon = { Icon(icon, contentDescription = stringResource(labelRes)) },
+                label = { Text(stringResource(labelRes), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun AppMenu(vm: AppViewModel, enabled: Boolean) {
     var open by remember { mutableStateOf(false) }
     IconButton(onClick = { open = true }, enabled = enabled) {
         Icon(Icons.Default.MoreVert, stringResource(R.string.menu))
     }
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        if (vm.step != Step.OFFLINE) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.offline_title)) },
+                leadingIcon = { Icon(Icons.Default.Info, null) },
+                onClick = { open = false; vm.openOffline() },
+            )
+        }
         DropdownMenuItem(
             text = { Text(stringResource(R.string.settings_title)) },
             leadingIcon = { Icon(Icons.Default.Settings, null) },
@@ -275,20 +392,23 @@ private fun UpdateAvailableBanner(version: String, onOpen: () -> Unit, onDismiss
 
 /** Progress, last result, and primary sticky action button always in sight at the bottom. */
 @Composable
-private fun BottomStatus(vm: AppViewModel) {
+private fun BottomStatus(vm: AppViewModel, hasNavBarBelow: Boolean = false) {
     val showBusy = vm.busy && !vm.running
     // the login sheet shows them itself, not twice
     if (vm.step == Step.REPEATER && vm.loginSheet != null) return
     // the restore's button stays in sight however long the list of differences
     val restoreBar = vm.step == Step.BACKUP && vm.restoreFrom != null && vm.restoreRows.isNotEmpty()
+    val onFirmwareTab = vm.step == Step.UPDATE && !vm.running && vm.repeaterTab == RepeaterTab.FIRMWARE
     val loraInfo = vm.info?.takeIf {
-        vm.step == Step.UPDATE && !vm.running && vm.firmwareTab == 0 &&
-            (vm.loraSource != Source.BUILD || vm.newImage != null)
+        onFirmwareTab && vm.firmwareTab == 0 && (vm.loraSource != Source.BUILD || vm.newImage != null)
     }
-    val flashBar = ((vm.step == Step.UPDATE && vm.firmwareTab == 1) || vm.step == Step.FLASH) &&
+    val flashBar = ((onFirmwareTab && vm.firmwareTab == 1) || vm.step == Step.FLASH) &&
         !vm.running && !vm.flashDone && (vm.flashSource != Source.BUILD || vm.flashImage != null)
     if (!showBusy && vm.message.isEmpty() && !restoreBar && loraInfo == null && !flashBar) return
-    Surface(tonalElevation = 3.dp, modifier = Modifier.navigationBarsPadding()) {
+    Surface(
+        tonalElevation = 3.dp,
+        modifier = if (hasNavBarBelow) Modifier else Modifier.navigationBarsPadding(),
+    ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (showBusy) Busy(vm)
             Message(vm)
@@ -385,7 +505,7 @@ private fun CompanionStep(vm: AppViewModel) {
 
 // ---- repeaters ----
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun RepeaterStep(vm: AppViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -416,7 +536,14 @@ private fun RepeaterStep(vm: AppViewModel) {
             }
         }
     }
-    if (vm.companionOta) OutlinedButton(onClick = { vm.openQueue() }, enabled = !vm.busy) { Text(stringResource(R.string.q_open)) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (vm.companionOta) {
+            OutlinedButton(onClick = { vm.openQueue() }, enabled = !vm.busy) { Text(stringResource(R.string.q_open)) }
+        }
+        if (vm.repeaters.isNotEmpty()) {
+            OutlinedButton(onClick = { vm.openSweep() }, enabled = !vm.busy) { Text(stringResource(R.string.sweep_open)) }
+        }
+    }
     if (vm.repeaters.size > 4 || query.isNotEmpty()) {
         OutlinedTextField(
             value = query, onValueChange = { query = it }, singleLine = true,
@@ -430,11 +557,14 @@ private fun RepeaterStep(vm: AppViewModel) {
     }
     if (vm.repeaters.isEmpty()) Text(stringResource(R.string.no_repeaters))
     val shown = vm.repeaters.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
-    // next to you first: only those can be updated over LoRa
+    val pinned = shown.filter { vm.isPinned(it) }
+    val unpinned = shown.filter { !vm.isPinned(it) }
+    // pinned first, then direct (next to you: only those can be updated over LoRa), multi-hop, unknown
     val groups = listOf(
-        R.string.section_direct to shown.filter { it.hops == 0 },
-        R.string.section_hops to shown.filter { (it.hops ?: 0) > 0 },
-        R.string.section_unknown to shown.filter { it.hops == null },
+        R.string.section_pinned to pinned,
+        R.string.section_direct to unpinned.filter { it.hops == 0 },
+        R.string.section_hops to unpinned.filter { (it.hops ?: 0) > 0 },
+        R.string.section_unknown to unpinned.filter { it.hops == null },
     )
     for ((title, list) in groups) {
         if (list.isEmpty()) continue
@@ -464,34 +594,86 @@ private fun RepeaterStep(vm: AppViewModel) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit, onEditPassword: () -> Unit) {
     val hasPw = vm.hasSavedPassword(c)
+    val pinned = vm.isPinned(c)
+    val healthRec = vm.fleetHealth[hex(c.publicKey)]
+    val parsedHealth = remember(healthRec?.line) { healthRec?.let { SelfTest.parse(it.line) } }
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
     Card(
         modifier = Modifier.fillMaxWidth().clickable(enabled = !vm.busy, onClick = onClick),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(c.name, style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     RouteBadge(c.hops)
-                    if (hasPw) {
-                        Text(stringResource(R.string.tap_to_login), style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (healthRec != null && parsedHealth != null) {
+                        val problems = HealthCheck.problems(HealthCheck.warnings(parsedHealth, null))
+                        val dotColor = when {
+                            problems.any { it.severity == HealthSeverity.DANGER } -> MaterialTheme.colorScheme.error
+                            problems.any { it.severity == HealthSeverity.WARN } || !parsedHealth.ok ->
+                                if (dark) Color(0xFFFFB74D) else Color(0xFF9A5B00)
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                        val ageMs = (System.currentTimeMillis() - healthRec.time).coerceAtLeast(0L)
+                        val ageText = formatRelativeAge(ageMs)
+                        val battText = parsedHealth.batteryPercent?.let { "$it%" }
+                            ?: parsedHealth.batteryMv?.let { String.format(Locale.ROOT, "%.2fV", it / 1000.0) }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
+                            Text(
+                                listOfNotNull(battText, ageText).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else if (hasPw) {
+                        Text(
+                            stringResource(R.string.tap_to_login),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
             if (hasPw) {
-                TextButton(onClick = onEditPassword, enabled = !vm.busy) {
-                    Icon(Icons.Default.Lock, stringResource(R.string.password_saved), modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.change_password), style = MaterialTheme.typography.labelMedium)
+                IconButton(onClick = onEditPassword, enabled = !vm.busy) {
+                    Icon(Icons.Default.Lock, stringResource(R.string.change_password), modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            IconButton(onClick = { vm.togglePin(c) }, enabled = !vm.busy) {
+                Icon(
+                    Icons.Default.Star,
+                    stringResource(if (pinned) R.string.unpin_repeater else R.string.pin_repeater),
+                    modifier = Modifier.size(20.dp),
+                    tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun formatRelativeAge(ageMs: Long): String {
+    val mins = (ageMs / 60_000L).toInt()
+    val hours = (ageMs / 3_600_000L).toInt()
+    val days = (ageMs / 86_400_000L).toInt()
+    return when {
+        mins < 1 -> stringResource(R.string.ago_just_now)
+        mins < 60 -> stringResource(R.string.ago_mins, mins)
+        hours < 24 -> stringResource(R.string.ago_hours, hours)
+        else -> stringResource(R.string.ago_days, days)
     }
 }
 
@@ -573,6 +755,7 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
                 TextButton(onClick = { vm.openFlash(FlashTarget.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.flash_open)) }
                 TextButton(onClick = { vm.openBackup(DeviceKind.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.backup_open)) }
                 TextButton(onClick = { vm.openHealth(DeviceKind.COMPANION) }, enabled = !vm.busy) { Text(stringResource(R.string.health_open)) }
+                TextButton(onClick = { vm.openCompanionCli() }, enabled = !vm.busy) { Text(stringResource(R.string.tools_cli)) }
             }
         }
     }
@@ -582,21 +765,28 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
 
 @Composable
 private fun RepeaterHome(vm: AppViewModel) {
-    StatusCard(vm)
-    vm.info?.let { RunningCard(it) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { vm.openHealth(DeviceKind.REPEATER) }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.health_open))
+    when (vm.repeaterTab) {
+        RepeaterTab.OVERVIEW -> {
+            StatusCard(vm)
+            vm.info?.let { RunningCard(it) }
+            QuickActionsCard(vm)
+            NeighborsCard(vm)
         }
-        OutlinedButton(onClick = { vm.openBackup(DeviceKind.REPEATER) }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.backup_open))
+        RepeaterTab.HEALTH -> {
+            HealthScreen(vm)
+        }
+        RepeaterTab.FIRMWARE -> {
+            vm.info?.let { RunningCard(it) }
+            TabRow(selectedTabIndex = vm.firmwareTab) {
+                Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
+                Tab(selected = vm.firmwareTab == 1, onClick = { vm.showFlashTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_flash)) })
+            }
+            if (vm.firmwareTab == 0) LoraTab(vm) else FlashContent(vm)
+        }
+        RepeaterTab.TOOLS -> {
+            RepeaterToolsTab(vm)
         }
     }
-    TabRow(selectedTabIndex = vm.firmwareTab) {
-        Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
-        Tab(selected = vm.firmwareTab == 1, onClick = { vm.showFlashTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_flash)) })
-    }
-    if (vm.firmwareTab == 0) LoraTab(vm) else FlashContent(vm)
 }
 
 @Composable
