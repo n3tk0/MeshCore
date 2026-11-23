@@ -766,4 +766,8 @@
     </plurals>
     <string name="field_prep_pick_title">Choose boards to cache offline</string>
     <string name="field_prep_cache_selected">Cache (%1$d)</string>
+    <string name="cli_snippet_secret_blocked">Commands containing passwords cannot be saved as quick snippets.</string>
+    <string name="tempradio_confirm_title">Apply temporary radio parameters?</string>
+    <string name="tempradio_confirm_body">This will send “%1$s”. Contact with the repeater will drop for %2$s min unless your companion matches these settings, after which the repeater reverts automatically.</string>
+    <string name="rset_gps_waiting">Acquiring GPS fix…</string>
 </resources>

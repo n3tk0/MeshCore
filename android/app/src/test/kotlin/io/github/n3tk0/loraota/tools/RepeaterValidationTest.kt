@@ -23,8 +23,10 @@ class RepeaterValidationTest {
         assertEquals(SettingValidationError.TX_RANGE, RepeaterSettingsValidator.validate("tx", "abc"))
 
         assertNull(RepeaterSettingsValidator.validate("lat", "42.69770"))
+        assertNull(RepeaterSettingsValidator.validate("lat", "42,69770"))
         assertEquals(SettingValidationError.LAT_RANGE, RepeaterSettingsValidator.validate("lat", "95.0"))
         assertNull(RepeaterSettingsValidator.validate("lon", "23.32190"))
+        assertNull(RepeaterSettingsValidator.validate("lon", "23,32190"))
         assertEquals(SettingValidationError.LON_RANGE, RepeaterSettingsValidator.validate("lon", "-181.0"))
 
         assertNull(RepeaterSettingsValidator.validate("advert.interval", "0"))
@@ -38,14 +40,21 @@ class RepeaterValidationTest {
         assertEquals(SettingValidationError.FLOOD_ADVERT_RANGE, RepeaterSettingsValidator.validate("flood.advert.interval", "200"))
 
         assertNull(RepeaterSettingsValidator.validate("af", "1.5"))
+        assertNull(RepeaterSettingsValidator.validate("af", "1,5"))
         assertEquals(SettingValidationError.AF_RANGE, RepeaterSettingsValidator.validate("af", "12"))
+
+        assertEquals("42.69770", RepeaterSettingsValidator.normalizeForSave("lat", " 42,69770 "))
+        assertEquals("23.32190", RepeaterSettingsValidator.normalizeForSave("lon", "23,32190"))
+        assertEquals("1.5", RepeaterSettingsValidator.normalizeForSave("af", " 1,5 "))
+        assertEquals("22", RepeaterSettingsValidator.normalizeForSave("tx", " 22 "))
+        assertEquals("Vitosha-R1", RepeaterSettingsValidator.normalizeForSave("name", " Vitosha-R1 "))
     }
 
     @Test
     fun buildsValidTempRadioCommandAndRejectsInvalidParams() {
         val cmd = RepeaterSettingsValidator.buildTempRadioCommand("869,525", "250", "7", "5", "5")
         assertNotNull(cmd)
-        assertEquals("tempradio 869.525 250.0 7 5 5", cmd)
+        assertEquals("tempradio 869.525,250.0,7,5,5", cmd)
 
         assertNull(RepeaterSettingsValidator.buildTempRadioCommand("50", "250", "7", "5", "5"))
         assertNull(RepeaterSettingsValidator.buildTempRadioCommand("869.5", "250", "13", "5", "5"))

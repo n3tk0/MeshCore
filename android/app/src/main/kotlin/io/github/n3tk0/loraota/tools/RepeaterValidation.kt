@@ -21,9 +21,19 @@ enum class SettingValidationError {
 object RepeaterSettingsValidator {
     private val FORBIDDEN_NAME_CHARS = setOf('[', ']', '\\', ':', ',', '?', '*')
 
+    private val DECIMAL_KEYS = setOf("lat", "lon", "af")
+    private val TRIM_KEYS = setOf("name", "tx", "lat", "lon", "advert.interval", "flood.advert.interval", "af")
+
+    /** Normalizes decimal commas and outer whitespace before sending `set <key> <value>` to C `atof`/`atoi`. */
+    fun normalizeForSave(key: String, rawValue: String): String = when (key) {
+        in DECIMAL_KEYS -> rawValue.trim().replace(',', '.')
+        in TRIM_KEYS -> rawValue.trim()
+        else -> rawValue
+    }
+
     /** Validates a single repeater setting before sending `set <key> <value>` over LoRa. */
     fun validate(key: String, rawValue: String): SettingValidationError? {
-        val v = rawValue.trim()
+        val v = normalizeForSave(key, rawValue)
         return when (key) {
             "name" -> when {
                 v.isEmpty() -> SettingValidationError.NAME_EMPTY
@@ -60,7 +70,8 @@ object RepeaterSettingsValidator {
     }
 
     /**
-     * Validates `tempradio <freq> <bw> <sf> <cr> <mins>` parameters matching `CommonCLI.cpp:271-285`.
+     * Validates `tempradio <freq>,<bw>,<sf>,<cr>,<mins>` parameters matching `CommonCLI.cpp:271-285`
+     * (which parses via `Utils::parseTextParts` with default `,` separator).
      * Returns the ready CLI command string, or `null` if any parameter is out of bounds.
      */
     fun buildTempRadioCommand(
@@ -80,7 +91,7 @@ object RepeaterSettingsValidator {
         if (sf !in 5..12) return null
         if (cr !in 5..8) return null
         if (mins !in 1..60) return null
-        return String.format(Locale.ROOT, "tempradio %.3f %.1f %d %d %d", freq, bw, sf, cr, mins)
+        return String.format(Locale.ROOT, "tempradio %.3f,%.1f,%d,%d,%d", freq, bw, sf, cr, mins)
     }
 }
 

@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
+import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -47,6 +50,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,6 +67,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.tools.NeighborEntry
@@ -368,11 +373,70 @@ private fun validationMessage(err: SettingValidationError): String = when (err) 
 }
 
 @SuppressLint("MissingPermission")
-private fun readBestPhoneLocation(ctx: Context): Location? {
+private fun readLastKnownLocation(ctx: Context): Location? {
     val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
     val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
     return providers.mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
         .maxByOrNull { it.time }
+}
+
+private fun hasAnyLocationPermission(ctx: Context): Boolean =
+    ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+@SuppressLint("MissingPermission")
+private fun requestPhoneLocation(
+    ctx: Context,
+    signal: CancellationSignal,
+    onResult: (Location?) -> Unit,
+) {
+    val cached = readLastKnownLocation(ctx)
+    val freshEnough = cached != null && (System.currentTimeMillis() - cached.time) < 120_000L && cached.accuracy <= 50f
+    if (freshEnough) {
+        onResult(cached)
+        return
+    }
+    val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+    if (lm == null) {
+        onResult(cached)
+        return
+    }
+    val provider = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        .firstOrNull { p -> runCatching { lm.isProviderEnabled(p) }.getOrDefault(false) }
+    if (provider == null) {
+        onResult(cached)
+        return
+    }
+    var settled = false
+    val handler = Handler(Looper.getMainLooper())
+    val timeout = Runnable {
+        if (!settled && !signal.isCanceled) {
+            settled = true
+            signal.cancel()
+            onResult(readLastKnownLocation(ctx) ?: cached)
+        }
+    }
+    handler.postDelayed(timeout, 6_000L)
+    runCatching {
+        LocationManagerCompat.getCurrentLocation(
+            lm,
+            provider,
+            signal,
+            ContextCompat.getMainExecutor(ctx),
+        ) { loc ->
+            if (!settled && !signal.isCanceled) {
+                settled = true
+                handler.removeCallbacks(timeout)
+                onResult(loc ?: readLastKnownLocation(ctx) ?: cached)
+            }
+        }
+    }.onFailure {
+        if (!settled && !signal.isCanceled) {
+            settled = true
+            handler.removeCallbacks(timeout)
+            onResult(cached)
+        }
+    }
 }
 
 @Composable
@@ -380,21 +444,36 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
     val ctx = LocalContext.current
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
     var confirmRadioChange by remember { mutableStateOf(false) }
+    var gpsLoading by remember { mutableStateOf(false) }
+    var gpsSignal by remember { mutableStateOf<CancellationSignal?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose { gpsSignal?.cancel() }
+    }
 
     fun applyPhoneGps() {
-        val loc = readBestPhoneLocation(ctx)
-        if (loc == null) {
-            vm.message = ctx.getString(R.string.rset_gps_unavailable)
-            vm.messageIsError = true
-        } else {
-            vm.updateRepeaterSettingDraft("lat", String.format(Locale.ROOT, "%.5f", loc.latitude))
-            vm.updateRepeaterSettingDraft("lon", String.format(Locale.ROOT, "%.5f", loc.longitude))
-            vm.message = ctx.getString(R.string.rset_gps_filled)
-            vm.messageIsError = false
+        gpsSignal?.cancel()
+        val sig = CancellationSignal()
+        gpsSignal = sig
+        gpsLoading = true
+        requestPhoneLocation(ctx, sig) { loc ->
+            gpsLoading = false
+            if (loc == null) {
+                vm.message = ctx.getString(R.string.rset_gps_unavailable)
+                vm.messageIsError = true
+            } else {
+                vm.updateRepeaterSettingDraft("lat", String.format(Locale.ROOT, "%.5f", loc.latitude))
+                vm.updateRepeaterSettingDraft("lon", String.format(Locale.ROOT, "%.5f", loc.longitude))
+                vm.message = ctx.getString(R.string.rset_gps_filled)
+                vm.messageIsError = false
+            }
         }
     }
 
-    val gpsPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val gpsPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        val granted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            results[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
+            hasAnyLocationPermission(ctx)
         if (granted) {
             applyPhoneGps()
         } else {
@@ -497,14 +576,22 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                     if (spec.key == "lon" && "lat" in vm.repeaterSettings) {
                         OutlinedButton(
                             onClick = {
-                                val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                                if (granted) applyPhoneGps() else gpsPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                if (hasAnyLocationPermission(ctx)) {
+                                    applyPhoneGps()
+                                } else {
+                                    gpsPermLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        ),
+                                    )
+                                }
                             },
-                            enabled = !vm.busy,
+                            enabled = !vm.busy && !gpsLoading,
                         ) {
                             Icon(Icons.Default.LocationOn, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.rset_use_phone_gps))
+                            Text(stringResource(if (gpsLoading) R.string.rset_gps_waiting else R.string.rset_use_phone_gps))
                         }
                     }
                 }
@@ -612,6 +699,7 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
 @Composable
 private fun TempRadioCard(vm: AppViewModel) {
     var expanded by rememberSaveable(vm.repeater?.name) { mutableStateOf(false) }
+    var confirmApply by remember(vm.repeater?.name) { mutableStateOf(false) }
     var freq by rememberSaveable { mutableStateOf("869.525") }
     var bw by rememberSaveable { mutableStateOf("250") }
     var sf by rememberSaveable { mutableStateOf("7") }
@@ -680,7 +768,7 @@ private fun TempRadioCard(vm: AppViewModel) {
                         )
                     }
                     Button(
-                        onClick = { if (cmd != null) vm.applyTempRadio(cmd) },
+                        onClick = { if (cmd != null) confirmApply = true },
                         enabled = !vm.busy && cmd != null,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
@@ -689,5 +777,22 @@ private fun TempRadioCard(vm: AppViewModel) {
                 }
             }
         }
+    }
+
+    if (confirmApply && cmd != null) {
+        AlertDialog(
+            onDismissRequest = { confirmApply = false },
+            title = { Text(stringResource(R.string.tempradio_confirm_title)) },
+            text = { Text(stringResource(R.string.tempradio_confirm_body, cmd, mins.trim())) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmApply = false
+                    vm.applyTempRadio(cmd)
+                }) { Text(stringResource(R.string.tempradio_apply), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmApply = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 }

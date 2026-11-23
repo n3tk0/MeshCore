@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import io.github.n3tk0.loraota.backup.Backup
 import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.HealthStore
+import io.github.n3tk0.loraota.tools.CliHelper
 import io.github.n3tk0.loraota.tools.NeighborEntry
 import org.json.JSONArray
 
@@ -22,13 +23,16 @@ class CliSnippetStore(ctx: Context) {
         val raw = prefs.getString(KEY, null) ?: return emptyList()
         return runCatching {
             val arr = JSONArray(raw)
-            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+            (0 until arr.length())
+                .mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() && !CliHelper.isSecretWriteCommand(s) } }
         }.getOrDefault(emptyList())
     }
 
     fun save(list: List<String>) {
         val arr = JSONArray()
-        for (s in list) arr.put(s)
+        for (s in list) {
+            if (!CliHelper.isSecretWriteCommand(s)) arr.put(s)
+        }
         prefs.edit().putString(KEY, arr.toString()).apply()
     }
 
@@ -62,12 +66,13 @@ class RepeaterToolsState(ctx: Context) {
     var settingsLoaded by mutableStateOf(false)
     var settingsProgress by mutableStateOf<Pair<Int, Int>?>(null)
 
-    fun addSnippet(raw: String) {
+    fun addSnippet(raw: String): Boolean {
         val cmd = raw.trim()
-        if (cmd.isEmpty() || cmd in customCliSnippets) return
+        if (cmd.isEmpty() || cmd in customCliSnippets || CliHelper.isSecretWriteCommand(cmd)) return false
         customCliSnippets.add(cmd)
         while (customCliSnippets.size > 16) customCliSnippets.removeAt(0)
         snippetStore.save(customCliSnippets)
+        return true
     }
 
     fun removeSnippet(cmd: String) {

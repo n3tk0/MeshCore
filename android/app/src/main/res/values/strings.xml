@@ -767,4 +767,8 @@
     </plurals>
     <string name="field_prep_pick_title">Избери платки за офлайн кеш</string>
     <string name="field_prep_cache_selected">Кеширай (%1$d)</string>
+    <string name="cli_snippet_secret_blocked">Команди с пароли не могат да се запазват като бързи команди.</string>
+    <string name="tempradio_confirm_title">Приложи временни радио параметри?</string>
+    <string name="tempradio_confirm_body">Ще се изпрати „%1$s“. Връзката с рипитъра ще прекъсне за %2$s мин, освен ако companion-ът не ползва същите параметри, след което рипитърът ще върне старите.</string>
+    <string name="rset_gps_waiting">Търся GPS позиция…</string>
 </resources>

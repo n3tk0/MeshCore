@@ -745,8 +745,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         step = Step.UPDATE
         if (initialTab == RepeaterTab.HEALTH) {
             resetHealthState(DeviceKind.REPEATER)
-            // inspect status/OTA first, then refresh health cleanly
-            inspect(learned ?: contact, learned?.hops)
+            val target = learned ?: contact
+            inspect(target, learned?.hops)
             val dev = deviceKey(DeviceKind.REPEATER)
             healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) }
             val latestRec = healthRecords.lastOrNull()
@@ -755,6 +755,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val prev = healthRecords.getOrNull(healthRecords.size - 2)?.let { SelfTest.parse(it.line) }
                 selfTest = parsed
                 healthWarnings = parsed?.let { HealthCheck.warnings(it, prev) }.orEmpty()
+                if (parsed != null && canReadRepeater == true) {
+                    try {
+                        readBattery(target, hasGauge = "day" in parsed.values)
+                    } finally {
+                        withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+                    }
+                }
                 repeaterHealthLoadedFor = dev
             }
         } else {
@@ -2240,6 +2247,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeSettings() {
+        fleetState.showFieldPrepDialog = false
         step = settingsReturn
     }
 
@@ -2605,7 +2613,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val r = repeater ?: return@work
         val changed = changedRepeaterSettings()
         if (changed.isEmpty()) return@work
-        val items = changed.map { (k, v) -> BackupItem(GROUP_SETTING, k, k, v) }
+        val normalized = changed.mapValues { (k, v) ->
+            io.github.n3tk0.loraota.tools.RepeaterSettingsValidator.normalizeForSave(k, v)
+        }
+        val items = normalized.map { (k, v) -> BackupItem(GROUP_SETTING, k, k, v) }
         val result = try {
             RepeaterBackup.apply(companion, r, items) { i, total ->
                 toolsState.settingsProgress = i to total
@@ -2615,8 +2626,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             toolsState.settingsProgress = null
         }
         val failedKeys = result.failed.map { it.first.id }.toSet()
-        for ((k, v) in changed) {
-            if (k !in failedKeys) toolsState.settings[k] = v
+        for ((k, v) in normalized) {
+            if (k !in failedKeys) {
+                toolsState.settings[k] = v
+                toolsState.settingsDraft[k] = v
+            }
         }
         if (result.failed.isEmpty()) {
             val needsRestart = changed.keys.any { it in RepeaterBackup.NEEDS_RESTART }
@@ -2629,9 +2643,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Sends `tempradio <freq> <bw> <sf> <cr> <mins>` so the repeater tests new radio params safely and reverts automatically. */
+    /** Sends `tempradio <freq>,<bw>,<sf>,<cr>,<mins>` so the repeater tests new radio params safely and reverts automatically. */
     fun applyTempRadio(command: String) = work {
         val r = repeater ?: return@work
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
         working = command
         if (canReadRepeater != true) {
             companion.sendRemoteCli(r, command)

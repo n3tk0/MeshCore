@@ -340,9 +340,10 @@ private fun OfflineBackupCard(
             if (expanded) {
                 HorizontalDivider()
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val hiddenKeys = io.github.n3tk0.loraota.backup.PasswordBox.SECRET_SETTINGS + setOf("pin", "wifi.pwd")
                     val settings = b.items.filter {
                         it.group == io.github.n3tk0.loraota.backup.BackupItem.GROUP_SETTING &&
-                            it.id !in io.github.n3tk0.loraota.backup.PasswordBox.SECRET_SETTINGS
+                            it.id !in hiddenKeys
                     }
                     val channels = b.items.filter { it.group == io.github.n3tk0.loraota.backup.BackupItem.GROUP_CHANNEL }
                     val contacts = b.items.count { it.group == io.github.n3tk0.loraota.backup.BackupItem.GROUP_CONTACT }

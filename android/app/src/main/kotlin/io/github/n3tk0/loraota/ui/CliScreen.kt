@@ -193,7 +193,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                         contentDescription = stringResource(R.string.cli_remove_snippet),
                         modifier = Modifier
                             .size(15.dp)
-                            .clickable { vm.removeCliSnippet(snip) },
+                            .clickable(enabled = !vm.busy) { vm.removeCliSnippet(snip) },
                     )
                 },
             )
@@ -230,7 +230,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             } else {
-                val redactedLines = remember(lines.toList()) {
+                val redactedLines = remember(lines.size, lines.lastOrNull()) {
                     CliHelper.redactCliEntries(lines.map { (it.kind == CliLineKind.COMMAND) to it.text })
                 }
                 for ((idx, line) in lines.withIndex()) {
@@ -240,9 +240,15 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                         CliLineKind.INFO -> "# " to Color(0xFFFFC168)
                         CliLineKind.ERROR -> "! " to Color(0xFFFF7B72)
                     }
+                    val isSecretCmd = line.kind == CliLineKind.COMMAND && CliHelper.isSecretWriteCommand(line.text)
+                    val shownText = if (isSecretCmd) {
+                        redactedLines.getOrElse(idx) { CliHelper.redactSecrets(line.text) }
+                    } else {
+                        line.text
+                    }
                     val rttText = formatRtt(line.durationMs)
                     Text(
-                        "${timeFmt.format(Date(line.timeMs))} $prefix${line.text}$rttText",
+                        "${timeFmt.format(Date(line.timeMs))} $prefix$shownText$rttText",
                         color = color,
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodySmall,
@@ -250,8 +256,10 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                             .fillMaxWidth()
                             .clickable {
                                 if (line.kind == CliLineKind.COMMAND) {
-                                    input = line.text
-                                    historyIdx = -1
+                                    if (!isSecretCmd) {
+                                        input = line.text
+                                        historyIdx = -1
+                                    }
                                 } else {
                                     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     val safe = redactedLines.getOrElse(idx) { CliHelper.redactSecrets(line.text) }
@@ -374,6 +382,8 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
 
     // Add custom pinned command dialog
     if (showAddSnippet) {
+        val trimmedSnippet = newSnippetText.trim()
+        val isSecretSnippet = trimmedSnippet.isNotEmpty() && CliHelper.isSecretWriteCommand(trimmedSnippet)
         AlertDialog(
             onDismissRequest = { showAddSnippet = false },
             title = { Text(stringResource(R.string.cli_add_snippet_title)) },
@@ -382,6 +392,10 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                     value = newSnippetText,
                     onValueChange = { newSnippetText = it },
                     singleLine = true,
+                    isError = isSecretSnippet,
+                    supportingText = if (isSecretSnippet) {
+                        { Text(stringResource(R.string.cli_snippet_secret_blocked)) }
+                    } else null,
                     label = { Text(stringResource(R.string.cli_add_snippet_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -392,7 +406,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
                         vm.addCliSnippet(newSnippetText)
                         showAddSnippet = false
                     },
-                    enabled = newSnippetText.isNotBlank(),
+                    enabled = trimmedSnippet.isNotEmpty() && !isSecretSnippet,
                 ) { Text(stringResource(R.string.cli_add_snippet)) }
             },
             dismissButton = {
