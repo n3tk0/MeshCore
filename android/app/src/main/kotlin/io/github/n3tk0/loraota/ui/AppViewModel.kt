@@ -323,9 +323,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val sweepFinished get() = fleetState.sweepFinished
     val offlineHealth get() = fleetState.offlineHealth
     val offlineBackups get() = fleetState.offlineBackups
+    val offlineFirmwares get() = fleetState.offlineFirmwares
+    val offlineBuildRole get() = fleetState.offlineBuildRole
+    var exportingFirmware: Pair<FirmwareFile, Boolean>?
+        get() = fleetState.exportingFirmware
+        set(v) { fleetState.exportingFirmware = v }
     val fieldPrepProgress get() = fleetState.fieldPrepProgress
     val fieldPrepCandidates get() = fleetState.fieldPrepCandidates
     val fieldPrepPicked get() = fleetState.fieldPrepPicked
+    val fieldPrepAlreadyCached get() = fleetState.fieldPrepAlreadyCached
     var showFieldPrepDialog: Boolean
         get() = fleetState.showFieldPrepDialog
         set(v) { fleetState.showFieldPrepDialog = v }
@@ -2083,8 +2089,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- a new build on GitHub ----
 
-    /** The workflow input the board is picked in: the companion's own flash screen builds a companion. */
-    val buildRole get() = if (step == Step.FLASH && flashTarget == FlashTarget.COMPANION) "companion" else "repeater"
+    /** The workflow input the board is picked in: Offline lets the user pick any role (repeater/companion/room_server). */
+    val buildRole get() = when {
+        step == Step.OFFLINE -> fleetState.offlineBuildRole
+        step == Step.FLASH && flashTarget == FlashTarget.COMPANION -> "companion"
+        else -> "repeater"
+    }
+
+    /** Switches target device role in the Offline -> Firmware custom GitHub build panel. */
+    fun selectOfflineBuildRole(role: String) {
+        if (fleetState.offlineBuildRole == role) return
+        fleetState.offlineBuildRole = role
+        if (buildInputs.any { it.name == role }) {
+            buildInputsRole = role
+            pickAutoBoard()
+        } else if (hasToken) {
+            loadBuildForm()
+        }
+    }
 
     private fun api(): GitHubApi = GitHubApi(tokens.get() ?: run {
         hasToken = false
@@ -2132,8 +2154,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The device the form is for: another repeater (or the companion) gets its own board. */
-    private fun buildDevice() = if (buildRole == "companion") companionDevice?.address ?: ""
-        else repeater?.let { hex(it.publicKey) } ?: ""
+    private fun buildDevice() = when {
+        step == Step.OFFLINE -> "offline:${fleetState.offlineBuildRole}"
+        buildRole == "companion" -> companionDevice?.address ?: ""
+        else -> repeater?.let { hex(it.publicKey) } ?: ""
+    }
 
     /**
      * The boards and boxes of the workflow on GitHub, once per screen (repeater or companion); the board
@@ -2142,7 +2167,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadBuildForm() {
         if (!hasToken) return
         if (buildInputs.isEmpty() || buildInputsRole != buildRole) {
-            work { readBuildForm() }
+            if (buildInputs.any { it.name == buildRole }) {
+                buildInputsRole = buildRole
+                pickAutoBoard()
+            } else {
+                work { readBuildForm() }
+            }
         } else if (buildFormFor != buildDevice() || buildBoard.isEmpty() || buildBoardAuto) {
             pickAutoBoard()
         }
@@ -2182,6 +2212,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The board the device is: the one its firmware was built for, or the companion's model. */
     private fun autoBoard(choices: List<String>): String {
+        if (buildRole == "room_server") return ""
         if (buildRole == "companion") {
             if (companionModel.isEmpty()) return ""
             return choices.firstOrNull { BoardCheck.fitsCompanion(it) && BoardCheck.matches(it, companionModel) == true } ?: ""
@@ -2222,6 +2253,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Its files are on the phone now: in the releases list, and chosen when this screen asked for them. */
     private fun buildFinished(j: BuildJob) {
         builds = Releases.builds(ctx.filesDir)
+        refreshCacheStats()
+        if (step == Step.OFFLINE) loadOfflineData()
         val made = builds.filter { it.release == FirmwareFile.BUILD_PREFIX + j.runNumber && it.env == j.board }
         if (busy || j.role != buildRole) return
         if (step == Step.UPDATE && firmwareTab == 0 && loraSource == Source.BUILD) {
@@ -2249,6 +2282,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closeSettings() {
         fleetState.showFieldPrepDialog = false
         step = settingsReturn
+        if (step == Step.OFFLINE) loadOfflineData()
     }
 
     fun updateAutoCheck(enabled: Boolean) {
@@ -2819,23 +2853,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeOffline() {
+        fleetState.showFieldPrepDialog = false
         step = offlineReturn
     }
 
     fun loadOfflineData() {
         viewModelScope.launch {
-            val (healthMap, allBackups) = withContext(Dispatchers.IO) {
-                healthStore.allRecords() to backupStore.all()
+            val (healthMap, allBackups, cachedFw) = withContext(Dispatchers.IO) {
+                val h = healthStore.allRecords()
+                val b = backupStore.all()
+                val fw = Releases.cachedFirmwares(repo, ctx.filesDir).map { f ->
+                    CachedFirmwareItem(
+                        firmware = f,
+                        hasCachedOta = Releases.isFileCached(f, ctx.filesDir),
+                        hasCachedDfu = Releases.isDfuCached(f, ctx.filesDir),
+                    )
+                }
+                Triple(h, b, fw)
             }
             fleetState.offlineHealth.clear()
             fleetState.offlineHealth.putAll(healthMap)
             fleetState.offlineBackups.clear()
             fleetState.offlineBackups.addAll(allBackups)
+            fleetState.offlineFirmwares.clear()
+            fleetState.offlineFirmwares.addAll(cachedFw)
             for (b in allBackups) {
                 if (b.deviceKey.isNotEmpty() && b.deviceName.isNotBlank() && b.deviceKey !in fleetState.knownDeviceNames) {
                     fleetState.knownDeviceNames[b.deviceKey] = b.deviceName
                 }
             }
+            refreshCacheStats()
         }
     }
 
@@ -2844,6 +2891,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.IO) { backupStore.delete(b) }
             fleetState.offlineBackups.remove(b)
         }
+    }
+
+    fun deleteOfflineFirmware(f: FirmwareFile) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { Releases.removeCachedFirmware(ctx.filesDir, f) }
+            builds = withContext(Dispatchers.IO) { Releases.builds(ctx.filesDir) }
+            loadOfflineData()
+            message = str(R.string.offline_fw_deleted)
+            messageIsError = false
+        }
+    }
+
+    /** Exports an already-cached firmware binary (.bin or DFU .zip/.bin) to a user-chosen SAF file. */
+    fun exportCachedFirmware(f: FirmwareFile, dfu: Boolean, uri: android.net.Uri) = work {
+        val bytes = withContext(Dispatchers.IO) { Releases.readCachedFile(f, dfu, ctx.filesDir) }
+            ?: throw Exception(str(R.string.offline_fw_export_failed))
+        withContext(Dispatchers.IO) {
+            ctx.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                ?: throw Exception(str(R.string.offline_fw_export_failed))
+        }
+        message = str(R.string.offline_fw_exported)
     }
 
     // ---- field preparation ("Подготви за терен" with board picker) & shareable diagnostics ----
@@ -2877,8 +2945,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ?.let { knownEnvs.add(it) }
             }
 
+            val cachedStatus = withContext(Dispatchers.IO) {
+                latestByEnv.mapValues { (_, f) -> Releases.isAnyCached(f, ctx.filesDir) }
+            }
+
             fleetState.fieldPrepCandidates.clear()
             fleetState.fieldPrepCandidates.addAll(latestByEnv.values.sortedBy { it.env })
+            fleetState.fieldPrepAlreadyCached.clear()
+            fleetState.fieldPrepAlreadyCached.putAll(cachedStatus)
             fleetState.fieldPrepPicked.clear()
             val preChecked = knownEnvs.filter { it in latestByEnv }
             if (preChecked.isNotEmpty()) {
@@ -2921,6 +2995,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             refreshCacheStats()
+            if (step == Step.OFFLINE) loadOfflineData()
             message = if (failed == 0) str(R.string.field_prep_done, downloaded, toDownload.size)
             else str(R.string.field_prep_done_partial, downloaded, toDownload.size, failed)
             messageIsError = downloaded == 0 && failed > 0

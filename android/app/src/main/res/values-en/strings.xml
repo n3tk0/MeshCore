@@ -770,4 +770,27 @@
     <string name="tempradio_confirm_title">Apply temporary radio parameters?</string>
     <string name="tempradio_confirm_body">This will send “%1$s”. Contact with the repeater will drop for %2$s min unless your companion matches these settings, after which the repeater reverts automatically.</string>
     <string name="rset_gps_waiting">Acquiring GPS fix…</string>
+    <!-- Offline Firmware Hub (build, download & export for any device) -->
+    <string name="offline_tab_firmware">Firmware</string>
+    <string name="offline_fw_prepare_title">Download ready firmware</string>
+    <string name="offline_fw_prepare_desc">Pick repeaters, companions, or room servers from the latest releases and cache them on this phone for offline field use.</string>
+    <string name="offline_fw_download_btn">Download firmware for boards</string>
+    <string name="offline_fw_build_title">New GitHub build (any device)</string>
+    <string name="offline_fw_build_desc">Choose a device type and board — the finished firmware downloads here automatically, ready for offline OTA or flashing.</string>
+    <string name="role_repeater">Repeater</string>
+    <string name="role_companion">Companion</string>
+    <string name="role_room_server">Room server</string>
+    <string name="offline_fw_cached_title">Ready on phone (%1$d)</string>
+    <string name="offline_fw_none">No downloaded or built firmwares saved on this phone yet.</string>
+    <string name="offline_fw_badge_ota">LoRa OTA</string>
+    <string name="offline_fw_badge_dfu">DFU / Flash</string>
+    <string name="offline_fw_badge_cached">Cached</string>
+    <string name="offline_fw_export_ota">Save .bin</string>
+    <string name="offline_fw_export_dfu">Save DFU</string>
+    <string name="offline_fw_exported">File saved.</string>
+    <string name="offline_fw_export_failed">Could not save the firmware file.</string>
+    <string name="offline_fw_delete_title">Remove from cache?</string>
+    <string name="offline_fw_delete_text">This will remove the cached firmware for “%1$s” from this phone.</string>
+    <string name="offline_fw_deleted">Firmware removed from cache.</string>
+    <string name="field_prep_search">Search board…</string>
 </resources>

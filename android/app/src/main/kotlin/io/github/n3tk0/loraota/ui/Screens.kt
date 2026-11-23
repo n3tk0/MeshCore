@@ -1297,7 +1297,7 @@ private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, de
 
 /** "Build Firmware for Boards" from the app: the token once, then a collapsible options card, and progress card. */
 @Composable
-private fun BuildPanel(vm: AppViewModel) {
+internal fun BuildPanel(vm: AppViewModel) {
     if (!vm.hasToken) {
         TokenForm(vm)
         return

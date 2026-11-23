@@ -5,6 +5,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,10 +20,13 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -49,6 +54,9 @@ import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.Backup
 import io.github.n3tk0.loraota.backup.DeviceKind
+import io.github.n3tk0.loraota.flash.BoardCheck
+import io.github.n3tk0.loraota.flash.Role
+import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.HealthCheck
 import io.github.n3tk0.loraota.ota.HealthSeverity
 import io.github.n3tk0.loraota.ota.HealthStore
@@ -58,14 +66,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Offline inspection of saved health checks (HealthStore) and device backups (BackupStore)
- * without needing an active Bluetooth connection to a companion.
+ * Offline hub: inspect saved health checks, device backups, and prepare/build/download/export
+ * firmware for repeaters, companions, or room servers without needing a Bluetooth connection.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OfflineScreen(vm: AppViewModel) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var deleteCandidate by remember { mutableStateOf<Backup?>(null) }
+    var deleteFirmwareCandidate by remember { mutableStateOf<FirmwareFile?>(null) }
     var showExportDialog by rememberSaveable { mutableStateOf(false) }
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -76,9 +85,18 @@ fun OfflineScreen(vm: AppViewModel) {
         if (uri != null && b != null) vm.exportBackup(b, uri, pw)
     }
 
+    val saveFirmwareFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val pending = vm.exportingFirmware
+        vm.exportingFirmware = null
+        if (uri != null && pending != null) {
+            vm.exportCachedFirmware(pending.first, pending.second, uri)
+        }
+    }
+
     val tabs = listOf(
         R.string.offline_tab_health to vm.offlineHealth.size,
         R.string.offline_tab_backups to vm.offlineBackups.size,
+        R.string.offline_tab_firmware to vm.offlineFirmwares.size,
     )
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         for ((i, pair) in tabs.withIndex()) {
@@ -93,10 +111,9 @@ fun OfflineScreen(vm: AppViewModel) {
         }
     }
 
-    if (tab == 0) {
-        OfflineHealthList(vm)
-    } else {
-        OfflineBackupsList(
+    when (tab) {
+        0 -> OfflineHealthList(vm)
+        1 -> OfflineBackupsList(
             backups = vm.offlineBackups,
             onExport = { b ->
                 vm.exportingBackup = b
@@ -104,6 +121,36 @@ fun OfflineScreen(vm: AppViewModel) {
                 showExportDialog = true
             },
             onDelete = { b -> deleteCandidate = b },
+        )
+        else -> OfflineFirmwareTab(
+            vm = vm,
+            onExportFirmware = { f, dfu ->
+                vm.exportingFirmware = f to dfu
+                val name = (if (dfu) f.dfu else f.file).ifEmpty {
+                    "${f.env}-${f.version.ifEmpty { f.release }}${if (dfu && f.dfuIsZip) ".zip" else ".bin"}"
+                }
+                saveFirmwareFile.launch(name)
+            },
+            onDeleteFirmware = { f -> deleteFirmwareCandidate = f },
+        )
+    }
+
+    FieldPrepDialog(vm)
+
+    deleteFirmwareCandidate?.let { f ->
+        AlertDialog(
+            onDismissRequest = { deleteFirmwareCandidate = null },
+            title = { Text(stringResource(R.string.offline_fw_delete_title)) },
+            text = { Text(stringResource(R.string.offline_fw_delete_text, "${f.env.replace('_', ' ')} (${f.label})")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteOfflineFirmware(f)
+                    deleteFirmwareCandidate = null
+                }) { Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteFirmwareCandidate = null }) { Text(stringResource(R.string.cancel)) }
+            },
         )
     }
 
@@ -389,6 +436,197 @@ private fun OfflineBackupCard(
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { onDelete(b) }) {
+                    Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Offline Firmware Hub:
+ * 1) Download/prepare ready firmwares from GitHub releases for any board/role
+ * 2) Trigger a custom GitHub build for any device (Repeater, Companion, or Room server)
+ * 3) Inspect, export (.bin / DFU .zip), or remove cached firmwares already on the phone.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OfflineFirmwareTab(
+    vm: AppViewModel,
+    onExportFirmware: (FirmwareFile, Boolean) -> Unit,
+    onDeleteFirmware: (FirmwareFile) -> Unit,
+) {
+    // 1. Download / prepare ready firmwares for field use
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.offline_fw_prepare_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.offline_fw_prepare_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                pluralStringResource(R.plurals.settings_cache_summary, vm.cacheFileCount, vm.cacheFileCount, formatSize(vm.cacheBytes)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            vm.fieldPrepProgress?.let { progress ->
+                Text(progress, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            Button(
+                onClick = { vm.openFieldPrepPicker() },
+                enabled = !vm.busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.offline_fw_download_btn))
+            }
+        }
+    }
+
+    // 2. Build custom firmware on GitHub for any device role (Repeater / Companion / Room server)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            stringResource(R.string.offline_fw_build_title),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            stringResource(R.string.offline_fw_build_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val roles = listOf(
+            "repeater" to R.string.role_repeater,
+            "companion" to R.string.role_companion,
+            "room_server" to R.string.role_room_server,
+        )
+        val buildRunning = vm.buildJob?.finished == false
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for ((roleKey, labelRes) in roles) {
+                FilterChip(
+                    selected = vm.offlineBuildRole == roleKey,
+                    onClick = { vm.selectOfflineBuildRole(roleKey) },
+                    enabled = !vm.busy && !buildRunning,
+                    label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelMedium) },
+                )
+            }
+        }
+        BuildPanel(vm)
+    }
+
+    // 3. Cached / built firmwares ready on this phone
+    Text(
+        stringResource(R.string.offline_fw_cached_title, vm.offlineFirmwares.size),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
+    if (vm.offlineFirmwares.isEmpty()) {
+        InfoCard(stringResource(R.string.offline_fw_none))
+    } else {
+        for (item in vm.offlineFirmwares) {
+            CachedFirmwareCard(
+                item = item,
+                enabled = !vm.busy,
+                onExport = { dfu -> onExportFirmware(item.firmware, dfu) },
+                onDelete = { onDeleteFirmware(item.firmware) },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CachedFirmwareCard(
+    item: CachedFirmwareItem,
+    enabled: Boolean,
+    onExport: (dfu: Boolean) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val f = item.firmware
+    val roleLabelRes = when (BoardCheck.role(f.env)) {
+        Role.REPEATER -> R.string.role_repeater
+        Role.COMPANION -> R.string.role_companion
+        Role.ROOM_SERVER -> R.string.role_room_server
+        Role.OTHER -> null
+    }
+    val totalBytes = (if (item.hasCachedOta) f.size.toLong() else 0L) +
+        (if (item.hasCachedDfu) f.dfuSize.toLong() else 0L)
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(f.env.replace('_', ' '), style = MaterialTheme.typography.titleMedium)
+                val meta = buildList {
+                    val row = f.rowLabel()
+                    if (row.isNotEmpty()) add(row)
+                    if (totalBytes > 0L) add(formatSize(totalBytes))
+                }.joinToString(" · ")
+                if (meta.isNotEmpty()) {
+                    Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    roleLabelRes?.let { res ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                        ) {
+                            Text(
+                                stringResource(res),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                    if (item.hasCachedOta) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                        ) {
+                            Text(
+                                stringResource(R.string.offline_fw_badge_ota),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                    if (item.hasCachedDfu) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                        ) {
+                            Text(
+                                stringResource(R.string.offline_fw_badge_dfu),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (item.hasCachedOta) {
+                    TextButton(onClick = { onExport(false) }, enabled = enabled) {
+                        Text(stringResource(R.string.offline_fw_export_ota))
+                    }
+                }
+                if (item.hasCachedDfu) {
+                    TextButton(onClick = { onExport(true) }, enabled = enabled) {
+                        Text(stringResource(R.string.offline_fw_export_dfu))
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDelete, enabled = enabled) {
                     Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.backup_delete), color = MaterialTheme.colorScheme.error)

@@ -8,6 +8,8 @@ import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,11 +30,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -57,6 +61,8 @@ import io.github.n3tk0.loraota.BuildConfig
 import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.ThemeMode
+import io.github.n3tk0.loraota.flash.BoardCheck
+import io.github.n3tk0.loraota.flash.Role
 import io.github.n3tk0.loraota.github.AppUpdater
 import java.io.File
 import java.util.Locale
@@ -395,58 +401,8 @@ fun SettingsScreen(
         }
     }
 
-    // Field preparation board selection dialog
-    if (vm.showFieldPrepDialog) {
-        val pickedCount = vm.fieldPrepCandidates.count { vm.fieldPrepPicked[it.env] == true }
-        AlertDialog(
-            onDismissRequest = { vm.showFieldPrepDialog = false },
-            title = { Text(stringResource(R.string.field_prep_pick_title)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = {
-                            for (f in vm.fieldPrepCandidates) vm.fieldPrepPicked[f.env] = true
-                        }) { Text(stringResource(R.string.q_select_all)) }
-                        TextButton(onClick = { vm.fieldPrepPicked.clear() }) {
-                            Text(stringResource(R.string.q_select_none))
-                        }
-                    }
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(280.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        for (f in vm.fieldPrepCandidates) {
-                            val checked = vm.fieldPrepPicked[f.env] == true
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { vm.fieldPrepPicked[f.env] = !checked },
-                            ) {
-                                Checkbox(checked = checked, onCheckedChange = { vm.fieldPrepPicked[f.env] = it })
-                                Column(Modifier.weight(1f)) {
-                                    Text(f.env.replace('_', ' '), style = MaterialTheme.typography.bodyMedium)
-                                    Text(f.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { vm.runFieldPrepDownload() },
-                    enabled = pickedCount > 0,
-                ) { Text(stringResource(R.string.field_prep_cache_selected, pickedCount)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.showFieldPrepDialog = false }) { Text(stringResource(R.string.cancel)) }
-            },
-        )
-    }
+    // Field preparation board selection dialog (shared with Offline -> Firmware)
+    FieldPrepDialog(vm)
 
     // Group APK warning & token preservation dialog
     if (showGroupUpdateDialog) {
@@ -518,7 +474,108 @@ fun SettingsScreen(
     }
 }
 
-private fun formatSize(bytes: Long): String = when {
+/** Shared Field Preparation board picker dialog with search, device role filters, and cached status badges. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun FieldPrepDialog(vm: AppViewModel) {
+    if (!vm.showFieldPrepDialog) return
+    var query by remember { mutableStateOf("") }
+    var roleFilter by remember { mutableStateOf<Role?>(null) }
+
+    val filtered = vm.fieldPrepCandidates.filter { f ->
+        (roleFilter == null || BoardCheck.role(f.env) == roleFilter) &&
+            (query.isBlank() || f.env.replace('_', ' ').contains(query.trim(), ignoreCase = true) ||
+                f.env.contains(query.trim(), ignoreCase = true))
+    }
+    val pickedCount = vm.fieldPrepCandidates.count { vm.fieldPrepPicked[it.env] == true }
+
+    AlertDialog(
+        onDismissRequest = { vm.showFieldPrepDialog = false },
+        title = { Text(stringResource(R.string.field_prep_pick_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text(stringResource(R.string.field_prep_search)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val roles = listOf(
+                        null to R.string.filter_all,
+                        Role.REPEATER to R.string.role_repeater,
+                        Role.COMPANION to R.string.role_companion,
+                        Role.ROOM_SERVER to R.string.role_room_server,
+                    )
+                    for ((role, labelRes) in roles) {
+                        FilterChip(
+                            selected = roleFilter == role,
+                            onClick = { roleFilter = role },
+                            label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        for (f in filtered) vm.fieldPrepPicked[f.env] = true
+                    }) { Text(stringResource(R.string.q_select_all)) }
+                    TextButton(onClick = {
+                        for (f in filtered) vm.fieldPrepPicked.remove(f.env)
+                    }) { Text(stringResource(R.string.q_select_none)) }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    for (f in filtered) {
+                        val checked = vm.fieldPrepPicked[f.env] == true
+                        val cached = vm.fieldPrepAlreadyCached[f.env] == true
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { vm.fieldPrepPicked[f.env] = !checked },
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = { vm.fieldPrepPicked[f.env] = it })
+                            Column(Modifier.weight(1f)) {
+                                Text(f.env.replace('_', ' '), style = MaterialTheme.typography.bodyMedium)
+                                Text(f.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (cached) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    shape = MaterialTheme.shapes.small,
+                                ) {
+                                    Text(
+                                        stringResource(R.string.offline_fw_badge_cached),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { vm.runFieldPrepDownload() },
+                enabled = pickedCount > 0,
+            ) { Text(stringResource(R.string.field_prep_cache_selected, pickedCount)) }
+        },
+        dismissButton = {
+            TextButton(onClick = { vm.showFieldPrepDialog = false }) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+internal fun formatSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
     bytes >= 1024 -> String.format(Locale.ROOT, "%.0f KB", bytes / 1024.0)
     else -> "$bytes B"

@@ -99,6 +99,13 @@ class RepeaterToolsState(ctx: Context) {
     }
 }
 
+/** One locally cached firmware entry shown in the Offline -> Firmware tab. */
+data class CachedFirmwareItem(
+    val firmware: FirmwareFile,
+    val hasCachedOta: Boolean,
+    val hasCachedDfu: Boolean,
+)
+
 /**
  * Encapsulates fleet pins, cached health badges, Health Sweep state, Offline viewer state,
  * and Field Preparation board selection state.
@@ -120,11 +127,17 @@ class FleetToolsState(ctx: Context) {
 
     val offlineHealth = mutableStateMapOf<String, List<HealthStore.Record>>()
     val offlineBackups = mutableStateListOf<Backup>()
+    val offlineFirmwares = mutableStateListOf<CachedFirmwareItem>()
+    /** Selected device role ("repeater", "companion", "room_server") for offline GitHub builds. */
+    var offlineBuildRole by mutableStateOf("repeater")
+    /** Rotation-safe holder for exporting a cached firmware file via SAF CreateDocument. */
+    var exportingFirmware by mutableStateOf<Pair<FirmwareFile, Boolean>?>(null)
 
     // Field preparation board picker state
     var fieldPrepProgress by mutableStateOf<String?>(null)
     val fieldPrepCandidates = mutableStateListOf<FirmwareFile>()
     val fieldPrepPicked = mutableStateMapOf<String, Boolean>()
+    val fieldPrepAlreadyCached = mutableStateMapOf<String, Boolean>()
     var showFieldPrepDialog by mutableStateOf(false)
 
     fun togglePin(keyHex: String) {

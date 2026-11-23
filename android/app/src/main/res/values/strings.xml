@@ -771,4 +771,27 @@
     <string name="tempradio_confirm_title">Приложи временни радио параметри?</string>
     <string name="tempradio_confirm_body">Ще се изпрати „%1$s“. Връзката с рипитъра ще прекъсне за %2$s мин, освен ако companion-ът не ползва същите параметри, след което рипитърът ще върне старите.</string>
     <string name="rset_gps_waiting">Търся GPS позиция…</string>
+    <!-- Offline Firmware Hub (build, download & export for any device) -->
+    <string name="offline_tab_firmware">Firmware</string>
+    <string name="offline_fw_prepare_title">Свали готов firmware</string>
+    <string name="offline_fw_prepare_desc">Избери рипитъри, companion-и или room server-и от последните релийзи и ги кеширай на телефона за работа без интернет.</string>
+    <string name="offline_fw_download_btn">Свали firmware за платки</string>
+    <string name="offline_fw_build_title">Нов build в GitHub (всяко устройство)</string>
+    <string name="offline_fw_build_desc">Избери тип устройство и платка — готовият firmware ще се свали автоматично тук, готов за офлайн ъпдейт или флаш.</string>
+    <string name="role_repeater">Рипитър</string>
+    <string name="role_companion">Companion</string>
+    <string name="role_room_server">Room server</string>
+    <string name="offline_fw_cached_title">Готови на телефона (%1$d)</string>
+    <string name="offline_fw_none">Все още нямаш свалени или build-нати фърмуери на телефона.</string>
+    <string name="offline_fw_badge_ota">LoRa OTA</string>
+    <string name="offline_fw_badge_dfu">DFU / Flash</string>
+    <string name="offline_fw_badge_cached">Кеширан</string>
+    <string name="offline_fw_export_ota">Запази .bin</string>
+    <string name="offline_fw_export_dfu">Запази DFU</string>
+    <string name="offline_fw_exported">Файлът е запазен.</string>
+    <string name="offline_fw_export_failed">Не успях да запиша firmware файла.</string>
+    <string name="offline_fw_delete_title">Изтрий от кеша?</string>
+    <string name="offline_fw_delete_text">Ще изтриеш сваления firmware за „%1$s“ от телефона.</string>
+    <string name="offline_fw_deleted">Firmware файлът е премахнат от кеша.</string>
+    <string name="field_prep_search">Търси платка…</string>
 </resources>
