@@ -71,16 +71,24 @@ import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.DeviceKind
+import io.github.n3tk0.loraota.ota.hex
+import io.github.n3tk0.loraota.tools.LoraRadioCalculator
+import io.github.n3tk0.loraota.tools.LoraRadioMetrics
+import io.github.n3tk0.loraota.tools.MeshGeoTopology
 import io.github.n3tk0.loraota.tools.NeighborEntry
+import io.github.n3tk0.loraota.tools.PingStatsCalculator
 import io.github.n3tk0.loraota.tools.RepeaterSettingsValidator
 import io.github.n3tk0.loraota.tools.SettingValidationError
 import java.util.Locale
 
-/** Quick one-tap repeater maintenance actions on the Overview tab. */
+/** Quick one-tap repeater maintenance actions on the Overview tab (including 5x Ping Link Test). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun QuickActionsCard(vm: AppViewModel) {
     var confirmReboot by remember { mutableStateOf(false) }
+    val pingSummary = remember(vm.pingSamples.size, vm.pingRunning) {
+        if (vm.pingSamples.isEmpty()) null else PingStatsCalculator.summarize(vm.pingSamples)
+    }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -95,6 +103,9 @@ fun QuickActionsCard(vm: AppViewModel) {
                 OutlinedButton(onClick = { vm.sendRepeaterAdvert(flood = true) }, enabled = !vm.busy) {
                     Text(stringResource(R.string.qa_advert))
                 }
+                OutlinedButton(onClick = { vm.runRepeaterPingTest(5) }, enabled = !vm.busy && !vm.pingRunning) {
+                    Text(stringResource(R.string.ping_start))
+                }
                 OutlinedButton(onClick = { vm.recheck() }, enabled = !vm.busy) {
                     Text(stringResource(R.string.qa_refresh_status))
                 }
@@ -108,6 +119,50 @@ fun QuickActionsCard(vm: AppViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            if (pingSummary != null) {
+                val rttText = if (pingSummary.minRttMs != null && pingSummary.avgRttMs != null && pingSummary.maxRttMs != null) {
+                    "${pingSummary.minRttMs} / ${pingSummary.avgRttMs} / ${pingSummary.maxRttMs} ms"
+                } else {
+                    "—"
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            stringResource(
+                                R.string.ping_summary,
+                                pingSummary.received,
+                                pingSummary.sent,
+                                pingSummary.successPercent,
+                                rttText,
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (pingSummary.received == pingSummary.sent) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error,
+                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            for (s in vm.pingSamples) {
+                                val ok = s.ok
+                                Surface(
+                                    color = if (ok) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                                    shape = MaterialTheme.shapes.extraSmall,
+                                ) {
+                                    Text(
+                                        if (ok) "#${s.seq} ${s.rttMs}ms" else "#${s.seq} ×",
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (ok) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -206,11 +261,42 @@ fun NeighborsCard(vm: AppViewModel) {
                             )
                         }
                         else -> {
+                            val coordsByPrefix = remember(vm.offlineBackups, vm.repeater?.name, vm.repeaterSettingsLoaded) {
+                                val map = MeshGeoTopology.extractCoordsFromBackups(vm.offlineBackups).toMutableMap()
+                                val r = vm.repeater
+                                val lat = vm.repeaterSettings["lat"]?.replace(',', '.')?.toDoubleOrNull()
+                                val lon = vm.repeaterSettings["lon"]?.replace(',', '.')?.toDoubleOrNull()
+                                if (r != null && lat != null && lon != null && (lat != 0.0 || lon != 0.0)) {
+                                    map[hex(r.publicKey).lowercase(Locale.ROOT)] = lat to lon
+                                }
+                                map
+                            }
+                            val selfCoords = remember(coordsByPrefix, vm.repeater) {
+                                val selfKey = vm.repeater?.let { hex(it.publicKey).lowercase(Locale.ROOT) }
+                                if (selfKey == null) null
+                                else coordsByPrefix.entries.firstOrNull { (k, _) ->
+                                    k.startsWith(selfKey) || selfKey.startsWith(k)
+                                }?.value
+                            }
                             for (n in vm.neighbors) {
                                 val snrColor = when {
                                     n.snrDb >= 0f -> MaterialTheme.colorScheme.primary
                                     n.snrDb >= -8f -> if (dark) Color(0xFFFFB74D) else Color(0xFF9A5B00)
                                     else -> MaterialTheme.colorScheme.error
+                                }
+                                val geoVector = remember(selfCoords, coordsByPrefix, n.prefixHex) {
+                                    val peerPrefix = n.prefixHex.lowercase(Locale.ROOT)
+                                    val peerCoords = coordsByPrefix.entries.firstOrNull { (k, _) ->
+                                        peerPrefix.isNotEmpty() && (k.startsWith(peerPrefix) || peerPrefix.startsWith(k))
+                                    }?.value
+                                    if (selfCoords != null && peerCoords != null) {
+                                        MeshGeoTopology.distanceAndBearing(
+                                            selfCoords.first,
+                                            selfCoords.second,
+                                            peerCoords.first,
+                                            peerCoords.second,
+                                        )
+                                    } else null
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -224,6 +310,18 @@ fun NeighborsCard(vm: AppViewModel) {
                                         val sub = buildString {
                                             if (n.resolvedName != null) append("${n.prefixHex} · ")
                                             append(formatSecsAgo(n.secsAgo))
+                                            if (geoVector != null) {
+                                                append(" · ")
+                                                append(
+                                                    String.format(
+                                                        Locale.ROOT,
+                                                        "%.1f km %s (%d°)",
+                                                        geoVector.distanceKm,
+                                                        geoVector.cardinal,
+                                                        geoVector.bearingDeg,
+                                                    ),
+                                                )
+                                            }
                                         }
                                         Text(
                                             sub,
@@ -442,11 +540,14 @@ private fun requestPhoneLocation(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RepeaterSettingsEditor(vm: AppViewModel) {
     val ctx = LocalContext.current
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
     var confirmRadioChange by remember { mutableStateOf(false) }
+    var showSaveProfileDialog by remember { mutableStateOf(false) }
+    var profileNameInput by rememberSaveable { mutableStateOf("") }
     var gpsLoading by remember { mutableStateOf(false) }
     var gpsSignal by remember { mutableStateOf<CancellationSignal?>(null) }
 
@@ -523,6 +624,70 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
         val validationErrors = changed.mapNotNull { (k, v) ->
             RepeaterSettingsValidator.validate(k, v)?.let { k to it }
         }.toMap()
+
+        // Config profiles / templates bar
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        stringResource(R.string.profile_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            profileNameInput = ""
+                            showSaveProfileDialog = true
+                        },
+                        enabled = !vm.busy,
+                    ) {
+                        Text(stringResource(R.string.profile_save_current))
+                    }
+                }
+                if (vm.configProfiles.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (p in vm.configProfiles) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = MaterialTheme.shapes.small,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                                ) {
+                                    Text(
+                                        "${p.name} (${p.settings.size})",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.clickable(enabled = !vm.busy) { vm.applyConfigProfile(p) },
+                                    )
+                                    IconButton(
+                                        onClick = { vm.deleteConfigProfile(p.name) },
+                                        enabled = !vm.busy,
+                                        modifier = Modifier.size(24.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = stringResource(R.string.backup_delete),
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        val radioDraft = vm.repeaterSettingsDraft["radio"]
+        val draftRadioMetrics = remember(radioDraft) {
+            radioDraft?.let { LoraRadioCalculator.computeFromRadioString(it) }
+        }
+        if (draftRadioMetrics != null) {
+            LoraAirtimeBadge(draftRadioMetrics)
+        }
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -693,9 +858,82 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                 },
             )
         }
+
+        if (showSaveProfileDialog) {
+            AlertDialog(
+                onDismissRequest = { showSaveProfileDialog = false },
+                title = { Text(stringResource(R.string.profile_save_current)) },
+                text = {
+                    OutlinedTextField(
+                        value = profileNameInput,
+                        onValueChange = { profileNameInput = it },
+                        label = { Text(stringResource(R.string.profile_name_hint)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            vm.saveConfigProfile(profileNameInput)
+                            showSaveProfileDialog = false
+                        },
+                        enabled = profileNameInput.trim().isNotEmpty(),
+                    ) {
+                        Text(stringResource(R.string.profile_save_current))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSaveProfileDialog = false }) { Text(stringResource(R.string.cancel)) }
+                },
+            )
+        }
     }
 
     TempRadioCard(vm)
+}
+
+@Composable
+private fun LoraAirtimeBadge(m: LoraRadioMetrics) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                stringResource(R.string.lora_calc_title) + " · " +
+                    String.format(Locale.ROOT, "%.3f MHz / %.1f kHz / SF%d / CR4/%d", m.freqMhz, m.bwKhz, m.sf, m.cr),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                stringResource(
+                    R.string.lora_calc_metrics,
+                    m.bitrateBps,
+                    m.packet64AirMs,
+                    m.sensitivityDbm,
+                    m.estOta25KbMins,
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+            if (m.exceeds869SubBand) {
+                Text(
+                    stringResource(R.string.lora_calc_warn_subband),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (m.slowForOta) {
+                Text(
+                    stringResource(R.string.lora_calc_warn_slow),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
 }
 
 /** Collapsible safe temporary radio test (`tempradio`) card that auto-reverts after N minutes. */
@@ -709,6 +947,13 @@ private fun TempRadioCard(vm: AppViewModel) {
     var cr by rememberSaveable { mutableStateOf("5") }
     var mins by rememberSaveable { mutableStateOf("5") }
     val cmd = RepeaterSettingsValidator.buildTempRadioCommand(freq, bw, sf, cr, mins)
+    val metrics = remember(freq, bw, sf, cr) {
+        val f = freq.trim().replace(',', '.').toDoubleOrNull()
+        val b = bw.trim().replace(',', '.').toDoubleOrNull()
+        val s = sf.trim().toIntOrNull()
+        val c = cr.trim().toIntOrNull()
+        if (f != null && b != null && s != null && c != null) LoraRadioCalculator.compute(f, b, s, c) else null
+    }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth()) {
@@ -770,6 +1015,9 @@ private fun TempRadioCard(vm: AppViewModel) {
                             singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f),
                         )
                     }
+                    if (metrics != null) {
+                        LoraAirtimeBadge(metrics)
+                    }
                     Button(
                         onClick = { if (cmd != null) confirmApply = true },
                         enabled = !vm.busy && cmd != null,
@@ -799,3 +1047,4 @@ private fun TempRadioCard(vm: AppViewModel) {
         )
     }
 }
+

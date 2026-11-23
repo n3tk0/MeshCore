@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -56,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.BuildConfig
 import io.github.n3tk0.loraota.Lang
@@ -81,8 +84,23 @@ fun SettingsScreen(
     var keepGroupToken by rememberSaveable { mutableStateOf(true) }
     var showUnknownSourcesDialog by rememberSaveable { mutableStateOf(false) }
     var showTokenForm by rememberSaveable { mutableStateOf(false) }
+    var showWorkspaceExportDialog by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(vm.hasOwnToken) {
         if (vm.hasOwnToken) showTokenForm = false
+    }
+
+    val saveWorkspaceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { destUri ->
+        val pw = vm.workspaceArchivePassword
+        vm.workspaceArchivePassword = ""
+        if (destUri != null) {
+            vm.exportWorkspaceArchive(destUri, pw)
+        }
+    }
+
+    val openWorkspaceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { srcUri ->
+        if (srcUri != null) {
+            vm.importWorkspaceArchive(srcUri)
+        }
     }
 
     fun launchInstall(apk: File) {
@@ -373,6 +391,35 @@ fun SettingsScreen(
         }
     }
 
+    // ---- 4b. Full Workspace Archive (Encrypted Export / Import) ----
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.workspace_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.workspace_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        vm.workspaceArchivePassword = ""
+                        showWorkspaceExportDialog = true
+                    },
+                    enabled = !vm.busy,
+                ) {
+                    Text(stringResource(R.string.workspace_export_btn))
+                }
+                OutlinedButton(
+                    onClick = { openWorkspaceLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                    enabled = !vm.busy,
+                ) {
+                    Text(stringResource(R.string.workspace_import_btn))
+                }
+            }
+        }
+    }
+
     // ---- 5. Diagnostics & About ----
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -409,6 +456,73 @@ fun SettingsScreen(
 
     // Field preparation board selection dialog (shared with Offline -> Firmware)
     FieldPrepDialog(vm)
+
+    if (showWorkspaceExportDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showWorkspaceExportDialog = false
+                vm.workspaceArchivePassword = ""
+            },
+            title = { Text(stringResource(R.string.workspace_export_btn)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.backup_export_hint), style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = vm.workspaceArchivePassword,
+                        onValueChange = { vm.workspaceArchivePassword = it },
+                        label = { Text(stringResource(R.string.backup_password_optional)) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showWorkspaceExportDialog = false
+                    saveWorkspaceLauncher.launch("meshcore-workspace-archive.json")
+                }) { Text(stringResource(R.string.workspace_export_btn)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showWorkspaceExportDialog = false
+                    vm.workspaceArchivePassword = ""
+                }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
+    if (vm.pendingWorkspaceImportJson != null) {
+        AlertDialog(
+            onDismissRequest = {
+                vm.pendingWorkspaceImportJson = null
+                vm.workspaceArchivePassword = ""
+            },
+            title = { Text(stringResource(R.string.workspace_import_btn)) },
+            text = {
+                OutlinedTextField(
+                    value = vm.workspaceArchivePassword,
+                    onValueChange = { vm.workspaceArchivePassword = it },
+                    label = { Text(stringResource(R.string.import_password)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.confirmEncryptedWorkspaceImport() },
+                    enabled = vm.workspaceArchivePassword.isNotEmpty(),
+                ) { Text(stringResource(R.string.workspace_import_btn)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    vm.pendingWorkspaceImportJson = null
+                    vm.workspaceArchivePassword = ""
+                }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
 
     // Group APK warning & token preservation dialog
     if (showGroupUpdateDialog) {

@@ -126,6 +126,26 @@ fun SweepScreen(vm: AppViewModel) {
         }
     }
 
+    if (candidates.isNotEmpty()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !vm.busy) { vm.sweepSyncClock = !vm.sweepSyncClock },
+        ) {
+            Checkbox(
+                checked = vm.sweepSyncClock,
+                onCheckedChange = { vm.sweepSyncClock = it },
+                enabled = !vm.busy,
+            )
+            Text(
+                stringResource(R.string.sweep_sync_clock_opt),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+
     val pickedCount = candidates.count { vm.sweepPicked[hex(it.publicKey)] == true }
     Button(
         onClick = { vm.startSweep() },

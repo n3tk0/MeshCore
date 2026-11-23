@@ -155,7 +155,10 @@ fun AppScreen(
                             Step.COMPANION -> stringResource(R.string.app_name)
                             Step.REPEATER -> vm.companionName
                             Step.UPDATE -> vm.repeater?.name ?: ""
-                            Step.FLASH -> stringResource(R.string.flash_title, vm.companionName)
+                            Step.FLASH -> stringResource(
+                                R.string.flash_title,
+                                vm.companionName.ifEmpty { vm.flashImage?.env?.replace('_', ' ') ?: "" }
+                            )
                             Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
                             Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
                             Step.QUEUE -> stringResource(R.string.q_title)
@@ -1161,14 +1164,14 @@ private fun FlashContent(vm: AppViewModel) {
         if (uri != null) vm.pickFlashFile(uri)
     }
     val toCompanion = vm.flashTarget == FlashTarget.COMPANION
-    if (toCompanion) CompanionCard(vm, withFlashButton = false)
+    if (toCompanion && vm.hasCompanionConnection) CompanionCard(vm, withFlashButton = false)
     Hint(
         stringResource(if (toCompanion) R.string.flash_hint_companion_short else R.string.flash_hint_repeater_short),
         stringResource(if (toCompanion) R.string.flash_hint_companion else R.string.flash_hint_repeater),
     )
     if (vm.flashDone) {
         Button(onClick = { vm.closeFlash() }) {
-            Text(stringResource(if (toCompanion) R.string.reconnect else R.string.back_to_list))
+            Text(stringResource(if (toCompanion && vm.hasCompanionConnection) R.string.reconnect else R.string.back))
         }
         return
     }
