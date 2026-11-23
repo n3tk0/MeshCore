@@ -135,7 +135,7 @@ uint16_t SH1107Display::getTextWidth(const char *str)
 #ifdef DISPLAY_CYRILLIC
 void SH1107Display::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size)
 {
-  translateUTF8ForDisplay(dest, src, dest_size, true);
+  translateUTF8ForDisplay(dest, src, dest_size, true, true);
 }
 #endif
 

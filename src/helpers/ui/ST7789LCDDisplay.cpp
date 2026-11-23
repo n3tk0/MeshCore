@@ -166,7 +166,7 @@ uint16_t ST7789LCDDisplay::getTextWidth(const char* str) {
 
 #ifdef DISPLAY_CYRILLIC
 void ST7789LCDDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
-  translateUTF8ForDisplay(dest, src, dest_size, true);
+  translateUTF8ForDisplay(dest, src, dest_size, true, true);
 }
 #endif
 
