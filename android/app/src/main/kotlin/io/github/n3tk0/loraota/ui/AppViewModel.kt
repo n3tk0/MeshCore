@@ -2671,6 +2671,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             toolsState.appendCli(false, str(R.string.cli_timeout), CliLineKind.ERROR, durationMs = rtt)
         } else {
             toolsState.appendCli(false, reply.trim(), CliLineKind.REPLY, durationMs = rtt)
+            // the repeater took the new admin password: keep the saved one in step with it
+            val newPw = CliHelper.newPasswordOf(cmd)
+            if (newPw != null && reply.trim().removePrefix("> ").startsWith("password now", ignoreCase = true) &&
+                hasSavedPassword(r)) {
+                savePassword(r, newPw)
+            }
         }
     }
 

@@ -100,7 +100,18 @@ object CliHelper {
         if (c.startsWith("password ") || c == "password") return true
         if (c.startsWith("set guest.password ") || c.startsWith("set wifi.clear")) return true
         if (c.startsWith("set prv.key ")) return true
+        // radio changes can cut the repeater off the mesh; `tempradio off` only restores the saved ones
+        if (c.startsWith("set radio ") || c.startsWith("set freq ") || c.startsWith("set tx ")) return true
+        if (c == "tempradio" || (c.startsWith("tempradio ") && c != "tempradio off")) return true
+        if (c == "start ota") return true
         return false
+    }
+
+    /** The new password of a `password <new>` command (tag prefix removed), or null for any other command. */
+    fun newPasswordOf(command: String): String? {
+        val trimmed = TAG_PREFIX.replaceFirst(command.trim(), "").trimStart()
+        if (!trimmed.lowercase(Locale.ROOT).startsWith("password ")) return null
+        return trimmed.substring("password ".length).trim().ifEmpty { null }
     }
 
     /** True when the firmware executes the command immediately without returning a CLI reply. */

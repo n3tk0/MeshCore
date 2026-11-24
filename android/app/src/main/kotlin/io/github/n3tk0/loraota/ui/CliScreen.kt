@@ -420,7 +420,7 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         AlertDialog(
             onDismissRequest = { pendingConfirm = null },
             title = { Text(stringResource(R.string.cli_confirm_title)) },
-            text = { Text(stringResource(R.string.cli_confirm_body, cmd)) },
+            text = { Text(stringResource(R.string.cli_confirm_body, CliHelper.redactSecrets(cmd))) },
             confirmButton = {
                 TextButton(onClick = {
                     pendingConfirm = null
