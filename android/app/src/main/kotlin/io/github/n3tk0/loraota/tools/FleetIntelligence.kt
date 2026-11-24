@@ -140,10 +140,20 @@ object ConfigProfileLogic {
     /** Computes key-by-key differences between two backups (excluding secrets), sorted by setting key. */
     fun diffBackups(a: Backup, b: Backup): List<Triple<String, String, String>> {
         val hidden = PasswordBox.SECRET_SETTINGS + setOf("pin", "wifi.pwd", "prv.key", "bridge.secret")
-        val mapA = a.items.filter { it.group == BackupItem.GROUP_SETTING && it.id !in hidden }
-            .associate { it.id to it.value }
-        val mapB = b.items.filter { it.group == BackupItem.GROUP_SETTING && it.id !in hidden }
-            .associate { it.id to it.value }
+        fun toComparableMap(bk: Backup): Map<String, String> {
+            val out = LinkedHashMap<String, String>()
+            for (item in bk.items) {
+                when (item.group) {
+                    BackupItem.GROUP_SETTING -> if (item.id !in hidden) out[item.id] = item.value
+                    BackupItem.GROUP_CHANNEL -> out["channel:${item.id}"] = item.label.ifEmpty { "#${item.id}" }
+                }
+            }
+            val contacts = bk.items.count { it.group == BackupItem.GROUP_CONTACT }
+            if (contacts > 0) out["contacts.count"] = contacts.toString()
+            return out
+        }
+        val mapA = toComparableMap(a)
+        val mapB = toComparableMap(b)
         val allKeys = (mapA.keys + mapB.keys).toSortedSet()
         return allKeys.mapNotNull { k ->
             val va = mapA[k] ?: "—"

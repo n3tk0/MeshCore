@@ -677,6 +677,12 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                             }
                         }
                     }
+                } else {
+                    Text(
+                        stringResource(R.string.profile_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

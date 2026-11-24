@@ -1360,7 +1360,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeFlash() {
         if (flashTarget == FlashTarget.COMPANION) {
-            // after a flash (or a failed one) the companion is gone: back to the start
+            // after a flash (or a failed one) the companion is gone: back to the start (or back to Offline if opened from there)
             if (flashDone || flashingCompanion) {
                 flashingCompanion = false
                 devices.clear()
@@ -1371,6 +1371,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 flashImage = null
                 step = flashReturn
             }
+            if (step == Step.OFFLINE) loadOfflineData()
         } else if (flashDone) {
             backToRepeaters()   // it restarted with other firmware: log in again
         }
@@ -1390,6 +1391,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val name = (if (useDfu || f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
         flashReturn = step
         flashTarget = FlashTarget.COMPANION
+        flashSource = Source.RELEASES
+        flashUpstream = false
         flashPlan = null
         flashPercent = -1
         flashDone = false
@@ -1407,19 +1410,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun flashCandidates(): List<FirmwareFile> {
         val platform = info?.platform
         val running = oldImage?.env
+        val offlineFlash = flashTarget == FlashTarget.COMPANION && companionDevice == null
+        val selectedEnv = flashImage?.env
         return (if (flashUpstream) upstream else allFirmware).filter {
-            it.hasDfu && when (flashTarget) {
-                FlashTarget.COMPANION -> BoardCheck.fitsCompanion(it.env) && it.dfuIsZip
-                FlashTarget.REPEATER -> BoardCheck.role(it.env) == Role.REPEATER && when (platform) {
-                    OtaProtocol.PLATFORM_NRF52 -> it.dfuIsZip
-                    OtaProtocol.PLATFORM_ESP32 -> !it.dfuIsZip
-                    else -> true
+            if (offlineFlash) {
+                it.hasDfu || (!it.dfuIsZip && it.hasLoraOta)
+            } else {
+                it.hasDfu && when (flashTarget) {
+                    FlashTarget.COMPANION -> BoardCheck.fitsCompanion(it.env) && it.dfuIsZip
+                    FlashTarget.REPEATER -> BoardCheck.role(it.env) == Role.REPEATER && when (platform) {
+                        OtaProtocol.PLATFORM_NRF52 -> it.dfuIsZip
+                        OtaProtocol.PLATFORM_ESP32 -> !it.dfuIsZip
+                        else -> true
+                    }
                 }
             }
         }.sortedBy {
-            // the board it runs now first
-            val same = if (flashTarget == FlashTarget.COMPANION) BoardCheck.matches(it.env, companionModel) == true
-                else it.env == running
+            // the board it runs now (or the preselected board in offline flash) first
+            val same = when {
+                offlineFlash -> selectedEnv != null && it.env == selectedEnv
+                flashTarget == FlashTarget.COMPANION -> BoardCheck.matches(it.env, companionModel) == true
+                else -> it.env == running
+            }
             if (same) 0 else 1
         }
     }

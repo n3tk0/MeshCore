@@ -1239,7 +1239,15 @@ private fun FlashContent(vm: AppViewModel) {
             Text(stringResource(R.string.flash_from_file))
         }
     }
-    vm.flashImage?.let { if (it.env == null) Text(stringResource(R.string.chosen, it.name)) }
+    vm.flashImage?.let { img ->
+        if (img.env == null || !vm.hasCompanionConnection) {
+            Text(
+                stringResource(R.string.chosen, img.label),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
 }
 
 /** Releases (and builds made before) / a new build on GitHub / a file. */
