@@ -108,8 +108,7 @@ fun SettingsScreen(
             showUnknownSourcesDialog = true
             return
         }
-        runCatching { ctx.startActivity(AppUpdater.installIntent(ctx, apk)) }
-            .onFailure { vm.appUpdateError = it.message ?: it.toString() }
+        vm.installAppUpdate(apk)
     }
 
     LaunchedEffect(vm.pendingInstallApk) {

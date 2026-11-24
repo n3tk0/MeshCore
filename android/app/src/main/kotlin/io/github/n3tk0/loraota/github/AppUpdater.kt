@@ -1,8 +1,10 @@
 package io.github.n3tk0.loraota.github
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.FileProvider
+import android.content.pm.PackageInstaller
+import android.os.Build
 import io.github.n3tk0.loraota.ota.HttpError
 import io.github.n3tk0.loraota.ota.Releases
 import org.json.JSONArray
@@ -12,6 +14,9 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /** A LoRa OTA Android app release published on GitHub (tags starting with `lora-ota-app-`). */
 data class AppRelease(
@@ -155,6 +160,7 @@ object AppUpdater {
 
     /** Downloads the release APK into [destFile] over HTTPS only, verifying byte count and SHA-256 digest. */
     fun downloadApk(release: AppRelease, destFile: File, token: String? = null, isActive: () -> Boolean = { true }, onProgress: (Int) -> Unit) {
+        if (release.apkSha256.isEmpty()) throw IOException("The release has no SHA-256 checksum; update refused")
         destFile.parentFile?.mkdirs()
         val tmp = File(destFile.parentFile, "${destFile.name}.part")
         var target = release.apkUrl
@@ -207,10 +213,8 @@ object AppUpdater {
                 if (read <= 0L) throw IOException("empty APK download")
                 if (contentLen > 0L && read != contentLen) throw IOException("truncated APK download ($read / $contentLen bytes)")
                 if (release.apkSize > 0L && read != release.apkSize) throw IOException("APK size mismatch ($read / ${release.apkSize} bytes)")
-                if (release.apkSha256.isNotEmpty()) {
-                    val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
-                    if (actualSha != release.apkSha256) throw IOException("APK SHA-256 checksum mismatch")
-                }
+                val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+                if (actualSha != release.apkSha256) throw IOException("APK SHA-256 checksum mismatch")
                 if (destFile.exists()) destFile.delete()
                 if (!tmp.renameTo(destFile)) {
                     tmp.copyTo(destFile, overwrite = true)
@@ -258,12 +262,49 @@ object AppUpdater {
         throw IOException("too many redirects for $url")
     }
 
-    /** Creates an Intent to launch Android's package installer for [apkFile]. */
-    fun installIntent(ctx: Context, apkFile: File): Intent {
-        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apkFile)
-        return Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    private const val ACTION_INSTALL_STATUS = "io.github.n3tk0.loraota.INSTALL_STATUS"
+
+    /** Result of a PackageInstaller session, reported by [InstallResultReceiver]. */
+    data class InstallResult(val success: Boolean, val message: String?)
+
+    private val installResultsFlow = MutableSharedFlow<InstallResult>(extraBufferCapacity = 8)
+
+    /** Install outcomes (the ViewModel observes this to show errors). */
+    val installResults: SharedFlow<InstallResult> = installResultsFlow.asSharedFlow()
+
+    internal fun reportInstallResult(result: InstallResult) {
+        installResultsFlow.tryEmit(result)
+    }
+
+    /**
+     * Installs [apkFile] through a PackageInstaller session. Blocking (writes the whole APK):
+     * call from a background thread. The outcome arrives through [installResults].
+     */
+    fun installApk(ctx: Context, apkFile: File) {
+        val installer = ctx.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(ctx.packageName)
+        val sessionId = installer.createSession(params)
+        val session = installer.openSession(sessionId)
+        try {
+            apkFile.inputStream().use { input ->
+                session.openWrite("base.apk", 0, apkFile.length()).use { out ->
+                    input.copyTo(out)
+                    session.fsync(out)
+                }
+            }
+            val intent = Intent(ACTION_INSTALL_STATUS)
+                .setPackage(ctx.packageName)
+                .setClass(ctx, InstallResultReceiver::class.java)
+            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE
+            else PendingIntent.FLAG_UPDATE_CURRENT
+            val pi = PendingIntent.getBroadcast(ctx, sessionId, intent, flags)
+            session.commit(pi.intentSender)
+        } catch (e: Exception) {
+            session.abandon()
+            throw e
+        } finally {
+            session.close()
         }
     }
 }

@@ -415,6 +415,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         BuildWatcher.resume(app)
         viewModelScope.launch {
+            AppUpdater.installResults.collect { r ->
+                if (!r.success) appUpdateError = r.message ?: ""
+            }
+        }
+        viewModelScope.launch {
             BuildWatcher.state.collect { j ->
                 val before = buildJob
                 buildJob = j
@@ -2552,6 +2557,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appUpdateError = releasesWhy(e)
             } finally {
                 appUpdateDownloading = false
+            }
+        }
+    }
+
+    /** Installs [apk] via a PackageInstaller session; the outcome comes back through [AppUpdater.installResults]. */
+    fun installAppUpdate(apk: java.io.File) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { AppUpdater.installApk(ctx, apk) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appUpdateError = e.message ?: e.toString()
             }
         }
     }
