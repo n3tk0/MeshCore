@@ -52,9 +52,9 @@ class PasswordStore private constructor(
         for ((k, v) in entries) {
             val saved = runCatching {
                 if (encryptedPrefs.getString(k) == null) {
-                    encryptedPrefs.putString(k, cipher.encrypt(v))
-                }
-                true
+                    // commit() so the encrypted entry is on disk before the legacy one is removed
+                    encryptedPrefs.putStringSync(k, cipher.encrypt(v))
+                } else true
             }.getOrDefault(false)
             if (saved) legacy.remove(k)
         }
@@ -104,6 +104,8 @@ class PasswordStore private constructor(
         fun allStrings(): Map<String, String>
         fun getString(key: String): String?
         fun putString(key: String, value: String)
+        /** Writes synchronously; false when it could not be stored. */
+        fun putStringSync(key: String, value: String): Boolean { putString(key, value); return true }
         fun remove(key: String)
     }
 
@@ -113,6 +115,7 @@ class PasswordStore private constructor(
             prefs.all.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
         override fun getString(key: String): String? = prefs.getString(key, null)
         override fun putString(key: String, value: String) { prefs.edit().putString(key, value).apply() }
+        override fun putStringSync(key: String, value: String): Boolean = prefs.edit().putString(key, value).commit()
         override fun remove(key: String) { prefs.edit().remove(key).apply() }
     }
 
