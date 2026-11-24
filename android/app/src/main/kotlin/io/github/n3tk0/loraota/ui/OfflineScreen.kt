@@ -92,6 +92,7 @@ fun OfflineScreen(vm: AppViewModel) {
     var compareBase by remember { mutableStateOf<Backup?>(null) }
     var diffTarget by remember { mutableStateOf<Pair<Backup, Backup>?>(null) }
     var saveProfileTarget by remember { mutableStateOf<Backup?>(null) }
+    var directFlashPick by remember { mutableStateOf<FirmwareFile?>(null) }
     var profileNameInput by rememberSaveable { mutableStateOf("") }
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -171,7 +172,9 @@ fun OfflineScreen(vm: AppViewModel) {
         )
         2 -> OfflineFirmwareTab(
             vm = vm,
-            onFlashDirect = { f -> vm.startDirectOfflineFlash(f) },
+            onFlashDirect = { f ->
+                if (vm.hasCompanionConnection) directFlashPick = f else vm.startDirectOfflineFlash(f)
+            },
             onExportFirmware = { f, dfu ->
                 vm.exportingFirmware = f to dfu
                 val name = (if (dfu) f.dfu else f.file).ifEmpty {
@@ -185,6 +188,28 @@ fun OfflineScreen(vm: AppViewModel) {
     }
 
     FieldPrepDialog(vm)
+
+    // Flash direct while a companion is connected: which device?
+    directFlashPick?.let { f ->
+        AlertDialog(
+            onDismissRequest = { directFlashPick = null },
+            title = { Text(stringResource(R.string.offline_flash_which_title)) },
+            text = { Text(stringResource(R.string.offline_flash_which_text)) },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = {
+                        directFlashPick = null
+                        vm.startDirectOfflineFlash(f, standalone = false)
+                    }) { Text(stringResource(R.string.offline_flash_which_companion, vm.companionName)) }
+                    TextButton(onClick = {
+                        directFlashPick = null
+                        vm.startDirectOfflineFlash(f, standalone = true)
+                    }) { Text(stringResource(R.string.offline_flash_which_other)) }
+                    TextButton(onClick = { directFlashPick = null }) { Text(stringResource(R.string.cancel)) }
+                }
+            },
+        )
+    }
 
     // Encrypted backup import password prompt
     if (vm.importText != null && vm.step == Step.OFFLINE) {

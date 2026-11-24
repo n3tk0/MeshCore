@@ -252,6 +252,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var companionVersion by mutableStateOf("")
     private var companionDevice: BluetoothDevice? = null
     val hasCompanionConnection: Boolean get() = companionDevice != null
+    /** Offline flash of another device while a companion stays connected: flashCheck/flashBle ignore the companion. */
+    private var flashStandalone = false
+    private val flashCompanionDevice: BluetoothDevice? get() = if (flashStandalone) null else companionDevice
     private var flashingCompanion = false   // its link drops on purpose
 
     // backups of the settings (the companion's or the repeater's), kept on the phone
@@ -1339,6 +1342,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The companion's own flash screen, or (repeater) the Bluetooth / Wi-Fi tab of the repeater's screen. */
     fun openFlash(target: FlashTarget) {
+        flashStandalone = false
         if (target == FlashTarget.COMPANION) flashReturn = step
         flashTarget = target
         flashImage = null
@@ -1370,6 +1374,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // after a flash (or a failed one) the companion is gone: back to the start (or back to Offline if opened from there)
             if (flashDone || flashingCompanion) {
                 flashingCompanion = false
+                // its link is gone after the flash: no stale connected-companion state behind Back
+                if (!flashStandalone) clearDeviceSession()
                 devices.clear()
                 step = if (flashReturn == Step.OFFLINE) Step.OFFLINE else Step.COMPANION
             } else {
@@ -1389,7 +1395,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * allowing field flashing of any nRF52 (in bootloader `*_OTA`) or ESP32 (`MeshCore-OTA` AP)
      * without requiring a connected companion.
      */
-    fun startDirectOfflineFlash(f: FirmwareFile) = work {
+    fun startDirectOfflineFlash(f: FirmwareFile, standalone: Boolean = false) = work {
         // the DFU file when there is one; the LoRa-OTA .bin only as a Wi-Fi image of an ESP32
         if (!f.hasDfu && !f.plainBinFlashable(info?.platform)) throw Exception(str(R.string.err_flash_need_dfu))
         val bytes = withContext(Dispatchers.IO) {
@@ -1398,6 +1404,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val name = (if (f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
         flashReturn = step
+        flashStandalone = standalone
         flashTarget = FlashTarget.COMPANION
         flashSource = Source.RELEASES
         flashUpstream = false
@@ -1418,7 +1425,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun flashCandidates(): List<FirmwareFile> {
         val platform = info?.platform
         val running = oldImage?.env
-        val offlineFlash = flashTarget == FlashTarget.COMPANION && companionDevice == null
+        val offlineFlash = flashTarget == FlashTarget.COMPANION && flashCompanionDevice == null
         val selectedEnv = flashImage?.env
         return (if (flashUpstream) upstream else allFirmware).filter {
             if (offlineFlash) {
@@ -1503,7 +1510,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (env == null) warnings.add(str(R.string.warn_board_unknown))
 
         if (flashTarget == FlashTarget.COMPANION) {
-            val dev = companionDevice
+            val dev = flashCompanionDevice
             if (dev != null) {
                 if (!img.isZip) throw Exception(str(R.string.err_flash_need_zip))
                 if (env != null && !BoardCheck.fitsCompanion(env)) warnings.add(str(R.string.warn_not_companion, env))
@@ -1596,7 +1603,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 flashPercent = -1
             }
             flashDone = true
-            message = str(if (flashTarget == FlashTarget.COMPANION && companionDevice != null) R.string.msg_flash_done_companion else R.string.msg_flash_done)
+            message = str(if (flashTarget == FlashTarget.COMPANION && flashCompanionDevice != null) R.string.msg_flash_done_companion else R.string.msg_flash_done)
         }
     }
 
@@ -1604,7 +1611,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val address = p.address ?: return
         val zip = java.io.File(ctx.cacheDir, "flash.zip")
         withContext(Dispatchers.IO) { zip.writeBytes(p.image.data) }
-        val isConnectedCompanion = flashTarget == FlashTarget.COMPANION && companionDevice != null
+        val isConnectedCompanion = flashTarget == FlashTarget.COMPANION && flashCompanionDevice != null
         if (isConnectedCompanion) {
             // the DFU library needs the device to itself
             flashingCompanion = true
