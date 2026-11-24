@@ -294,6 +294,7 @@ fun AppScreen(
             dismissButton = { TextButton(onClick = { vm.flashCancel() }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+    ProfileBatchHost(vm)
     if (flashNoStop) {
         AlertDialog(
             onDismissRequest = { flashNoStop = false },
@@ -451,6 +452,7 @@ private fun BottomStatus(vm: AppViewModel, hasNavBarBelow: Boolean = false) {
 private fun CompanionStep(vm: AppViewModel) {
     LaunchedEffect(Unit) {
         if (vm.devices.isEmpty() && !vm.scanning && !vm.busy) vm.scan()
+        vm.loadKnownRepeaters()
     }
     Text(stringResource(R.string.companion_hint))
     val lastAddr = vm.lastCompanionAddress
@@ -473,6 +475,7 @@ private fun CompanionStep(vm: AppViewModel) {
             }
         }
     }
+    KnownRepeatersSection(vm)
     Button(onClick = { vm.scan() }, enabled = !vm.scanning && !vm.busy) {
         Text(stringResource(if (vm.scanning) R.string.scanning else R.string.scan))
     }

@@ -700,6 +700,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             loadRepeaters()
             step = Step.REPEATER
+            schedulePendingOpen()
         } catch (e: Throwable) {
             // do not leave a half-open GATT link behind (the companion stops advertising while connected)
             withContext(NonCancellable) { link.closeAndRefresh() }
@@ -3166,6 +3167,252 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- start screen: "My repeaters" from what is kept on the phone ----
+
+    var knownRepeaters by mutableStateOf<List<io.github.n3tk0.loraota.tools.KnownRepeaterRow>>(emptyList())
+        private set
+    /** The repeater to open once the companion is connected and its contacts are loaded. */
+    var pendingOpenKey by mutableStateOf<String?>(null)
+        private set
+    var pendingOpenName by mutableStateOf("")
+        private set
+    /** Offline hub opened for one repeater: the tab (0 health, 1 backups) and the search it starts with. */
+    var offlineFocusTab by mutableStateOf(0)
+        private set
+    var offlineFocusQuery by mutableStateOf("")
+        private set
+    private var knownJob: Job? = null
+
+    fun loadKnownRepeaters() {
+        knownJob?.cancel()
+        knownJob = viewModelScope.launch {
+            val (health, backups) = withContext(Dispatchers.IO) { healthStore.allRecords() to backupStore.all() }
+            fleetState.offlineHealth.clear()
+            fleetState.offlineHealth.putAll(health)
+            fleetState.offlineBackups.clear()
+            fleetState.offlineBackups.addAll(backups)
+            val names = HashMap(fleetState.knownDeviceNames.toMap())
+            for (b in backups) if (b.deviceKey.isNotEmpty() && b.deviceName.isNotBlank() && b.deviceKey !in names) names[b.deviceKey] = b.deviceName
+            val chems = chemPrefs.all.mapNotNull { (k, v) ->
+                (v as? String)?.let { n -> BatteryChem.entries.firstOrNull { it.name == n } }?.let { k to it }
+            }.toMap()
+            knownRepeaters = io.github.n3tk0.loraota.tools.KnownRepeaters.build(
+                health, backups, fleetState.pinnedKeys.toList(), names, chems, savedKeys.toList(),
+            )
+        }
+    }
+
+    /** A row's details: the Offline hub, on its health (or else its backups), searching for that repeater. */
+    fun openKnownOffline(row: io.github.n3tk0.loraota.tools.KnownRepeaterRow) {
+        offlineFocusTab = if (fleetState.offlineHealth.containsKey(row.key)) 0 else 1
+        offlineFocusQuery = if (fleetState.knownDeviceNames[row.key] == row.name) row.name else row.key
+        openOffline()
+    }
+
+    /** Connects the way the start screen does (the last companion) and opens this repeater's login after. */
+    fun connectAndOpen(row: io.github.n3tk0.loraota.tools.KnownRepeaterRow) {
+        if (busy || reconnecting) return
+        pendingOpenKey = row.key
+        pendingOpenName = row.name
+        val addr = lastCompanionAddress
+        if (addr != null) connectByAddress(addr)
+        else {
+            message = str(R.string.known_pick_companion)
+            messageIsError = false
+        }
+    }
+
+    fun cancelPendingOpen() {
+        pendingOpenKey = null
+        pendingOpenName = ""
+    }
+
+    /** After a connect: when the work that did it has ended (a login cannot start inside it), the repeater's login. */
+    private fun schedulePendingOpen() {
+        if (pendingOpenKey == null) return
+        viewModelScope.launch {
+            var waited = 0
+            while (busy && waited++ < 100) delay(50)
+            val key = pendingOpenKey ?: return@launch
+            val name = pendingOpenName
+            cancelPendingOpen()
+            if (step != Step.REPEATER || busy) return@launch
+            val c = repeaters.firstOrNull { hex(it.publicKey) == key }
+            if (c == null) {
+                message = str(R.string.known_not_in_contacts, name)
+                messageIsError = true
+                return@launch
+            }
+            val pw = savedPassword(c)
+            if (!pw.isNullOrEmpty()) login(c, pw) else loginSheet = c
+        }
+    }
+
+    // ---- one settings profile applied to several repeaters, one after another ----
+
+    var profileBatchOpen by mutableStateOf(false)
+    var profileBatchProfile by mutableStateOf<io.github.n3tk0.loraota.tools.ConfigProfile?>(null)
+    val profileBatchPicked = mutableStateMapOf<String, Boolean>()
+    var profileBatchAsk by mutableStateOf(false)
+    var profileBatch by mutableStateOf<io.github.n3tk0.loraota.tools.ProfileBatchState?>(null)
+        private set
+    var profileBatchCurrent by mutableStateOf<io.github.n3tk0.loraota.tools.BatchEntry?>(null)
+        private set
+
+    /** Repeaters it can take: those with a kept password, nearest first. */
+    fun profileBatchCandidates(): List<Contact> =
+        OtaQueueState.order(repeaters.filter { hasSavedPassword(it) }, { it.hops }, { it.name })
+
+    fun openProfileBatch(profile: io.github.n3tk0.loraota.tools.ConfigProfile?) {
+        if (profileBatch?.finished != false) profileBatch = null
+        profileBatchProfile = profile ?: configProfiles.firstOrNull()
+        profileBatchAsk = false
+        // the way of the sweep: only the ones next to us ticked at first
+        profileBatchPicked.clear()
+        for (c in repeaters) if (hasSavedPassword(c)) profileBatchPicked[hex(c.publicKey)] = c.hops == 0
+        profileBatchOpen = true
+    }
+
+    fun closeProfileBatch() {
+        if (busy && profileBatchCurrent != null) return   // Stop first
+        profileBatchOpen = false
+        profileBatchAsk = false
+    }
+
+    fun newProfileBatch() {
+        if (busy) return
+        profileBatch = null
+        openProfileBatch(profileBatchProfile)
+    }
+
+    fun startProfileBatch() {
+        profileBatchAsk = false
+        val p = profileBatchProfile ?: return
+        val picked = profileBatchCandidates().filter { profileBatchPicked[hex(it.publicKey)] == true }
+        if (picked.isEmpty()) return
+        profileBatch = io.github.n3tk0.loraota.tools.ProfileBatchState(
+            p.name, picked.map { io.github.n3tk0.loraota.tools.BatchEntry(hex(it.publicKey), it.name) },
+        )
+        runProfileBatch()
+    }
+
+    /** The ones that failed or were left (stopped) go once more. */
+    fun retryProfileBatch() {
+        val b = profileBatch ?: return
+        b.retryFailed()
+        profileBatch = b.refreshed()
+        runProfileBatch()
+    }
+
+    fun runProfileBatch() = work {
+        val b0 = profileBatch ?: return@work
+        val profile = configProfiles.firstOrNull { it.name == b0.profileName }
+            ?: throw Exception(str(R.string.pbatch_profile_gone, b0.profileName))
+        if (canReadRepeater == null) {
+            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+        }
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        // the repeater the app is logged in to (if any) is the user's: it is put back after the batch
+        val prevRepeater = repeater
+        val prevInfo = info
+        OtaService.start(ctx, str(R.string.pbatch_notif, b0.profileName), str(R.string.phase_start))
+        try {
+            while (true) {
+                val e = b0.next ?: break
+                profileBatchCurrent = e
+                working = e.name
+                profileApplyOne(profile, e)   // a Stop leaves e pending: nothing half-done is recorded
+                profileBatch = b0.refreshed()
+            }
+        } finally {
+            profileBatchCurrent = null
+            repeater = prevRepeater
+            info = prevInfo
+            OtaService.stop(ctx)
+            if (prevRepeater != null && b0.entries.any { it.key == hex(prevRepeater.publicKey) && it.result == io.github.n3tk0.loraota.tools.BatchResult.APPLIED }) {
+                toolsState.settingsLoaded = false   // what the editor shows is no longer what the repeater has
+            }
+        }
+        message = str(R.string.pbatch_report, b0.count(io.github.n3tk0.loraota.tools.BatchResult.APPLIED),
+            b0.count(io.github.n3tk0.loraota.tools.BatchResult.UNCHANGED),
+            b0.count(io.github.n3tk0.loraota.tools.BatchResult.SKIPPED), b0.count(io.github.n3tk0.loraota.tools.BatchResult.FAILED))
+        messageIsError = b0.count(io.github.n3tk0.loraota.tools.BatchResult.FAILED) > 0
+    }
+
+    /**
+     * One repeater: log in, back up (the automatic one), read what it has now, write only what the profile
+     * changes. Cancellation is rethrown and records nothing; the writes already made are the same ones a
+     * retry would make (it reads again and diffs again).
+     */
+    private suspend fun profileApplyOne(profile: io.github.n3tk0.loraota.tools.ConfigProfile, e: io.github.n3tk0.loraota.tools.BatchEntry) {
+        fun finish(r: io.github.n3tk0.loraota.tools.BatchResult, note: String, keys: Int = 0) {
+            e.result = r
+            e.note = note
+            e.keys = keys
+        }
+        val c = repeaters.firstOrNull { hex(it.publicKey) == e.key } ?: return finish(io.github.n3tk0.loraota.tools.BatchResult.SKIPPED, str(R.string.q_not_found))
+        val pw = savedPassword(c) ?: return finish(io.github.n3tk0.loraota.tools.BatchResult.SKIPPED, str(R.string.q_no_password))
+        repeater = c
+        info = null
+        val learned = try {
+            signIn(c, pw)
+        } catch (x: CancellationException) {
+            throw x
+        } catch (x: io.github.n3tk0.loraota.ble.CompanionError) {
+            throw x
+        } catch (x: Exception) {
+            return finish(io.github.n3tk0.loraota.tools.BatchResult.FAILED, x.message ?: x.toString())
+        }
+        val r = learned ?: c
+        repeater = r
+        try {
+            // the automatic backup first (the same one before an update); it is also what the repeater has now
+            val backup = try {
+                makeBackup(DeviceKind.REPEATER, true)
+            } catch (x: CancellationException) {
+                throw x
+            } catch (x: io.github.n3tk0.loraota.ble.CompanionError) {
+                throw x
+            } catch (x: Exception) {
+                return finish(io.github.n3tk0.loraota.tools.BatchResult.FAILED, str(R.string.warn_no_backup, x.message ?: ""))
+            }
+            val current = backup.items.filter { it.group == GROUP_SETTING && it.id != RepeaterBackup.PASSWORD }
+                .associate { it.id to it.value }
+            val plan = io.github.n3tk0.loraota.tools.ProfilePlanner.plan(profile.settings, current)
+            val skippedNote = buildList {
+                if (plan.invalid.isNotEmpty()) add(str(R.string.pbatch_invalid, plan.invalid.joinToString(", ") { it.first }))
+                if (plan.unsupported.isNotEmpty()) add(str(R.string.pbatch_unsupported, plan.unsupported.size))
+            }.joinToString(" · ")
+            if (plan.changes.isEmpty()) {
+                return if (plan.invalid.isNotEmpty()) finish(io.github.n3tk0.loraota.tools.BatchResult.FAILED, skippedNote)
+                else finish(io.github.n3tk0.loraota.tools.BatchResult.UNCHANGED, skippedNote)
+            }
+            val items = plan.changes.map { (k, v) -> BackupItem(GROUP_SETTING, k, k, v) }
+            val res = RepeaterBackup.apply(companion, r, items) { i, n -> working = "${e.name}: ${str(R.string.working_save_settings)} ($i/$n)" }
+            if (res.failed.isNotEmpty()) {
+                val first = res.failed.first()
+                finish(io.github.n3tk0.loraota.tools.BatchResult.FAILED,
+                    str(R.string.rset_partial, res.done, res.failed.size, "${first.first.id}: ${first.second.ifEmpty { str(R.string.health_no_answer) }}"),
+                    res.done)
+            } else {
+                val note = listOfNotNull(
+                    str(R.string.pbatch_applied_keys, res.done, plan.changes.keys.joinToString(", ")),
+                    if (io.github.n3tk0.loraota.tools.ProfilePlanner.needsRestart(plan)) str(R.string.pbatch_restart) else null,
+                    skippedNote.ifEmpty { null },
+                ).joinToString(" · ")
+                finish(io.github.n3tk0.loraota.tools.BatchResult.APPLIED, note, res.done)
+            }
+        } catch (x: CancellationException) {
+            throw x
+        } catch (x: io.github.n3tk0.loraota.ble.CompanionError) {
+            throw x
+        } catch (x: Exception) {
+            finish(io.github.n3tk0.loraota.tools.BatchResult.FAILED, x.message ?: x.toString())
+        } finally {
+            withContext(NonCancellable) { runCatching { companion.restorePath(r) } }
+        }
+    }
+
     // ---- offline viewer (saved backups, past health checks & offline firmware hub without companion) ----
 
     private var offlineLoadJob: Job? = null
@@ -3179,7 +3426,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeOffline() {
         fleetState.showFieldPrepDialog = false
+        offlineFocusTab = 0
+        offlineFocusQuery = ""
         step = offlineReturn
+        if (step == Step.COMPANION) loadKnownRepeaters()
     }
 
     fun loadOfflineData() {

@@ -680,6 +680,9 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                             }
                         }
                     }
+                    TextButton(onClick = { vm.openProfileBatch(null) }, enabled = !vm.busy && vm.repeaters.isNotEmpty()) {
+                        Text(stringResource(R.string.pbatch_open))
+                    }
                 } else {
                     Text(
                         stringResource(R.string.profile_empty),

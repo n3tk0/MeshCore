@@ -870,4 +870,65 @@
     <string name="sweep_confirm_text">Ще бъдат проверени %1$d ретранслатора. Приблизително време: ~%2$d мин (груба оценка; зависи от обхвата и трафика в ефира).</string>
     <string name="sweep_confirm_far">%1$d от избраните не са директни: влизането при тях е с flood и изразходва повече ефирно време.</string>
     <string name="sweep_confirm_go">Старт</string>
+
+    <!-- Моите рипитъри (начален екран) -->
+    <string name="known_title">Моите рипитъри</string>
+    <string name="known_empty">Още няма познати рипитъри. След първата проверка на здравето или backup тук ще се виждат името, батерията и състоянието им и без връзка.</string>
+    <string name="known_connect_open">Свържи и отвори</string>
+    <string name="known_checked">проверен %1$s</string>
+    <string name="known_never_checked">още не е проверяван</string>
+    <string name="known_health_ok">Наред</string>
+    <string name="known_health_warn">Внимание</string>
+    <string name="known_health_bad">Проблем</string>
+    <string name="known_health_unknown">Без проверка</string>
+    <string name="known_pending">След свързване ще се отвори: %1$s</string>
+    <string name="known_not_in_contacts">„%1$s“ не е в контактите на този companion. Потърси го в списъка или го добави отново.</string>
+    <string name="known_pick_companion">Избери companion от списъка, за да се свържеш и да се отвори рипитърът.</string>
+    <string name="known_show_all">Покажи всички (%1$d)</string>
+    <string name="known_show_less">Покажи по-малко</string>
+
+    <!-- Профил към няколко рипитъра -->
+    <string name="pbatch_open">Приложи към няколко</string>
+    <string name="pbatch_title">Профил към няколко рипитъра</string>
+    <string name="pbatch_hint">Всеки рипитър се обработва поред: влизане, автоматичен backup, четене на настройките и запис само на разликите. Име, GPS и пароли никога не се пишат.</string>
+    <string name="pbatch_no_profiles">Няма запазени профили. Запази настройките на един рипитър като профил първо.</string>
+    <string name="pbatch_profile">Профил</string>
+    <plurals name="pbatch_start">
+        <item quantity="one">Приложи към %1$d рипитър</item>
+        <item quantity="other">Приложи към %1$d рипитъра</item>
+    </plurals>
+    <string name="pbatch_confirm_title">Приложи „%1$s“?</string>
+    <string name="pbatch_confirm_count">%1$d рипитъра, около %2$d мин.</string>
+    <string name="pbatch_confirm_text">Преди всеки се прави backup. Записват се само настройките, които се различават. Можеш да спреш с „Спри“; недовършеният остава за повторение.</string>
+    <string name="pbatch_go">Приложи</string>
+    <string name="pbatch_progress">Обработвам %1$d от %2$d…</string>
+    <string name="pbatch_summary_title">Резултат</string>
+    <string name="pbatch_summary_counts">Приложен: %1$d (%2$d параметъра) · Без промяна: %3$d · Неуспешни: %4$d · Чакащи: %5$d</string>
+    <string name="pbatch_retry">Повтори неуспешните (%1$d)</string>
+    <string name="pbatch_new">Нов избор</string>
+    <string name="pbatch_st_applied">приложен: %1$d параметъра</string>
+    <string name="pbatch_st_unchanged">без промяна</string>
+    <string name="pbatch_st_skipped">пропуснат</string>
+    <string name="pbatch_st_failed">неуспешен</string>
+    <string name="pbatch_st_running">работя…</string>
+    <string name="pbatch_st_pending">чака</string>
+    <string name="pbatch_profile_gone">Профилът „%1$s“ вече го няма.</string>
+    <string name="pbatch_notif">Профил „%1$s“ към рипитъри</string>
+    <string name="pbatch_report">Приложени: %1$d · без промяна: %2$d · пропуснати: %3$d · неуспешни: %4$d</string>
+    <string name="pbatch_invalid">невалидни стойности: %1$s</string>
+    <string name="pbatch_unsupported">%1$d параметъра, които рипитърът няма</string>
+    <string name="pbatch_applied_keys">записани %1$d: %2$s</string>
+    <string name="pbatch_restart">радиото се променя след рестарт</string>
+
+    <!-- Сравнение на два backup-а -->
+    <string name="compare_title">Сравнение на backup-и</string>
+    <string name="compare_old">Старо: %1$s</string>
+    <string name="compare_new">Ново: %1$s</string>
+    <string name="compare_other_device">Двата backup-а са от различни устройства.</string>
+    <string name="compare_none">Няма разлики между двата backup-а.</string>
+    <string name="compare_settings">Настройки</string>
+    <string name="compare_channels">Канали</string>
+    <string name="compare_contacts">Контакти</string>
+    <string name="compare_contacts_count">%1$d → %2$d (%3$s)</string>
+    <string name="compare_secret_changed">стойността е различна (скрита)</string>
 </resources>
