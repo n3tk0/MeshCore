@@ -1,11 +1,11 @@
 package io.github.n3tk0.loraota.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,22 +17,30 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,12 +48,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.DeviceKind
@@ -57,13 +67,16 @@ import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.HistorySeries
 import io.github.n3tk0.loraota.ota.SelfTest
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * A device's health: first a summary (all good, or what is wrong, with the self test in words), then
- * graphs of the telemetry history, then the self tests kept on this phone. "Check again" is the
- * refresh icon in the top bar.
+ * A device's health:
+ * 1) Summary (all good or problems + self test in words)
+ * 2) Expandable History section with lazy per-metric chart cards (fetched from firmware only when expanded)
+ * 3) Expandable Past Checks kept on this phone
+ * 4) Collapsible Battery & power-saving settings (`battsave` / capacity) at the bottom
  */
 @Composable
 fun HealthScreen(vm: AppViewModel) {
@@ -80,67 +93,131 @@ fun HealthScreen(vm: AppViewModel) {
         if (vm.selfTestMissing) InfoCard(stringResource(R.string.health_no_selftest))
     }
     if (vm.selfTest != null || problems.isNotEmpty()) SummaryCard(vm.selfTest, problems)
-    if (repeater) vm.battSave?.let { BatteryCard(vm, it) }
-    HistoryCard(vm)
+    HistorySection(vm, defaultExpanded = !repeater || vm.canReadRepeater == false)
     if (repeater && vm.healthRecords.size > 1) PastChecks(vm)
-    Text(stringResource(if (repeater) R.string.health_hint_repeater else R.string.health_hint_companion),
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (repeater) {
+        val battIssue = HealthWarning.BATTERY_STEP in vm.healthWarnings || HealthWarning.FAST_DRAIN in vm.healthWarnings
+        vm.battSave?.let { BatteryCard(vm, it, defaultExpanded = battIssue) }
+    }
+    Text(
+        stringResource(if (repeater) R.string.health_hint_repeater else R.string.health_hint_companion),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 private fun volts(mv: Int) = String.format(Locale.ROOT, "%.2f V", mv / 1000.0)
 
 /**
- * The repeater's battery steps (`battsave`) next to what we suggest for one Li-ion / LiPo cell, and the
- * capacity when an INA219 counts the charge. 'Off' is suggested only once the reading was checked.
+ * Collapsible battery & power-saving settings card at the bottom of HealthScreen.
  */
 @Composable
-private fun BatteryCard(vm: AppViewModel, b: BattSave) {
+private fun BatteryCard(vm: AppViewModel, b: BattSave, defaultExpanded: Boolean) {
+    var expanded by rememberSaveable(vm.healthDeviceName, defaultExpanded) { mutableStateOf(defaultExpanded) }
     val rec = BattSave.recommended(vm.battChecked)
-    @Composable fun steps(low: Int, crit: Int, off: Int) = stringResource(R.string.batt_steps, volts(low), volts(crit),
-        if (off == 0) stringResource(R.string.batt_off_unused) else volts(off))
+    @Composable fun steps(low: Int, crit: Int, off: Int) = stringResource(
+        R.string.batt_steps,
+        volts(low),
+        volts(crit),
+        if (off == 0) stringResource(R.string.batt_off_unused) else volts(off),
+    )
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(stringResource(R.string.batt_title), style = MaterialTheme.typography.titleMedium)
-            HealthRow(stringResource(R.string.batt_now), if (b.enabled)
-                stringResource(R.string.batt_on_step, powerStep(b.step)) + "\n" + steps(b.low, b.crit, b.off)
-                else stringResource(R.string.hv_off))
-            HealthRow(stringResource(R.string.batt_suggested), steps(rec.first, rec.second, rec.third))
-            if (b.external) Text(stringResource(R.string.batt_external), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
-                .clickable(enabled = !vm.busy && !vm.battGauge) { vm.battChecked = !vm.battChecked }) {
-                Checkbox(checked = vm.battChecked, onCheckedChange = { vm.battChecked = it }, enabled = !vm.busy && !vm.battGauge)
-                Text(stringResource(if (vm.battGauge) R.string.batt_checked_ina else R.string.batt_checked, volts(b.mv)),
-                    style = MaterialTheme.typography.bodyMedium)
-            }
-            if (!vm.battChecked) Text(stringResource(R.string.batt_why_no_off), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { vm.applyBattSave() }, enabled = !vm.busy && !b.matches(rec)) {
-                    Text(stringResource(R.string.batt_apply))
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(12.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(stringResource(R.string.batt_title), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (b.enabled) stringResource(R.string.batt_on_step, powerStep(b.step))
+                        else stringResource(R.string.hv_off),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                TextButton(onClick = { vm.setBattSave(!b.enabled) }, enabled = !vm.busy) {
-                    Text(stringResource(if (b.enabled) R.string.batt_turn_off else R.string.batt_turn_on))
-                }
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            if (vm.battGauge) {
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                val c = vm.battCapacity
-                HealthRow(stringResource(R.string.batt_capacity), when {
-                    c == null || c.mah == 0 -> stringResource(R.string.batt_cap_unknown)
-                    c.learnt -> stringResource(R.string.batt_cap_learnt, c.mah)
-                    else -> stringResource(R.string.batt_cap_set, c.mah)
-                })
-                var text by rememberSaveable(c?.mah) { mutableStateOf(if (c == null || c.mah == 0) "" else c.mah.toString()) }
-                Text(stringResource(R.string.batt_cap_hint), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(text, { text = it.filter(Char::isDigit).take(5) }, Modifier.weight(1f), singleLine = true,
-                        label = { Text("mAh") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    val mah = text.toIntOrNull()
-                    OutlinedButton(onClick = { vm.setBattCapacity(mah ?: 0) },
-                        enabled = !vm.busy && (mah == null || mah <= 60000) && (mah ?: 0) != (c?.mah ?: 0)) {
-                        Text(stringResource(if (mah == null || mah == 0) R.string.batt_cap_learn else R.string.batt_cap_save))
+            if (expanded) {
+                HorizontalDivider()
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HealthRow(
+                        stringResource(R.string.batt_now),
+                        if (b.enabled) stringResource(R.string.batt_on_step, powerStep(b.step)) + "\n" + steps(b.low, b.crit, b.off)
+                        else stringResource(R.string.hv_off),
+                    )
+                    HealthRow(stringResource(R.string.batt_suggested), steps(rec.first, rec.second, rec.third))
+                    if (b.external) {
+                        Text(
+                            stringResource(R.string.batt_external),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !vm.busy && !vm.battGauge) { vm.battChecked = !vm.battChecked },
+                    ) {
+                        Checkbox(checked = vm.battChecked, onCheckedChange = { vm.battChecked = it }, enabled = !vm.busy && !vm.battGauge)
+                        Text(
+                            stringResource(if (vm.battGauge) R.string.batt_checked_ina else R.string.batt_checked, volts(b.mv)),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    if (!vm.battChecked) {
+                        Text(
+                            stringResource(R.string.batt_why_no_off),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.applyBattSave() }, enabled = !vm.busy && !b.matches(rec)) {
+                            Text(stringResource(R.string.batt_apply))
+                        }
+                        TextButton(onClick = { vm.setBattSave(!b.enabled) }, enabled = !vm.busy) {
+                            Text(stringResource(if (b.enabled) R.string.batt_turn_off else R.string.batt_turn_on))
+                        }
+                    }
+                    if (vm.battGauge) {
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        val c = vm.battCapacity
+                        HealthRow(
+                            stringResource(R.string.batt_capacity),
+                            when {
+                                c == null || c.mah == 0 -> stringResource(R.string.batt_cap_unknown)
+                                c.learnt -> stringResource(R.string.batt_cap_learnt, c.mah)
+                                else -> stringResource(R.string.batt_cap_set, c.mah)
+                            },
+                        )
+                        var text by rememberSaveable(c?.mah) { mutableStateOf(if (c == null || c.mah == 0) "" else c.mah.toString()) }
+                        Text(
+                            stringResource(R.string.batt_cap_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                text, { text = it.filter(Char::isDigit).take(5) }, Modifier.weight(1f), singleLine = true,
+                                label = { Text("mAh") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            )
+                            val mah = text.toIntOrNull()
+                            OutlinedButton(
+                                onClick = { vm.setBattCapacity(mah ?: 0) },
+                                enabled = !vm.busy && (mah == null || mah <= 60000) && (mah ?: 0) != (c?.mah ?: 0),
+                            ) {
+                                Text(stringResource(if (mah == null || mah == 0) R.string.batt_cap_learn else R.string.batt_cap_save))
+                            }
+                        }
                     }
                 }
             }
@@ -198,8 +275,10 @@ private fun SummaryCard(t: SelfTest?, problems: List<HealthProblem>) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (worst.isEmpty()) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = color,
-                    modifier = Modifier.size(24.dp))
+                Icon(
+                    if (worst.isEmpty()) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = color,
+                    modifier = Modifier.size(24.dp),
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(title, style = MaterialTheme.typography.titleMedium, color = color)
             }
@@ -210,8 +289,10 @@ private fun SummaryCard(t: SelfTest?, problems: List<HealthProblem>) {
                     HealthSeverity.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 Row(verticalAlignment = Alignment.Top) {
-                    Icon(if (p.severity == HealthSeverity.INFO) Icons.Default.Info else Icons.Default.Warning, null,
-                        tint = tint, modifier = Modifier.size(18.dp))
+                    Icon(
+                        if (p.severity == HealthSeverity.INFO) Icons.Default.Info else Icons.Default.Warning, null,
+                        tint = tint, modifier = Modifier.size(18.dp),
+                    )
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(warningText(p)), style = MaterialTheme.typography.bodyMedium)
                 }
@@ -236,13 +317,16 @@ private fun SelfTestRows(t: SelfTest) {
     }
     if (radio.isNotEmpty()) HealthRow(stringResource(R.string.health_radio), radio.joinToString(" · "))
     v["i2c"]?.let { i2c ->
-        HealthRow(stringResource(R.string.health_sensors), when {
-            i2c == "stuck" -> stringResource(R.string.hv_bus_stuck)
-            i2c.startsWith("off") -> (i2c.substringAfter(':', "1").toIntOrNull() ?: 1).let {
-                pluralStringResource(R.plurals.hv_sensors_off, it, it)
-            }
-            else -> stringResource(R.string.hv_fine)
-        })
+        HealthRow(
+            stringResource(R.string.health_sensors),
+            when {
+                i2c == "stuck" -> stringResource(R.string.hv_bus_stuck)
+                i2c.startsWith("off") -> (i2c.substringAfter(':', "1").toIntOrNull() ?: 1).let {
+                    pluralStringResource(R.plurals.hv_sensors_off, it, it)
+                }
+                else -> stringResource(R.string.hv_fine)
+            },
+        )
     }
     v["qspi"]?.let { HealthRow(stringResource(R.string.health_flash), stringResource(if (it == "ok") R.string.hv_fine else R.string.hv_no_answer)) }
     val batt = buildList {
@@ -263,33 +347,42 @@ private fun SelfTestRows(t: SelfTest) {
     v["mail"]?.let { HealthRow(stringResource(R.string.health_mailbox), if (it == "off") stringResource(R.string.health_off) else it) }
     v["ota"]?.let { o ->
         val on = stringResource(if (o.startsWith("on")) R.string.hv_on else R.string.hv_off)
-        HealthRow("LoRa OTA", when {
-            o.endsWith(",new") -> on + " · " + stringResource(R.string.health_unconfirmed)
-            o.endsWith(",fresh") -> on + " · " + stringResource(R.string.health_fresh)
-            else -> on
-        })
+        HealthRow(
+            "LoRa OTA",
+            when {
+                o.endsWith(",new") -> on + " · " + stringResource(R.string.health_unconfirmed)
+                o.endsWith(",fresh") -> on + " · " + stringResource(R.string.health_fresh)
+                else -> on
+            },
+        )
     }
     t.powerStep?.let { HealthRow(stringResource(R.string.health_power), powerStep(it)) }
     v["up"]?.let { up ->
         val m = Regex("(\\d+)d(\\d+)h").matchEntire(up)
-        HealthRow(stringResource(R.string.health_uptime),
-            if (m != null) stringResource(R.string.hv_uptime, m.groupValues[1].toInt(), m.groupValues[2].toInt()) else up)
+        HealthRow(
+            stringResource(R.string.health_uptime),
+            if (m != null) stringResource(R.string.hv_uptime, m.groupValues[1].toInt(), m.groupValues[2].toInt()) else up,
+        )
     }
 }
 
 @Composable
-private fun powerStep(s: String) = stringResource(when (s) {
-    "low" -> R.string.ps_low
-    "critical" -> R.string.ps_critical
-    "off" -> R.string.ps_off
-    else -> R.string.ps_normal
-})
+private fun powerStep(s: String) = stringResource(
+    when (s) {
+        "low" -> R.string.ps_low
+        "critical" -> R.string.ps_critical
+        "off" -> R.string.ps_off
+        else -> R.string.ps_normal
+    }
+)
 
 @Composable
 private fun HealthRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth()) {
-        Text(label, modifier = Modifier.weight(0.35f), style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            label, modifier = Modifier.weight(0.35f), style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text(value, modifier = Modifier.weight(0.65f), style = MaterialTheme.typography.bodyMedium)
     }
 }
@@ -329,41 +422,171 @@ private fun format(field: Int, v: Int): String {
     return "$text ${unit(field)}".trim()
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/**
+ * Expandable "History" section with individual collapsible chart cards.
+ * Each chart stays closed by default and fetches its telemetry series from firmware only when opened.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HistoryCard(vm: AppViewModel) {
+private fun HistorySection(vm: AppViewModel, defaultExpanded: Boolean) {
+    var historyOpen by rememberSaveable(vm.healthDeviceName, defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var expandedFields by rememberSaveable(vm.healthDeviceName, vm.healthGeneration) { mutableStateOf(emptyList<Int>()) }
+    val createCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        val pending = vm.pendingCsvExport
+        vm.pendingCsvExport = null
+        if (uri != null && pending != null) {
+            val (s, label) = pending
+            vm.exportHistoryCsv(s, label, unit(s.field), uri)
+        }
+    }
+
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.health_history), style = MaterialTheme.typography.titleMedium)
-            if (vm.historyMissing) {
-                Text(stringResource(R.string.health_no_history), style = MaterialTheme.typography.bodyMedium)
-                return@Column
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { historyOpen = !historyOpen }
+                .padding(12.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(stringResource(R.string.health_history), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (vm.historyMissing) stringResource(R.string.health_no_history)
+                    else stringResource(R.string.health_history_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = vm.historyRing == HistorySeries.RING_DAY, enabled = !vm.busy,
-                    onClick = { vm.showHistory(HistorySeries.RING_DAY, vm.historyField) },
-                    label = { Text(stringResource(R.string.health_24h)) })
-                FilterChip(selected = vm.historyRing == HistorySeries.RING_WEEK, enabled = !vm.busy,
-                    onClick = { vm.showHistory(HistorySeries.RING_WEEK, vm.historyField) },
-                    label = { Text(stringResource(R.string.health_week)) })
+            Icon(
+                if (historyOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    if (!historyOpen || vm.historyMissing) return
+
+    val rings = listOf(
+        HistorySeries.RING_DAY to R.string.health_24h,
+        HistorySeries.RING_WEEK to R.string.health_week,
+    )
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        for ((i, pair) in rings.withIndex()) {
+            val (ring, labelRes) = pair
+            SegmentedButton(
+                selected = vm.historyRing == ring,
+                onClick = { vm.setHistoryRing(ring, expandedFields) },
+                enabled = !vm.busy,
+                shape = SegmentedButtonDefaults.itemShape(i, rings.size),
+            ) {
+                Text(stringResource(labelRes), maxLines = 1)
             }
-            // only what the device measures (the node says which fields have values; an older one does not)
-            val masks = vm.historyCache.values.mapNotNull { it.fields }
-            // none yet (the first 10 minutes after a fresh flash): all of them, as from an older node
-            val has = masks.fold(0) { a, m -> a or m }.takeIf { it != 0 }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((f, name) in FIELDS) {
-                    if (has != null && has and (1 shl f) == 0 && f != vm.historyField) continue
-                    FilterChip(selected = vm.historyField == f, enabled = !vm.busy,
-                        onClick = { vm.showHistory(vm.historyRing, f) }, label = { Text(stringResource(name)) })
+        }
+    }
+
+    // Filter to metrics supported by the device once any loaded series tells us its field bitmask
+    val masks = vm.historyCache.values.mapNotNull { it.fields }
+    val hasMask = masks.fold(0) { a, m -> a or m }.takeIf { it != 0 }
+
+    for ((field, nameRes) in FIELDS) {
+        val isExpanded = field in expandedFields
+        if (hasMask != null && hasMask and (1 shl field) == 0 && !isExpanded) continue
+        val key = vm.historyRing to field
+        val series = vm.historyCache[key]
+        val isLoading = vm.loadingHistoryKey == key || key in vm.queuedHistoryKeys
+        val canStartLoad = !vm.busy || vm.loadingHistoryKey != null
+        val lastVal = series?.values?.lastOrNull { it != null }
+        val metricLabel = stringResource(nameRes)
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val next = !isExpanded
+                            expandedFields = if (next) expandedFields + field else expandedFields - field
+                            if (next && series == null && canStartLoad) {
+                                vm.loadHistoryField(vm.historyRing, field)
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        metricLabel,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (lastVal != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                        ) {
+                            Text(
+                                format(field, lastVal),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Icon(
+                        if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            }
-            val s = vm.historyCache[vm.historyRing to vm.historyField]
-            when {
-                s == null -> Text(stringResource(if (vm.busy) R.string.health_loading else R.string.health_not_loaded),
-                    style = MaterialTheme.typography.bodySmall)
-                s.values.none { it != null } -> Text(stringResource(R.string.health_no_values), style = MaterialTheme.typography.bodyMedium)
-                else -> Chart(s)
+                if (isExpanded) {
+                    HorizontalDivider()
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        when {
+                            isLoading -> {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(
+                                    stringResource(R.string.health_loading),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            series == null -> {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        stringResource(if (vm.busy) R.string.health_loading else R.string.health_not_loaded),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(
+                                        onClick = { vm.loadHistoryField(vm.historyRing, field) },
+                                        enabled = !vm.busy,
+                                    ) {
+                                        Text(stringResource(R.string.releases_retry))
+                                    }
+                                }
+                            }
+                            series.values.none { it != null } -> {
+                                Text(stringResource(R.string.health_no_values), style = MaterialTheme.typography.bodyMedium)
+                            }
+                            else -> {
+                                Chart(series)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = {
+                                        val dev = vm.healthDeviceName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "device" }
+                                        val ringTag = if (series.ring == HistorySeries.RING_DAY) "24h" else "7d"
+                                        vm.pendingCsvExport = series to metricLabel
+                                        createCsv.launch("${dev}_f${series.field}_$ringTag.csv")
+                                    }) {
+                                        Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(stringResource(R.string.health_export_csv))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -377,23 +600,34 @@ private fun Chart(s: HistorySeries) {
     val line = MaterialTheme.colorScheme.primary
     val fill = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
     val grid = MaterialTheme.colorScheme.outlineVariant
-    val fmt = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-    var selectedIdx by androidx.compose.runtime.remember(s) { mutableStateOf<Int?>(null) }
+    val locale = LocalConfiguration.current.locales[0]
+    val axisFmt = remember(locale) { SimpleDateFormat("dd.MM HH:mm", locale) }
+    val inspectFmt = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale) }
+    var selectedIdx by remember(s) { mutableStateOf<Int?>(null) }
 
     val inspectedIdx = selectedIdx?.takeIf { it in s.values.indices && s.values[it] != null }
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         if (inspectedIdx != null) {
             val v = s.values[inspectedIdx]!!
             val t = s.timeOf(inspectedIdx)
-            val stamp = if (t != null) fmt.format(Date(t * 1000)) else "#$inspectedIdx"
-            Text("$stamp · ${format(s.field, v)}", style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            val stamp = if (t != null) inspectFmt.format(Date(t * 1000)) else "#$inspectedIdx"
+            Text(
+                "$stamp · ${format(s.field, v)}",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
             TextButton(onClick = { selectedIdx = null }) { Text(stringResource(R.string.build_close)) }
         } else {
-            Text(stringResource(R.string.health_range, format(s.field, lo), format(s.field, hi)),
-                style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-            Text(stringResource(R.string.health_last, format(s.field, s.values.lastOrNull { it != null } ?: lo)),
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                stringResource(R.string.health_range, format(s.field, lo), format(s.field, hi)),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                stringResource(R.string.health_last, format(s.field, s.values.lastOrNull { it != null } ?: lo)),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
     Canvas(
@@ -478,34 +712,70 @@ private fun Chart(s: HistorySeries) {
     }
     val first = s.timeOf(0)
     val last = s.timeOf(s.values.size - 1)
-    Row {
-        Text(if (first != null) fmt.format(Date(first * 1000)) else stringResource(
-            if (s.ring == HistorySeries.RING_DAY) R.string.health_ago_day else R.string.health_ago_week),
-            style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-        Text(stringResource(R.string.chart_touch_hint), style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.weight(1f))
-        Text(if (last != null) fmt.format(Date(last * 1000)) else stringResource(R.string.health_now),
-            style = MaterialTheme.typography.labelSmall)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(
+            if (first != null) axisFmt.format(Date(first * 1000))
+            else stringResource(if (s.ring == HistorySeries.RING_DAY) R.string.health_ago_day else R.string.health_ago_week),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            if (last != null) axisFmt.format(Date(last * 1000)) else stringResource(R.string.health_now),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    if (inspectedIdx == null) {
+        Text(
+            stringResource(R.string.chart_touch_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
-/** The self tests kept on this phone, newest first: what changed between visits. */
+/** The self tests kept on this phone, newest first: collapsible card. */
 @Composable
 private fun PastChecks(vm: AppViewModel) {
+    var expanded by rememberSaveable(vm.healthDeviceName) { mutableStateOf(false) }
+    val locale = LocalConfiguration.current.locales[0]
+    val fmt = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale) }
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.health_past), style = MaterialTheme.typography.titleMedium)
-            val fmt = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-            for (r in vm.healthRecords.asReversed().take(10)) {
-                val t = SelfTest.parse(r.line) ?: continue
-                val what = buildString {
-                    append(if (t.ok) stringResource(R.string.hv_fine) else t.problems.joinToString(", ").ifEmpty { "WARN" })
-                    t.batteryMv?.let { append(String.format(Locale.ROOT, " · %.2f V", it / 1000.0)) }
-                    t.batteryPercent?.let { append(" $it%") }
-                    t.mailbox?.let { append(" · ✉ $it") }
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(12.dp),
+            ) {
+                Text(
+                    "${stringResource(R.string.health_past)} (${vm.healthRecords.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (expanded) {
+                HorizontalDivider()
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (r in vm.healthRecords.asReversed().take(10)) {
+                        val t = SelfTest.parse(r.line) ?: continue
+                        val what = buildString {
+                            append(if (t.ok) stringResource(R.string.hv_fine) else t.problems.joinToString(", ").ifEmpty { "WARN" })
+                            t.batteryMv?.let { append(String.format(Locale.ROOT, " · %.2f V", it / 1000.0)) }
+                            t.batteryPercent?.let { append(" $it%") }
+                            t.mailbox?.let { append(" · ✉ $it") }
+                        }
+                        HealthRow(fmt.format(Date(r.time)), what)
+                    }
                 }
-                HealthRow(fmt.format(Date(r.time)), what)
             }
         }
     }

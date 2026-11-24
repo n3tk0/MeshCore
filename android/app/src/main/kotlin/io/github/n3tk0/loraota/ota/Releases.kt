@@ -413,9 +413,93 @@ object Releases {
         binDir(cache).listFiles()?.forEach { if (it.name !in keep && !it.name.endsWith(".tmp")) it.delete() }
     }
 
+    /** Count and total bytes of cached firmware binaries and release lists (excludes backups and health). */
+    fun cacheStats(cache: File): Pair<Int, Long> {
+        val bins = File(cache, "firmware").listFiles().orEmpty().filter { it.isFile }
+        val jsons = cache.listFiles { f ->
+            f.isFile && (f.name.startsWith("releases-") && f.name.endsWith(".json") || f.name == "builds.json")
+        }.orEmpty()
+        val bytes = bins.sumOf { it.length() } + jsons.sumOf { it.length() }
+        return bins.size to bytes
+    }
+
+    /** Clears all cached firmware binaries, cached release lists, and downloaded build artifacts. */
+    @Synchronized
+    fun clearCache(cache: File) {
+        File(cache, "firmware").listFiles()?.forEach { it.delete() }
+        cache.listFiles { f ->
+            f.isFile && (f.name.startsWith("releases-") && f.name.endsWith(".json") || f.name == "builds.json")
+        }?.forEach { it.delete() }
+    }
+
     /** The firmware the app's builds made (newest first), kept on the phone (see [addBuild]). */
     fun builds(cache: File): List<FirmwareFile> = runCatching { fromJson(JSONArray(String(buildsFile(cache).readBytes()))) }
         .getOrDefault(emptyList())
+
+    fun isFileCached(f: FirmwareFile, cache: File): Boolean =
+        f.hasLoraOta && f.sha256.isNotEmpty() && File(binDir(cache), "${f.sha256}.bin").isFile
+
+    fun isDfuCached(f: FirmwareFile, cache: File): Boolean =
+        f.hasDfu && f.dfuSha256.isNotEmpty() && File(binDir(cache), "${f.dfuSha256}.bin").isFile
+
+    fun isAnyCached(f: FirmwareFile, cache: File): Boolean = isFileCached(f, cache) || isDfuCached(f, cache)
+
+    /**
+     * All firmware entries (app builds + cached releases across all repos + older cached) that currently
+     * have at least one binary saved on disk, deduplicated with builds first and newest releases next.
+     */
+    fun cachedFirmwares(repo: String, cache: File): List<FirmwareFile> {
+        val seen = HashSet<Triple<String, String, String>>()
+        val out = ArrayList<FirmwareFile>()
+        val repoFiles = cache.listFiles { f -> f.isFile && f.name.startsWith("releases-") && f.name.endsWith(".json") }
+            .orEmpty()
+            .sortedBy { if (it.name == listFile(cache, repo).name) 0 else 1 }
+        val releaseEntries = repoFiles.flatMap { f ->
+            runCatching { fromJson(JSONArray(String(f.readBytes()))) }.getOrDefault(emptyList())
+        }
+        val all = builds(cache) + releaseEntries
+        for (f in all) {
+            if (!isAnyCached(f, cache)) continue
+            val key = Triple(f.env, f.sha256, f.dfuSha256)
+            if (seen.add(key)) out.add(f)
+        }
+        return out
+    }
+
+    /** Reads and checksum-verifies an already-cached firmware binary without touching the network. */
+    fun readCachedFile(f: FirmwareFile, dfu: Boolean, cache: File): ByteArray? {
+        val (size, sha) = if (dfu) f.dfuSize to f.dfuSha256 else f.size to f.sha256
+        if (sha.isEmpty()) return null
+        val kept = File(binDir(cache), "$sha.bin")
+        if (!kept.isFile) return null
+        val data = runCatching { kept.readBytes() }.getOrNull() ?: return null
+        return if (matches(size, sha, data)) data else null
+    }
+
+    /** Removes a single firmware entry's cached binary files (and removes it from builds.json if it was a build). */
+    @Synchronized
+    fun removeCachedFirmware(cache: File, f: FirmwareFile) {
+        if (f.isBuild) {
+            val remaining = builds(cache).filterNot {
+                it.release == f.release && it.env == f.env && it.sha256 == f.sha256 && it.dfuSha256 == f.dfuSha256
+            }
+            writeAtomic(buildsFile(cache), toJson(remaining).toString().toByteArray())
+        }
+        val otherEntries = builds(cache) +
+            cache.listFiles { file -> file.isFile && file.name.startsWith("releases-") && file.name.endsWith(".json") }
+                .orEmpty()
+                .flatMap { file -> runCatching { fromJson(JSONArray(String(file.readBytes()))) }.getOrDefault(emptyList()) }
+                .filterNot { it.env == f.env && it.sha256 == f.sha256 && it.dfuSha256 == f.dfuSha256 }
+        val stillUsed = otherEntries.filter { isAnyCached(it, cache) }
+            .flatMap { listOf(it.sha256, it.dfuSha256) }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        for (sha in listOf(f.sha256, f.dfuSha256)) {
+            if (sha.isNotEmpty() && sha !in stillUsed) {
+                File(binDir(cache), "$sha.bin").delete()
+            }
+        }
+    }
 
     /**
      * A build's files: [data] by file name, checked against the entries' checksums, kept on the phone

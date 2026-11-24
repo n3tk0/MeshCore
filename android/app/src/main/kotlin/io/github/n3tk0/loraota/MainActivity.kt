@@ -12,14 +12,24 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import io.github.n3tk0.loraota.ui.AppScreen
 import io.github.n3tk0.loraota.ui.AppViewModel
 
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
 
-    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        if (results.values.any { it }) vm.onPermissionsGranted()
+    }
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(Lang.wrap(base))
@@ -41,6 +51,25 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
+            var themeMode by remember { mutableStateOf(AppPrefs.theme(this)) }
+            val darkTheme = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            val colorScheme = if (darkTheme) DarkColors else LightColors
+            val view = LocalView.current
+            if (!view.isInEditMode) {
+                SideEffect {
+                    @Suppress("DEPRECATION")
+                    window.statusBarColor = colorScheme.surface.toArgb()
+                    @Suppress("DEPRECATION")
+                    window.navigationBarColor = colorScheme.surface.toArgb()
+                    val controller = WindowCompat.getInsetsController(window, view)
+                    controller.isAppearanceLightStatusBars = !darkTheme
+                    controller.isAppearanceLightNavigationBars = !darkTheme
+                }
+            }
             // the screen stays on only while an update, a flash, a build or a queue runs
             val keepOn = vm.keepScreenOn || (vm.busy && vm.queueCurrent != null)
             androidx.compose.runtime.DisposableEffect(keepOn) {
@@ -48,11 +77,19 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 onDispose { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
             }
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors) {
-                AppScreen(vm) { lang ->
-                    Lang.set(this, lang)
-                    recreate()
-                }
+            MaterialTheme(colorScheme = colorScheme) {
+                AppScreen(
+                    vm = vm,
+                    themeMode = themeMode,
+                    setThemeMode = { mode ->
+                        themeMode = mode
+                        AppPrefs.setTheme(this, mode)
+                    },
+                    setLang = { lang ->
+                        Lang.set(this, lang)
+                        recreate()
+                    },
+                )
             }
         }
     }

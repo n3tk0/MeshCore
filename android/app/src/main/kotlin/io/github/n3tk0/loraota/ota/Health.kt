@@ -222,6 +222,31 @@ class HealthStore(dir: File) {
         return (0 until a.length()).map { val o = a.getJSONObject(it); Record(o.getLong("t"), o.getString("l")) }
     }
 
+    /** All saved self-tests per device key (newest last), for offline view and fleet summaries. */
+    @Synchronized
+    fun allRecords(): Map<String, List<Record>> {
+        val all = readAll()
+        val out = LinkedHashMap<String, List<Record>>()
+        val it = all.keys()
+        while (it.hasNext()) {
+            val key = it.next()
+            val a = all.optJSONArray(key) ?: continue
+            val list = (0 until a.length()).mapNotNull { idx ->
+                runCatching {
+                    val o = a.getJSONObject(idx)
+                    Record(o.getLong("t"), o.getString("l"))
+                }.getOrNull()
+            }
+            if (list.isNotEmpty()) out[key] = list
+        }
+        return out
+    }
+
+    /** Most recent self-test per device key, for fast fleet badges on the repeater list. */
+    @Synchronized
+    fun allLatest(): Map<String, Record> =
+        allRecords().mapValues { (_, list) -> list.last() }
+
     @Synchronized
     fun add(device: String, line: String, time: Long = System.currentTimeMillis()) {
         val all = readAll()

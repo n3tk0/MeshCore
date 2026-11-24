@@ -13,6 +13,11 @@ val groupToken = System.getenv("LORAOTA_GITHUB_TOKEN")?.trim().orEmpty().toByteA
 val groupKey = ByteArray(groupToken.size).also { SecureRandom().nextBytes(it) }
 fun hexOf(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
 
+val appVersionName = System.getenv("LORAOTA_VERSION_NAME")?.trim().takeUnless { it.isNullOrEmpty() }
+    ?: (project.findProperty("appVersionName") as? String) ?: "0.2.0"
+val appVersionCode = System.getenv("LORAOTA_VERSION_CODE")?.trim()?.toIntOrNull()
+    ?: (project.findProperty("appVersionCode") as? String)?.toIntOrNull() ?: 2
+
 android {
     namespace = "io.github.n3tk0.loraota"
     compileSdk = 35
@@ -21,10 +26,11 @@ android {
         applicationId = "io.github.n3tk0.loraota"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         buildConfigField("String", "GROUP_TOKEN_A", "\"${hexOf(ByteArray(groupToken.size) { (groupToken[it].toInt() xor groupKey[it].toInt()).toByte() })}\"")
         buildConfigField("String", "GROUP_TOKEN_B", "\"${hexOf(groupKey)}\"")
+        buildConfigField("boolean", "IS_GROUP_APK", "${groupToken.isNotEmpty()}")
     }
 
     // the release key: from the environment (GitHub Secrets in CI), so every version installs over the last
