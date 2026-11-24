@@ -27,6 +27,7 @@ protected:
   int          _active_sensor_count = 0;
   uint8_t      next_available_channel = TELEM_CHANNEL_SELF + 1;
   bool         _ina219_found = false;   // its bus is taken as the battery
+  bool         _ina226_found = false;   // primary INA226 (0x44): its bus is taken as the battery
   bool         _bq_found = false;       // a BQ25798 charger: it measures the battery (before an INA219)
   #if ENV_INCLUDE_BQ25798
   bool bqActive() const;
