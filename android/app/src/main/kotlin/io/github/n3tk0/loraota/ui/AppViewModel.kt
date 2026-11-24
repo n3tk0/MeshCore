@@ -2066,9 +2066,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = ""
         step = Step.BACKUP
         loadBackups()
-        if (kind == DeviceKind.REPEATER && canReadRepeater == null) {
-            viewModelScope.launch { canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false) }
-        }
     }
 
     fun closeBackup() {
