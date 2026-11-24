@@ -6,13 +6,23 @@ Android приложението в [`android/`](../android) служи за б�
 
 ## Галерия с екрани
 
-| Преглед на рипитър (Ping x5 & Haversine съседи) | Настройки, Профили & LoRa Airtime калкулатор | Интерактивна CLI конзола |
+Екраните са **истински снимки на приложението**: рендират се директно от Compose кода с [Paparazzi](https://github.com/cashapp/paparazzi) върху демонстрационни данни (измислени имена като `Vitosha-Peak-R1`) и затова винаги съвпадат с приложението. Обновяват се с `tools/android-screens.sh`; CI (`android-screens.yml`) ги генерира като artifact.
+
+| Преглед на рипитър (Ping x5 & съседи) | Настройки, Профили & LoRa Airtime калкулатор | Интерактивна CLI конзола с подсказки |
 | :---: | :---: | :---: |
 | ![Преглед на рипитър](./_assets/android_repeater_overview.png) | ![Настройки и LoRa калкулатор](./_assets/android_repeater_settings_lora_calc.png) | ![CLI конзола](./_assets/android_repeater_cli.png) |
 
 | Офлайн Firmware хъб & Директен флаш | Офлайн Одит, Делта OTA & Мрежова топология | Пакетна проверка на флота (Health Sweep) |
 | :---: | :---: | :---: |
 | ![Офлайн Firmware](./_assets/android_offline_firmware.png) | ![Офлайн Одит и Топология](./_assets/android_offline_audit_mesh.png) | ![Health Sweep](./_assets/android_fleet_sweep.png) |
+
+| Начален екран „Моите рипитъри“ | Сравнение на два backup-а | Профил към няколко рипитъра |
+| :---: | :---: | :---: |
+| ![Моите рипитъри](./_assets/android_start_my_repeaters.png) | ![Сравнение на backup-и](./_assets/android_backup_compare.png) | ![Профил към няколко рипитъра](./_assets/android_profile_batch.png) |
+
+| Преглед в тъмна тема |
+| :---: |
+| ![Преглед, тъмна тема](./_assets/android_repeater_overview_dark.png) |
 
 ---
 
