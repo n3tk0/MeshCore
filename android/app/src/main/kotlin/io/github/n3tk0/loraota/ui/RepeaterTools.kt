@@ -190,7 +190,7 @@ fun QuickActionsCard(vm: AppViewModel) {
 /** Expandable neighbors list on the Overview tab (loads via `neighbors` CLI; supports `neighbor.remove`). */
 @Composable
 fun NeighborsCard(vm: AppViewModel) {
-    var expanded by rememberSaveable(vm.repeater?.name) { mutableStateOf(false) }
+    var expanded by vm.toolsState::neighborsExpanded
     var removeCandidate by remember { mutableStateOf<NeighborEntry?>(null) }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
@@ -397,7 +397,7 @@ private fun formatSecsAgo(secs: Long): String = when {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RepeaterToolsTab(vm: AppViewModel) {
-    var toolSection by rememberSaveable(vm.repeater?.name) { mutableIntStateOf(0) }
+    var toolSection by vm.toolsState::toolSection
     val sections = listOf(
         R.string.tools_cli,
         R.string.tools_settings,

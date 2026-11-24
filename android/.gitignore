@@ -4,3 +4,5 @@ local.properties
 *.iml
 .idea/
 .kotlin/
+# Paparazzi output (the docs copy is made by tools/android-screens.sh)
+app/src/test/snapshots/

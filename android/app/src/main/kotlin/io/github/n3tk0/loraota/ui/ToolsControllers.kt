@@ -2,6 +2,7 @@ package io.github.n3tk0.loraota.ui
 
 import android.content.Context
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -198,6 +199,14 @@ class RepeaterToolsState(ctx: Context) {
     val customCliSnippets = mutableStateListOf<String>().apply { addAll(snippetStore.load()) }
     val configProfiles = mutableStateListOf<ConfigProfile>().apply { addAll(profileStore.load()) }
 
+    /** The Tools tab's section (0 CLI, 1 settings, 2 backup) and the Overview's neighbors card: kept here, not in a composable. */
+    var toolSection by mutableIntStateOf(0)
+    var neighborsExpanded by mutableStateOf(false)
+
+    /** What is typed in each CLI console (kept when the tab is left). */
+    var repeaterCliInput by mutableStateOf("")
+    var companionCliInput by mutableStateOf("")
+
     val neighbors = mutableStateListOf<NeighborEntry>()
     var neighborsLoaded by mutableStateOf(false)
     var neighborsError by mutableStateOf<String?>(null)
@@ -276,6 +285,8 @@ class RepeaterToolsState(ctx: Context) {
     }
 
     fun clearForNewRepeater() {
+        toolSection = 0
+        neighborsExpanded = false
         neighbors.clear()
         neighborsLoaded = false
         neighborsError = null

@@ -79,7 +79,7 @@ import java.util.Locale
 @Composable
 fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
     val ctx = LocalContext.current
-    var input by rememberSaveable(isCompanion) { mutableStateOf("") }
+    var input by (if (isCompanion) vm.toolsState::companionCliInput else vm.toolsState::repeaterCliInput)
     var historyIdx by remember { mutableIntStateOf(-1) }
     var pendingConfirm by remember { mutableStateOf<String?>(null) }
     var copiedNotice by remember { mutableStateOf(false) }

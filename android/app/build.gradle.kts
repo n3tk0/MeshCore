@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("app.cash.paparazzi")
 }
 
 // The group's GitHub token for "New build" (Petko's choice, risk accepted 2026-10-22): from the environment,
@@ -71,6 +72,13 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+}
+
+// The screenshot tests (Paparazzi, see tools/android-screens.sh) run only with the record/verify tasks,
+// not with the plain unit tests.
+val paparazziRun = gradle.startParameter.taskNames.any { it.contains("paparazzi", ignoreCase = true) }
+tasks.withType<Test>().configureEach {
+    if (!paparazziRun) filter.excludeTestsMatching("io.github.n3tk0.loraota.screens.*")
 }
 
 dependencies {

@@ -34,13 +34,21 @@ private const val MAX_NAMES = 12
 /** Two backups side by side (the older one first): settings, channels and contacts, secrets redacted. */
 @Composable
 fun BackupCompareDialog(a: Backup, b: Backup, onClose: () -> Unit) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        BackupCompareContent(a, b, onClose)
+    }
+}
+
+/** The compare page itself (the dialog's content; also rendered on its own for the docs screenshots). */
+@Composable
+fun BackupCompareContent(a: Backup, b: Backup, onClose: () -> Unit) {
     val (old, new) = remember(a, b) { BackupCompare.inTimeOrder(a, b) }
     val cmp = remember(old, new) { BackupCompare.compare(old, new) }
     val fmt = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
     fun label(x: Backup) = "${x.deviceName.ifEmpty { x.deviceKey.take(8) }} · ${fmt.format(Date(x.time))}" +
         (if (x.firmware.isNotEmpty()) " · ${x.firmware}" else "")
 
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    run {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

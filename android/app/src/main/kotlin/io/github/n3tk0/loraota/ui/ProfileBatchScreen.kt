@@ -57,6 +57,14 @@ import io.github.n3tk0.loraota.tools.ProfilePlanner
 fun ProfileBatchHost(vm: AppViewModel) {
     if (!vm.profileBatchOpen) return
     Dialog(onDismissRequest = { vm.closeProfileBatch() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        ProfileBatchContent(vm)
+    }
+}
+
+/** The batch page itself (the dialog's content; also rendered on its own for the docs screenshots). */
+@Composable
+fun ProfileBatchContent(vm: AppViewModel) {
+    run {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
