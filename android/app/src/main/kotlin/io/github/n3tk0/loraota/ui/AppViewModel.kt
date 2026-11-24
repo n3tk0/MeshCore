@@ -2752,6 +2752,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = str(R.string.qa_reboot_sent)
     }
 
+    /** Lets the neighbors card ask again after an error. */
+    fun clearNeighborsError() { toolsState.neighborsError = null }
+
     fun loadNeighbors() = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
@@ -2765,6 +2768,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         working = str(R.string.working_neighbors)
         val reply = try {
             RepeaterBackup.ask(companion, r, "neighbors")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // set an error so the card does not ask again in a loop
+            toolsState.neighborsError = e.message ?: e.toString()
+            return@work
         } finally {
             withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
         }

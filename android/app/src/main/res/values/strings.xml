@@ -844,4 +844,5 @@
     <string name="workspace_imported">Възстановени: %1$d backup-а, %2$d устройства със здраве, %3$d пароли, %4$d профила.</string>
     <string name="err_update_token">Не може да се запази груповият токен; обновяването е спряно</string>
     <string name="err_update_bad_apk">Свален файл, който не е това приложение; обновяването е спряно</string>
+    <string name="neighbors_retry">Опитай пак</string>
 </resources>

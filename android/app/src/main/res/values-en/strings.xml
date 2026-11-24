@@ -843,4 +843,5 @@
     <string name="workspace_imported">Restored: %1$d backups, %2$d health devices, %3$d passwords, %4$d profiles.</string>
     <string name="err_update_token">Could not keep the group token; update stopped</string>
     <string name="err_update_bad_apk">The downloaded file is not this app; update stopped</string>
+    <string name="neighbors_retry">Retry</string>
 </resources>

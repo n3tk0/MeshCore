@@ -243,7 +243,10 @@ fun NeighborsCard(vm: AppViewModel) {
                                 Icon(Icons.Default.Warning, null, modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.error)
                                 Spacer(Modifier.width(8.dp))
-                                Text(err, style = MaterialTheme.typography.bodySmall)
+                                Text(err, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { vm.clearNeighborsError() }, enabled = !vm.busy) {
+                                    Text(stringResource(R.string.neighbors_retry))
+                                }
                             }
                         }
                         !vm.neighborsLoaded -> {
