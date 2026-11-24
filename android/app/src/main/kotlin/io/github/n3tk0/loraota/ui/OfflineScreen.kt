@@ -1053,6 +1053,36 @@ private fun OfflineAuditAndMeshTab(
         }
     }
 
+    // Network map (osmdroid) as a full-screen dialog
+    var showMap by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth().clickable { showMap = true }) {
+        Column(Modifier.padding(12.dp)) {
+            Text(stringResource(R.string.map_open), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.map_open_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (showMap) {
+        val mapData = remember(vm.observedNeighbors, vm.offlineBackups, vm.knownDeviceNames, vm.offlineHealth) {
+            val snippets = HashMap<String, String>()
+            for ((k, list) in vm.offlineHealth) {
+                val st = list.lastOrNull()?.let { io.github.n3tk0.loraota.ota.SelfTest.parse(it.line) } ?: continue
+                val txt = listOfNotNull(
+                    st.batteryPercent?.let { "$it%" },
+                    st.batteryMv?.let { "$it mV" },
+                ).joinToString(" · ")
+                if (txt.isNotEmpty()) snippets[k.lowercase(Locale.ROOT)] = txt
+            }
+            io.github.n3tk0.loraota.tools.NetworkMapLogic.build(
+                vm.offlineBackups.toList(), vm.observedNeighbors.toMap(), vm.knownDeviceNames.toMap(), snippets,
+            )
+        }
+        NetworkMapDialog(mapData) { showMap = false }
+    }
+
     // 3. Mesh Link Topology & SNR Asymmetry Matrix
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

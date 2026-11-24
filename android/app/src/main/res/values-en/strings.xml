@@ -931,4 +931,19 @@
     <string name="compare_contacts">Contacts</string>
     <string name="compare_contacts_count">%1$d → %2$d (%3$s)</string>
     <string name="compare_secret_changed">value differs (hidden)</string>
+    <string name="map_title">Network map</string>
+    <string name="map_open">Network map</string>
+    <string name="map_open_hint">Repeaters with GPS and the links between them (SNR)</string>
+    <string name="map_back">Back</string>
+    <string name="map_fit">Fit all</string>
+    <string name="map_close">Close</string>
+    <string name="map_cancel">Cancel</string>
+    <string name="map_download">Download</string>
+    <string name="map_save_offline">Save area offline</string>
+    <string name="map_saving">Downloading tiles…</string>
+    <string name="map_save_done">The area is saved for offline use.</string>
+    <string name="map_save_failed">The download did not fully succeed. Try again with an internet connection.</string>
+    <string name="map_no_nodes">No repeaters with GPS coordinates (lat/lon = 0 are skipped).</string>
+    <string name="map_save_confirm">%1$d tiles (zoom %2$d–%3$d) will be downloaded from OpenStreetMap for the visible area. Continue?</string>
+    <string name="map_save_too_many">The area is too large: %1$d tiles (maximum %2$d). Zoom in and try again.</string>
 </resources>
