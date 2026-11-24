@@ -191,7 +191,7 @@ class ToolsLogicTest {
         assertTrue(CliHelper.isSecretWriteCommand("ab|set pin 123456"))
         assertTrue(CliHelper.isSecretReadCommand("ab|get bridge.secret"))
         assertTrue(CliHelper.isSecretReadCommand("get guest.password extra"))
-        assertTrue("LoRa OTA Diagnostic Report" in report)
+        assertTrue("MeshCore Service Diagnostic Report" in report)
     }
 
     @Test

@@ -175,10 +175,10 @@ jobs:
         with:
           tag_name: ${{ env.LORAOTA_RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          name: "LoRa OTA app v${{ env.LORAOTA_VERSION_NAME }}"
+          name: "MeshCore Service app v${{ env.LORAOTA_VERSION_NAME }}"
           prerelease: ${{ env.LORAOTA_PRERELEASE == 'true' }}
           body: |
-            LoRa OTA Android app v${{ env.LORAOTA_VERSION_NAME }} (versionCode ${{ env.LORAOTA_VERSION_CODE }}).
+            MeshCore Service Android app v${{ env.LORAOTA_VERSION_NAME }} (versionCode ${{ env.LORAOTA_VERSION_CODE }}).
             - Updates repeaters over LoRa (delta OTA, no hop, side channel) and flashes over Bluetooth DFU / ESP32 Wi-Fi.
             - Includes 4-tab repeater workspace, interactive CLI console, visual settings editor, config profiles, live LoRa airtime calculator, Ping x5 range test, Fleet Health Sweep, 4-tab Offline Hub, and encrypted workspace archive.
           files: android/out/*.apk

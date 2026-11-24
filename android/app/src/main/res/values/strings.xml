@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">LoRa OTA</string>
+    <string name="app_name">MeshCore Сервиз</string>
     <string name="companion_hint">Обновяване на repeater по LoRa през твоя companion. Включи companion-а и го намери.</string>
     <string name="scan">Търси companion</string>
     <string name="scanning">Търся…</string>
@@ -21,7 +21,7 @@
     <string name="msg_stopped">Спряно. Repeater-ът остава на стария firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth е изключен.</string>
     <string name="msg_location_off">Включи Местоположение (локация) в настройките на телефона: на Android 7-11 Bluetooth търсенето без него не намира нищо.</string>
-    <string name="msg_no_location_permission">Приложението няма разрешение за „Местоположение“ (на Android 7-11 Bluetooth търсенето го изисква). Разреши го в настройките на телефона: Приложения → LoRa OTA → Разрешения.</string>
+    <string name="msg_no_location_permission">Приложението няма разрешение за „Местоположение“ (на Android 7-11 Bluetooth търсенето го изисква). Разреши го в настройките на телефона: Приложения → MeshCore Сервиз → Разрешения.</string>
     <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
     <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
     <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
@@ -113,6 +113,19 @@
     <string name="status_batt_uptime">Батерия %1$.2f V · работи от %2$s</string>
     <string name="status_radio">Шум %1$d dBm · последен пакет RSSI %2$d dBm</string>
     <string name="status_packets">Пакети: приети %1$d, изпратени %2$d · време в ефир %3$s</string>
+    <string name="status_battery">Батерия</string>
+    <string name="status_route_direct">Директен</string>
+    <string name="status_route_unknown">Маршрут ?</string>
+    <plurals name="status_route_hops">
+        <item quantity="one">%d скок</item>
+        <item quantity="other">%d скока</item>
+    </plurals>
+    <string name="status_uptime">Uptime</string>
+    <string name="status_noise">Шум</string>
+    <string name="status_rx_tx">RX / TX</string>
+    <string name="status_noise_value">%1$d dBm</string>
+    <string name="status_airtime">Време в ефир %1$s</string>
+    <string name="status_snr">SNR %1$.1f dB</string>
     <string name="status_none">Repeater-ът не върна статус.</string>
     <string name="dur_days">%1$d д %2$d ч</string>
     <string name="dur_hours">%1$d ч %2$d мин</string>
@@ -538,6 +551,7 @@
     <string name="settings_title">Настройки</string>
     <string name="menu_update_available">Нова версия v%1$s</string>
     <string name="settings_appearance">Външен вид</string>
+    <string name="settings_dynamic_color">Цветове от тапета (Android 12+)</string>
     <string name="settings_theme">Тема</string>
     <string name="theme_system">Системна</string>
     <string name="theme_light">Светла</string>
@@ -580,7 +594,7 @@
     <string name="settings_group_keep_token">Запази груповия токен след обновяването</string>
     <string name="settings_group_drop_warning">Без запазване ще загубиш груповия токен и за „Нов build“ ще трябва да въведеш личен токен.</string>
     <string name="settings_unknown_sources_title">Разреши инсталиране на APK</string>
-    <string name="settings_unknown_sources_text">Android изисква разрешение „Инсталиране на неизвестни приложения“ за LoRa OTA. Разреши го и натисни отново „Инсталирай сваления APK“.</string>
+    <string name="settings_unknown_sources_text">Android изисква разрешение „Инсталиране на неизвестни приложения“ за MeshCore Сервиз. Разреши го и натисни отново „Инсталирай сваления APK“.</string>
     <string name="settings_open_android_settings">Отвори настройки</string>
     <string name="settings_redownload">Свали отново</string>
     <string name="build_options_badge">Опции</string>

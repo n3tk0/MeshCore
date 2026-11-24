@@ -10,6 +10,7 @@ import io.github.n3tk0.loraota.backup.Backup
 import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.tools.CliHelper
+import io.github.n3tk0.loraota.tools.CliHistory
 import io.github.n3tk0.loraota.tools.ConfigProfile
 import io.github.n3tk0.loraota.tools.ConfigProfileLogic
 import io.github.n3tk0.loraota.tools.NeighborEntry
@@ -43,6 +44,35 @@ class CliSnippetStore(ctx: Context) {
     private companion object {
         const val PREFS = "cli_snippets"
         const val KEY = "items"
+    }
+}
+
+/**
+ * Persists the last sent CLI commands per console in SharedPreferences (secrets are never stored).
+ */
+class CliHistoryStore(ctx: Context) {
+    private val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun load(isCompanion: Boolean): List<String> {
+        val raw = prefs.getString(key(isCompanion), null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length())
+                .mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() && !CliHelper.isSecretWriteCommand(s) } }
+                .take(CliHistory.MAX)
+        }.getOrDefault(emptyList())
+    }
+
+    fun save(isCompanion: Boolean, list: List<String>) {
+        val arr = JSONArray()
+        for (s in list) if (!CliHelper.isSecretWriteCommand(s)) arr.put(s)
+        prefs.edit().putString(key(isCompanion), arr.toString()).apply()
+    }
+
+    private fun key(isCompanion: Boolean) = if (isCompanion) "companion" else "repeater"
+
+    private companion object {
+        const val PREFS = "cli_history"
     }
 }
 
@@ -151,10 +181,20 @@ class ObservedNeighborsStore(ctx: Context) {
 class RepeaterToolsState(ctx: Context) {
     private val snippetStore = CliSnippetStore(ctx)
     private val profileStore = ConfigProfileStore(ctx)
+    private val historyStore = CliHistoryStore(ctx)
 
     val repeaterCliLog = mutableStateListOf<CliLine>()
     val companionCliLog = mutableStateListOf<CliLine>()
-    val cliCommandHistory = mutableStateListOf<String>()
+    val repeaterCliHistory = mutableStateListOf<String>().apply { addAll(historyStore.load(false)) }
+    val companionCliHistory = mutableStateListOf<String>().apply { addAll(historyStore.load(true)) }
+
+    fun cliHistory(isCompanion: Boolean) = if (isCompanion) companionCliHistory else repeaterCliHistory
+
+    /** Remembers a sent command (newest first, 50 per console; passwords and keys are skipped). */
+    fun addCliHistory(isCompanion: Boolean, cmd: String) {
+        val list = cliHistory(isCompanion)
+        if (CliHistory.add(list, cmd)) historyStore.save(isCompanion, list)
+    }
     val customCliSnippets = mutableStateListOf<String>().apply { addAll(snippetStore.load()) }
     val configProfiles = mutableStateListOf<ConfigProfile>().apply { addAll(profileStore.load()) }
 

@@ -271,7 +271,7 @@ object DiagnosticReport {
         cliHistory: List<String>,
     ): String {
         val sb = StringBuilder()
-        sb.append("=== LoRa OTA Diagnostic Report ===\n")
+        sb.append("=== MeshCore Service Diagnostic Report ===\n")
         sb.append("App: v").append(appVersion).append(" (").append(versionCode).append(")")
             .append(if (isGroupApk) " [Group]\n" else " [Public]\n")
         sb.append("Device: ").append(deviceModel).append(" (Android ").append(androidVersion).append(")\n")

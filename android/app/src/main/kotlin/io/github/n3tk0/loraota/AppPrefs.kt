@@ -17,6 +17,7 @@ enum class ThemeMode(val key: String) {
 object AppPrefs {
     private const val PREFS = "settings"
     private const val KEY_THEME = "theme"
+    private const val KEY_DYNAMIC_COLOR = "dynamic_color"
     private const val KEY_AUTO_UPDATE = "auto_update_check"
     private const val KEY_LAST_UPDATE_CHECK = "last_update_check"
 
@@ -26,6 +27,13 @@ object AppPrefs {
 
     fun setTheme(ctx: Context, mode: ThemeMode) {
         prefs(ctx).edit().putString(KEY_THEME, mode.key).apply()
+    }
+
+    /** Material You colors from the wallpaper (Android 12+ only); off by default. */
+    fun dynamicColor(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_DYNAMIC_COLOR, false)
+
+    fun setDynamicColor(ctx: Context, enabled: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_DYNAMIC_COLOR, enabled).apply()
     }
 
     fun autoUpdateCheck(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_AUTO_UPDATE, true)

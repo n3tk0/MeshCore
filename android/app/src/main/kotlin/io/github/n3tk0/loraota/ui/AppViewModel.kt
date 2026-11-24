@@ -306,7 +306,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val repeaterCliLog get() = toolsState.repeaterCliLog
     val companionCliLog get() = toolsState.companionCliLog
-    val cliCommandHistory get() = toolsState.cliCommandHistory
+    fun cliHistory(isCompanion: Boolean) = toolsState.cliHistory(isCompanion)
     val customCliSnippets get() = toolsState.customCliSnippets
     val neighbors get() = toolsState.neighbors
     val neighborsLoaded get() = toolsState.neighborsLoaded
@@ -2648,10 +2648,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun sendCliCommand(rawCommand: String, isCompanion: Boolean) = work {
         val cmd = rawCommand.trim()
         if (cmd.isEmpty()) return@work
-        if (!CliHelper.isSecretWriteCommand(cmd) && toolsState.cliCommandHistory.firstOrNull() != cmd) {
-            toolsState.cliCommandHistory.add(0, cmd)
-            while (toolsState.cliCommandHistory.size > 50) toolsState.cliCommandHistory.removeAt(toolsState.cliCommandHistory.lastIndex)
-        }
+        toolsState.addCliHistory(isCompanion, cmd)
         toolsState.appendCli(isCompanion, cmd, CliLineKind.COMMAND)
         working = cmd
         val t0 = System.currentTimeMillis()
