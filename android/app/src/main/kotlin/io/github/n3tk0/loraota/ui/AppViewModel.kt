@@ -641,6 +641,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun connectByAddress(address: String) {
         val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) {
+            cancelPendingOpen()
             message = str(R.string.msg_bluetooth_off)
             messageIsError = true
             return
@@ -648,6 +649,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val dev = devices.firstOrNull { it.address.equals(address, ignoreCase = true) }
             ?: runCatching { adapter.getRemoteDevice(address) }.getOrNull()
             ?: run {
+                cancelPendingOpen()
                 message = str(R.string.msg_connect_failed)
                 messageIsError = true
                 return
@@ -655,7 +657,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         connect(dev)
     }
 
+    /** Whether the companion can capture repeater CLI replies; a Stop is not cached as "no". */
+    private suspend fun probeCanReadRepeater(): Boolean = try {
+        RepeaterBackup.supported(companion)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
+    }
+
     fun connect(device: BluetoothDevice) = work {
+        try {
+            connectInner(device)
+        } catch (e: Throwable) {
+            cancelPendingOpen()   // "connect and open" must not fire on a later, unrelated connect
+            throw e
+        }
+    }
+
+    private suspend fun connectInner(device: BluetoothDevice) {
         val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) throw Exception(str(R.string.msg_bluetooth_off))
         if (scanning) {
@@ -686,7 +706,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             companionDevice = device
             // left on the side channel by an update cut short; a stock companion has no such command
             companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
             companionName = companion.nodeName.ifEmpty {
                 runCatching { device.name }.getOrNull() ?: device.address
             }
@@ -2680,7 +2700,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         if (CliHelper.expectsNoReply(cmd)) {
             companion.sendRemoteCli(r, cmd)
@@ -2733,7 +2753,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun syncRepeaterClock() = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         val cmd = "time ${System.currentTimeMillis() / 1000L}"
         working = str(R.string.qa_clock_sync)
@@ -2769,7 +2789,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val r = repeater ?: return@work
         val cmd = if (flood) "advert" else "advert.zerohop"
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         working = str(R.string.qa_advert)
         if (canReadRepeater != true) {
@@ -2799,7 +2819,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadNeighbors() = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         if (canReadRepeater != true) {
             toolsState.neighborsError = str(R.string.health_no_capture)
@@ -2862,7 +2882,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun runRepeaterPingTest(count: Int = 5) = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
         toolsState.pingSamples.clear()
@@ -2921,7 +2941,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadRepeaterSettings() = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
         working = str(R.string.working_read_settings)
@@ -2993,7 +3013,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun applyTempRadio(command: String) = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         working = command
         if (canReadRepeater != true) {
@@ -3059,7 +3079,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startSweep() = work {
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
         val selected = repeaters.filter { hasSavedPassword(it) && fleetState.sweepPicked[hex(it.publicKey)] == true }
@@ -3287,6 +3307,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startProfileBatch() {
         profileBatchAsk = false
+        if (busy || reconnecting) return
         val p = profileBatchProfile ?: return
         val picked = profileBatchCandidates().filter { profileBatchPicked[hex(it.publicKey)] == true }
         if (picked.isEmpty()) return
@@ -3298,6 +3319,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The ones that failed or were left (stopped) go once more. */
     fun retryProfileBatch() {
+        if (busy || reconnecting) return
         val b = profileBatch ?: return
         b.retryFailed()
         profileBatch = b.refreshed()
@@ -3309,25 +3331,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val profile = configProfiles.firstOrNull { it.name == b0.profileName }
             ?: throw Exception(str(R.string.pbatch_profile_gone, b0.profileName))
         if (canReadRepeater == null) {
-            canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false)
+            canReadRepeater = probeCanReadRepeater()
         }
         if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
         // the repeater the app is logged in to (if any) is the user's: it is put back after the batch
         val prevRepeater = repeater
         val prevInfo = info
+        val prevHops = routeHops
         OtaService.start(ctx, str(R.string.pbatch_notif, b0.profileName), str(R.string.phase_start))
         try {
             while (true) {
                 val e = b0.next ?: break
                 profileBatchCurrent = e
                 working = e.name
-                profileApplyOne(profile, e)   // a Stop leaves e pending: nothing half-done is recorded
-                profileBatch = b0.refreshed()
+                try {
+                    profileApplyOne(profile, e)   // a Stop leaves e pending: nothing half-done is recorded
+                } finally {
+                    profileBatch = b0.refreshed()
+                }
             }
         } finally {
             profileBatchCurrent = null
             repeater = prevRepeater
             info = prevInfo
+            routeHops = prevHops
             OtaService.stop(ctx)
             if (prevRepeater != null && b0.entries.any { it.key == hex(prevRepeater.publicKey) && it.result == io.github.n3tk0.loraota.tools.BatchResult.APPLIED }) {
                 toolsState.settingsLoaded = false   // what the editor shows is no longer what the repeater has

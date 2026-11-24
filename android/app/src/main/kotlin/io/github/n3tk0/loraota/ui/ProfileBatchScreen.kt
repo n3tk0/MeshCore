@@ -166,7 +166,7 @@ private fun BatchPicker(vm: AppViewModel) {
                     Text(stringResource(R.string.pbatch_confirm_text), style = MaterialTheme.typography.bodySmall)
                 }
             },
-            confirmButton = { TextButton(onClick = { vm.startProfileBatch() }) { Text(stringResource(R.string.pbatch_go)) } },
+            confirmButton = { TextButton(onClick = { vm.startProfileBatch() }, enabled = !vm.busy) { Text(stringResource(R.string.pbatch_go)) } },
             dismissButton = { TextButton(onClick = { vm.profileBatchAsk = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }

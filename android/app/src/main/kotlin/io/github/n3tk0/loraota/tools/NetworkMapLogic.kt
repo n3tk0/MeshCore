@@ -83,7 +83,9 @@ object NetworkMapLogic {
         }
         fun find(edgeKey: String, edgeName: String): MapNode? =
             nodes.firstOrNull { it.key == edgeKey }
-                ?: nodes.firstOrNull { edgeKey.length >= 2 && (it.key.startsWith(edgeKey) || edgeKey.startsWith(it.key)) }
+                // a short neighbor prefix (1-byte hash) may fit several repeaters: only a single match counts
+                ?: nodes.filter { edgeKey.length >= 2 && (it.key.startsWith(edgeKey) || edgeKey.startsWith(it.key)) }
+                    .singleOrNull()
                 ?: nodes.firstOrNull { it.name.equals(edgeName, ignoreCase = true) }
 
         val coords = nodes.associate { it.key to (it.lat to it.lon) }
