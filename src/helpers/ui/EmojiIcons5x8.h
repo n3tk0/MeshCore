@@ -48,6 +48,7 @@ enum EmojiIconId : int8_t {
   EMOJI_ARROW_DOWN,
   EMOJI_ARROW_LEFT,
   EMOJI_ARROW_RIGHT,
+  EMOJI_GENERIC,   // any emoji without an icon of its own (hollow diamond)
   EMOJI_ICON_COUNT
 };
 
