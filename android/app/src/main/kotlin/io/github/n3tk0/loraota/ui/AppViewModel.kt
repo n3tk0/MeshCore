@@ -1825,6 +1825,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var loadingHistoryKey by mutableStateOf<Pair<Int, Int>?>(null)
     /** Pending (ring, field) pairs queued while another chart is loading. */
     val queuedHistoryKeys = mutableStateListOf<Pair<Int, Int>>()
+    /** Series the device did not answer: not asked again until an explicit refresh. */
+    private val failedHistoryKeys = HashSet<Pair<Int, Int>>()
     /** Incremented on openHealth/refreshHealth so UI resets expanded chart cards. */
     var healthGeneration by mutableStateOf(0)
     var historyMissing by mutableStateOf(false)    // the node keeps no history (stock or older firmware)
@@ -1842,6 +1844,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         selfTestMissing = false
         healthWarnings = emptyList()
         historyCache.clear()
+        failedHistoryKeys.clear()
         queuedHistoryKeys.clear()
         loadingHistoryKey = null
         healthGeneration++
@@ -1914,6 +1917,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         healthWarnings = warnings.toList()
         historyCache.clear()
+        failedHistoryKeys.clear()
         queuedHistoryKeys.clear()
         loadingHistoryKey = null
         healthGeneration++
@@ -1967,13 +1971,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun showHistory(ring: Int, field: Int) {
         historyRing = ring
         historyField = field
+        failedHistoryKeys.remove(ring to field)
         loadHistoryField(ring, field)
     }
 
     /** Enqueues a chart series to be fetched from the device; runs sequentially if another chart is already loading. */
     fun loadHistoryField(ring: Int, field: Int) {
         val key = ring to field
-        if (historyMissing || historyCache.containsKey(key) || loadingHistoryKey == key) return
+        if (historyMissing || historyCache.containsKey(key) || loadingHistoryKey == key || key in failedHistoryKeys) return
         if (busy && loadingHistoryKey == null) return
         if (key !in queuedHistoryKeys) queuedHistoryKeys.add(key)
         if (!busy) drainHistoryQueue()
@@ -1996,7 +2001,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         queuedHistoryKeys.removeAll { it.first != ring }
         for (f in openFields) {
             val key = ring to f
-            if (!historyCache.containsKey(key) && loadingHistoryKey != key && key !in queuedHistoryKeys) {
+            if (!historyCache.containsKey(key) && loadingHistoryKey != key && key !in queuedHistoryKeys && key !in failedHistoryKeys) {
                 queuedHistoryKeys.add(key)
             }
         }
@@ -2011,7 +2016,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (historyCache.containsKey(key)) continue
                 loadingHistoryKey = key
                 val s = loadSeries(key.first, key.second)
-                if (s != null) checkFasterDrain()
+                if (s != null) checkFasterDrain() else failedHistoryKeys.add(key)
             }
         } finally {
             loadingHistoryKey = null
@@ -3188,6 +3193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { backupStore.delete(b) }
             fleetState.offlineBackups.remove(b)
+            loadOfflineData()
         }
     }
 
@@ -3404,7 +3410,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Releases.apiToken = tokens.get()
             var downloaded = 0
             var failed = 0
+            var boardsDone = 0
             for ((i, f) in toDownload.withIndex()) {
+                val before = downloaded
                 val stepText = str(R.string.field_prep_downloading, i + 1, toDownload.size, f.env.replace('_', ' '))
                 fleetState.fieldPrepProgress = stepText
                 working = stepText
@@ -3421,10 +3429,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             .onFailure { if (it is CancellationException) throw it else failed++ }
                     }
                 }
+                if (downloaded > before) boardsDone++
             }
-            message = if (failed == 0) str(R.string.field_prep_done, downloaded, toDownload.size)
-            else str(R.string.field_prep_done_partial, downloaded, toDownload.size, failed)
-            messageIsError = downloaded == 0 && failed > 0
+            message = if (failed == 0) str(R.string.field_prep_done, downloaded, boardsDone)
+            else str(R.string.field_prep_done_partial, downloaded, boardsDone, failed)
+            messageIsError = failed > 0
         } finally {
             fleetState.fieldPrepProgress = null
             refreshCacheStats()
