@@ -1383,12 +1383,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * without requiring a connected companion.
      */
     fun startDirectOfflineFlash(f: FirmwareFile) = work {
-        val useDfu = Releases.isDfuCached(f, ctx.filesDir)
+        // the DFU file when there is one; the LoRa-OTA .bin only as a Wi-Fi image of an ESP32
+        if (!f.hasDfu && !f.plainBinFlashable(info?.platform)) throw Exception(str(R.string.err_flash_need_dfu))
         val bytes = withContext(Dispatchers.IO) {
-            Releases.readCachedFile(f, dfu = useDfu, cache = ctx.filesDir)
+            Releases.readCachedFile(f, dfu = f.hasDfu, cache = ctx.filesDir)
                 ?: if (f.hasDfu) Releases.downloadDfu(f, ctx.filesDir) else Releases.download(f, ctx.filesDir)
         }
-        val name = (if (useDfu || f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
+        val name = (if (f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
         flashReturn = step
         flashTarget = FlashTarget.COMPANION
         flashSource = Source.RELEASES
@@ -1414,7 +1415,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val selectedEnv = flashImage?.env
         return (if (flashUpstream) upstream else allFirmware).filter {
             if (offlineFlash) {
-                it.hasDfu || (!it.dfuIsZip && it.hasLoraOta)
+                it.hasDfu || it.plainBinFlashable(platform)
             } else {
                 it.hasDfu && when (flashTarget) {
                     FlashTarget.COMPANION -> BoardCheck.fitsCompanion(it.env) && it.dfuIsZip
@@ -1463,8 +1464,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun pickFlashRelease(f: FirmwareFile) = work {
-        val data = withContext(Dispatchers.IO) { Releases.downloadDfu(f, ctx.filesDir) }
-        flashImage = FlashImage(f.dfu, data, f.env, f.version.ifEmpty { f.release })
+        if (!f.hasDfu && !f.plainBinFlashable(info?.platform)) throw Exception(str(R.string.err_flash_need_dfu))
+        val data = withContext(Dispatchers.IO) {
+            if (f.hasDfu) Releases.downloadDfu(f, ctx.filesDir) else Releases.download(f, ctx.filesDir)
+        }
+        flashImage = FlashImage(if (f.hasDfu) f.dfu else f.file, data, f.env, f.version.ifEmpty { f.release })
     }
 
     fun pickFlashFile(uri: Uri) = work {

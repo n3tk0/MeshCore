@@ -22,6 +22,8 @@ data class FirmwareFile(val release: String, val env: String, val version: Strin
     val publishedMillis get() = runCatching { java.time.Instant.parse(published).toEpochMilli() }.getOrDefault(0L)
     val hasLoraOta get() = file.isNotEmpty()
     val hasDfu get() = dfu.isNotEmpty()
+    /** The plain app .bin can be flashed over Wi-Fi only on an ESP32; for an unknown platform use the DFU file. */
+    fun plainBinFlashable(platform: Int?) = !hasDfu && hasLoraOta && platform == OtaProtocol.PLATFORM_ESP32
     val dfuIsZip get() = dfu.endsWith(".zip", ignoreCase = true)
     /** Made by "Build Firmware for Boards" from the app ([release] is build-<run number>), not a release. */
     val isBuild get() = release.startsWith(BUILD_PREFIX)

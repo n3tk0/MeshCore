@@ -845,4 +845,5 @@
     <string name="err_update_token">Не може да се запази груповият токен; обновяването е спряно</string>
     <string name="err_update_bad_apk">Свален файл, който не е това приложение; обновяването е спряно</string>
     <string name="neighbors_retry">Опитай пак</string>
+    <string name="err_flash_need_dfu">Този фърмуер няма DFU файл; без известна платформа ESP32 не може да се зареди директно</string>
 </resources>
