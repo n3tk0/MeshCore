@@ -31,6 +31,8 @@ android {
         buildConfigField("String", "GROUP_TOKEN_A", "\"${hexOf(ByteArray(groupToken.size) { (groupToken[it].toInt() xor groupKey[it].toInt()).toByte() })}\"")
         buildConfigField("String", "GROUP_TOKEN_B", "\"${hexOf(groupKey)}\"")
         buildConfigField("boolean", "IS_GROUP_APK", "${groupToken.isNotEmpty()}")
+        // set by CI for builds published as a GitHub pre-release (branches other than main, -rc tags)
+        buildConfigField("boolean", "IS_PRERELEASE", "${System.getenv("LORAOTA_PRERELEASE")?.trim() == "true"}")
     }
 
     // the release key: from the environment (GitHub Secrets in CI), so every version installs over the last

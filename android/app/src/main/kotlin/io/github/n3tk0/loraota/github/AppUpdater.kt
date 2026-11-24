@@ -304,8 +304,9 @@ object AppUpdater {
             val intent = Intent(ACTION_INSTALL_STATUS)
                 .setPackage(ctx.packageName)
                 .setClass(ctx, InstallResultReceiver::class.java)
-            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE
-            else PendingIntent.FLAG_UPDATE_CURRENT
+            // the installer fills in the status extras, so the intent must be mutable on API 31+
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
             val pi = PendingIntent.getBroadcast(ctx, sessionId, intent, flags)
             session.commit(pi.intentSender)
         } catch (e: Exception) {

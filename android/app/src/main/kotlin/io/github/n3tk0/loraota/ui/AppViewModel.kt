@@ -1397,10 +1397,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startDirectOfflineFlash(f: FirmwareFile, standalone: Boolean = false) = work {
         // the DFU file when there is one; the LoRa-OTA .bin only as a Wi-Fi image of an ESP32
-        if (!f.hasDfu && !f.plainBinFlashable(info?.platform)) throw Exception(str(R.string.err_flash_need_dfu))
+        if (!f.hasDfu && !f.hasLoraOta) throw Exception(str(R.string.err_flash_need_dfu))
         val bytes = withContext(Dispatchers.IO) {
             Releases.readCachedFile(f, dfu = f.hasDfu, cache = ctx.filesDir)
                 ?: if (f.hasDfu) Releases.downloadDfu(f, ctx.filesDir) else Releases.download(f, ctx.filesDir)
+        }
+        // the target is not the logged-in repeater, so the image itself decides (ESP32 magic byte)
+        if (!f.hasDfu && !f.plainBinFlashable(null, Releases.isEsp32Image(bytes))) {
+            throw Exception(str(R.string.err_flash_need_dfu))
         }
         val name = (if (f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
         flashReturn = step
@@ -2493,7 +2497,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (manual) appUpdateError = null
         updateCheckJob = viewModelScope.launch {
             try {
-                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get(), includePrerelease = BuildConfig.VERSION_NAME.contains('-')) }
+                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get(), includePrerelease = BuildConfig.IS_PRERELEASE) }
                 val prevTag = availableUpdate?.tag
                 latestAppRelease = rel
                 val newer = rel != null && AppUpdater.isNewer(rel.version, BuildConfig.VERSION_NAME)
@@ -3194,6 +3198,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             firmware = f,
                             hasCachedOta = Releases.isFileCached(f, ctx.filesDir),
                             hasCachedDfu = Releases.isDfuCached(f, ctx.filesDir),
+                            otaIsEsp32 = Releases.cachedOtaIsEsp32(f, ctx.filesDir),
                         )
                     }
                     Triple(h, b, fw)

@@ -876,7 +876,6 @@ private fun OfflineFirmwareTab(
             CachedFirmwareCard(
                 item = item,
                 enabled = !vm.busy,
-                platform = vm.info?.platform,
                 onFlashDirect = { onFlashDirect(item.firmware) },
                 onExport = { dfu -> onExportFirmware(item.firmware, dfu) },
                 onDelete = { onDeleteFirmware(item.firmware) },
@@ -890,7 +889,6 @@ private fun OfflineFirmwareTab(
 private fun CachedFirmwareCard(
     item: CachedFirmwareItem,
     enabled: Boolean,
-    platform: Int?,
     onFlashDirect: () -> Unit,
     onExport: (dfu: Boolean) -> Unit,
     onDelete: () -> Unit,
@@ -906,7 +904,7 @@ private fun CachedFirmwareCard(
     val distinctDfu = item.hasCachedDfu && (!item.hasCachedOta || f.dfuSha256 != f.sha256)
     val totalBytes = (if (item.hasCachedOta) f.size.toLong() else 0L) +
         (if (distinctDfu) f.dfuSize.toLong() else 0L)
-    val canFlashDirect = item.hasCachedDfu || (item.hasCachedOta && f.plainBinFlashable(platform))
+    val canFlashDirect = item.hasCachedDfu || (item.hasCachedOta && f.plainBinFlashable(null, item.otaIsEsp32))
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth()) {
