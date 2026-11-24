@@ -154,7 +154,7 @@ object AppUpdater {
         }
 
     /** Downloads the release APK into [destFile] over HTTPS only, verifying byte count and SHA-256 digest. */
-    fun downloadApk(release: AppRelease, destFile: File, token: String? = null, onProgress: (Int) -> Unit) {
+    fun downloadApk(release: AppRelease, destFile: File, token: String? = null, isActive: () -> Boolean = { true }, onProgress: (Int) -> Unit) {
         destFile.parentFile?.mkdirs()
         val tmp = File(destFile.parentFile, "${destFile.name}.part")
         var target = release.apkUrl
@@ -189,6 +189,7 @@ object AppUpdater {
                         while (true) {
                             val n = input.read(buf)
                             if (n < 0) break
+                            if (!isActive()) throw kotlinx.coroutines.CancellationException("APK download cancelled")
                             out.write(buf, 0, n)
                             digest.update(buf, 0, n)
                             read += n
@@ -202,6 +203,7 @@ object AppUpdater {
                         }
                     }
                 }
+                if (!isActive()) throw kotlinx.coroutines.CancellationException("APK download cancelled")
                 if (read <= 0L) throw IOException("empty APK download")
                 if (contentLen > 0L && read != contentLen) throw IOException("truncated APK download ($read / $contentLen bytes)")
                 if (release.apkSize > 0L && read != release.apkSize) throw IOException("APK size mismatch ($read / ${release.apkSize} bytes)")

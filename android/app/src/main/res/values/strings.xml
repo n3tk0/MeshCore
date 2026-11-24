@@ -842,4 +842,6 @@
     <string name="workspace_import_btn">Импорт архив</string>
     <string name="workspace_exported">Архивът на работното място е запазен.</string>
     <string name="workspace_imported">Възстановени: %1$d backup-а, %2$d устройства със здраве, %3$d пароли, %4$d профила.</string>
+    <string name="err_update_token">Не може да се запази груповият токен; обновяването е спряно</string>
+    <string name="err_update_bad_apk">Свален файл, който не е това приложение; обновяването е спряно</string>
 </resources>

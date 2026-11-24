@@ -17,16 +17,16 @@ import javax.crypto.spec.GCMParameterSpec
 class TokenStore(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("github", Context.MODE_PRIVATE)
 
-    @Synchronized
-    private fun key(): SecretKey {
+    // one lock for all instances: several TokenStores must not generate two keys for one alias
+    private fun key(): SecretKey = synchronized(LOCK) {
         val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return@synchronized it }
         val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
         gen.init(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .build())
-        return gen.generateKey()
+        gen.generateKey()
     }
 
     private val builtInGroup: String? by lazy {
@@ -45,7 +45,7 @@ class TokenStore(ctx: Context) {
     }
 
     /** The user entered one (it can be forgotten; the built-in group's cannot). */
-    val hasOwn get() = prefs.contains(KEY)
+    val hasOwn get() = own() != null
 
     /** True when this APK binary itself contains the built-in group token. */
     val hasBuiltInGroup get() = builtInGroup != null
@@ -120,6 +120,7 @@ class TokenStore(ctx: Context) {
     private fun unhex(s: String) = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
     private companion object {
+        val LOCK = Any()
         const val KEYSTORE = "AndroidKeyStore"
         const val ALIAS = "github-token"
         const val KEY = "token"

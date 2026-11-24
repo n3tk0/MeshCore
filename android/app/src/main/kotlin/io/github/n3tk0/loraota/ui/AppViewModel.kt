@@ -2513,18 +2513,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val safeName = rel.apkName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "LoraOta-update.apk" }
                 val dest = java.io.File(dir, safeName)
                 withContext(Dispatchers.IO) {
-                    AppUpdater.downloadApk(rel, dest, tokens.get()) { pct ->
+                    AppUpdater.downloadApk(rel, dest, tokens.get(), { isActive }) { pct ->
                         viewModelScope.launch(Dispatchers.Main) { appUpdateProgress = pct }
                     }
                     @Suppress("DEPRECATION")
                     val pkgInfo = ctx.packageManager.getPackageArchiveInfo(dest.absolutePath, 0)
-                    val archiveCode = pkgInfo?.let { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it) }
-                    if (archiveCode != null && archiveCode < BuildConfig.VERSION_CODE.toLong()) {
+                    if (pkgInfo == null || pkgInfo.packageName != ctx.packageName) {
+                        dest.delete()
+                        throw Exception(str(R.string.err_update_bad_apk))
+                    }
+                    val archiveCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pkgInfo)
+                    if (archiveCode < BuildConfig.VERSION_CODE.toLong()) {
                         dest.delete()
                         throw Exception("APK versionCode ($archiveCode) < installed (${BuildConfig.VERSION_CODE})")
                     }
                     if (tokens.hasBuiltInGroup || tokens.hasSavedGroup) {
-                        if (keepGroupToken) tokens.persistGroupToken() else tokens.clearSavedGroup()
+                        if (keepGroupToken) {
+                            if (!tokens.persistGroupToken()) {
+                                dest.delete()
+                                throw Exception(str(R.string.err_update_token))
+                            }
+                        } else tokens.clearSavedGroup()
                     }
                 }
                 syncTokenFlags()
