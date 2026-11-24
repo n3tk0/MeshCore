@@ -44,9 +44,11 @@ fun BackupCompareDialog(a: Backup, b: Backup, onClose: () -> Unit) {
 fun BackupCompareContent(a: Backup, b: Backup, onClose: () -> Unit) {
     val (old, new) = remember(a, b) { BackupCompare.inTimeOrder(a, b) }
     val cmp = remember(old, new) { BackupCompare.compare(old, new) }
-    val fmt = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+    // the app's language (it can differ from the phone's), not the JVM default
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val fmt = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale) }
     fun label(x: Backup) = "${x.deviceName.ifEmpty { x.deviceKey.take(8) }} · ${fmt.format(Date(x.time))}" +
-        (if (x.firmware.isNotEmpty()) " · ${x.firmware}" else "")
+        (if (x.firmware.isNotEmpty()) " · ${x.firmware.replace("|", " · ")}" else "")
 
     run {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {

@@ -134,8 +134,10 @@ fun OfflineScreen(vm: AppViewModel) {
                 selected = tab == i,
                 onClick = { tab = i },
                 shape = SegmentedButtonDefaults.itemShape(i, tabs.size),
+                icon = {},   // no check mark: four labels need the whole width
             ) {
-                Text("${stringResource(labelRes)} ($count)", maxLines = 1, style = MaterialTheme.typography.labelSmall)
+                Text("${stringResource(labelRes)} ($count)", maxLines = 2, style = MaterialTheme.typography.labelSmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
         }
     }

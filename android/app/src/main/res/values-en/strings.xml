@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MeshCore Service</string>
-    <string name="companion_hint">Updates a repeater over LoRa through your companion. Turn the companion on and find it.</string>
+    <string name="tools_backup_short">Backup</string>
+    <string name="companion_hint">Connect your companion to manage, check and update your repeaters. Without one, see “My repeaters” and Offline.</string>
     <string name="scan">Find companion</string>
     <string name="scanning">Searching…</string>
     <string name="no_repeaters">The companion has no repeaters in its contacts.</string>

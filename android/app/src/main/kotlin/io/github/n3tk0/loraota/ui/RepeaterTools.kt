@@ -401,7 +401,7 @@ fun RepeaterToolsTab(vm: AppViewModel) {
     val sections = listOf(
         R.string.tools_cli,
         R.string.tools_settings,
-        R.string.backup_open,
+        R.string.tools_backup_short,
     )
 
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -410,6 +410,7 @@ fun RepeaterToolsTab(vm: AppViewModel) {
                 selected = toolSection == i,
                 onClick = { toolSection = i },
                 shape = SegmentedButtonDefaults.itemShape(i, sections.size),
+                icon = {},
             ) {
                 Text(stringResource(labelRes), maxLines = 1)
             }

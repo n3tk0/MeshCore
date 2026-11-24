@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MeshCore Сервиз</string>
-    <string name="companion_hint">Обновяване на repeater по LoRa през твоя companion. Включи companion-а и го намери.</string>
+    <string name="tools_backup_short">Backup</string>
+    <string name="companion_hint">Свържи своя companion, за да управляваш, проверяваш и обновяваш рипитърите. Без връзка виж „Моите рипитъри“ и Офлайн.</string>
     <string name="scan">Търси companion</string>
     <string name="scanning">Търся…</string>
     <string name="no_repeaters">Companion-ът няма repeater-и в контактите.</string>

@@ -133,7 +133,7 @@ private fun KnownRepeaterCard(vm: AppViewModel, row: KnownRepeaterRow, warnTint:
                 }
                 if (battery != null) Text(battery, style = MaterialTheme.typography.labelMedium)
                 if (row.firmware.isNotEmpty()) {
-                    Text(row.firmware, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(row.firmware.replace("|", " · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
