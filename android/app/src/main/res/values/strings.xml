@@ -851,4 +851,8 @@
     <string name="offline_flash_which_text">Има свързан компаньон. Изберете кое устройство да получи този фърмуер.</string>
     <string name="offline_flash_which_companion">Свързаният компаньон (%1$s)</string>
     <string name="offline_flash_which_other">Друго устройство (самостоятелно, търсене за Bluetooth DFU)</string>
+    <string name="sweep_confirm_title">Да се стартира ли проверката?</string>
+    <string name="sweep_confirm_text">Ще бъдат проверени %1$d ретранслатора. Приблизително време: ~%2$d мин (груба оценка; зависи от обхвата и трафика в ефира).</string>
+    <string name="sweep_confirm_far">%1$d от избраните не са директни: влизането при тях е с flood и изразходва повече ефирно време.</string>
+    <string name="sweep_confirm_go">Старт</string>
 </resources>

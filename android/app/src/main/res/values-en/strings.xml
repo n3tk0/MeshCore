@@ -850,4 +850,8 @@
     <string name="offline_flash_which_text">A companion is connected. Choose which device gets this firmware.</string>
     <string name="offline_flash_which_companion">Connected companion (%1$s)</string>
     <string name="offline_flash_which_other">Another device (standalone, over Bluetooth DFU scan)</string>
+    <string name="sweep_confirm_title">Start the sweep?</string>
+    <string name="sweep_confirm_text">%1$d repeaters will be checked. Estimated time: ~%2$d min (rough estimate; depends on range and airtime traffic).</string>
+    <string name="sweep_confirm_far">%1$d of the selected are not direct: their login uses a flood and costs more airtime.</string>
+    <string name="sweep_confirm_go">Start</string>
 </resources>

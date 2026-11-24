@@ -3021,7 +3021,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fleetState.sweepFinished = false
         fleetState.sweepRunning = false
         for (c in repeaters) {
-            if (hasSavedPassword(c)) {
+            // only direct repeaters are pre-ticked: a flood login to a far one costs much more airtime
+            if (hasSavedPassword(c) && c.hops == 0) {
                 val k = hex(c.publicKey)
                 if (k !in fleetState.sweepPicked) fleetState.sweepPicked[k] = true
             }
