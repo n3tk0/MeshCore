@@ -171,7 +171,8 @@ jobs:
           tag_name: ${{ env.LORAOTA_RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "LoRa OTA app v${{ env.LORAOTA_VERSION_NAME }}"
-          prerelease: ${{ env.LORAOTA_PRERELEASE == 'true' }}
+          # versions with a suffix, and any manual dispatch from a ref other than main or a tag, are pre-releases
+          prerelease: ${{ env.LORAOTA_PRERELEASE == 'true' || !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}
           body: |
             LoRa OTA Android app v${{ env.LORAOTA_VERSION_NAME }} (versionCode ${{ env.LORAOTA_VERSION_CODE }}).
             - Updates repeaters over LoRa (delta OTA, no hop, side channel) and flashes over Bluetooth DFU / ESP32 Wi-Fi.

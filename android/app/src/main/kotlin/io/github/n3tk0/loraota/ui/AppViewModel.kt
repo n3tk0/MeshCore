@@ -2493,7 +2493,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (manual) appUpdateError = null
         updateCheckJob = viewModelScope.launch {
             try {
-                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get()) }
+                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get(), includePrerelease = BuildConfig.VERSION_NAME.contains('-')) }
                 val prevTag = availableUpdate?.tag
                 latestAppRelease = rel
                 val newer = rel != null && AppUpdater.isNewer(rel.version, BuildConfig.VERSION_NAME)

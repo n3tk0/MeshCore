@@ -95,11 +95,12 @@ object AppUpdater {
     }
 
     /** Parses GitHub releases JSON array and returns the newest app release (by version, then list order). */
-    internal fun parseLatest(releases: JSONArray): AppRelease? {
+    internal fun parseLatest(releases: JSONArray, includePrerelease: Boolean = true): AppRelease? {
         val found = ArrayList<AppRelease>()
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
             if (rel.optBoolean("draft")) continue
+            if (!includePrerelease && rel.optBoolean("prerelease")) continue
             val tag = rel.optString("tag_name")
             if (!tag.startsWith(TAG_PREFIX, ignoreCase = true)) continue
             val assets = rel.optJSONArray("assets") ?: continue
@@ -139,10 +140,14 @@ object AppUpdater {
     }
 
     /** Searches up to [maxPages] pages of GitHub releases (newest first) until an app release is found. */
-    internal fun findLatestAcrossPages(maxPages: Int = MAX_PAGES, fetchPage: (Int) -> JSONArray): AppRelease? {
+    internal fun findLatestAcrossPages(
+        maxPages: Int = MAX_PAGES,
+        includePrerelease: Boolean = true,
+        fetchPage: (Int) -> JSONArray,
+    ): AppRelease? {
         for (page in 1..maxPages) {
             val arr = fetchPage(page)
-            parseLatest(arr)?.let { return it }
+            parseLatest(arr, includePrerelease)?.let { return it }
             if (arr.length() < PER_PAGE) break
         }
         return null
@@ -151,9 +156,12 @@ object AppUpdater {
     private const val PER_PAGE = 50
     private const val MAX_PAGES = 5
 
-    /** Fetches the latest app release from GitHub across up to 5 pages of releases. */
-    fun checkLatest(repo: String = Releases.DEFAULT_REPO, token: String? = null): AppRelease? =
-        findLatestAcrossPages { page ->
+    /**
+     * Fetches the latest app release from GitHub across up to 5 pages of releases.
+     * GitHub pre-releases are skipped unless [includePrerelease] (the installed build is itself a pre-release).
+     */
+    fun checkLatest(repo: String = Releases.DEFAULT_REPO, token: String? = null, includePrerelease: Boolean = false): AppRelease? =
+        findLatestAcrossPages(includePrerelease = includePrerelease) { page ->
             val url = "https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$page"
             JSONArray(String(getBytes(url, token)))
         }
