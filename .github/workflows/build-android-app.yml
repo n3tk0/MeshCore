@@ -3,8 +3,9 @@ name: Build LoRa OTA Android App
 # The Android app that updates our repeaters over LoRa through a companion (android/).
 # - push / pull request: unit tests (delta generator, protocol) and the APK as a workflow artifact
 # - tag "lora-ota-app-v1.2.3": also publishes a GitHub release with the APK
-# - by hand with "group APK": also an APK with the group's GitHub token for New build (the secret
-#   LORAOTA_GITHUB_TOKEN), only as a short-lived artifact to pass on directly, never in a release
+# - by hand (workflow_dispatch): publishes a GitHub release (tag "lora-ota-app-v<version>") when "release"
+#   is ticked (on by default) so the in-app updater sees it immediately; with "group APK" also builds an
+#   APK with LORAOTA_GITHUB_TOKEN as a short-lived 3-day artifact (never attached to the public release)
 
 permissions:
   contents: write
@@ -12,6 +13,14 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      release:
+        description: 'Публикувай в GitHub Releases (за да се вижда от приложението)'
+        type: boolean
+        default: true
+      version:
+        description: 'Версия (по избор, напр. 0.2.1; празно = автоматична версия с номер на build)'
+        type: string
+        default: ''
       group_apk:
         description: 'И APK с токена на групата (LORAOTA_GITHUB_TOKEN), само като artifact за 3 дни'
         type: boolean
@@ -67,21 +76,32 @@ jobs:
           fi
 
       - name: Compute Version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           BASE_VER=$(grep -E '^appVersionName=' gradle.properties 2>/dev/null | cut -d= -f2 || echo "0.2.0")
           if [ -z "$BASE_VER" ]; then BASE_VER="0.2.0"; fi
-          IS_TAG=0
+          IS_FINAL=0
+          CLEAN_INPUT=$(echo "${INPUT_VERSION}" | tr -d '[:space:]')
+          CLEAN_INPUT="${CLEAN_INPUT#lora-ota-app-}"
+          CLEAN_INPUT="${CLEAN_INPUT#v}"
           if [[ "${GITHUB_REF}" == refs/tags/lora-ota-app-* ]]; then
             VER="${GITHUB_REF_NAME#lora-ota-app-}"
             VER="${VER#v}"
-            IS_TAG=1
+            TAG="${GITHUB_REF_NAME}"
+            if [[ "$VER" != *-* ]]; then IS_FINAL=1; fi
+          elif [ -n "$CLEAN_INPUT" ]; then
+            VER="$CLEAN_INPUT"
+            TAG="lora-ota-app-v${VER}"
+            if [[ "$VER" != *-* ]]; then IS_FINAL=1; fi
           else
             VER="${BASE_VER}-build.${GITHUB_RUN_NUMBER}"
+            TAG="lora-ota-app-v${VER}"
           fi
           CORE="${VER%%-*}"
           IFS='.' read -r MAJ MIN PAT <<< "$CORE"
           MAJ=${MAJ:-0}; MIN=${MIN:-0}; PAT=${PAT:-0}
-          if [ "$IS_TAG" -eq 1 ]; then
+          if [ "$IS_FINAL" -eq 1 ]; then
             SUFFIX=999
           else
             SUFFIX=$((GITHUB_RUN_NUMBER > 998 ? 998 : GITHUB_RUN_NUMBER))
@@ -89,7 +109,9 @@ jobs:
           CODE=$((10#$MAJ * 10000000 + 10#$MIN * 100000 + 10#$PAT * 1000 + SUFFIX))
           echo "LORAOTA_VERSION_NAME=${VER}" >> "$GITHUB_ENV"
           echo "LORAOTA_VERSION_CODE=${CODE}" >> "$GITHUB_ENV"
-          echo "App version: ${VER} (code ${CODE})"
+          echo "LORAOTA_RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "LORAOTA_PRERELEASE=$([ "$IS_FINAL" -eq 1 ] && echo false || echo true)" >> "$GITHUB_ENV"
+          echo "App version: ${VER} (code ${CODE}, tag ${TAG})"
 
       - name: Build APK
         env:
@@ -106,7 +128,7 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk "out/LoraOta-${GITHUB_REF_NAME//\//-}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "out/LoraOta-v${LORAOTA_VERSION_NAME}.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
@@ -129,7 +151,7 @@ jobs:
           fi
           ./gradlew --no-daemon :app:assembleRelease
           mkdir -p out-group
-          cp app/build/outputs/apk/release/app-release.apk "out-group/LoraOta-group-${GITHUB_REF_NAME//\//-}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "out-group/LoraOta-group-v${LORAOTA_VERSION_NAME}.apk"
 
       - name: Upload Group APK
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.group_apk }}
@@ -140,11 +162,15 @@ jobs:
           retention-days: 3
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release) }}
         uses: softprops/action-gh-release@v3
         with:
-          name: "LoRa OTA app ${{ github.ref_name }}"
+          tag_name: ${{ env.LORAOTA_RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: "LoRa OTA app v${{ env.LORAOTA_VERSION_NAME }}"
+          prerelease: ${{ env.LORAOTA_PRERELEASE == 'true' }}
           body: |
-            Android app that updates the Xiao repeaters over LoRa (delta, no hop, side channel) through a companion.
-            Install the APK (allow installs from this source).
+            LoRa OTA Android app v${{ env.LORAOTA_VERSION_NAME }} (versionCode ${{ env.LORAOTA_VERSION_CODE }}).
+            - Updates repeaters over LoRa (delta OTA, no hop, side channel) and flashes over Bluetooth DFU / ESP32 Wi-Fi.
+            - Includes 4-tab repeater workspace, interactive CLI console, visual settings editor, config profiles, live LoRa airtime calculator, Ping x5 range test, Fleet Health Sweep, 4-tab Offline Hub, and encrypted workspace archive.
           files: android/out/*.apk
