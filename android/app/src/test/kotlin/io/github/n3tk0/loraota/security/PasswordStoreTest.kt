@@ -59,27 +59,26 @@ class PasswordStoreTest {
     }
 
     @Test
-    fun setFallbackRemovesStaleEncryptedEntrySoNewPasswordIsPreserved() {
+    fun setFallbackKeepsPasswordInMemoryOnlyAndNeverWritesPlaintext() {
         val enc = MemoryStore()
         val legacy = MemoryStore()
         val cipher = FakeCipher(failEncrypt = false)
         val store = PasswordStore.createForTest(enc, legacy, cipher)
 
-        store.set("r1", "oldpw")
+        assertTrue(store.set("r1", "oldpw"))
         assertEquals("oldpw", store.get("r1"))
 
-        // Transient Keystore failure while updating password: old ciphertext must be dropped
+        // Keystore failure while updating: old ciphertext dropped, new password only in memory
         cipher.failEncrypt = true
-        store.set("r1", "newpw")
+        assertFalse(store.set("r1", "newpw"))
         assertEquals("newpw", store.get("r1"))
         assertNull(enc.getString("r1"))
-
-        // On next startup after Keystore recovers, newpw migrates to encrypted store instead of reverting to oldpw
-        cipher.failEncrypt = false
-        val restarted = PasswordStore.createForTest(enc, legacy, cipher)
-        assertEquals("newpw", restarted.get("r1"))
-        assertEquals("ENC:newpw", enc.getString("r1"))
         assertTrue(legacy.map.isEmpty())
+        assertTrue("r1" in store.keys())
+
+        // Not persisted: a restarted store does not know it
+        val restarted = PasswordStore.createForTest(enc, legacy, cipher)
+        assertNull(restarted.get("r1"))
     }
 
     @Test

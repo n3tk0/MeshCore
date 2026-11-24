@@ -60,14 +60,21 @@ class PasswordStore private constructor(
         }
     }
 
+    /** Passwords that could not be encrypted: kept only for this process, never written to disk in plaintext. */
+    private val sessionOnly = HashMap<String, String>()
+
+    @Synchronized
     fun keys(): Set<String> {
         val all = LinkedHashSet<String>()
+        all.addAll(sessionOnly.keys)
         all.addAll(encryptedPrefs.keys())
         legacyPrefs?.keys()?.let { all.addAll(it) }
         return all
     }
 
+    @Synchronized
     fun get(key: String): String? {
+        sessionOnly[key]?.let { return it }
         encryptedPrefs.getString(key)?.let { enc ->
             when (val res = cipher.decrypt(enc)) {
                 is DecryptResult.Ok -> return res.plain
@@ -79,21 +86,31 @@ class PasswordStore private constructor(
         return legacyPrefs?.getString(key)
     }
 
-    fun set(key: String, password: String) {
+    /**
+     * Stores [password] encrypted. Returns false when Keystore encryption failed: the password is then
+     * kept in memory only (until the app closes) and nothing is written to disk in plaintext.
+     */
+    @Synchronized
+    fun set(key: String, password: String): Boolean {
         val ok = runCatching {
             encryptedPrefs.putString(key, cipher.encrypt(password))
             legacyPrefs?.remove(key)
             true
         }.getOrDefault(false)
-        if (!ok) {
-            // If Keystore is transiently unavailable, drop any stale encrypted entry so the newer
-            // fallback is returned on get() and cleanly re-encrypted on next startup migration.
+        if (ok) {
+            sessionOnly.remove(key)
+        } else {
+            // drop any stale encrypted/legacy entry so the old password is not returned instead of the new one
             encryptedPrefs.remove(key)
-            legacyPrefs?.putString(key, password)
+            legacyPrefs?.remove(key)
+            sessionOnly[key] = password
         }
+        return ok
     }
 
+    @Synchronized
     fun remove(key: String) {
+        sessionOnly.remove(key)
         encryptedPrefs.remove(key)
         legacyPrefs?.remove(key)
     }

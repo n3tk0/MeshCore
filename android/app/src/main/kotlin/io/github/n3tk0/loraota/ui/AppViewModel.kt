@@ -954,8 +954,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun savePassword(contact: Contact, password: String) {
         val key = hex(contact.publicKey)
-        passwordStore.set(key, password)
+        val secure = passwordStore.set(key, password)
         if (key !in savedKeys) savedKeys.add(key)
+        if (!secure) message = str(R.string.msg_password_not_secure)
     }
 
     fun forgetPassword(contact: Contact) {
