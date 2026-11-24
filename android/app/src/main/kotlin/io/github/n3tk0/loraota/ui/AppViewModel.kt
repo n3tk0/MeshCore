@@ -3321,7 +3321,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         fleetState.pendingWorkspaceImportJson = null
         fleetState.workspaceArchivePassword = ""
-        withContext(Dispatchers.IO) {
+        val unsavedPasswords = withContext(Dispatchers.IO) {
             for (b in data.backups) runCatching { backupStore.save(b) }
             for ((devKey, records) in data.healthRecords) {
                 val existingTimes = healthStore.records(devKey).map { it.time }.toHashSet()
@@ -3329,9 +3329,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (r.time !in existingTimes) healthStore.add(devKey, r.line, r.time)
                 }
             }
-            for ((k, pw) in data.passwords) {
-                passwordStore.set(k, pw)
-            }
+            data.passwords.count { (k, pw) -> !passwordStore.set(k, pw) }
         }
         savedKeys.clear()
         savedKeys.addAll(passwordStore.keys())
@@ -3350,7 +3348,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             data.healthRecords.size,
             data.passwords.size,
             data.profiles.size,
-        )
+        ) + if (unsavedPasswords > 0) "\n" + str(R.string.workspace_passwords_not_saved, unsavedPasswords) else ""
     }
 
     fun deleteOfflineFirmware(f: FirmwareFile) {

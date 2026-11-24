@@ -100,9 +100,8 @@ class PasswordStore private constructor(
         if (ok) {
             sessionOnly.remove(key)
         } else {
-            // drop any stale encrypted/legacy entry so the old password is not returned instead of the new one
-            encryptedPrefs.remove(key)
-            legacyPrefs?.remove(key)
+            // keep any saved entry: get() returns the session value first, and after a restart the old
+            // password is better than none (the caller tells the user it was not saved)
             sessionOnly[key] = password
         }
         return ok

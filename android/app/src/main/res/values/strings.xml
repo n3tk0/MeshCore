@@ -846,6 +846,7 @@
     <string name="err_update_bad_apk">Свален файл, който не е това приложение; обновяването е спряно</string>
     <string name="neighbors_retry">Опитай пак</string>
     <string name="err_flash_need_dfu">Този фърмуер няма DFU файл; без известна платформа ESP32 не може да се зареди директно</string>
+    <string name="workspace_passwords_not_saved">%1$d пароли не можаха да се запазят сигурно; пазят се само докато приложението е отворено.</string>
     <string name="msg_password_not_secure">Паролата не можа да се запази сигурно; пази се само докато приложението е отворено</string>
     <string name="offline_flash_which_title">Кое устройство да се прошие?</string>
     <string name="offline_flash_which_text">Има свързан компаньон. Изберете кое устройство да получи този фърмуер.</string>

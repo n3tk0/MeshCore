@@ -845,6 +845,7 @@
     <string name="err_update_bad_apk">The downloaded file is not this app; update stopped</string>
     <string name="neighbors_retry">Retry</string>
     <string name="err_flash_need_dfu">This firmware has no DFU file; it can only be flashed directly to a known ESP32</string>
+    <string name="workspace_passwords_not_saved">%1$d passwords could not be stored securely; they are kept only until the app closes.</string>
     <string name="msg_password_not_secure">Could not store the password securely; it is kept only until the app closes</string>
     <string name="offline_flash_which_title">Which device to flash?</string>
     <string name="offline_flash_which_text">A companion is connected. Choose which device gets this firmware.</string>

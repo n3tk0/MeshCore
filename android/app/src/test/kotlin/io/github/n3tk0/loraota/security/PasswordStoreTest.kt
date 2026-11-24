@@ -68,17 +68,22 @@ class PasswordStoreTest {
         assertTrue(store.set("r1", "oldpw"))
         assertEquals("oldpw", store.get("r1"))
 
-        // Keystore failure while updating: old ciphertext dropped, new password only in memory
+        // Keystore failure while updating: old ciphertext kept, new password only in memory
         cipher.failEncrypt = true
         assertFalse(store.set("r1", "newpw"))
         assertEquals("newpw", store.get("r1"))
-        assertNull(enc.getString("r1"))
+        assertEquals("ENC:oldpw", enc.getString("r1"))
         assertTrue(legacy.map.isEmpty())
         assertTrue("r1" in store.keys())
 
-        // Not persisted: a restarted store does not know it
+        // New password not persisted: a restarted store still has the old one, never plaintext
         val restarted = PasswordStore.createForTest(enc, legacy, cipher)
-        assertNull(restarted.get("r1"))
+        assertEquals("oldpw", restarted.get("r1"))
+
+        // Nothing saved before: a failed set leaves nothing on disk
+        assertFalse(store.set("r2", "pw2"))
+        assertNull(enc.getString("r2"))
+        assertNull(PasswordStore.createForTest(enc, legacy, cipher).get("r2"))
     }
 
     @Test
