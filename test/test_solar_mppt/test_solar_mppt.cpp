@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <string.h>
 
 #include <helpers/sensors/SolarMppt.h>
 
@@ -127,6 +128,113 @@ TEST(SolarMppt, DueSurvivesMillisWrap) {
   m.update(t, 5.5f, 0.2f, 3.8f);
   EXPECT_FALSE(m.due(t + 100));
   EXPECT_TRUE(m.due(t + SOLAR_MPPT_STEP_MS));   // wrapped past zero
+}
+
+TEST(SolarMppt, FileKeepsTheLimitAndReadsTheOldFile) {
+  SolarMppt a, b;
+  uint8_t raw[SolarMppt::FILE_LEN];
+  a.setIchg(304);
+  EXPECT_EQ(a.ichg(), 300);
+  a.setAuto();
+  a.toFile(raw);
+  EXPECT_TRUE(b.fromFile(raw, sizeof(raw)));
+  EXPECT_EQ(b.ichg(), 300);
+  EXPECT_TRUE(b.limitSet());
+  uint8_t old[3] = {SOLAR_MPPT_MODE_FIXED, 0x7C, 0x15};   // 5.5 V, no limit in the file
+  EXPECT_TRUE(b.fromFile(old, 3));
+  EXPECT_EQ(b.ichg(), SOLAR_MPPT_ICHG_HW_MA);
+  EXPECT_FALSE(b.limitSet());
+  uint8_t bad[5] = {SOLAR_MPPT_MODE_AUTO, 0, 0, 50, 0};   // 50 mA: under the minimum
+  EXPECT_FALSE(b.fromFile(bad, 5));
+  EXPECT_EQ(b.ichg(), SOLAR_MPPT_ICHG_HW_MA);   // a refused file changes nothing
+  a.setIchg(5000);
+  EXPECT_EQ(a.ichg(), SOLAR_MPPT_ICHG_HW_MA);
+}
+
+// the battery takes what the panel gives at that point, at ~4 V (a lossless charger is close enough here)
+static float battAmps(float v) { return panelPower(v) / 4.0f; }
+
+TEST(SolarMppt, LimitHoldsTheBatteryCurrentByRaisingTheSetpoint) {
+  SolarMppt m;
+  m.setIchg(200);   // the peak gives 300 mA
+  uint32_t t = 0;
+  for (int i = 0; i < 300; i++) {
+    t += SOLAR_MPPT_STEP_MS;
+    float v = m.setpoint();
+    float p = panelPower(v);
+    m.update(t, v, p / v, 3.8f, m.wantsBatteryCurrent() ? battAmps(v) : NAN);
+  }
+  EXPECT_TRUE(m.driven());
+  EXPECT_TRUE(m.limiting());
+  EXPECT_GT(m.setpoint(), 5.8f);   // above the peak
+  EXPECT_NEAR(battAmps(m.setpoint()), 0.200f, 0.035f);
+  // the limit off: P&O goes back to the peak
+  m.setIchg(SOLAR_MPPT_ICHG_HW_MA);
+  for (int i = 0; i < 200; i++) {
+    t += SOLAR_MPPT_STEP_MS;
+    float v = m.setpoint();
+    float p = panelPower(v);
+    m.update(t, v, p / v, 3.8f, NAN);
+  }
+  EXPECT_FALSE(m.limiting());
+  EXPECT_NEAR(m.setpoint(), 5.8f, 0.25f);
+}
+
+TEST(SolarMppt, LimitStuckAtTheTop) {
+  SolarMppt m;
+  m.setIchg(100);
+  uint32_t t = 0;
+  for (int i = 0; i < 100; i++) {
+    t += SOLAR_MPPT_STEP_MS;
+    float v = m.setpoint();
+    m.update(t, v, 0.5f, 3.8f, 0.5f);   // the battery always takes 500 mA
+  }
+  EXPECT_TRUE(m.limitStuck());
+  EXPECT_NEAR(m.setpoint(), SOLAR_MPPT_V_MAX, 0.02f);
+}
+
+TEST(SolarMppt, ScanFindsTheBestPointAndTracksFromThere) {
+  SolarMppt m;
+  uint32_t t = 0;
+  char buf[160];
+  EXPECT_FALSE(m.scanStart(t));   // not tracking yet
+  m.formatScan(buf, sizeof(buf));
+  EXPECT_STREQ(buf, "scan: none yet");
+  m.update(t += 1, 5.2f, 0.2f, 3.8f);
+  ASSERT_TRUE(m.driven());
+  ASSERT_TRUE(m.scanStart(t));
+  EXPECT_FALSE(m.scanStart(t));   // one at a time
+  EXPECT_NEAR(m.setpoint(), SOLAR_MPPT_V_MAX, 0.02f);
+  EXPECT_FALSE(m.due(t + SOLAR_MPPT_SCAN_MS - 1));
+  int steps = 0;
+  while (m.scanning() && steps < 50) {
+    t += SOLAR_MPPT_SCAN_MS;
+    EXPECT_TRUE(m.due(t));
+    float v = m.setpoint();
+    float d = v - 5.7f;
+    float p = v > 6.6f ? 0.0f : 1.2f - 0.8f * d * d;   // peak at 5.7 V; over the open voltage nothing (no release in a scan)
+    m.update(t, v, p / v, 3.8f);
+    EXPECT_TRUE(m.driven());
+    steps++;
+  }
+  EXPECT_EQ(steps, SOLAR_MPPT_SCAN_POINTS);
+  EXPECT_NEAR(m.setpoint(), 5.7f, 0.02f);   // P&O starts from the best point
+  int n = m.formatScan(buf, 155);
+  EXPECT_LT(n, 155);
+  EXPECT_EQ(strncmp(buf, "scan: best ", 11), 0);
+  EXPECT_NE(strstr(buf, " 6.9:0.00"), (char*)NULL);
+  EXPECT_FALSE(m.due(t + SOLAR_MPPT_STEP_MS - 1));
+  m.setOff();
+  EXPECT_FALSE(m.scanning());
+}
+
+TEST(SolarMppt, ScanEndsWhenThePanelIsLost) {
+  SolarMppt m;
+  m.update(1, 5.2f, 0.2f, 3.8f);
+  ASSERT_TRUE(m.scanStart(1));
+  m.panelUnavailable(2, false);
+  EXPECT_FALSE(m.scanning());
+  EXPECT_FALSE(m.driven());
 }
 
 int main(int argc, char** argv) {

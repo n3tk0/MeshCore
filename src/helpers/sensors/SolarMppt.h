@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <math.h>
+#include <stdio.h>
 
 // Panel voltage set-point control for a CN3791 buck MPPT charger whose MPPT pin is fed, besides the
 // 330k/100k divider, from a PWM pin (10k + 1uF RC filter, 200k injection resistor: 210k in series):
@@ -48,6 +49,21 @@
 #define SOLAR_MPPT_DONE_A         0.010f    // under this the charger is done (or there is no sun)
 #define SOLAR_MPPT_BATT_MARGIN_V  0.10f     // panel under battery + this: no sun
 
+// charge current limit (`charger ichg`): the CN3791 sets its own maximum with the sense resistor (120 mV / RCS);
+// a lower limit is kept by moving the panel point up (off the power peak) while the battery takes more
+#ifndef SOLAR_MPPT_ICHG_HW_MA
+#define SOLAR_MPPT_ICHG_HW_MA     600       // xiao-solar-lite v0.6: 120 mV / (2 x 100 mOhm in series)
+#endif
+#define SOLAR_MPPT_ICHG_MIN_MA    100
+#define SOLAR_MPPT_LIMIT_HYST_MA  30        // limited: P&O again only under limit - this
+#define SOLAR_MPPT_LIMIT_FAR_MA   50        // over limit + this: big steps
+#define SOLAR_MPPT_LIMIT_STEP     0.01f     // ~0.055 V of the set-point, near the limit
+
+// scan (`charger scan`): the set-point from the top down in steps, the power at each, then P&O from the best
+#define SOLAR_MPPT_SCAN_MS        2000UL    // per point
+#define SOLAR_MPPT_SCAN_STEP_V    0.2f
+#define SOLAR_MPPT_SCAN_POINTS    12        // 6.9, 6.7 .. 4.7 V
+
 class SolarMppt {
 public:
   enum State : uint8_t { ST_OFF, ST_FIXED, ST_TRACKING, ST_RELEASED, ST_NO_SENSOR };
@@ -82,25 +98,46 @@ public:
   uint8_t mode() const { return _mode; }
   float fixedVolts() const { return _fixed_v; }
   void setAuto() { _mode = SOLAR_MPPT_MODE_AUTO; resetTracker(); }
-  void setOff() { _mode = SOLAR_MPPT_MODE_OFF; _driven = false; }
+  void setOff() { _mode = SOLAR_MPPT_MODE_OFF; _driven = false; endLimitAndScan(); }
   void setFixed(float volts) {
+    endLimitAndScan();
     _mode = SOLAR_MPPT_MODE_FIXED;
     _fixed_v = clampSetpoint(volts);
     _duty = dutyForSetpoint(_fixed_v);
     _driven = true;
   }
-  // from the saved file: [mode][volts in mV, 2 bytes little endian]
-  static const int FILE_LEN = 3;
+  // charge current limit, mA: SOLAR_MPPT_ICHG_HW_MA = none (the CN3791's own); kept only in auto mode
+  uint16_t ichg() const { return _ichg_ma; }
+  void setIchg(int ma) {
+    if (ma < SOLAR_MPPT_ICHG_MIN_MA) ma = SOLAR_MPPT_ICHG_MIN_MA;
+    if (ma > SOLAR_MPPT_ICHG_HW_MA) ma = SOLAR_MPPT_ICHG_HW_MA;
+    _ichg_ma = (uint16_t)(ma / 10 * 10);
+    if (!limitSet()) { _limiting = false; _limit_stuck = false; }
+  }
+  bool limitSet() const { return _ichg_ma < SOLAR_MPPT_ICHG_HW_MA; }
+  bool limiting() const { return _limiting; }        // the set-point is held up for the limit now
+  bool limitStuck() const { return _limit_stuck; }   // at the highest set-point and still over the limit
+  // the battery current is wanted with each update() (an extra read): a limit is set and could act
+  bool wantsBatteryCurrent() const { return limitSet() && _mode == SOLAR_MPPT_MODE_AUTO && _driven && !_scanning; }
+
+  // from the saved file: [mode][volts in mV, 2 bytes LE][ichg mA, 2 bytes LE]; the old 3-byte file has no limit
+  static const int FILE_LEN = 5;
+  static const int FILE_LEN_OLD = 3;
   void toFile(uint8_t* out) const {
     uint16_t mv = (uint16_t)lroundf(_fixed_v * 1000.0f);
     out[0] = _mode;
     out[1] = (uint8_t)(mv & 0xFF);
     out[2] = (uint8_t)(mv >> 8);
+    out[3] = (uint8_t)(_ichg_ma & 0xFF);
+    out[4] = (uint8_t)(_ichg_ma >> 8);
   }
   bool fromFile(const uint8_t* in, int len) {
-    if (len < FILE_LEN || in[0] > SOLAR_MPPT_MODE_FIXED) return false;
+    if (len < FILE_LEN_OLD || in[0] > SOLAR_MPPT_MODE_FIXED) return false;
+    uint16_t ma = len >= FILE_LEN ? (uint16_t)(in[3] | (in[4] << 8)) : SOLAR_MPPT_ICHG_HW_MA;
+    if (ma < SOLAR_MPPT_ICHG_MIN_MA || ma > SOLAR_MPPT_ICHG_HW_MA) return false;
     float v = ((uint16_t)(in[1] | (in[2] << 8))) / 1000.0f;
     if (in[0] == SOLAR_MPPT_MODE_FIXED && (v < SOLAR_MPPT_V_MIN - 0.001f || v > SOLAR_MPPT_V_MAX + 0.001f)) return false;
+    setIchg(ma);
     if (v >= SOLAR_MPPT_V_MIN) _fixed_v = clampSetpoint(v);
     if (in[0] == SOLAR_MPPT_MODE_OFF) setOff();
     else if (in[0] == SOLAR_MPPT_MODE_FIXED) setFixed(_fixed_v);
@@ -143,14 +180,48 @@ public:
   // The panel could not be read (no sensor, off, I2C errors): in auto the pin is released.
   void panelUnavailable(uint32_t now, bool no_sensor) {
     _have_panel = false;
+    endLimitAndScan();
     _no_sensor = no_sensor;
     _due_now = false;
     _next_ms = now + (_mode == SOLAR_MPPT_MODE_AUTO && _driven ? SOLAR_MPPT_STEP_MS : SOLAR_MPPT_RETRY_MS);
     if (_mode == SOLAR_MPPT_MODE_AUTO) release("panel not readable");
   }
 
-  // One measurement of the panel (volts and amps at the charger input) and the battery (0: not known).
-  void update(uint32_t now, float panel_v, float panel_a, float batt_v) {
+  // ---- scan ----
+  // false: not tracking now (auto, pin driven, a panel reading) or a scan is already running
+  bool scanStart(uint32_t now) {
+    if (_mode != SOLAR_MPPT_MODE_AUTO || !_driven || !_have_panel || _scanning) return false;
+    _scanning = true;
+    _scan_i = 0;
+    _scan_have = false;
+    _limiting = false;
+    _limit_stuck = false;
+    _duty = dutyForSetpoint(scanVolts(0));
+    _due_now = false;
+    _next_ms = now + SOLAR_MPPT_SCAN_MS;
+    return true;
+  }
+  bool scanning() const { return _scanning; }
+  // "scan 5/12 ..." / "scan: best 5.70V 1.23W; 6.9:0.40 6.7:0.81 ..." / "scan: none yet"
+  int formatScan(char* out, int max) const {
+    int n;
+    if (_scanning) n = snprintf(out, max, "scan %d/%d, ~%ds left", _scan_i + 1, SOLAR_MPPT_SCAN_POINTS,
+                                (int)((SOLAR_MPPT_SCAN_POINTS - _scan_i) * SOLAR_MPPT_SCAN_MS / 1000));
+    else if (!_scan_have) return snprintf(out, max, "scan: none yet");
+    else n = snprintf(out, max, "scan: best %d.%02dV %d.%02dW;", x100i(_scan_best_v), x100f(_scan_best_v),
+                      _scan_mw[_scan_best_i] / 1000, _scan_mw[_scan_best_i] % 1000 / 10);
+    int pts = _scanning ? _scan_i : SOLAR_MPPT_SCAN_POINTS;
+    for (int i = 0; i < pts && n > 0 && n < max; i++) {
+      int dv = (int)lroundf(scanVolts(i) * 10.0f);
+      n += snprintf(out + n, max - n, " %d.%d:%d.%02d", dv / 10, dv % 10, _scan_mw[i] / 1000, _scan_mw[i] % 1000 / 10);
+    }
+    return n < max ? n : max - 1;
+  }
+  static float scanVolts(int i) { return SOLAR_MPPT_V_MAX - SOLAR_MPPT_SCAN_STEP_V * i; }
+
+  // One measurement of the panel (volts and amps at the charger input) and the battery (volts, 0: not known;
+  // amps, + = charging, NaN: not read).
+  void update(uint32_t now, float panel_v, float panel_a, float batt_v, float batt_a = NAN) {
     _no_sensor = false;
     _due_now = false;
     if (!(panel_v >= 0.0f) || !(panel_a > -1000.0f)) {   // NaN
@@ -166,6 +237,10 @@ public:
       return;
     }
 
+    if (_scanning) {   // no release while scanning: the top points may be above the panel's open voltage
+      scanStep(now, p);
+      return;
+    }
     bool no_sun = p < SOLAR_MPPT_MIN_W || (batt_v > 0 && _pv < batt_v + SOLAR_MPPT_BATT_MARGIN_V);
     bool done = _pa < SOLAR_MPPT_DONE_A;
     if (_driven) {
@@ -174,6 +249,7 @@ public:
         _next_ms = now + SOLAR_MPPT_RETRY_MS;
         return;
       }
+      if (limitSet() && batt_a == batt_a && limitStep(now, batt_a)) return;   // batt_a NaN: not read, P&O
       if (_have_last) {
         if (p < _last_p * 0.995f) _dir = -_dir;   // it got worse: the other way
       }
@@ -212,6 +288,7 @@ private:
     _driven = false;
     _have_last = false;
     _reason = why;
+    endLimitAndScan();
   }
   void resetTracker() {
     _driven = false;
@@ -219,7 +296,52 @@ private:
     _dir = 1;
     _due_now = true;   // look at the panel at once
     _reason = "";
+    endLimitAndScan();
   }
+  void endLimitAndScan() {
+    _scanning = false;
+    _limiting = false;
+    _limit_stuck = false;
+  }
+  // true: the limit decided this step (the set-point went up, or is held); false: P&O as usual
+  bool limitStep(uint32_t now, float batt_a) {
+    float lim = _ichg_ma / 1000.0f;
+    if (batt_a > lim) {
+      float step = batt_a > lim + SOLAR_MPPT_LIMIT_FAR_MA / 1000.0f ? SOLAR_MPPT_STEP_DUTY : SOLAR_MPPT_LIMIT_STEP;
+      float c = clampDuty(_duty - step);   // a lower duty is a higher set-point: off the peak, less current
+      _limit_stuck = c == _duty;
+      _duty = c;
+    } else if (!(_limiting && batt_a > lim - SOLAR_MPPT_LIMIT_HYST_MA / 1000.0f)) {
+      if (_limiting) { _dir = 1; _have_last = false; }   // back to P&O, first towards the peak (lower volts)
+      _limiting = false;
+      _limit_stuck = false;
+      return false;
+    }
+    _limiting = true;
+    _have_last = false;
+    _next_ms = now + SOLAR_MPPT_STEP_MS;
+    return true;
+  }
+  void scanStep(uint32_t now, float p) {
+    float mw = p * 1000.0f;
+    _scan_mw[_scan_i] = (uint16_t)(mw > 65535.0f ? 65535.0f : mw);
+    if (++_scan_i < SOLAR_MPPT_SCAN_POINTS) {
+      _duty = dutyForSetpoint(scanVolts(_scan_i));
+      _next_ms = now + SOLAR_MPPT_SCAN_MS;
+      return;
+    }
+    _scan_best_i = 0;
+    for (int i = 1; i < SOLAR_MPPT_SCAN_POINTS; i++) if (_scan_mw[i] > _scan_mw[_scan_best_i]) _scan_best_i = i;
+    _scan_best_v = scanVolts(_scan_best_i);
+    _scanning = false;
+    _scan_have = true;
+    _duty = dutyForSetpoint(_scan_best_v);   // P&O from the best point
+    _have_last = false;
+    _dir = 1;
+    _next_ms = now + SOLAR_MPPT_STEP_MS;
+  }
+  static int x100i(float v) { return (int)lroundf(v * 100.0f) / 100; }
+  static int x100f(float v) { return (int)lroundf(v * 100.0f) % 100; }
 
   uint8_t _mode = SOLAR_MPPT_MODE_AUTO;
   float _fixed_v = 5.5f;
@@ -234,4 +356,10 @@ private:
   bool _no_sensor = false;
   float _pv = 0, _pa = 0;
   const char* _reason = "";
+  uint16_t _ichg_ma = SOLAR_MPPT_ICHG_HW_MA;
+  bool _limiting = false, _limit_stuck = false;
+  bool _scanning = false, _scan_have = false;
+  uint8_t _scan_i = 0, _scan_best_i = 0;
+  float _scan_best_v = 0;
+  uint16_t _scan_mw[SOLAR_MPPT_SCAN_POINTS] = {0};
 };

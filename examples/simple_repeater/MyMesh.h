@@ -178,7 +178,13 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void loadBatteryCapacity();
 #ifdef SOLAR_MPPT_PWM_PIN
   void loadMppt();
+  bool saveMppt(SolarMppt* m);
+#endif
+#if defined(SOLAR_MPPT_PWM_PIN) || ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
   void handleMpptCommand(char* args, char* reply);
+#endif
+#if SOLAR_BOARD_AUTO && defined(SOLAR_MPPT_PWM_PIN) && ENV_INCLUDE_BQ25798
+  void handleCn3791Charger(const char* args, const char* val, char* reply);
 #endif
 #if SOLAR_BOARD_AUTO
   uint8_t _solar_board_kept = 0;   // SOLAR_BOARD_* in /board

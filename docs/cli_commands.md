@@ -250,24 +250,32 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 `Xiao_nrf52_solar_repeater` (and the same build as `Xiao_nrf52_solar_lite_repeater`) runs on every XIAO solar board and finds it at boot (`-D SOLAR_BOARD_AUTO=1`): a BQ25798 on 0x6B = xiao-solar-lite v0.5 (D0 = the charger's ~CE, `charger`); else INA226 on both 0x44 and 0x45 = xiao-solar-lite v0.6 (CN3791, D0 = MPPT PWM, `mppt`, the 0x44 INA226 is the battery); else the MSPM0 ID on 0x42 = xiao-solar / solar-smart-mppt (`smppt`, `charger`). D0 stays an input (hi-Z) until the board is known. The first board found is kept in `/board`; at a later boot a different find is reported, and the PWM on D0 runs only when the kept board is the CN3791 one (a BQ25798 board whose charger did not answer must never get PWM on its ~CE). The chips found always run. An INA219 or extra sensors work as before on any of them. On these boards the XIAO's battery pad is not connected: with a BQ25798 or the battery INA226 the board's own ADC is never used for the battery.
 - `solar`: `solar cn3791 (mppt on)`, `solar bq25798`, `solar mspm0`, `solar none`; with a mismatch `solar bq25798, kept cn3791: check, then `solar auto``.
 - `solar auto`: keep what was found at this boot (none: forget the kept board); the PWM follows at once.
-- `charger` on the CN3791 board: one status line from the two INA226, nothing to set (4.20 V and the 600 mA charge current are set by the parts, `-D SOLAR_CN3791_ICHG_MA` for the text; the panel point is `mppt`): `sun 5.62V 210mA, batt 3.950V +180mA charging, mppt auto 5.40V, cn3791 4.20V 600mA`. Any argument: `Err - CN3791: nothing to set (panel point: mppt)`.
+- `charger` on the CN3791 board (xiao-solar-lite v0.6): the same words as on a BQ25798, done with the panel set-point (PWM on D0) and `battsave`; 4.20 V and the most current (600 mA: 120 mV / 2 x 100 mOhm, `-D SOLAR_MPPT_ICHG_HW_MA`) are set by the parts.
+  - `charger`: `sun 5.62V 210mA, batt 3.950V +180mA charging, vin mppt 5.40V tracking, ichg 400/600mA limiting, 4.20V liion, cutoff 3000mV`
+  - `charger vin mppt|off|<mV>`: P&O on the panel power (default) / the pin hi-Z (~5.18 V) / a fixed set-point 4600..6900. `mppt` is the short form (`mppt auto`, `mppt off`, `mppt 5500` or `mppt 5.5`).
+  - `charger ichg <mA>`: 100..600 (600 = no limit, the default). Under 600, while the battery INA226 (0x44) reads more than the limit the set-point goes up (off the power peak: less power, less current), 0.11 V a step when more than 50 mA over, else 0.055 V, every 10 s; P&O again once the current is 30 mA under the limit (accuracy about +-20 mA). Only with `vin mppt`; at 6.9 V and still over: `stuck`. Kept in `/mppt` (5 bytes now; the old 3-byte file reads as no limit).
+  - `charger scan [last]`: the set-point from 6.9 V down to 4.7 V in 0.2 V steps, 2 s each (~24 s), the panel power at each, then P&O from the best point. Needs `vin mppt` and sun (tracking). `charger scan last`: `scan: best 5.70V 1.23W; 6.9:0.00 6.7:0.41 ...` (V:W); while running `scan 5/12, ~16s left`.
+  - `charger chem liion` (the only one; `lifepo4`/`lto`: `Err - CN3791 charges to 4.20V: Li-ion/LiPo only`).
+  - `charger cutoff <mV>|off`: the `battsave` off step (System OFF; 3000..4500, under the crit step); there is no ship FET.
+  - `hybrid`, `ntc`, `shipfet`, `ship`, `ibat`, `ibus`, `ina`, `reg`: `Err - charger <x>: n/a on CN3791`.
+- `mppt <x>` on the BQ25798 / MSPM0 boards: the same as `charger vin <x>` (`mppt auto` = `charger vin mppt`; volts are taken as `5.5`); bare `mppt` = `charger`.
 
 ### Solar panel set-point - mppt (Repeater, xiao-solar-ultralite)
 
 For the xiao-solar-lite v0.6 (CN3791) board in `Xiao_nrf52_solar_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`, only when `solar` says cn3791): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k (in series: 210k): `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/210`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.08 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=210000`. The set-point is kept between 4.6 and 6.9 V.
 
 **Usage:**
-- `mppt` (mode, duty, computed set-point, last panel voltage / current / power)
-- `mppt auto` (the default: perturb & observe on the panel power)
-- `mppt off` (the pin is hi-Z: the fixed divider point)
-- `mppt <volts>` (a fixed set-point, limited to 4.6..6.9 V; the reply says `(limited)` when it was cut)
+- `mppt` (mode, duty, computed set-point, last panel voltage / current / power, the `ichg` limit when set)
+- `mppt auto` (the default: perturb & observe on the panel power) = `charger vin mppt`
+- `mppt off` (the pin is hi-Z: the fixed divider point) = `charger vin off`
+- `mppt <mV>|<volts>` (a fixed set-point 4.6..6.9 V, out of range is refused) = `charger vin <mV>`
 
-**Example reply:** `tracking, duty 37%, set 5.11V, panel 5.12V 214mA 1.10W`
+**Example reply:** `tracking, duty 37%, set 5.11V, panel 5.12V 214mA 1.10W, ichg 400 (limiting)`
 
 **Notes:**
 - Auto measures the panel (the INA226 on 0x45: bus voltage x current) every 10 s and steps the duty by 2 % (about 0.11 V) in the direction that gave more power; when the power falls by more than 0.5 % it turns round, and at the end of the range too. It runs in the sensor loop and takes about 35 ms of I2C wait per measurement; the radio is not touched.
 - No sun (panel power under 0.05 W, or the panel voltage under the battery plus 0.1 V) or the charge is done (panel current under 10 mA): the pin is released (hi-Z, the default set-point) and the panel is looked at again every 60 s; tracking starts again at 0.10 W and 20 mA. The same when the panel INA226 cannot be read or is turned off.
-- The mode is kept in `/mppt` (default auto). `off` and a fixed set-point do not look at the sun.
+- The mode and the `charger ichg` limit are kept in `/mppt` (default auto, no limit). `off` and a fixed set-point do not look at the sun. For the limit and the scan see `charger` on the CN3791 board.
 
 ---
 

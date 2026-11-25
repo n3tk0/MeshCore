@@ -1645,11 +1645,14 @@ void EnvironmentSensorManager::mpptLoop() {
   if (!ok || i2cErrorCount(*TELEM_WIRE) != errors) {
     solar_mppt.panelUnavailable(millis(), false);
   } else {
-    float batt_v = 0;
+    float batt_v = 0, batt_a = NAN;
     #if INA226_BATTERY
     batt_v = ina226_last_mv / 1000.0f;   // 0: not known
+    // a charge limit (`charger ichg`) under the CN3791's own: the battery current too (a second conversion)
+    float ma;
+    if (solar_mppt.wantsBatteryCurrent() && s_ina226_found && s_ina226_bat && readIna226Battery(NULL, &ma)) batt_a = -ma / 1000.0f;
     #endif
-    solar_mppt.update(millis(), smp.vbus, smp.amps, batt_v);
+    solar_mppt.update(millis(), smp.vbus, smp.amps, batt_v, batt_a);
   }
   mpptApplyPin();
   #endif
