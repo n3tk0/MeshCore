@@ -313,7 +313,9 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
                                     ? (_board->isSolarChargerActive() ? "yes" : "no")
                                     : "n/a";
       uint16_t batt_mv = _sensors->getBatteryMilliVolts();  // an INA219 read: once
+#if !(defined(INA226_BATTERY) && INA226_BATTERY)   // there the board has no battery of its own to read
       if (batt_mv == 0) batt_mv = _board->getBattMilliVolts();
+#endif
       int ext = _sensors->externalPower();
       bool is_ext = ext >= 0 ? ext > 0 : _board->isExternalPowered();
       snprintf(reply, 155, "batt:%u mV usb:%s solar_chg:%s ext:%s charger:%s",

@@ -118,6 +118,7 @@
 #define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
 #define BATT_CAP_FILE            "/batt_cap"
 #define CHARGER_FILE             "/charger"
+#define MPPT_FILE                "/mppt"         // solar panel set-point mode (SolarMppt.h): auto / off / fixed volts
 #define IBATCAL_FILE             "/ibatcal"      // IBAT calibration curve (IbatCal.h)
 #define IBATCAL_TMP              "/ibatcal.tmp"
 #define IBUSCAL_FILE             "/ibuscal"      // IBUS (solar input) calibration curve, `charger ina sun`
@@ -391,10 +392,17 @@ uint8_t MyMesh::handleAnonClockReq(const mesh::Identity& sender, uint32_t sender
   return 0;
 }
 
-// the battery: from a sensor that measures it (INA219) when there is one, else the board's own reading
+// the battery: from a sensor that measures it (INA219) when there is one, else the board's own reading.
+// With INA226_BATTERY the sensor is the only source: the board has no battery connected there (the XIAO's BAT
+// pad is open, its ADC reads noise), so 0 means unknown, and every caller treats 0 as "no reading":
+// PowerSaver (under 2500 mV: no change, no battsave step), the OTA power check (under 1000 mV: allowed), status.
 static uint16_t battMilliVolts() {
   uint16_t mv = sensors.getBatteryMilliVolts();
+#if defined(INA226_BATTERY) && INA226_BATTERY
+  return mv;
+#else
   return mv ? mv : board.getBattMilliVolts();
+#endif
 }
 
 // external power: a charger chip that sees its panel (BQ25798) knows; else the board (USB). On
@@ -1244,6 +1252,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #if ENV_INCLUDE_BQ25798
   loadCharger();
 #endif
+#ifdef SOLAR_MPPT_PWM_PIN
+  loadMppt();
+#endif
   sensors.setDayClock([]() -> uint32_t { return the_instance->getRTCClock()->getCurrentTime(); });
 #ifdef WITH_TELEMETRY_HISTORY
   loadHistory();
@@ -1612,6 +1623,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
 #if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
   } else if (memcmp(command, "charger", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleChargerCommand(&command[7], reply);
+#endif
+#ifdef SOLAR_MPPT_PWM_PIN
+  } else if (memcmp(command, "mppt", 4) == 0 && (command[4] == 0 || command[4] == ' ')) {
+    handleMpptCommand(&command[4], reply);
 #endif
 #if ENV_INCLUDE_INA260
   } else if (memcmp(command, "smppt", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
@@ -2230,6 +2245,54 @@ void MyMesh::otaLoop() {
     MESH_DEBUG_PRINTLN("LoRa OTA: could not boot the new image");
     applyOtaAction();
   }
+}
+#endif
+
+#ifdef SOLAR_MPPT_PWM_PIN
+/* ------------------------- Solar panel set-point (mppt) ------------------------- */
+
+void MyMesh::loadMppt() {
+  SolarMppt* m = sensors.getSolarMppt();
+  uint8_t raw[SolarMppt::FILE_LEN] = {0};
+  if (m && readSmallFile(_fs, MPPT_FILE, raw, sizeof(raw))) m->fromFile(raw, sizeof(raw));   // else: auto
+}
+
+// mppt                  mode, duty, set-point, panel
+// mppt auto|off         auto: perturb & observe on the panel power; off: the pin is hi-Z (the charger's divider: ~5.2 V)
+// mppt <volts>          a fixed set-point (4.6 .. 6.9 V)
+void MyMesh::handleMpptCommand(char* args, char* reply) {
+  SolarMppt* m = sensors.getSolarMppt();
+  if (m == NULL) { strcpy(reply, "Err - no mppt"); return; }
+  while (*args == ' ') args++;
+  const char* note = "";
+  if (*args != 0) {
+    if (strcmp(args, "auto") == 0) {
+      m->setAuto();
+    } else if (strcmp(args, "off") == 0) {
+      m->setOff();
+    } else {
+      char* end = NULL;
+      float v = strtof(args, &end);
+      if (end == args || *end != 0 || !(v > 0)) { strcpy(reply, "Err - mppt [auto|off|<volts>]"); return; }
+      if (v < SOLAR_MPPT_V_MIN || v > SOLAR_MPPT_V_MAX) note = " (limited)";
+      m->setFixed(v);
+    }
+    uint8_t raw[SolarMppt::FILE_LEN];
+    m->toFile(raw);
+    if (!writeSmallFile(_fs, MPPT_FILE, raw, sizeof(raw))) note = " (not saved)";
+  }
+  // integers only: no float printf on the small libc
+  #define MPPT_X100(v) ((int)lroundf((v) * 100.0f) / 100), ((int)lroundf((v) * 100.0f) % 100)
+  SolarMppt::State st = m->state();
+  int n = sprintf(reply, "%s%s", SolarMppt::stateName(st), note);
+  if (st == SolarMppt::ST_RELEASED && m->releaseReason()[0]) n += sprintf(reply + n, " (%s)", m->releaseReason());
+  if (st == SolarMppt::ST_FIXED) n += sprintf(reply + n, " %d.%02dV", MPPT_X100(m->fixedVolts()));
+  if (m->driven()) n += sprintf(reply + n, ", duty %d%%", (int)lroundf(m->duty() * 100.0f));
+  else n += sprintf(reply + n, ", pin hi-Z");
+  n += sprintf(reply + n, ", set %d.%02dV", MPPT_X100(m->setpoint()));
+  if (m->hasPanel()) sprintf(reply + n, ", panel %d.%02dV %dmA %d.%02dW", MPPT_X100(m->panelV()), (int)lroundf(m->panelA() * 1000.0f), MPPT_X100(m->panelW()));
+  else sprintf(reply + n, ", panel n/a");
+  #undef MPPT_X100
 }
 #endif
 

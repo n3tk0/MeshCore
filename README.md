@@ -149,6 +149,12 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 
 With an INA219 in the battery line (the battery on Vin+, the load and the charger on Vin-), the repeater takes the battery from it instead of the board's ADC: bus voltage plus the drop over the shunt. It is used in the status, telemetry channel 1, the `power` command and the battery check before a LoRa OTA install. The INA219 channel also carries the current with its sign as an analog input (Cayenne LPP current has no sign): negative while charging, positive while discharging. Without an INA219, or after it was turned off for I2C errors (see `i2c` below), the board's own reading is used.
 
+### INA226 battery and the xiao-solar-ultralite board
+
+An INA226 at 0x44 is plain telemetry on every board. With `-D INA226_BATTERY=1` it is the battery, like the INA219 above (battery on Vin+, load and charger on Vin-, 100 mOhm shunt): the voltage, the charge counting and the percentage in telemetry come from it, the board's ADC is not used, and when a read fails or the sensor is turned off the last good value is kept (unknown, 0, until the first good read; `battsave` and the OTA check treat that as no reading). A second INA226 at 0x45 (found by its manufacturer ID) is a second telemetry channel. `-D INA226_LOW_POWER=1` reads them in triggered mode with 16 averages (~35 ms, the chip rests at ~2 uA in between).
+
+`Xiao_nrf52_solar_ultralite_repeater` is the XIAO nRF52840 + Wio-SX1262 repeater for the xiao-solar-ultralite board: a CN3791 buck MPPT charger, the battery INA226 on 0x44 and the solar input INA226 on 0x45 (SCL D6 / SDA D7); the XIAO's own battery pad is not connected. D0 drives the charger's panel voltage set-point through a PWM (`-D SOLAR_MPPT_PWM_PIN=D0`); the `mppt` command (`auto` perturb & observe on the panel power, `off`, or a fixed `<volts>`) is in the [docs](./docs/cli_commands.md#solar-panel-set-point---mppt-repeater-xiao-solar-ultralite). Not hardware-tested yet.
+
 ### xiao-solar-lite charger (BQ25798)
 
 All solar boards (commands and capabilities per board and version): [docs/solar-boards.bg.md](docs/solar-boards.bg.md).

@@ -5,6 +5,7 @@
 #include "BatteryGauge.h"
 
 class BQ25798;
+class SolarMppt;
 
 #define TELEM_PERM_BASE         0x01   // 'base' permission includes battery
 #define TELEM_PERM_LOCATION     0x02
@@ -33,6 +34,8 @@ public:
   virtual BatteryGauge* getBatteryGauge() { return NULL; }
   // a charger chip on I2C (BQ25798 on xiao-solar-lite); NULL: none
   virtual BQ25798* getCharger() { return NULL; }
+  // the panel voltage set-point control of a CN3791 MPPT charger (SOLAR_MPPT_PWM_PIN); NULL: none
+  virtual SolarMppt* getSolarMppt() { return NULL; }
   // 1 / 0: a charger chip sees a panel or adapter (or not); -1: no such chip, ask the board
   virtual int externalPower() { return -1; }
   // the gauge's 'today' follows this clock when it is set (else days since boot)

@@ -244,6 +244,25 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 
 ---
 
+### Solar panel set-point - mppt (Repeater, xiao-solar-ultralite)
+
+For `Xiao_nrf52_solar_ultralite_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k: `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/200`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.17 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=200000`. The set-point is kept between 4.6 and 6.9 V.
+
+**Usage:**
+- `mppt` (mode, duty, computed set-point, last panel voltage / current / power)
+- `mppt auto` (the default: perturb & observe on the panel power)
+- `mppt off` (the pin is hi-Z: the fixed divider point)
+- `mppt <volts>` (a fixed set-point, limited to 4.6..6.9 V; the reply says `(limited)` when it was cut)
+
+**Example reply:** `tracking, duty 37%, set 5.11V, panel 5.12V 214mA 1.10W`
+
+**Notes:**
+- Auto measures the panel (the INA226 on 0x45: bus voltage x current) every 10 s and steps the duty by 2 % (about 0.11 V) in the direction that gave more power; when the power falls by more than 0.5 % it turns round, and at the end of the range too. It runs in the sensor loop and takes about 35 ms of I2C wait per measurement; the radio is not touched.
+- No sun (panel power under 0.05 W, or the panel voltage under the battery plus 0.1 V) or the charge is done (panel current under 10 mA): the pin is released (hi-Z, the default set-point) and the panel is looked at again every 60 s; tracking starts again at 0.10 W and 20 mA. The same when the panel INA226 cannot be read or is turned off.
+- The mode is kept in `/mppt` (default auto). `off` and a fixed set-point do not look at the sun.
+
+---
+
 ### Self test
 **Usage:** `selftest`
 
@@ -314,11 +333,17 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 
 **Notes:**
 - Lists the RTC and the sensors found at boot, with `ok` or why each was turned off: `timeout at boot` (its probe or start hung the bus), `init failed` (it answered, its driver did not start) or `3 errors at <uptime>m` (3 reads in a row failed).
-- A device turned off for read errors is tried again after 10 minutes, 1 hour, then every 6 hours (`off: 3 errors at 125m, retrying`); one that came back shows how often it dropped out (`ok (off 2x)`). One that hung at boot stays off until a reboot. A device keeps its telemetry channel while off. When an INA219 used for the battery is turned off, the board's own battery reading is used.
+- A device turned off for read errors is tried again after 10 minutes, 1 hour, then every 6 hours (`off: 3 errors at 125m, retrying`); one that came back shows how often it dropped out (`ok (off 2x)`). One that hung at boot stays off until a reboot. A device keeps its telemetry channel while off. When an INA219 used for the battery is turned off, the board's own battery reading is used; when the battery INA226 (`-D INA226_BATTERY=1`) is turned off or a read fails, its last good value stays (see below).
 - `bus STUCK` in front: a line stayed low after the bus was freed, so no device can be reached. The bus is freed again every 10 s while it is used; `bus was stuck` once it came back (the devices turned off meanwhile stay off until a reboot).
 - `?` for the name: none of the drivers for that address started (several share 0x76/0x77 and 0x44).
 - On nRF52, every I2C wait has a 50 ms timeout, so a bad module cannot hang the node. On other platforms the devices are only listed.
 - `N probe timeouts at boot (first XX)` in front: probes that timed out where nothing is known, often a flaky bus.
+
+**INA226 (0x44 and 0x45):**
+- The INA226 at 0x44 is a telemetry channel (voltage, current, power, signed current) on every board. It is the battery (voltage for status, telemetry, `power`, `battsave` and the OTA check, and the charge gauge for the % / time left / mAh) only in a build with `-D INA226_BATTERY=1` (battery on Vin+, load and charger on Vin-, 100 mOhm shunt). The battery percentage (`addPercentage` in telemetry) is carried only by the sensor that feeds the gauge. With an INA219 in the battery line as well, the INA219 is the battery and the INA226 stays telemetry; the voltage always comes from the same sensor as the gauge.
+- With `INA226_BATTERY` the board's own ADC is never used (on the xiao-solar-ultralite the XIAO BAT pad is not connected): if the battery INA226 cannot be read or is turned off, the last good reading is used; before the first good one the battery is unknown (0 mV): `battsave`, the OTA battery check and the status take that as "no reading" (no power step, no refusal).
+- A second INA226 at 0x45 (found by its manufacturer ID) is another telemetry channel: the solar input of the xiao-solar-ultralite (panel on Vin+, charger on Vin-). It is also what `mppt` measures.
+- `-D INA226_LOW_POWER=1`: both are read in triggered mode with 16 averages (about 35 ms a reading, the chip rests at ~2 uA in between instead of ~330 uA). A reading that does not finish within 80 ms counts as a failed read, like an I2C error (3 in a row turn the sensor off).
 
 ---
 

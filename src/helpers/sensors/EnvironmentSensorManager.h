@@ -5,6 +5,15 @@
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
 
+// INA226_BATTERY=1: the primary INA226 (0x44) is the battery (voltage and charge gauge); else it is telemetry only.
+// INA226_LOW_POWER=1: INA226s are read in triggered mode with averaging (they rest at ~2 uA in between).
+#ifndef INA226_BATTERY
+#define INA226_BATTERY 0
+#endif
+#ifndef INA226_LOW_POWER
+#define INA226_LOW_POWER 0
+#endif
+
 class EnvironmentSensorManager : public SensorManager {
 protected:
   static const int MAX_ACTIVE_SENSORS = 16;
@@ -26,9 +35,6 @@ protected:
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
   int          _active_sensor_count = 0;
   uint8_t      next_available_channel = TELEM_CHANNEL_SELF + 1;
-  bool         _ina219_found = false;   // its bus is taken as the battery
-  bool         _ina226_found = false;   // primary INA226 (0x44): its bus is taken as the battery
-  bool         _bq_found = false;       // a BQ25798 charger: it measures the battery (before an INA219)
   #if ENV_INCLUDE_BQ25798
   bool bqActive() const;
   void bqLoop();
@@ -37,6 +43,8 @@ protected:
   void noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before);
   void retryOffSensors();
   void sampleBatteryGauge();
+  bool readIna226Battery(uint16_t* mv, float* ma);
+  void mpptLoop();
   uint32_t gaugeDay() const;
 
   bool     gps_detected = false;
@@ -67,6 +75,9 @@ public:
   uint16_t getBatteryMilliVolts() override;
   void loop() override;
   BatteryGauge* getBatteryGauge() override;
+  #ifdef SOLAR_MPPT_PWM_PIN
+  SolarMppt* getSolarMppt() override;
+  #endif
   #if ENV_INCLUDE_BQ25798
   BQ25798* getCharger() override;
   int externalPower() override;

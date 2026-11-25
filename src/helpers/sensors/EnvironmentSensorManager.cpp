@@ -112,8 +112,16 @@ LPS22HBClass LPS22HB(*TELEM_WIRE);
 static Adafruit_INA3221 INA3221;
 #endif
 
-#if ENV_INCLUDE_INA219 || ENV_INCLUDE_INA226
+// which sensors were found (set in begin())
+static bool s_ina219_found = false;   // its bus is taken as the battery
+static bool s_ina226_found = false;   // primary INA226 (0x44): its bus is the battery, with INA226_BATTERY
+static bool s_bq_found = false;       // a BQ25798 charger: it measures the battery (before an INA219)
+
+#if ENV_INCLUDE_INA219 || (ENV_INCLUDE_INA226 && INA226_BATTERY)
+#define ENV_INA_GAUGE 1
 static BatteryGauge ina_gauge;   // in the battery line: its current is counted every 10 s
+#else
+#define ENV_INA_GAUGE 0
 #endif
 
 #if ENV_INCLUDE_INA219
@@ -193,7 +201,95 @@ static Adafruit_INA260 INA260;
 #include <INA226.h>
 static INA226 INA226_1(TELEM_INA226_ADDRESS, TELEM_WIRE);
 static INA226 INA226_2(TELEM_INA226_2_ADDRESS, TELEM_WIRE);
+
+// One reading of an INA226: voltages in V, current in A, power in W (from one conversion).
+struct Ina226Sample { float vbus, vshunt, amps, watts; };
+static uint8_t ina226_timeouts = 0;   // bit n: INA226 n gave no conversion-ready; noteRead() counts it as a failed read
+static bool    ina226_waited = false; // a conversion was waited for since the loop began (see mpptLoop)
+#if INA226_BATTERY
+static uint16_t ina226_last_mv = 0;   // the battery INA226's last good value (0: never)
 #endif
+#if INA226_LOW_POWER
+// Triggered mode, 16 averages of 1.1 ms (bus + shunt): 35 ms a reading, ~2 uA in between (continuous: ~330 uA)
+#define INA226_CONV_MS       36      // the wait before the first look
+#define INA226_CONV_TIMEOUT  80      // ms from the trigger: after this the chip is taken as not answering
+#define INA226_CACHE_MS      200     // a reading this young is used again (two values from one call)
+static Ina226Sample ina226_cache[2];
+static uint32_t     ina226_cache_ms[2];
+static bool         ina226_cache_ok[2] = {false, false};
+#endif
+
+// Reads dev (idx 0: battery 0x44, 1: panel 0x45). In low power mode it triggers a conversion and waits for it
+// (a timeout sets the bit in ina226_timeouts and fails). False: the read failed (I2C error or timeout).
+static bool ina226Read(INA226& dev, uint8_t idx, Ina226Sample& s) {
+  uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+  #if INA226_LOW_POWER
+  if (ina226_cache_ok[idx] && (uint32_t)(millis() - ina226_cache_ms[idx]) < INA226_CACHE_MS) {
+    s = ina226_cache[idx];
+    return true;
+  }
+  ina226_cache_ok[idx] = false;
+  dev.setModeShuntBusTrigger();   // writing the mode starts one conversion
+  ina226_waited = true;
+  uint32_t t0 = millis();
+  delay(INA226_CONV_MS);
+  while (!dev.isConversionReady()) {
+    if (i2cErrorCount(*TELEM_WIRE) != errors || (uint32_t)(millis() - t0) >= INA226_CONV_TIMEOUT) {
+      ina226_timeouts |= (uint8_t)(1 << idx);
+      return false;
+    }
+    delay(2);
+  }
+  #endif
+  s.vbus = dev.getBusVoltage();
+  s.vshunt = dev.getShuntVoltage();
+  s.amps = dev.getCurrent();
+  s.watts = dev.getPower();
+  bool ok = i2cErrorCount(*TELEM_WIRE) == errors;
+  #if INA226_LOW_POWER
+  if (ok) {
+    ina226_cache[idx] = s;
+    ina226_cache_ms[idx] = millis();
+    ina226_cache_ok[idx] = true;
+  }
+  #endif
+  return ok;
+}
+#endif
+
+#if ENV_INCLUDE_INA226 && defined(SOLAR_MPPT_PWM_PIN)
+#include <helpers/sensors/SolarMppt.h>
+static SolarMppt solar_mppt;
+static bool      mppt_pin_driven = false;
+static uint8_t   mppt_pin_value = 0;
+#elif defined(SOLAR_MPPT_PWM_PIN)
+#error "SOLAR_MPPT_PWM_PIN needs ENV_INCLUDE_INA226 (the panel is measured by the INA226 on 0x45)"
+#endif
+
+// The battery: INA219 (not on the solar input), else the primary INA226 with INA226_BATTERY.
+#if ENV_INA_GAUGE
+enum { BS_NONE = 0, BS_INA219, BS_INA226 };
+static uint8_t batterySource() {
+  #if ENV_INCLUDE_INA219
+  if (s_ina219_found
+  #if ENV_INCLUDE_BQ25798
+      && !bq_charger.inaSun()   // `charger ina sun`: the INA219 is on the solar input, not the battery
+  #endif
+     ) return BS_INA219;
+  #endif
+  #if ENV_INCLUDE_INA226 && INA226_BATTERY
+  if (s_ina226_found) return BS_INA226;
+  #endif
+  return BS_NONE;
+}
+// true when ina_gauge is fed by this source (a BQ25798 has its own gauge)
+static bool gaugeFedBy(uint8_t src) {
+  return !s_bq_found && batterySource() == src;
+}
+#endif
+
+// a read that timed out (no I2C error, but no result): true once, for noteRead()
+static bool takeReadTimeout(void (*query)(uint8_t, uint8_t, CayenneLPP&));
 
 #if ENV_INCLUDE_MLX90614
 #ifndef TELEM_MLX90614_ADDRESS
@@ -450,8 +546,10 @@ static void query_ina219(uint8_t ch, uint8_t, CayenneLPP& lpp) {
   lpp.addPower(ch, INA219.getPower_mW() / 1000.0f);
   // LPP current has no sign: the direction (charge / discharge in a battery line) as a signed analog value too
   lpp.addAnalogInput(ch, amps);
-  int pct = ina_gauge.percent();
-  if (pct >= 0) lpp.addPercentage(ch, pct);   // the counted charge (see BatteryGauge)
+  if (gaugeFedBy(BS_INA219)) {   // only the sensor that feeds the gauge (not an INA219 on the solar input)
+    int pct = ina_gauge.percent();
+    if (pct >= 0) lpp.addPercentage(ch, pct);   // the counted charge (see BatteryGauge)
+  }
 }
 #endif
 
@@ -498,7 +596,13 @@ static void query_ina260(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 static uint8_t init_ina226_dev(INA226& dev) {
   if (!dev.begin()) return 0;
   if (dev.getManufacturerID() != 0x5449) return 0;   // TI INA226 (distinguish from e.g. SHT4X at 0x44)
-  dev.setMaxCurrentShunt(TELEM_INA226_MAX_AMP, TELEM_INA226_SHUNT_VALUE);
+  if (dev.setMaxCurrentShunt(TELEM_INA226_MAX_AMP, TELEM_INA226_SHUNT_VALUE) != INA226_ERR_NONE) return 0;   // else it would measure 0
+  #if INA226_LOW_POWER
+  if (!dev.setAverage(INA226_16_SAMPLES)) return 0;
+  if (!dev.setBusVoltageConversionTime(INA226_1100_us)) return 0;
+  if (!dev.setShuntVoltageConversionTime(INA226_1100_us)) return 0;
+  dev.setModeShuntBusTrigger();   // one conversion, then it rests until the next trigger (ina226Read)
+  #endif
   return 1;
 }
 static uint8_t init_ina226(TwoWire*, uint8_t) {
@@ -508,20 +612,26 @@ static uint8_t init_ina226_2(TwoWire*, uint8_t) {
   return init_ina226_dev(INA226_2);
 }
 static void query_ina226(uint8_t ch, uint8_t, CayenneLPP& lpp) {
-  float amps = INA226_1.getCurrent_mA() / 1000.0f;
-  lpp.addVoltage(ch, INA226_1.getBusVoltage());
-  lpp.addCurrent(ch, amps < 0 ? -amps : amps);
-  lpp.addPower(ch, INA226_1.getPower_mW() / 1000.0f);
+  Ina226Sample s;
+  if (!ina226Read(INA226_1, 0, s)) return;   // a failed read adds nothing (noteRead() counts it)
+  lpp.addVoltage(ch, s.vbus);
+  lpp.addCurrent(ch, s.amps < 0 ? -s.amps : s.amps);
+  lpp.addPower(ch, s.watts);
   // LPP current has no sign: the direction (charge / discharge in a battery line) as a signed analog value too
-  lpp.addAnalogInput(ch, amps);
-  int pct = ina_gauge.percent();
-  if (pct >= 0) lpp.addPercentage(ch, pct);   // the counted charge (see BatteryGauge)
+  lpp.addAnalogInput(ch, s.amps);
+  #if INA226_BATTERY
+  if (gaugeFedBy(BS_INA226)) {   // only the sensor that feeds the gauge
+    int pct = ina_gauge.percent();
+    if (pct >= 0) lpp.addPercentage(ch, pct);   // the counted charge (see BatteryGauge)
+  }
+  #endif
 }
 static void query_ina226_2(uint8_t ch, uint8_t, CayenneLPP& lpp) {
-  float amps = INA226_2.getCurrent_mA() / 1000.0f;
-  lpp.addVoltage(ch, INA226_2.getBusVoltage());
-  lpp.addCurrent(ch, amps < 0 ? -amps : amps);
-  lpp.addPower(ch, INA226_2.getPower_mW() / 1000.0f);
+  Ina226Sample s;
+  if (!ina226Read(INA226_2, 1, s)) return;
+  lpp.addVoltage(ch, s.vbus);
+  lpp.addCurrent(ch, s.amps < 0 ? -s.amps : s.amps);
+  lpp.addPower(ch, s.watts);
 }
 #endif
 
@@ -760,6 +870,10 @@ bool EnvironmentSensorManager::begin() {
   MESH_DEBUG_PRINTLN("Second I2C initialized on pins SDA: %d SCL: %d", ENV_PIN_SDA, ENV_PIN_SCL);
   #endif
 
+  #ifdef SOLAR_MPPT_PWM_PIN
+  pinMode(SOLAR_MPPT_PWM_PIN, INPUT);   // hi-Z: the charger's own divider set-point until the tracker takes over
+  #endif
+
   // Scan the I2C bus before touching any sensor library.
   bool detected[128] = {};
   #ifndef DISABLE_ENV_SENSORS
@@ -802,13 +916,13 @@ bool EnvironmentSensorManager::begin() {
     MESH_DEBUG_PRINTLN("Found %s at address: %02X", def.name, def.address);
     detected[def.address] = false;  // consumed; later entries must not re-claim this device
     #if ENV_INCLUDE_INA219
-    if (def.init == init_ina219) _ina219_found = true;
+    if (def.init == init_ina219) s_ina219_found = true;
     #endif
     #if ENV_INCLUDE_INA226
-    if (def.init == init_ina226) _ina226_found = true;
+    if (def.init == init_ina226) s_ina226_found = true;
     #endif
     #if ENV_INCLUDE_BQ25798
-    if (def.init == init_bq25798) _bq_found = true;
+    if (def.init == init_bq25798) s_bq_found = true;
     #endif
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
       _active_sensors[_active_sensor_count++] = { def.query, def.init, sub, def.address, def.name, 0, false, 0, 0 };
@@ -833,40 +947,59 @@ bool EnvironmentSensorManager::begin() {
   return true;
 }
 
-// An INA219 or primary INA226 sits in the battery line (battery on Vin+, the load and charger on Vin-):
-// the battery is the bus voltage plus the drop over the shunt. 0 without one: the board's own reading counts.
+#if ENV_INCLUDE_INA226 && INA226_BATTERY
+// One read of the battery INA226 (0x44): its bus voltage plus the drop over the shunt, and the current
+// (+ = out of the battery). The conversion happens once for both. False: the sensor is off or the read failed.
+bool EnvironmentSensorManager::readIna226Battery(uint16_t* mv_out, float* ma_out) {
+  for (int i = 0; i < _active_sensor_count; i++) {
+    if (_active_sensors[i].query == query_ina226 && _active_sensors[i].off) return false;
+  }
+  uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+  Ina226Sample smp;
+  bool ok = ina226Read(INA226_1, 0, smp);
+  noteRead(query_ina226, errors);   // I2C errors and timeouts: 3 in a row turn it off
+  if (!ok || i2cErrorCount(*TELEM_WIRE) != errors) return false;
+  float mv = (smp.vbus + smp.vshunt) * 1000.0f;
+  if (!(mv > 0 && mv < 65535)) return false;   // also NaN
+  ina226_last_mv = (uint16_t)mv;
+  if (mv_out) *mv_out = (uint16_t)mv;
+  if (ma_out) *ma_out = smp.amps * 1000.0f;
+  return true;
+}
+#else
+bool EnvironmentSensorManager::readIna226Battery(uint16_t*, float*) { return false; }
+#endif
+
+// An INA219 or (INA226_BATTERY) the primary INA226 sits in the battery line (battery on Vin+, the load and
+// charger on Vin-): the battery is the bus voltage plus the drop over the shunt. 0 without one: the board's
+// own reading counts. One source only: when the INA219 is the battery and cannot be read, it is 0, not the INA226.
+// With the INA226 as the battery a failed read, or the sensor turned off, gives its last good value
+// (0 only until the first good read, and callers treat 0 as unknown, see MyMesh.cpp battMilliVolts()).
 uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
   #if ENV_INCLUDE_BQ25798
   if (bqActive() && bq_charger.reading().valid) return bq_charger.reading().vbat_mv;   // the last ADC, no I2C here
   #endif
-  #if ENV_INCLUDE_INA219
-  #if ENV_INCLUDE_BQ25798
-  if (bq_charger.inaSun()) goto check_ina226;   // `charger ina sun`: the INA219 is on the solar input, not the battery
-  #endif
-  if (_ina219_found) {
-    for (int i = 0; i < _active_sensor_count; i++) {
-      if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) return 0;  // the board's own reading
+  #if ENV_INA_GAUGE
+  switch (batterySource()) {
+    #if ENV_INCLUDE_INA219
+    case BS_INA219: {
+      for (int i = 0; i < _active_sensor_count; i++) {
+        if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) return 0;  // the board's own reading
+      }
+      uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+      float mv = INA219.getBusVoltage_V() * 1000.0f + INA219.getShuntVoltage_mV();
+      noteRead(query_ina219, errors);
+      if (i2cErrorCount(*TELEM_WIRE) != errors) return 0;  // a half-read value: the board's own reading
+      return (mv > 0 && mv < 65535) ? (uint16_t)mv : 0;
     }
-    uint32_t errors = i2cErrorCount(*TELEM_WIRE);
-    float mv = INA219.getBusVoltage_V() * 1000.0f + INA219.getShuntVoltage_mV();
-    noteRead(query_ina219, errors);
-    if (i2cErrorCount(*TELEM_WIRE) != errors) return 0;  // a half-read value: the board's own reading
-    if (mv > 0 && mv < 65535) return (uint16_t)mv;
-  }
-  #endif
-#if ENV_INCLUDE_INA219 && ENV_INCLUDE_BQ25798
-check_ina226:
-#endif
-  #if ENV_INCLUDE_INA226
-  if (_ina226_found) {
-    for (int i = 0; i < _active_sensor_count; i++) {
-      if (_active_sensors[i].query == query_ina226 && _active_sensors[i].off) return 0;  // the board's own reading
+    #endif
+    #if ENV_INCLUDE_INA226 && INA226_BATTERY
+    case BS_INA226: {
+      uint16_t mv;
+      return readIna226Battery(&mv, NULL) ? mv : ina226_last_mv;
     }
-    uint32_t errors = i2cErrorCount(*TELEM_WIRE);
-    float mv = INA226_1.getBusVoltage_mV() + INA226_1.getShuntVoltage_mV();
-    noteRead(query_ina226, errors);
-    if (i2cErrorCount(*TELEM_WIRE) != errors) return 0;  // a half-read value: the board's own reading
-    if (mv > 0 && mv < 65535) return (uint16_t)mv;
+    #endif
+    default: break;
   }
   #endif
   return 0;
@@ -880,8 +1013,17 @@ static uint32_t sensorRetryDelay(uint8_t retries) {
   return retries == 0 ? 10 * 60000UL : retries == 1 ? 60 * 60000UL : 6 * 60 * 60000UL;
 }
 
+static bool takeReadTimeout(void (*query)(uint8_t, uint8_t, CayenneLPP&)) {
+  #if ENV_INCLUDE_INA226
+  if (query == query_ina226 && (ina226_timeouts & 1)) { ina226_timeouts &= ~1; return true; }
+  if (query == query_ina226_2 && (ina226_timeouts & 2)) { ina226_timeouts &= ~2; return true; }
+  #endif
+  return false;
+}
+
 void EnvironmentSensorManager::noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before) {
   bool failed = i2cErrorCount(*TELEM_WIRE) != errors_before;
+  if (takeReadTimeout(query)) failed = true;   // a conversion that never finished counts like an I2C error
   for (int i = 0; i < _active_sensor_count; i++) {
     ActiveSensor& a = _active_sensors[i];
     if (a.query != query || a.off) continue;
@@ -917,8 +1059,9 @@ void EnvironmentSensorManager::retryOffSensors() {
     if (ok) ok = a.init(TELEM_WIRE, a.address) != 0 && i2cErrorCount(*TELEM_WIRE) == errors;
     if (ok) {
       scratch.reset();
+      takeReadTimeout(a.query);   // forget an old one
       a.query(TELEM_CHANNEL_SELF + 1, 0, scratch);
-      ok = i2cErrorCount(*TELEM_WIRE) == errors;
+      ok = i2cErrorCount(*TELEM_WIRE) == errors && !takeReadTimeout(a.query);
     }
     for (int j = i; j < _active_sensor_count; j++) {   // every channel of the device
       ActiveSensor& c = _active_sensors[j];
@@ -945,7 +1088,7 @@ void EnvironmentSensorManager::retryOffSensors() {
 
 #if ENV_INCLUDE_BQ25798
 bool EnvironmentSensorManager::bqActive() const {
-  if (!_bq_found) return false;
+  if (!s_bq_found) return false;
   for (int i = 0; i < _active_sensor_count; i++) {
     if (_active_sensors[i].query == query_bq25798 && _active_sensors[i].off) return false;
   }
@@ -965,7 +1108,7 @@ void EnvironmentSensorManager::bqLoop() {
   // is on the solar input, it is the reference of the IBUS ADC instead (the battery current is the BQ's)
   #if ENV_INCLUDE_INA219
   bool ref = false;
-  if (_ina219_found) {
+  if (s_ina219_found) {
     bool on = true;
     for (int i = 0; i < _active_sensor_count; i++) {
       if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) on = false;
@@ -992,7 +1135,7 @@ BQ25798* EnvironmentSensorManager::getCharger() {
 }
 
 int EnvironmentSensorManager::externalPower() {
-  if (!_bq_found) return -1;
+  if (!s_bq_found) return -1;
   if (!bqActive()) return 0;   // turned off for I2C errors: not the board's USB detection (always on with SYS on 5V)
   return bq_charger.vbusPresent() ? 1 : 0;
 }
@@ -1006,45 +1149,26 @@ uint32_t EnvironmentSensorManager::gaugeDay() const {
 
 BatteryGauge* EnvironmentSensorManager::getBatteryGauge() {
   #if ENV_INCLUDE_BQ25798
-  if (_bq_found) return &bq_gauge;
-  #if ENV_INCLUDE_INA219
-  if (bq_charger.inaSun()) {
-    #if ENV_INCLUDE_INA226
-    if (_ina226_found) return &ina_gauge;
-    #endif
-    return NULL;   // the INA219 is on the solar input, not the battery (also with no BQ25798 answering)
-  }
+  if (s_bq_found) return &bq_gauge;
   #endif
-  #endif
-  #if ENV_INCLUDE_INA219
-  if (_ina219_found) return &ina_gauge;
-  #endif
-  #if ENV_INCLUDE_INA226
-  if (_ina226_found) return &ina_gauge;
+  #if ENV_INA_GAUGE
+  if (batterySource() != BS_NONE) return &ina_gauge;   // `charger ina sun` with no battery INA226: NULL
   #endif
   return NULL;
 }
 
 void EnvironmentSensorManager::sampleBatteryGauge() {
-  #if ENV_INCLUDE_INA219 || ENV_INCLUDE_INA226
-  if (_bq_found) return;   // getBatteryGauge() returns &bq_gauge when a BQ25798 is present
+  #if ENV_INA_GAUGE
+  if (s_bq_found) return;   // getBatteryGauge() returns &bq_gauge when a BQ25798 is present
   static uint32_t next_sample = 0;
   if ((int32_t)(millis() - next_sample) < 0) return;
 
-  bool use_ina219 = false;
-  #if ENV_INCLUDE_INA219
-  if (_ina219_found) {
-    #if ENV_INCLUDE_BQ25798
-    if (!bq_charger.inaSun()) use_ina219 = true;
-    #else
-    use_ina219 = true;
-    #endif
-  }
-  #endif
+  uint8_t src = batterySource();
+  if (src == BS_NONE) return;
+  next_sample = millis() + 10000;
 
-  if (use_ina219) {
-    next_sample = millis() + 10000;
-    #if ENV_INCLUDE_INA219
+  #if ENV_INCLUDE_INA219
+  if (src == BS_INA219) {
     for (int i = 0; i < _active_sensor_count; i++) {
       if (_active_sensors[i].query == query_ina219 && _active_sensors[i].off) return;
     }
@@ -1054,22 +1178,14 @@ void EnvironmentSensorManager::sampleBatteryGauge() {
     noteRead(query_ina219, errors);
     if (i2cErrorCount(*TELEM_WIRE) != errors || mv <= 0 || mv >= 65535) return;
     ina_gauge.update(millis(), (uint16_t)mv, ma, gaugeDay());
-    #endif
     return;
   }
+  #endif
 
-  #if ENV_INCLUDE_INA226
-  if (!_ina226_found) return;
-  next_sample = millis() + 10000;
-  for (int i = 0; i < _active_sensor_count; i++) {
-    if (_active_sensors[i].query == query_ina226 && _active_sensors[i].off) return;
-  }
-  uint32_t errors = i2cErrorCount(*TELEM_WIRE);
-  float mv = INA226_1.getBusVoltage_mV() + INA226_1.getShuntVoltage_mV();
-  float ma = INA226_1.getCurrent_mA();
-  noteRead(query_ina226, errors);
-  if (i2cErrorCount(*TELEM_WIRE) != errors || mv <= 0 || mv >= 65535) return;
-  ina_gauge.update(millis(), (uint16_t)mv, ma, gaugeDay());
+  #if ENV_INCLUDE_INA226 && INA226_BATTERY
+  uint16_t mv;
+  float ma;
+  if (readIna226Battery(&mv, &ma)) ina_gauge.update(millis(), mv, ma, gaugeDay());
   #endif
   #endif
 }
@@ -1329,9 +1445,74 @@ void EnvironmentSensorManager::stop_gps() {
 }
 #endif // ENV_INCLUDE_GPS
 
+#ifdef SOLAR_MPPT_PWM_PIN
+SolarMppt* EnvironmentSensorManager::getSolarMppt() { return &solar_mppt; }
+
+// the pin follows what the tracker wants: PWM (62.5 kHz, 8 bit: the nRF52 core's analogWrite default) or hi-Z
+static void mpptApplyPin() {
+  if (solar_mppt.driven()) {
+    uint8_t v = solar_mppt.pwm8();
+    if (!mppt_pin_driven || v != mppt_pin_value) {
+      analogWrite(SOLAR_MPPT_PWM_PIN, v);
+      mppt_pin_driven = true;
+      mppt_pin_value = v;
+    }
+  } else if (mppt_pin_driven) {
+    analogWrite(SOLAR_MPPT_PWM_PIN, 0);
+    for (int i = 0; i < HWPWM_MODULE_NUM; i++) {   // detach the pin and stop the PWM: it would keep the 16 MHz clock on
+      if (HwPWMx[i]->checkPin(SOLAR_MPPT_PWM_PIN)) {
+        HwPWMx[i]->removePin(SOLAR_MPPT_PWM_PIN);
+        if (HwPWMx[i]->releaseOwnership(0x676f6c41)) HwPWMx[i]->stop();   // analogWrite()'s token
+      }
+    }
+    pinMode(SOLAR_MPPT_PWM_PIN, INPUT);   // no pull: the default set-point
+    mppt_pin_driven = false;
+  }
+}
+#endif
+
+// Panel tracker tick: a mode change from the CLI is applied at once, a measurement is due every 10 s (60 s
+// while the pin is released). It reads the panel INA226 (0x45) and never touches the radio.
+void EnvironmentSensorManager::mpptLoop() {
+  #ifdef SOLAR_MPPT_PWM_PIN
+  mpptApplyPin();
+  uint32_t now = millis();
+  if (!solar_mppt.due(now)) return;
+  if (ina226_waited) return;   // the battery read just waited for its conversion: not twice in one pass
+
+  bool found = false, off = false;
+  for (int i = 0; i < _active_sensor_count; i++) {
+    if (_active_sensors[i].query == query_ina226_2) { found = true; off = _active_sensors[i].off; }
+  }
+  if (!found || off) {
+    solar_mppt.panelUnavailable(now, !found);   // no panel reading: auto releases the pin
+    mpptApplyPin();
+    return;
+  }
+  uint32_t errors = i2cErrorCount(*TELEM_WIRE);
+  Ina226Sample smp;
+  bool ok = ina226Read(INA226_2, 1, smp);
+  noteRead(query_ina226_2, errors);
+  if (!ok || i2cErrorCount(*TELEM_WIRE) != errors) {
+    solar_mppt.panelUnavailable(millis(), false);
+  } else {
+    float batt_v = 0;
+    #if INA226_BATTERY
+    batt_v = ina226_last_mv / 1000.0f;   // 0: not known
+    #endif
+    solar_mppt.update(millis(), smp.vbus, smp.amps, batt_v);
+  }
+  mpptApplyPin();
+  #endif
+}
+
 void EnvironmentSensorManager::loop() {
+  #if ENV_INCLUDE_INA226
+  ina226_waited = false;
+  #endif
   retryOffSensors();
   sampleBatteryGauge();
+  mpptLoop();
   #if ENV_INCLUDE_BQ25798
   bqLoop();
   #endif
