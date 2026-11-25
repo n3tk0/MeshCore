@@ -2279,12 +2279,15 @@ void MyMesh::handleSolarBoardCommand(char* args, char* reply) {
   if (strcmp(args, "auto") == 0) {
     bool ok = found == SOLAR_BOARD_NONE ? (!_fs->exists(SOLAR_BOARD_FILE) || _fs->remove(SOLAR_BOARD_FILE))
                                         : writeSmallFile(_fs, SOLAR_BOARD_FILE, &found, 1);
-    if (!ok) note = " (not saved)";
-    _solar_board_kept = ok ? found : _solar_board_kept;
-    sensors.solarBoardLock(found);
-  #ifdef SOLAR_MPPT_PWM_PIN
-    if (found == SOLAR_BOARD_CN3791) loadMppt();   // the tracker's saved mode
-  #endif
+    if (!ok) {
+      note = " (not saved, unchanged)";   // the lock follows the file only: a reboot must not undo it
+    } else {
+      _solar_board_kept = found;
+      sensors.solarBoardLock(found);
+    #ifdef SOLAR_MPPT_PWM_PIN
+      if (found == SOLAR_BOARD_CN3791) loadMppt();   // the tracker's saved mode
+    #endif
+    }
   } else if (*args) {
     strcpy(reply, "Err - solar [auto]");
     return;
@@ -2293,7 +2296,12 @@ void MyMesh::handleSolarBoardCommand(char* args, char* reply) {
   if (_solar_board_kept != SOLAR_BOARD_NONE && _solar_board_kept != found) {
     n += sprintf(reply + n, ", kept %s: check, then `solar auto`", solarBoardName(_solar_board_kept));
   }
-  if (found == SOLAR_BOARD_CN3791) n += sprintf(reply + n, " (mppt %s)", sensors.getSolarMppt() ? "on" : "off");
+  if (found == SOLAR_BOARD_CN3791) {
+  #ifdef SOLAR_MPPT_PWM_PIN
+    SolarMppt* m = sensors.getSolarMppt();
+    n += sprintf(reply + n, " (mppt %s)", m ? SolarMppt::stateName(m->state()) : "held: kept board differs");
+  #endif
+  }
   sprintf(reply + n, "%s", note);
 }
 #endif
@@ -2691,6 +2699,12 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
 }
 #else
   if (c == NULL) {
+    strcpy(reply, "Err - no BQ25798 charger found");
+    return;
+  }
+  // without the chip only the status and the INA219's position: a setting would go to /charger and move the
+  // battery chemistry (battsave thresholds) of a board that has no BQ25798
+  if (!direct && *args != 0 && strcmp(args, "ina") != 0) {
     strcpy(reply, "Err - no BQ25798 charger found");
     return;
   }

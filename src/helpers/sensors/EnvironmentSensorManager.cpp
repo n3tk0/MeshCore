@@ -126,6 +126,7 @@ static uint8_t s_board_detected = SOLAR_BOARD_NONE;
 static uint8_t s_board_active = SOLAR_BOARD_NONE;
 static bool    s_mppt_ok = !SOLAR_BOARD_AUTO;                 // the PWM on SOLAR_MPPT_PWM_PIN may be driven
 static bool    s_ina226_bat = INA226_BATTERY && !SOLAR_BOARD_AUTO;   // the primary INA226 is the battery
+static bool    s_board_known = false;                         // begin() has looked (SOLAR_BOARD_AUTO)
 
 const char* solarBoardName(uint8_t b) {
   static const char* names[] = { "none", "bq25798", "cn3791", "mspm0" };
@@ -899,7 +900,13 @@ bool EnvironmentSensorManager::begin() {
   scanI2CBus(TELEM_WIRE, detected);
   #endif
   #if SOLAR_BOARD_AUTO
-  bool ack_0x42 = detected[0x42];   // MSPM0 (solar boards), before a table entry takes the address
+  // the MSPM0 of xiao-solar v0.5 / solar-smart-mppt answers on 0x42 before any table entry may claim it
+  // (an INA3221 there would write its reset into the MSPM0's registers and be listed as failed)
+  bool mspm0 = detected[0x42] && smpptPresent(*TELEM_WIRE);
+  if (mspm0) {
+    i2cListDevice(0x42, "SMPPT", I2C_DEV_OK);
+    detected[0x42] = false;
+  }
   #endif
 
   // Walk the sensor table and initialize only detected devices.
@@ -973,14 +980,35 @@ bool EnvironmentSensorManager::begin() {
   #if SOLAR_BOARD_AUTO
   if (s_bq_found) s_board_detected = SOLAR_BOARD_BQ25798;
   else if (s_ina226_found && s_ina226_2_found) s_board_detected = SOLAR_BOARD_CN3791;
-  else if (ack_0x42 && smpptPresent(*TELEM_WIRE)) s_board_detected = SOLAR_BOARD_MSPM0;
+  else if (mspm0) s_board_detected = SOLAR_BOARD_MSPM0;
   else s_board_detected = SOLAR_BOARD_NONE;
   s_ina226_bat = INA226_BATTERY && s_board_detected == SOLAR_BOARD_CN3791;
   s_board_active = s_board_detected;   // until solarBoardLock(); the PWM stays off until then
+  s_board_known = true;
   #endif
 
   return true;
 }
+
+#if SOLAR_BOARD_AUTO
+// MSPM0 boards: pack voltage and sun from 0x42, read at most every 10 s (status, battsave, OTA and telemetry ask often)
+static uint16_t smppt_vpack = 0;
+static bool     smppt_sun = false, smppt_ok = false;
+static uint32_t smppt_at = 0;
+static bool     smppt_read_once = false;
+static void smpptRefresh() {
+  if (smppt_read_once && (uint32_t)(millis() - smppt_at) < 10000) return;
+  smppt_read_once = true;
+  smppt_at = millis();
+  uint16_t mv;
+  bool sun;
+  smppt_ok = smpptPowerState(*TELEM_WIRE, &mv, &sun);
+  if (smppt_ok) {
+    if (mv > 0) smppt_vpack = mv;
+    smppt_sun = sun;
+  }
+}
+#endif
 
 uint8_t EnvironmentSensorManager::solarBoardDetected() const { return s_board_detected; }
 uint8_t EnvironmentSensorManager::solarBoardActive() const { return s_board_active; }
@@ -999,7 +1027,7 @@ void EnvironmentSensorManager::solarBoardLock(uint8_t stored) {
 
 bool EnvironmentSensorManager::batteryOnlyFromSensor() const {
   #if SOLAR_BOARD_AUTO
-  return s_ina226_bat || s_bq_found;   // the XIAO's BAT pad is open on these boards
+  return true;   // the XIAO's BAT pad is open on every board this build is for, found or not
   #else
   return INA226_BATTERY != 0;
   #endif
@@ -1036,6 +1064,12 @@ bool EnvironmentSensorManager::readIna226Battery(uint16_t*, float*) { return fal
 uint16_t EnvironmentSensorManager::getBatteryMilliVolts() {
   #if ENV_INCLUDE_BQ25798
   if (bqActive() && bq_charger.reading().valid) return bq_charger.reading().vbat_mv;   // the last ADC, no I2C here
+  #endif
+  #if SOLAR_BOARD_AUTO
+  if (s_board_detected == SOLAR_BOARD_MSPM0) {   // the pack voltage the MSPM0 measures (0x42 R_VPACK)
+    smpptRefresh();
+    return smppt_vpack;   // the last good value (0 before the first): callers take 0 as unknown
+  }
   #endif
   #if ENV_INA_GAUGE
   switch (batterySource()) {
@@ -1189,6 +1223,9 @@ void EnvironmentSensorManager::bqLoop() {
 }
 
 BQ25798* EnvironmentSensorManager::getCharger() {
+  #if SOLAR_BOARD_AUTO
+  if (s_board_known && !s_bq_found) return NULL;   // another solar board: no settings for a charger it has not
+  #endif
   return &bq_charger;   // apply() before begin() keeps the settings; status says "no BQ25798"
 }
 
@@ -1202,8 +1239,16 @@ int EnvironmentSensorManager::externalPower() {
     return bq_charger.vbusPresent() ? 1 : 0;
   }
   #endif
+  #if SOLAR_BOARD_AUTO
+  // these boards feed the XIAO's 5V from SYS: its own USB detection is always on, never ask it
+  if (s_board_detected == SOLAR_BOARD_MSPM0) {
+    smpptRefresh();
+    return smppt_ok && smppt_sun ? 1 : 0;
+  }
+  if (!s_mppt_ok) return 0;   // no board found, or the CN3791 one held by /board: not known, taken as no sun
+  #endif
   #ifdef SOLAR_MPPT_PWM_PIN
-  if (!s_mppt_ok) return -1;   // not the CN3791 board (SOLAR_BOARD_AUTO): the board's own detection
+  if (!s_mppt_ok) return -1;   // not the CN3791 board: the board's own detection
   // The XIAO's VBUS detection sees the battery on its 5V pin (through the ideal diode), day and night: not
   // usable. The panel feeds the charger when its last reading (0x45, every 10..60 s) is above the battery
   // (CN3791 leaves sleep at VCC - VBAT > ~0.32 V) and gives some power. No reading: on battery.

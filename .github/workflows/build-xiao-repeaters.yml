@@ -35,8 +35,8 @@ jobs:
         target:
           - Xiao_C3_repeater
           - Xiao_nrf52_repeater
-          - Xiao_nrf52_solar_repeater
           - Xiao_nrf52_solar_lite_repeater
+          - Xiao_nrf52_solar_repeater
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
