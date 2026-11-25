@@ -80,6 +80,8 @@ public:
   #endif
   #if ENV_INCLUDE_BQ25798
   BQ25798* getCharger() override;
+  #endif
+  #if ENV_INCLUDE_BQ25798 || defined(SOLAR_MPPT_PWM_PIN)
   int externalPower() override;
   #endif
   int getNumSettings() const override;

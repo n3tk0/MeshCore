@@ -594,6 +594,7 @@ static void query_ina260(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 
 #if ENV_INCLUDE_INA226
 static uint8_t init_ina226_dev(INA226& dev) {
+  uint32_t errors = i2cErrorCount(*TELEM_WIRE);   // the library's set*() report no I2C write errors
   if (!dev.begin()) return 0;
   if (dev.getManufacturerID() != 0x5449) return 0;   // TI INA226 (distinguish from e.g. SHT4X at 0x44)
   if (dev.setMaxCurrentShunt(TELEM_INA226_MAX_AMP, TELEM_INA226_SHUNT_VALUE) != INA226_ERR_NONE) return 0;   // else it would measure 0
@@ -603,6 +604,7 @@ static uint8_t init_ina226_dev(INA226& dev) {
   if (!dev.setShuntVoltageConversionTime(INA226_1100_us)) return 0;
   dev.setModeShuntBusTrigger();   // one conversion, then it rests until the next trigger (ina226Read)
   #endif
+  if (i2cErrorCount(*TELEM_WIRE) != errors) return 0;   // a setting may not have been written
   return 1;
 }
 static uint8_t init_ina226(TwoWire*, uint8_t) {
@@ -1134,10 +1136,29 @@ BQ25798* EnvironmentSensorManager::getCharger() {
   return &bq_charger;   // apply() before begin() keeps the settings; status says "no BQ25798"
 }
 
+#endif
+
+#if ENV_INCLUDE_BQ25798 || defined(SOLAR_MPPT_PWM_PIN)
 int EnvironmentSensorManager::externalPower() {
-  if (!s_bq_found) return -1;
-  if (!bqActive()) return 0;   // turned off for I2C errors: not the board's USB detection (always on with SYS on 5V)
-  return bq_charger.vbusPresent() ? 1 : 0;
+  #if ENV_INCLUDE_BQ25798
+  if (s_bq_found) {
+    if (!bqActive()) return 0;   // turned off for I2C errors: not the board's USB detection (always on with SYS on 5V)
+    return bq_charger.vbusPresent() ? 1 : 0;
+  }
+  #endif
+  #ifdef SOLAR_MPPT_PWM_PIN
+  // The XIAO's VBUS detection sees the battery on its 5V pin (through the ideal diode), day and night: not
+  // usable. The panel feeds the charger when its last reading (0x45, every 10..60 s) is above the battery
+  // (CN3791 leaves sleep at VCC - VBAT > ~0.32 V) and gives some power. No reading: on battery.
+  if (!solar_mppt.hasPanel()) return 0;
+  float batt_v = 0;
+  #if INA226_BATTERY
+  batt_v = ina226_last_mv / 1000.0f;   // 0: not known
+  #endif
+  return (solar_mppt.panelV() > batt_v + 0.3f && solar_mppt.panelW() >= SOLAR_MPPT_MIN_W) ? 1 : 0;
+  #else
+  return -1;
+  #endif
 }
 #endif
 
@@ -1462,7 +1483,11 @@ static void mpptApplyPin() {
     for (int i = 0; i < HWPWM_MODULE_NUM; i++) {   // detach the pin and stop the PWM: it would keep the 16 MHz clock on
       if (HwPWMx[i]->checkPin(SOLAR_MPPT_PWM_PIN)) {
         HwPWMx[i]->removePin(SOLAR_MPPT_PWM_PIN);
-        if (HwPWMx[i]->releaseOwnership(0x676f6c41)) HwPWMx[i]->stop();   // analogWrite()'s token
+        // stop() first: releaseOwnership() refuses while the module is enabled (and removePin() leaves it on)
+        if (HwPWMx[i]->isOwner(0x676f6c41) && HwPWMx[i]->usedChannelCount() == 0) {   // analogWrite()'s token
+          HwPWMx[i]->stop();
+          HwPWMx[i]->releaseOwnership(0x676f6c41);
+        }
       }
     }
     pinMode(SOLAR_MPPT_PWM_PIN, INPUT);   // no pull: the default set-point

@@ -2273,7 +2273,7 @@ void MyMesh::handleMpptCommand(char* args, char* reply) {
     } else {
       char* end = NULL;
       float v = strtof(args, &end);
-      if (end == args || *end != 0 || !(v > 0)) { strcpy(reply, "Err - mppt [auto|off|<volts>]"); return; }
+      if (end == args || *end != 0 || !isfinite(v) || !(v > 0)) { strcpy(reply, "Err - mppt [auto|off|<volts>]"); return; }
       if (v < SOLAR_MPPT_V_MIN || v > SOLAR_MPPT_V_MAX) note = " (limited)";
       m->setFixed(v);
     }
