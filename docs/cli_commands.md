@@ -256,7 +256,7 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
   - `charger ichg <mA>`: 100..600 (600 = no limit, the default). Under 600, while the battery INA226 (0x44) reads more than the limit the set-point goes up (off the power peak: less power, less current), 0.11 V a step when more than 50 mA over, else 0.055 V, every 10 s; P&O again once the current is 30 mA under the limit (accuracy about +-20 mA). Only with `vin mppt`; at 6.9 V and still over: `stuck`. Kept in `/mppt` (5 bytes now; the old 3-byte file reads as no limit).
   - `charger scan [last]`: the set-point from 6.9 V down to 4.7 V in 0.2 V steps, 2 s each (~24 s), the panel power at each, then P&O from the best point. Needs `vin mppt` and sun (tracking). `charger scan last`: `scan: best 5.70V 1.23W; 6.9:0.00 6.7:0.41 ...` (V:W); while running `scan 5/12, ~16s left`.
   - `charger chem liion` (the only one; `lifepo4`/`lto`: `Err - CN3791 charges to 4.20V: Li-ion/LiPo only`).
-  - `charger cutoff <mV>|off`: the `battsave` off step (System OFF; 3000..4500, under the crit step); there is no ship FET.
+  - `charger cutoff <mV>|off`: the `battsave` off step (System OFF; 3000..4500, under the crit step, or low when crit is 0); there is no ship FET.
   - `hybrid`, `ntc`, `shipfet`, `ship`, `ibat`, `ibus`, `ina`, `reg`: `Err - charger <x>: n/a on CN3791`.
 - `mppt <x>` on the BQ25798 / MSPM0 boards: the same as `charger vin <x>` (`mppt auto` = `charger vin mppt`; volts are taken as `5.5`); bare `mppt` = `charger`.
 

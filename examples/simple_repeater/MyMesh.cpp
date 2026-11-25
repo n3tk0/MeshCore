@@ -2963,29 +2963,33 @@ void MyMesh::handleCn3791Charger(const char* args, const char* val, char* reply)
   SolarMppt* m = sensors.getSolarMppt();
   PowerSaverConfig& ps = psave.config();
   if (*args == 0) {
-    int n;
-    if (m && m->hasPanel()) n = sprintf(reply, "sun %d.%02dV %dmA", X100(m->panelV()), (int)lroundf(m->panelA() * 1000.0f));
-    else n = sprintf(reply, "sun ?");
+    // bounded like BQ25798::formatStatus(reply, 155): the 160-byte reply may already hold a 3-byte "xx|" tag
+    const int MAX = 155;
+    int n = 0;
+    #define ADD(...) do { if (n < MAX) { int k = snprintf(reply + n, MAX - n, __VA_ARGS__); if (k > 0) n += k; if (n > MAX - 1) n = MAX - 1; } } while (0)
+    if (m && m->hasPanel()) ADD("sun %d.%02dV %dmA", X100(m->panelV()), (int)lroundf(m->panelA() * 1000.0f));
+    else ADD("sun ?");
     uint16_t mv; int ma;
     if (sensors.inaBatteryNow(&mv, &ma)) {
-      n += sprintf(reply + n, ", batt %u.%03uV %+dmA %s", mv / 1000, mv % 1000, ma, ma > 5 ? "charging" : "idle");
+      ADD(", batt %u.%03uV %+dmA %s", mv / 1000, mv % 1000, ma, ma > 5 ? "charging" : "idle");
     } else {
-      n += sprintf(reply + n, ", batt ?");
+      ADD(", batt ?");
     }
     if (m) {
       const char* mode = m->mode() == SOLAR_MPPT_MODE_AUTO ? "mppt" : m->mode() == SOLAR_MPPT_MODE_OFF ? "off" : "fixed";
       SolarMppt::State st = m->state();
-      n += sprintf(reply + n, ", vin %s %d.%02dV%s%s", mode, X100(m->setpoint()),
-                   m->scanning() ? " scan" : st == SolarMppt::ST_TRACKING ? " tracking" : st == SolarMppt::ST_RELEASED || st == SolarMppt::ST_NO_SENSOR ? " released" : "",
-                   st == SolarMppt::ST_NO_SENSOR ? " (no panel INA226)" : "");
-      n += sprintf(reply + n, ", ichg %u/%umA%s", m->ichg(), (unsigned)SOLAR_MPPT_ICHG_HW_MA,
-                   m->limitStuck() ? " stuck" : m->limiting() ? " limiting" : m->limitSet() && m->mode() != SOLAR_MPPT_MODE_AUTO ? " (mppt only)" : "");
+      ADD(", vin %s %d.%02dV%s%s", mode, X100(m->setpoint()),
+          m->scanning() ? " scan" : st == SolarMppt::ST_TRACKING ? " tracking" : st == SolarMppt::ST_RELEASED || st == SolarMppt::ST_NO_SENSOR ? " released" : "",
+          st == SolarMppt::ST_NO_SENSOR ? " (no panel INA226)" : "");
+      ADD(", ichg %u/%umA%s", m->ichg(), (unsigned)SOLAR_MPPT_ICHG_HW_MA,
+          m->limitStuck() ? " stuck" : m->limiting() ? " limiting" : m->limitSet() && m->mode() != SOLAR_MPPT_MODE_AUTO ? " (mppt only)" : "");
     } else {
-      n += sprintf(reply + n, ", vin held (solar), ichg %umA", (unsigned)SOLAR_MPPT_ICHG_HW_MA);
+      ADD(", vin held (solar), ichg %umA", (unsigned)SOLAR_MPPT_ICHG_HW_MA);
     }
-    n += sprintf(reply + n, ", 4.20V liion");
-    if (ps.enabled && ps.off_mv) sprintf(reply + n, ", cutoff %umV", ps.off_mv);
-    else sprintf(reply + n, ", cutoff off");
+    ADD(", 4.20V liion");
+    if (ps.enabled && ps.off_mv) ADD(", cutoff %umV", ps.off_mv);
+    else ADD(", cutoff off");
+    #undef ADD
     return;
   }
   if (strcmp(args, "chem") == 0) {
@@ -3006,7 +3010,11 @@ void MyMesh::handleCn3791Charger(const char* args, const char* val, char* reply)
       ps.off_mv = (uint16_t)mv;
       if (mv < 3000 || mv > 4500 || !psave.valid()) {
         ps = old;
-        sprintf(reply, "Err - charger cutoff off|3000..%u (mV, under battsave crit %u)", ps.crit_mv ? ps.crit_mv - 1 : 4500, ps.crit_mv);
+        // the step under it: crit, else low (psave.valid() wants off < both); none: 4500
+        uint16_t above = ps.crit_mv ? ps.crit_mv : ps.low_mv;
+        unsigned top = above && above - 1 < 4500 ? above - 1 : 4500;
+        if (above) sprintf(reply, "Err - charger cutoff off|3000..%u (mV, under battsave %s %u)", top, ps.crit_mv ? "crit" : "low", above);
+        else strcpy(reply, "Err - charger cutoff off|3000..4500 (mV)");
         return;
       }
     } else {

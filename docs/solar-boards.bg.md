@@ -69,7 +69,7 @@ v0.4 работи със същия env като lite, защото и там BQ
 | `charger ichg <mA>` | 100..600 (600 = без граница, по подразбиране). Под 600: докато INA226 на батерията (0x44) показва над границата, точката на панела се вдига (встрани от върха: по-малко мощност и ток) с 0.11 V на стъпка при над 50 mA отгоре, иначе 0.055 V, на 10 s; P&O пак, щом токът е 30 mA под границата (точност около ±20 mA). Само при `vin mppt`; на 6.9 V и пак над: `stuck`. Пази се в `/mppt` (вече 5 байта; старият файл от 3 байта = без граница) |
 | `charger scan [last]` | точката от 6.9 V надолу до 4.7 V през 0.2 V, по 2 s (~24 s), мощността на всяка; после P&O от най-добрата. Трябва `vin mppt` и слънце (tracking). `scan last`: `scan: best 5.70V 1.23W; 6.9:0.00 6.7:0.41 ...` (V:W) |
 | `charger chem liion` | единствената; `lifepo4`/`lto` се отказват: `Li-ion/LiPo only` |
-| `charger cutoff <mV>\|off` | стъпката `off` на `battsave` (System OFF; 3000..4500, под `crit`); ship FET няма |
+| `charger cutoff <mV>\|off` | стъпката `off` на `battsave` (System OFF; 3000..4500, под `crit`, а при `crit` 0 под `low`); ship FET няма |
 | `hybrid`, `ntc`, `shipfet`, `ship`, `ibat`, `ibus`, `ina`, `reg` | `Err - charger <x>: n/a on CN3791` |
 
 `mppt <x>` на BQ25798 / MSPM0 платките е същото като `charger vin <x>` (`mppt auto` = `charger vin mppt`,
