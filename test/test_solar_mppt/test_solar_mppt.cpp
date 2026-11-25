@@ -4,7 +4,7 @@
 
 TEST(SolarMppt, SetpointMathMatchesTheBoard) {
   EXPECT_NEAR(SolarMppt::defaultSetpoint(), 5.18f, 0.01f);           // pin hi-Z
-  EXPECT_NEAR(SolarMppt::setpointForDuty(0.0f), 7.17f, 0.01f);       // duty 0: the highest
+  EXPECT_NEAR(SolarMppt::setpointForDuty(0.0f), 7.075f, 0.01f);       // duty 0: the highest
   EXPECT_LT(SolarMppt::setpointForDuty(0.5f), SolarMppt::setpointForDuty(0.1f));
   // the duty that equals the divider alone: Vp = Vref
   EXPECT_NEAR(SolarMppt::setpointForDuty(1.205f / 3.3f), SolarMppt::defaultSetpoint(), 0.01f);

@@ -246,7 +246,7 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 
 ### Solar panel set-point - mppt (Repeater, xiao-solar-ultralite)
 
-For `Xiao_nrf52_solar_ultralite_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k: `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/200`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.17 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=200000`. The set-point is kept between 4.6 and 6.9 V.
+For `Xiao_nrf52_solar_ultralite_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k (in series: 210k): `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/210`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.08 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=210000`. The set-point is kept between 4.6 and 6.9 V.
 
 **Usage:**
 - `mppt` (mode, duty, computed set-point, last panel voltage / current / power)

@@ -4,12 +4,12 @@
 #include <math.h>
 
 // Panel voltage set-point control for a CN3791 buck MPPT charger whose MPPT pin is fed, besides the
-// 330k/100k divider, from a PWM pin (10k + 1uF RC filter, 200k injection resistor):
+// 330k/100k divider, from a PWM pin (10k + 1uF RC filter, 200k injection resistor: 210k in series):
 //
 //   Vset = Vref * (1 + Rtop/Rbot) + (Vref - Vp) * Rtop/Rinj,   Vp = duty * Vpwm
 //
 // The pin as input without pull (hi-Z) leaves the divider alone: Vset = Vref * (1 + Rtop/Rbot) (5.18 V
-// with the defaults). Duty 0 gives the highest set-point (~7.17 V), a higher duty a lower one.
+// with the defaults). Duty 0 gives the highest set-point (~7.08 V), a higher duty a lower one.
 //
 // This class is the logic only (no pins, no I2C): the caller measures the panel (voltage, current) and
 // drives the pin from driven() / duty(). It is a perturb & observe tracker on the panel power.
@@ -20,7 +20,7 @@
 #define SOLAR_MPPT_R_BOT   100000
 #endif
 #ifndef SOLAR_MPPT_R_INJ
-#define SOLAR_MPPT_R_INJ   200000
+#define SOLAR_MPPT_R_INJ   210000   // xiao-solar-ultralite v0.2: R6 200k + the RC filter's R7 10k in series
 #endif
 #ifndef SOLAR_MPPT_VREF
 #define SOLAR_MPPT_VREF    1.205f   // the CN3791's MPPT pin regulation voltage
