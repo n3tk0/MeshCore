@@ -2971,7 +2971,7 @@ void MyMesh::handleCn3791Charger(const char* args, const char* val, char* reply)
     else ADD("sun ?");
     uint16_t mv; int ma;
     if (sensors.inaBatteryNow(&mv, &ma)) {
-      ADD(", batt %u.%03uV %+dmA %s", mv / 1000, mv % 1000, ma, ma > 5 ? "charging" : "idle");
+      ADD(", batt %u.%03uV %+dmA %s", mv / 1000, mv % 1000, ma, ma > 5 ? "charging" : ma < -5 ? "discharging" : "idle");
     } else {
       ADD(", batt ?");
     }
