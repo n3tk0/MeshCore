@@ -35,8 +35,8 @@ jobs:
         target:
           - Xiao_C3_repeater
           - Xiao_nrf52_repeater
+          - Xiao_nrf52_solar_repeater
           - Xiao_nrf52_solar_lite_repeater
-          - Xiao_nrf52_solar_ultralite_repeater
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
@@ -98,8 +98,8 @@ jobs:
           name: "Xiao Repeaters ${{ github.ref_name }}"
           body: |
             Repeater firmware for Xiao ESP32-C3 + Wio SX1262 and Xiao nRF52840 + Wio SX1262.
-            `Xiao_nrf52_solar_lite_repeater` is for the xiao-solar-lite board (BQ25798 charger, `charger` CLI).
-            `Xiao_nrf52_solar_ultralite_repeater` is for the xiao-solar-ultralite board (CN3165 + dual INA226).
+            `Xiao_nrf52_solar_repeater` is for every XIAO solar board, found at boot (`solar` CLI): xiao-solar-lite v0.5 (BQ25798), v0.6 (CN3791 + dual INA226), xiao-solar / solar-smart-mppt (MSPM0).
+            `Xiao_nrf52_solar_lite_repeater` is the same firmware under the old name (LoRa OTA of boards already in the field).
             - First install: nRF52 `.uf2` on the bootloader drive (double-tap RST); ESP32-C3 `-merged.bin` at 0x0.
             - Update over LoRa: the LoRa OTA Android app makes a delta from the `.bin` the repeater runs
               to the new `.bin` (`ota-manifest.json` lists them) and sends it through the companion.

@@ -1,4 +1,7 @@
 #include "EnvironmentSensorManager.h"
+#if SOLAR_BOARD_AUTO
+#include <helpers/SmartMppt.h>
+#endif
 #include <math.h>
 
 #include <Wire.h>
@@ -116,6 +119,18 @@ static Adafruit_INA3221 INA3221;
 static bool s_ina219_found = false;   // its bus is taken as the battery
 static bool s_ina226_found = false;   // primary INA226 (0x44): its bus is the battery, with INA226_BATTERY
 static bool s_bq_found = false;       // a BQ25798 charger: it measures the battery (before an INA219)
+static bool s_ina226_2_found = false; // the panel INA226 (0x45)
+// SOLAR_BOARD_AUTO: the board the scan found and the one that runs (solarBoardLock()). Without it the
+// build flags decide, as before: the PWM may run and INA226_BATTERY holds from the start.
+static uint8_t s_board_detected = SOLAR_BOARD_NONE;
+static uint8_t s_board_active = SOLAR_BOARD_NONE;
+static bool    s_mppt_ok = !SOLAR_BOARD_AUTO;                 // the PWM on SOLAR_MPPT_PWM_PIN may be driven
+static bool    s_ina226_bat = INA226_BATTERY && !SOLAR_BOARD_AUTO;   // the primary INA226 is the battery
+
+const char* solarBoardName(uint8_t b) {
+  static const char* names[] = { "none", "bq25798", "cn3791", "mspm0" };
+  return b < 4 ? names[b] : "?";
+}
 
 #if ENV_INCLUDE_INA219 || (ENV_INCLUDE_INA226 && INA226_BATTERY)
 #define ENV_INA_GAUGE 1
@@ -278,7 +293,7 @@ static uint8_t batterySource() {
      ) return BS_INA219;
   #endif
   #if ENV_INCLUDE_INA226 && INA226_BATTERY
-  if (s_ina226_found) return BS_INA226;
+  if (s_ina226_found && s_ina226_bat) return BS_INA226;
   #endif
   return BS_NONE;
 }
@@ -873,13 +888,18 @@ bool EnvironmentSensorManager::begin() {
   #endif
 
   #ifdef SOLAR_MPPT_PWM_PIN
-  pinMode(SOLAR_MPPT_PWM_PIN, INPUT);   // hi-Z: the charger's own divider set-point until the tracker takes over
+  // hi-Z: the CN3791's own divider set-point until the tracker takes over; on a BQ25798 board (same pin = ~CE,
+  // SOLAR_BOARD_AUTO) the jumper's pull holds it until the charger driver takes it
+  pinMode(SOLAR_MPPT_PWM_PIN, INPUT);
   #endif
 
   // Scan the I2C bus before touching any sensor library.
   bool detected[128] = {};
   #ifndef DISABLE_ENV_SENSORS
   scanI2CBus(TELEM_WIRE, detected);
+  #endif
+  #if SOLAR_BOARD_AUTO
+  bool ack_0x42 = detected[0x42];   // MSPM0 (solar boards), before a table entry takes the address
   #endif
 
   // Walk the sensor table and initialize only detected devices.
@@ -922,6 +942,7 @@ bool EnvironmentSensorManager::begin() {
     #endif
     #if ENV_INCLUDE_INA226
     if (def.init == init_ina226) s_ina226_found = true;
+    if (def.init == init_ina226_2) s_ina226_2_found = true;
     #endif
     #if ENV_INCLUDE_BQ25798
     if (def.init == init_bq25798) s_bq_found = true;
@@ -946,7 +967,42 @@ bool EnvironmentSensorManager::begin() {
     detected[addr] = false;
   }
 
+  // The solar board. A BQ25798 answers with its part number, so it wins; two INA226 (battery + panel) are the
+  // CN3791 board; the MSPM0 answers its ID on 0x42. Nothing drives D0 here: solarBoardLock() decides.
+  // Only in SOLAR_BOARD_AUTO builds: elsewhere 0x42 may be a u-blox GPS, which takes any write as data.
+  #if SOLAR_BOARD_AUTO
+  if (s_bq_found) s_board_detected = SOLAR_BOARD_BQ25798;
+  else if (s_ina226_found && s_ina226_2_found) s_board_detected = SOLAR_BOARD_CN3791;
+  else if (ack_0x42 && smpptPresent(*TELEM_WIRE)) s_board_detected = SOLAR_BOARD_MSPM0;
+  else s_board_detected = SOLAR_BOARD_NONE;
+  s_ina226_bat = INA226_BATTERY && s_board_detected == SOLAR_BOARD_CN3791;
+  s_board_active = s_board_detected;   // until solarBoardLock(); the PWM stays off until then
+  #endif
+
   return true;
+}
+
+uint8_t EnvironmentSensorManager::solarBoardDetected() const { return s_board_detected; }
+uint8_t EnvironmentSensorManager::solarBoardActive() const { return s_board_active; }
+
+// stored: the board kept in /board (SOLAR_BOARD_NONE: none yet). The chips found always run (a BQ25798 that
+// answers is really there, and its driver owns ~CE); only the D0 PWM needs the kept board to agree, so that a
+// BQ25798 board whose charger did not answer at this boot never gets PWM on its ~CE.
+void EnvironmentSensorManager::solarBoardLock(uint8_t stored) {
+  #if SOLAR_BOARD_AUTO
+  s_board_active = s_board_detected;
+  s_mppt_ok = s_board_detected == SOLAR_BOARD_CN3791 && (stored == SOLAR_BOARD_NONE || stored == SOLAR_BOARD_CN3791);
+  #else
+  (void)stored;
+  #endif
+}
+
+bool EnvironmentSensorManager::batteryOnlyFromSensor() const {
+  #if SOLAR_BOARD_AUTO
+  return s_ina226_bat || s_bq_found;   // the XIAO's BAT pad is open on these boards
+  #else
+  return INA226_BATTERY != 0;
+  #endif
 }
 
 #if ENV_INCLUDE_INA226 && INA226_BATTERY
@@ -1147,6 +1203,7 @@ int EnvironmentSensorManager::externalPower() {
   }
   #endif
   #ifdef SOLAR_MPPT_PWM_PIN
+  if (!s_mppt_ok) return -1;   // not the CN3791 board (SOLAR_BOARD_AUTO): the board's own detection
   // The XIAO's VBUS detection sees the battery on its 5V pin (through the ideal diode), day and night: not
   // usable. The panel feeds the charger when its last reading (0x45, every 10..60 s) is above the battery
   // (CN3791 leaves sleep at VCC - VBAT > ~0.32 V) and gives some power. No reading: on battery.
@@ -1467,7 +1524,24 @@ void EnvironmentSensorManager::stop_gps() {
 #endif // ENV_INCLUDE_GPS
 
 #ifdef SOLAR_MPPT_PWM_PIN
-SolarMppt* EnvironmentSensorManager::getSolarMppt() { return &solar_mppt; }
+SolarMppt* EnvironmentSensorManager::getSolarMppt() { return s_mppt_ok ? &solar_mppt : NULL; }
+
+// the pin back to hi-Z: PWM detached and its module stopped (it would keep the 16 MHz clock on)
+static void mpptReleasePin() {
+  analogWrite(SOLAR_MPPT_PWM_PIN, 0);
+  for (int i = 0; i < HWPWM_MODULE_NUM; i++) {
+    if (HwPWMx[i]->checkPin(SOLAR_MPPT_PWM_PIN)) {
+      HwPWMx[i]->removePin(SOLAR_MPPT_PWM_PIN);
+      // stop() first: releaseOwnership() refuses while the module is enabled (and removePin() leaves it on)
+      if (HwPWMx[i]->isOwner(0x676f6c41) && HwPWMx[i]->usedChannelCount() == 0) {   // analogWrite()'s token
+        HwPWMx[i]->stop();
+        HwPWMx[i]->releaseOwnership(0x676f6c41);
+      }
+    }
+  }
+  pinMode(SOLAR_MPPT_PWM_PIN, INPUT);   // no pull: the default set-point
+  mppt_pin_driven = false;
+}
 
 // the pin follows what the tracker wants: PWM (62.5 kHz, 8 bit: the nRF52 core's analogWrite default) or hi-Z
 static void mpptApplyPin() {
@@ -1479,19 +1553,7 @@ static void mpptApplyPin() {
       mppt_pin_value = v;
     }
   } else if (mppt_pin_driven) {
-    analogWrite(SOLAR_MPPT_PWM_PIN, 0);
-    for (int i = 0; i < HWPWM_MODULE_NUM; i++) {   // detach the pin and stop the PWM: it would keep the 16 MHz clock on
-      if (HwPWMx[i]->checkPin(SOLAR_MPPT_PWM_PIN)) {
-        HwPWMx[i]->removePin(SOLAR_MPPT_PWM_PIN);
-        // stop() first: releaseOwnership() refuses while the module is enabled (and removePin() leaves it on)
-        if (HwPWMx[i]->isOwner(0x676f6c41) && HwPWMx[i]->usedChannelCount() == 0) {   // analogWrite()'s token
-          HwPWMx[i]->stop();
-          HwPWMx[i]->releaseOwnership(0x676f6c41);
-        }
-      }
-    }
-    pinMode(SOLAR_MPPT_PWM_PIN, INPUT);   // no pull: the default set-point
-    mppt_pin_driven = false;
+    mpptReleasePin();
   }
 }
 #endif
@@ -1500,6 +1562,10 @@ static void mpptApplyPin() {
 // while the pin is released). It reads the panel INA226 (0x45) and never touches the radio.
 void EnvironmentSensorManager::mpptLoop() {
   #ifdef SOLAR_MPPT_PWM_PIN
+  if (!s_mppt_ok) {   // not the CN3791 board, or /board disagrees: D0 is never driven
+    if (mppt_pin_driven) mpptReleasePin();
+    return;
+  }
   mpptApplyPin();
   uint32_t now = millis();
   if (!solar_mppt.due(now)) return;

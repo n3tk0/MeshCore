@@ -13,6 +13,19 @@
 #ifndef INA226_LOW_POWER
 #define INA226_LOW_POWER 0
 #endif
+// SOLAR_BOARD_AUTO=1: one firmware for the XIAO solar boards, the board is found at boot (see begin()):
+// BQ25798 on 0x6B = xiao-solar-lite v0.5 (D0 = ~CE), INA226 on 0x44 and 0x45 = xiao-solar-lite v0.6 (CN3791,
+// D0 = MPPT PWM, 0x44 = battery), MSPM0 on 0x42 = xiao-solar / solar-smart-mppt. Build with the flags of all
+// of them (ENV_INCLUDE_BQ25798, ENV_INCLUDE_INA226, INA226_BATTERY, SOLAR_MPPT_PWM_PIN, BQ25798_PIN_CE ...):
+// INA226_BATTERY and the PWM then apply only on the board that has them.
+#ifndef SOLAR_BOARD_AUTO
+#define SOLAR_BOARD_AUTO 0
+#endif
+#define SOLAR_BOARD_NONE     0
+#define SOLAR_BOARD_BQ25798  1
+#define SOLAR_BOARD_CN3791   2
+#define SOLAR_BOARD_MSPM0    3
+const char* solarBoardName(uint8_t b);   // "none" | "bq25798" | "cn3791" | "mspm0" | "?"
 
 class EnvironmentSensorManager : public SensorManager {
 protected:
@@ -84,6 +97,10 @@ public:
   #if ENV_INCLUDE_BQ25798 || defined(SOLAR_MPPT_PWM_PIN)
   int externalPower() override;
   #endif
+  uint8_t solarBoardDetected() const override;
+  uint8_t solarBoardActive() const override;
+  void solarBoardLock(uint8_t stored) override;
+  bool batteryOnlyFromSensor() const override;
   int getNumSettings() const override;
   const char* getSettingName(int i) const override;
   const char* getSettingValue(int i) const override;

@@ -118,6 +118,7 @@
 #define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
 #define BATT_CAP_FILE            "/batt_cap"
 #define CHARGER_FILE             "/charger"
+#define SOLAR_BOARD_FILE         "/board"        // the solar board kept (SOLAR_BOARD_AUTO), one byte
 #define MPPT_FILE                "/mppt"         // solar panel set-point mode (SolarMppt.h): auto / off / fixed volts
 #define IBATCAL_FILE             "/ibatcal"      // IBAT calibration curve (IbatCal.h)
 #define IBATCAL_TMP              "/ibatcal.tmp"
@@ -393,16 +394,14 @@ uint8_t MyMesh::handleAnonClockReq(const mesh::Identity& sender, uint32_t sender
 }
 
 // the battery: from a sensor that measures it (INA219) when there is one, else the board's own reading.
-// With INA226_BATTERY the sensor is the only source: the board has no battery connected there (the XIAO's BAT
-// pad is open, its ADC reads noise), so 0 means unknown, and every caller treats 0 as "no reading":
-// PowerSaver (under 2500 mV: no change, no battsave step), the OTA power check (under 1000 mV: allowed), status.
+// With the battery INA226 (or, on a SOLAR_BOARD_AUTO build, a BQ25798) the sensor is the only source: the board has
+// no battery connected there (the XIAO's BAT pad is open, its ADC reads noise), so 0 means unknown, and every
+// caller treats 0 as "no reading": PowerSaver (under 2500 mV: no change, no battsave step), the OTA power check
+// (under 1000 mV: allowed), status.
 static uint16_t battMilliVolts() {
   uint16_t mv = sensors.getBatteryMilliVolts();
-#if defined(INA226_BATTERY) && INA226_BATTERY
-  return mv;
-#else
-  return mv ? mv : board.getBattMilliVolts();
-#endif
+  if (mv || sensors.batteryOnlyFromSensor()) return mv;
+  return board.getBattMilliVolts();
 }
 
 // external power: a charger chip that sees its panel (BQ25798) knows; else the board (USB). On
@@ -1252,6 +1251,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #if ENV_INCLUDE_BQ25798
   loadCharger();
 #endif
+#if SOLAR_BOARD_AUTO
+  loadSolarBoard();   // before loadMppt(): the PWM tracker exists only on the CN3791 board
+#endif
 #ifdef SOLAR_MPPT_PWM_PIN
   loadMppt();
 #endif
@@ -1627,6 +1629,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
 #ifdef SOLAR_MPPT_PWM_PIN
   } else if (memcmp(command, "mppt", 4) == 0 && (command[4] == 0 || command[4] == ' ')) {
     handleMpptCommand(&command[4], reply);
+#endif
+#if SOLAR_BOARD_AUTO
+  } else if (memcmp(command, "solar", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
+    handleSolarBoardCommand(&command[5], reply);
 #endif
 #if ENV_INCLUDE_INA260
   } else if (memcmp(command, "smppt", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
@@ -2245,6 +2251,50 @@ void MyMesh::otaLoop() {
     MESH_DEBUG_PRINTLN("LoRa OTA: could not boot the new image");
     applyOtaAction();
   }
+}
+#endif
+
+#if SOLAR_BOARD_AUTO
+/* ------------------------- Solar board (one firmware for the XIAO solar boards) ------------------------- */
+
+// /board: one byte, SOLAR_BOARD_*. Written the first time a board is found; after that a different find does
+// not take over by itself (`solar auto` does): on a BQ25798 board whose charger did not answer at a boot,
+// two INA226 must not start PWM on D0 (its ~CE there).
+void MyMesh::loadSolarBoard() {
+  uint8_t stored = SOLAR_BOARD_NONE;
+  if (!readSmallFile(_fs, SOLAR_BOARD_FILE, &stored, 1) || stored > SOLAR_BOARD_MSPM0) stored = SOLAR_BOARD_NONE;
+  uint8_t found = sensors.solarBoardDetected();
+  if (stored == SOLAR_BOARD_NONE && found != SOLAR_BOARD_NONE && writeSmallFile(_fs, SOLAR_BOARD_FILE, &found, 1)) stored = found;
+  _solar_board_kept = stored;
+  sensors.solarBoardLock(stored);
+}
+
+// solar        "solar cn3791 (mppt on)" / "solar bq25798" / "solar none" / with a mismatch:
+//              "solar bq25798, kept cn3791: check, then `solar auto`"
+// solar auto   keep what was found now (none: forget the kept board)
+void MyMesh::handleSolarBoardCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+  uint8_t found = sensors.solarBoardDetected();
+  const char* note = "";
+  if (strcmp(args, "auto") == 0) {
+    bool ok = found == SOLAR_BOARD_NONE ? (!_fs->exists(SOLAR_BOARD_FILE) || _fs->remove(SOLAR_BOARD_FILE))
+                                        : writeSmallFile(_fs, SOLAR_BOARD_FILE, &found, 1);
+    if (!ok) note = " (not saved)";
+    _solar_board_kept = ok ? found : _solar_board_kept;
+    sensors.solarBoardLock(found);
+  #ifdef SOLAR_MPPT_PWM_PIN
+    if (found == SOLAR_BOARD_CN3791) loadMppt();   // the tracker's saved mode
+  #endif
+  } else if (*args) {
+    strcpy(reply, "Err - solar [auto]");
+    return;
+  }
+  int n = sprintf(reply, "solar %s", solarBoardName(found));
+  if (_solar_board_kept != SOLAR_BOARD_NONE && _solar_board_kept != found) {
+    n += sprintf(reply + n, ", kept %s: check, then `solar auto`", solarBoardName(_solar_board_kept));
+  }
+  if (found == SOLAR_BOARD_CN3791) n += sprintf(reply + n, " (mppt %s)", sensors.getSolarMppt() ? "on" : "off");
+  sprintf(reply + n, "%s", note);
 }
 #endif
 

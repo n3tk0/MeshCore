@@ -180,6 +180,11 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void loadMppt();
   void handleMpptCommand(char* args, char* reply);
 #endif
+#if SOLAR_BOARD_AUTO
+  uint8_t _solar_board_kept = 0;   // SOLAR_BOARD_* in /board
+  void loadSolarBoard();
+  void handleSolarBoardCommand(char* args, char* reply);
+#endif
 #if ENV_INCLUDE_BQ25798
   void loadCharger();
  public:

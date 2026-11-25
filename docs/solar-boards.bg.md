@@ -6,11 +6,14 @@
 
 ## Коя платка какво има
 
+`Xiao_nrf52_solar_repeater` разпознава платката сам при старт (команда `solar`, помни се в `/board`; `solar auto` приема новата). `Xiao_nrf52_solar_lite_repeater` е същият firmware със старото име (за LoRa OTA на платки, които вече са на терен). D0 остава вход, докато платката не е ясна; PWM на D0 тръгва само на CN3791 платката.
+
 | Платка | Зарядно | Кой управлява BQ25798 | Батерия за статус, `battsave`, OTA | Firmware за Xiao | Firmware за MSPM0 |
 |---|---|---|---|---|---|
-| xiao-solar-lite v0.4 / v0.5 | BQ25798 на шината на Xiao, ~CE = D0 | Xiao (драйвер `BQ25798`) | ADC на BQ25798 | `Xiao_nrf52_solar_lite_repeater` | — |
-| xiao-solar v0.4 | BQ25798 на шината на Xiao, ~CE = D0; INA219 0x40, SHT40 0x44 | Xiao | ADC на BQ25798 | `Xiao_nrf52_solar_lite_repeater` | — |
-| xiao-solar v0.5 | BQ25798 зад MSPM0 (I2C1); MSPM0 на шината на Xiao: INA260 0x41, 0x42, MLX90614 0x5A | MSPM0 | вж. „Ограничения“ | env с `ENV_INCLUDE_INA260` (напр. `Xiao_nrf52_repeater`, `Xiao_nrf52_solar_lite_repeater`) | още не е написан (нагревател, MLX90614) |
+| xiao-solar-lite v0.4 / v0.5 | BQ25798 на шината на Xiao, ~CE = D0 | Xiao (драйвер `BQ25798`) | ADC на BQ25798 | `Xiao_nrf52_solar_repeater` | — |
+| xiao-solar-lite v0.6 (бивша ultralite) | CN3791 (MPPT с PWM от D0), INA226 0x44 батерия, 0x45 панел | — | INA226 0x44 | `Xiao_nrf52_solar_repeater` | — |
+| xiao-solar v0.4 | BQ25798 на шината на Xiao, ~CE = D0; INA219 0x40, SHT40 0x44 | Xiao | ADC на BQ25798 | `Xiao_nrf52_solar_repeater` | — |
+| xiao-solar v0.5 | BQ25798 зад MSPM0 (I2C1); MSPM0 на шината на Xiao: INA260 0x41, 0x42, MLX90614 0x5A | MSPM0 | вж. „Ограничения“ | `Xiao_nrf52_solar_repeater` (или env с `ENV_INCLUDE_INA260`, напр. `Xiao_nrf52_repeater`) | още не е написан (нагревател, MLX90614) |
 | solar-smart-mppt v0.3 | BQ25798 зад MSPM0; J5 към всеки repeater: INA260 0x41 + 0x42 | MSPM0 | вж. „Ограничения“ | всеки env с `ENV_INCLUDE_INA260` | `smppt-j5-pa10` или `smppt-j5-pa0` (по-долу) |
 
 v0.4 и v0.5 на lite не се различават за firmware-а (изводите към Xiao са същите). Основната xiao-solar

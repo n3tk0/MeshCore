@@ -245,9 +245,15 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
 
 ---
 
+### Solar board - solar (Repeater, Xiao_nrf52_solar_repeater)
+
+`Xiao_nrf52_solar_repeater` (and the same build as `Xiao_nrf52_solar_lite_repeater`) runs on every XIAO solar board and finds it at boot (`-D SOLAR_BOARD_AUTO=1`): a BQ25798 on 0x6B = xiao-solar-lite v0.5 (D0 = the charger's ~CE, `charger`); else INA226 on both 0x44 and 0x45 = xiao-solar-lite v0.6 (CN3791, D0 = MPPT PWM, `mppt`, the 0x44 INA226 is the battery); else the MSPM0 ID on 0x42 = xiao-solar / solar-smart-mppt (`smppt`, `charger`). D0 stays an input (hi-Z) until the board is known. The first board found is kept in `/board`; at a later boot a different find is reported, and the PWM on D0 runs only when the kept board is the CN3791 one (a BQ25798 board whose charger did not answer must never get PWM on its ~CE). The chips found always run. An INA219 or extra sensors work as before on any of them. On these boards the XIAO's battery pad is not connected: with a BQ25798 or the battery INA226 the board's own ADC is never used for the battery.
+- `solar`: `solar cn3791 (mppt on)`, `solar bq25798`, `solar mspm0`, `solar none`; with a mismatch `solar bq25798, kept cn3791: check, then `solar auto``.
+- `solar auto`: keep what was found at this boot (none: forget the kept board); the PWM follows at once.
+
 ### Solar panel set-point - mppt (Repeater, xiao-solar-ultralite)
 
-For `Xiao_nrf52_solar_ultralite_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k (in series: 210k): `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/210`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.08 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=210000`. The set-point is kept between 4.6 and 6.9 V.
+For the xiao-solar-lite v0.6 (CN3791) board in `Xiao_nrf52_solar_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`, only when `solar` says cn3791): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k (in series: 210k): `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/210`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.08 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=210000`. The set-point is kept between 4.6 and 6.9 V.
 
 **Usage:**
 - `mppt` (mode, duty, computed set-point, last panel voltage / current / power)
