@@ -30,6 +30,11 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus), _learnBus(true) {
   _hiz_hold = 0;
   _vindpm_reg = 0;
   _auto_vin_mv = _auto_vin_count = 0;
+  _hybrid = BQ_HYBRID_DEFAULT;
+  _weak = true;
+  _weak_timing = false;
+  _weak_t = _weak_hold_until = 0;
+  _weak_poorsrc = _weak_falls = 0;
   _sc_state = _sc_idx = _sc_tries = 0;
   _sc_lo = _sc_table_lo = 0;
   _sc_forced = _sc_hiz_set = _sc_mppt_was = false;
@@ -166,6 +171,10 @@ bool BQ25798::begin(uint32_t now) {
   _low_timing = _adc_pending = _shutdown_sent = _adc_continuous = false;
   _shot_unl = _unl_now = _unl_last = _voc_valid = false;
   _hiz_hold = 0;
+  _weak = true;   // a new start begins weak, as a new sun session does
+  _weak_timing = false;
+  _weak_hold_until = now;
+  _weak_poorsrc = _poorsrc_count;
   _sc_state = 0;   // a scan that was running: enforce() puts HIZ / EN_MPPT back
   _sc_cond = false;
   _sc_first = true;
@@ -254,7 +263,7 @@ void BQ25798::enforce() {
   // VBUS is the open-circuit voltage. The chip's own VINDPM (VBUS0 - 0.7 V, 3.6 V at the clamp) pulls a
   // weak panel under VPOORSRC again and again, so set the VOC_PCT share (81 % by default) of Voc before EN_HIZ is cleared below.
   bool hiz = c[BQ_REG_CTRL0] & 0x04;
-  bool mppt_mode = _s.vindpm_mv == 0;
+  bool mppt_mode = _s.vindpm_mv == 0 && !weak();
   // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
   // poor-source HIZ with VBUS still up leaves it set. Running = EN_MPPT with PG and no EN_HIZ. A latched
   // EN_MPPT with HIZ / no PG takes the recovery below: VINDPM, then EN_HIZ. EN_MPPT is left set: the
@@ -270,6 +279,7 @@ void BQ25798::enforce() {
     bool set = false;
     if (_voc_valid) {
       uint16_t vin = vindpmFromVoc(_voc_mv, _s.voc_pct);
+      if (vin < BQ_VINDPM_FLOOR) vin = BQ_VINDPM_FLOOR;   // as a BQ25606: under Voc 4.4 V there is next to nothing to get anyway
       uint8_t reg = (uint8_t)(vin / 100);
       if (reg == _vindpm_reg || write8(BQ_REG_VINDPM, reg)) {
         if (reg != _vindpm_reg) _auto_vin_count++;
@@ -303,7 +313,7 @@ void BQ25798::enforce() {
   if (c5 != c[BQ_REG_CTRL5]) write8(BQ_REG_CTRL5, c5);
 
   uint8_t m = c[BQ_REG_MPPT];
-  if (_s.vindpm_mv == 0) {
+  if (mppt_mode) {
     // the chip clears EN_MPPT when the panel goes (every evening) and refuses it while VBAT < VSYSMIN
     bool can = vbusPresent() && powerGood() && !(_status[BQ_REG_STAT3 - BQ_REG_STAT0] & 0x10);
     uint8_t base = mpptBase(_s.voc_pct);
@@ -315,7 +325,7 @@ void BQ25798::enforce() {
   } else {
     uint8_t base = mpptBase(_s.voc_pct);
     if (m != base && write8(BQ_REG_MPPT, base)) m = base;
-    uint8_t want = (uint8_t)(_s.vindpm_mv / 100);
+    uint8_t want = (uint8_t)((_s.vindpm_mv ? _s.vindpm_mv : BQ_WEAK_VINDPM) / 100);   // fixed, or hybrid weak
     if (vbusPresent() && c[BQ_REG_VINDPM] != want) write8(BQ_REG_VINDPM, want);   // set again at each plug-in
   }
   _mppt_reg = m;
@@ -444,11 +454,72 @@ void BQ25798::loop(uint32_t now) {
   if (_applied) enforce();
   else { _unl_last = _unl_now; _unl_now = false; }
   adc(now);
+  bool mode_changed = _applied && weakTick(now);
+  if (mode_changed) _next_poll = now + 500;   // enforce() writes the new mode at once
+  else if (fastPoll(now)) _next_poll = now + BQ_POLL_FAST_MS;
   uint8_t state = chargeState();
   if (state == 7 && _prev_state != 7) _full = true;   // charge done: the cell is full
   _prev_state = state;
   lowBattery(now);
-  if (_applied) scanSchedule(now);
+  if (_applied && !mode_changed) scanSchedule(now);   // a mode change is written first (scanConditions also needs !weak)
+}
+
+// A poor source with the panel still there: EN_HIZ is cleared (enforce) every 2 s instead of 10 s, as a
+// BQ25606 retries on its own.
+bool BQ25798::fastPoll(uint32_t now) const {
+  if (!_applied || !vbusPresent() || !_poorsrc_count) return false;
+  if ((uint32_t)(now - _poorsrc_at) >= BQ_POORSRC_FAST_MS) return false;
+  return _hiz_seen || !powerGood();
+}
+
+void BQ25798::setHybrid(bool on) {
+  if (on == _hybrid) return;
+  _hybrid = on;
+  _weak = true;   // starts weak: MPPT once the panel gives enough
+  _weak_timing = false;
+  _weak_hold_until = _now;
+  _weak_poorsrc = _poorsrc_count;
+  _next_poll = _now;   // the next loop() polls and enforce() writes the mode
+}
+
+// Hybrid: weak sun (or a new sun session) = fixed VINDPM 4.4 V without MPPT, so the chip does not stop for
+// Voc measurements nor drag the panel down; MPPT once IBUS >= 150 mA for a minute; back to weak after a
+// poor source (at once) or 5 min under 100 mA / MPPT not running, then MPPT is not tried for 10 min.
+bool BQ25798::weakTick(uint32_t now) {
+  bool poor = _poorsrc_count != _weak_poorsrc;
+  _weak_poorsrc = _poorsrc_count;
+  if (!_hybrid || _s.vindpm_mv != 0) { _weak_timing = false; return false; }
+  if (!vbusPresent()) {   // evening: the next morning starts weak
+    _weak = true;
+    _weak_timing = false;
+    return false;
+  }
+  if (!_r.valid) return false;
+  bool cond;
+  if (_weak) cond = powerGood() && !_hiz_seen && _r.ibus_ma >= BQ_WEAK_EXIT_MA && (int32_t)(now - _weak_hold_until) >= 0;
+  else {
+    if (poor) {
+      _weak = true;
+      _weak_falls++;
+      _weak_timing = false;
+      _weak_hold_until = now + BQ_WEAK_HOLD_MS;
+      return true;
+    }
+    bool running = mpptOn() && powerGood() && !_hiz_seen;
+    // little current counts only in fast charge: in taper / top-off / done the battery, not the sun, limits it
+    cond = !running || (_ce_on && chargeState() == 3 && _r.ibus_ma < BQ_WEAK_ENTER_MA);
+  }
+  if (!cond) { _weak_timing = false; return false; }
+  if (!_weak_timing) { _weak_timing = true; _weak_t = now; return false; }
+  if ((uint32_t)(now - _weak_t) < (_weak ? BQ_WEAK_EXIT_MS : BQ_WEAK_ENTER_MS)) return false;
+  _weak_timing = false;
+  if (_weak) _weak = false;
+  else {
+    _weak = true;
+    _weak_falls++;
+    _weak_hold_until = now + BQ_WEAK_HOLD_MS;
+  }
+  return true;
 }
 
 bool BQ25798::mpptOn() const {
@@ -526,6 +597,7 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
       n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
       if (_s.voc_pct != BQ_VOC_PCT_DEFAULT) n = addf(buf, len, n, " %u%%", _s.voc_pct);
     }
+    if (weak() && vbusPresent()) n = addf(buf, len, n, ", weak %u.%uV", BQ_WEAK_VINDPM / 1000, BQ_WEAK_VINDPM % 1000 / 100);
     if (_sc_state) n = addf(buf, len, n, ", scan %u/%u", (unsigned)(_sc_idx > BQ_SCAN_N ? BQ_SCAN_N : _sc_idx) + 1, BQ_SCAN_N + 1);
   }
   if (vbusPresent()) {
@@ -572,7 +644,7 @@ uint8_t BQ25798::nearestVocPct(uint16_t share_x10) {
 
 // the panel there, loaded and held (PG), not in HIZ; for the automatic start also fast charge with MPPT on
 bool BQ25798::scanConditions(bool need_fast) const {
-  if (!_found || !_applied || _s.vindpm_mv != 0) return false;
+  if (!_found || !_applied || _s.vindpm_mv != 0 || weak()) return false;
   if (!vbusPresent() || !powerGood() || _hiz_seen || !_r.valid) return false;
   if (need_fast && (!_ce_on || chargeState() != 3 || !mpptOn())) return false;
   return true;
@@ -581,7 +653,7 @@ bool BQ25798::scanConditions(bool need_fast) const {
 int BQ25798::scanStart() {
   if (!_found || !_applied || _s.vindpm_mv != 0) return -1;
   if (_sc_state) return -3;
-  if (!vbusPresent() || !powerGood() || _hiz_seen) return -2;
+  if (!vbusPresent() || !powerGood() || _hiz_seen || weak()) return -2;   // weak: the restore would turn MPPT on
   _sc_state = BQ_SC_BEGIN;
   _learn.gap(); _learnBus.gap();   // the ADC pauses during the scan: no pair may join one from before it
   _sc_forced = true;
@@ -674,7 +746,9 @@ void BQ25798::scanFinish(uint32_t now, uint8_t fail) {
   }
   // put back: VINDPM for the share in force, EN_HIZ off, EN_MPPT on (what it was)
   if (_sc_voc >= BQ_VOC_MIN_MV && _s.vindpm_mv == 0) {
-    uint8_t reg = (uint8_t)(vindpmFromVoc(_sc_voc, _s.voc_pct) / 100);
+    uint16_t vin = vindpmFromVoc(_sc_voc, _s.voc_pct);
+    if (vin < BQ_VINDPM_FLOOR) vin = BQ_VINDPM_FLOOR;   // the same floor as the auto VINDPM
+    uint8_t reg = (uint8_t)(vin / 100);
     if (write8(BQ_REG_VINDPM, reg)) _vindpm_reg = reg;
   }
   if (_sc_hiz_set) {
