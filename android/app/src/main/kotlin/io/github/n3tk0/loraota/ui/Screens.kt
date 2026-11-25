@@ -128,6 +128,8 @@ fun AppScreen(
     themeMode: ThemeMode,
     setThemeMode: (ThemeMode) -> Unit,
     setLang: (String) -> Unit,
+    dynamicColor: Boolean = false,
+    setDynamicColor: (Boolean) -> Unit = {},
 ) {
     var askStop by remember { mutableStateOf(false) }      // Back during an update
     var flashNoStop by remember { mutableStateOf(false) }  // Back during a flash
@@ -234,7 +236,7 @@ fun AppScreen(
                         Step.BACKUP -> BackupScreen(vm)
                         Step.HEALTH -> HealthScreen(vm)
                         Step.QUEUE -> QueueScreen(vm)
-                        Step.SETTINGS -> SettingsScreen(vm, themeMode, setThemeMode, setLang)
+                        Step.SETTINGS -> SettingsScreen(vm, themeMode, setThemeMode, setLang, dynamicColor, setDynamicColor)
                         Step.CLI -> CliConsole(vm, isCompanion = true)
                         Step.SWEEP -> SweepScreen(vm)
                         Step.OFFLINE -> OfflineScreen(vm)
@@ -292,6 +294,7 @@ fun AppScreen(
             dismissButton = { TextButton(onClick = { vm.flashCancel() }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+    ProfileBatchHost(vm)
     if (flashNoStop) {
         AlertDialog(
             onDismissRequest = { flashNoStop = false },
@@ -332,8 +335,8 @@ private fun RepeaterBottomNav(vm: AppViewModel) {
     val tabs = listOf(
         Triple(RepeaterTab.OVERVIEW, R.string.rtab_overview, Icons.Default.Home),
         Triple(RepeaterTab.HEALTH, R.string.rtab_health, Icons.Default.Favorite),
-        Triple(RepeaterTab.FIRMWARE, R.string.rtab_firmware, Icons.Default.Build),
-        Triple(RepeaterTab.TOOLS, R.string.rtab_tools, Icons.Default.Settings),
+        Triple(RepeaterTab.FIRMWARE, R.string.rtab_firmware, AppIcons.SystemUpdate),
+        Triple(RepeaterTab.TOOLS, R.string.rtab_tools, AppIcons.Terminal),
     )
     NavigationBar {
         for ((tab, labelRes, icon) in tabs) {
@@ -358,7 +361,7 @@ private fun AppMenu(vm: AppViewModel, enabled: Boolean) {
         if (vm.step != Step.OFFLINE) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.offline_title)) },
-                leadingIcon = { Icon(Icons.Default.Info, null) },
+                leadingIcon = { Icon(AppIcons.CloudOff, null) },
                 onClick = { open = false; vm.openOffline() },
             )
         }
@@ -449,6 +452,7 @@ private fun BottomStatus(vm: AppViewModel, hasNavBarBelow: Boolean = false) {
 private fun CompanionStep(vm: AppViewModel) {
     LaunchedEffect(Unit) {
         if (vm.devices.isEmpty() && !vm.scanning && !vm.busy) vm.scan()
+        vm.loadKnownRepeaters()
     }
     Text(stringResource(R.string.companion_hint))
     val lastAddr = vm.lastCompanionAddress
@@ -471,6 +475,7 @@ private fun CompanionStep(vm: AppViewModel) {
             }
         }
     }
+    KnownRepeatersSection(vm)
     Button(onClick = { vm.scan() }, enabled = !vm.scanning && !vm.busy) {
         Text(stringResource(if (vm.scanning) R.string.scanning else R.string.scan))
     }
@@ -1665,38 +1670,32 @@ private fun StatusCard(vm: AppViewModel) {
     val sb = vm.sensorBattery
     val volts = sb?.volts ?: (s.battMv / 1000.0)
     val chem = vm.batteryChem
-    val battPct = ((volts - chem.emptyV) / (chem.fullV - chem.emptyV)).toFloat().coerceIn(0f, 1f)
+    val battPct = StatusFormat.fraction(volts, chem)
+    val percent = StatusFormat.percent(volts, chem)
     var chemMenuOpen by remember { mutableStateOf(false) }
+    val hops = vm.routeHops
+    val routeLabel = when (hops) {
+        null -> stringResource(R.string.status_route_unknown)
+        0 -> stringResource(R.string.status_route_direct)
+        else -> pluralStringResource(R.plurals.status_route_hops, hops, hops)
+    }
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    stringResource(R.string.status_batt_uptime, volts, duration(s.upTimeSecs)),
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Box {
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = MaterialTheme.shapes.small,
+                Box(Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.clickable { chemMenuOpen = true },
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                        ) {
-                            Text(
-                                chem.label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                            Icon(
-                                Icons.Default.ArrowDropDown,
-                                contentDescription = stringResource(R.string.battery_chem_pick),
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                        }
+                        Text(
+                            stringResource(R.string.status_battery) + " \u00b7 " + chem.label,
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = stringResource(R.string.battery_chem_pick),
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                     DropdownMenu(expanded = chemMenuOpen, onDismissRequest = { chemMenuOpen = false }) {
                         for (c in BatteryChem.entries) {
@@ -1708,8 +1707,26 @@ private fun StatusCard(vm: AppViewModel) {
                         }
                     }
                 }
+                Surface(
+                    color = if (hops == 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Text(
+                        StatusFormat.routeBadge(routeLabel, s.lastRssi),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hops == 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
             }
-            if (volts in (chem.emptyV - 0.5)..(chem.fullV + 0.5)) {
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("%.2f V".format(volts), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                if (percent != null) {
+                    Text("$percent%", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 2.dp))
+                }
+            }
+            if (StatusFormat.inRange(volts, chem)) {
                 LinearProgressIndicator(
                     progress = { battPct },
                     modifier = Modifier.fillMaxWidth().height(6.dp),
@@ -1724,11 +1741,25 @@ private fun StatusCard(vm: AppViewModel) {
                     else -> stringResource(R.string.status_batt_discharging, ma)
                 }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
-            Text(stringResource(R.string.status_radio, s.noiseFloor, s.lastRssi) +
-                (s.lastSnr?.let { ", SNR %.1f dB".format(it) } ?: ""), style = MaterialTheme.typography.bodySmall)
-            Text(stringResource(R.string.status_packets, s.packetsRecv, s.packetsSent, duration(s.airTimeSecs)),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatMetric(stringResource(R.string.status_uptime), duration(s.upTimeSecs), Modifier.weight(1f))
+                StatMetric(stringResource(R.string.status_noise), stringResource(R.string.status_noise_value, s.noiseFloor), Modifier.weight(1f))
+                StatMetric(stringResource(R.string.status_rx_tx), "${s.packetsRecv} / ${s.packetsSent}", Modifier.weight(1f))
+            }
+            Text(
+                stringResource(R.string.status_airtime, duration(s.airTimeSecs)) +
+                    (s.lastSnr?.let { " \u00b7 " + stringResource(R.string.status_snr, it) } ?: ""),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+    }
+}
+
+@Composable
+private fun StatMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
     }
 }
 

@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">LoRa OTA</string>
-    <string name="companion_hint">Обновяване на repeater по LoRa през твоя companion. Включи companion-а и го намери.</string>
+    <string name="app_name">MeshCore Сервиз</string>
+    <string name="tools_backup_short">Backup</string>
+    <string name="companion_hint">Свържи своя companion, за да управляваш, проверяваш и обновяваш рипитърите. Без връзка виж „Моите рипитъри“ и Офлайн.</string>
     <string name="scan">Търси companion</string>
     <string name="scanning">Търся…</string>
     <string name="no_repeaters">Companion-ът няма repeater-и в контактите.</string>
@@ -21,7 +22,7 @@
     <string name="msg_stopped">Спряно. Repeater-ът остава на стария firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth е изключен.</string>
     <string name="msg_location_off">Включи Местоположение (локация) в настройките на телефона: на Android 7-11 Bluetooth търсенето без него не намира нищо.</string>
-    <string name="msg_no_location_permission">Приложението няма разрешение за „Местоположение“ (на Android 7-11 Bluetooth търсенето го изисква). Разреши го в настройките на телефона: Приложения → LoRa OTA → Разрешения.</string>
+    <string name="msg_no_location_permission">Приложението няма разрешение за „Местоположение“ (на Android 7-11 Bluetooth търсенето го изисква). Разреши го в настройките на телефона: Приложения → MeshCore Сервиз → Разрешения.</string>
     <string name="msg_connect_failed">Не успях да се свържа с companion-а.</string>
     <string name="msg_not_admin">Входът не е като admin. Провери паролата.</string>
     <string name="msg_releases_failed">Изданията не се заредиха: %1$s</string>
@@ -113,6 +114,19 @@
     <string name="status_batt_uptime">Батерия %1$.2f V · работи от %2$s</string>
     <string name="status_radio">Шум %1$d dBm · последен пакет RSSI %2$d dBm</string>
     <string name="status_packets">Пакети: приети %1$d, изпратени %2$d · време в ефир %3$s</string>
+    <string name="status_battery">Батерия</string>
+    <string name="status_route_direct">Директен</string>
+    <string name="status_route_unknown">Маршрут ?</string>
+    <plurals name="status_route_hops">
+        <item quantity="one">%d скок</item>
+        <item quantity="other">%d скока</item>
+    </plurals>
+    <string name="status_uptime">Uptime</string>
+    <string name="status_noise">Шум</string>
+    <string name="status_rx_tx">RX / TX</string>
+    <string name="status_noise_value">%1$d dBm</string>
+    <string name="status_airtime">Време в ефир %1$s</string>
+    <string name="status_snr">SNR %1$.1f dB</string>
     <string name="status_none">Repeater-ът не върна статус.</string>
     <string name="dur_days">%1$d д %2$d ч</string>
     <string name="dur_hours">%1$d ч %2$d мин</string>
@@ -538,6 +552,7 @@
     <string name="settings_title">Настройки</string>
     <string name="menu_update_available">Нова версия v%1$s</string>
     <string name="settings_appearance">Външен вид</string>
+    <string name="settings_dynamic_color">Цветове от тапета (Android 12+)</string>
     <string name="settings_theme">Тема</string>
     <string name="theme_system">Системна</string>
     <string name="theme_light">Светла</string>
@@ -580,7 +595,7 @@
     <string name="settings_group_keep_token">Запази груповия токен след обновяването</string>
     <string name="settings_group_drop_warning">Без запазване ще загубиш груповия токен и за „Нов build“ ще трябва да въведеш личен токен.</string>
     <string name="settings_unknown_sources_title">Разреши инсталиране на APK</string>
-    <string name="settings_unknown_sources_text">Android изисква разрешение „Инсталиране на неизвестни приложения“ за LoRa OTA. Разреши го и натисни отново „Инсталирай сваления APK“.</string>
+    <string name="settings_unknown_sources_text">Android изисква разрешение „Инсталиране на неизвестни приложения“ за MeshCore Сервиз. Разреши го и натисни отново „Инсталирай сваления APK“.</string>
     <string name="settings_open_android_settings">Отвори настройки</string>
     <string name="settings_redownload">Свали отново</string>
     <string name="build_options_badge">Опции</string>
@@ -856,4 +871,80 @@
     <string name="sweep_confirm_text">Ще бъдат проверени %1$d ретранслатора. Приблизително време: ~%2$d мин (груба оценка; зависи от обхвата и трафика в ефира).</string>
     <string name="sweep_confirm_far">%1$d от избраните не са директни: влизането при тях е с flood и изразходва повече ефирно време.</string>
     <string name="sweep_confirm_go">Старт</string>
+
+    <!-- Моите рипитъри (начален екран) -->
+    <string name="known_title">Моите рипитъри</string>
+    <string name="known_empty">Още няма познати рипитъри. След първата проверка на здравето или backup тук ще се виждат името, батерията и състоянието им и без връзка.</string>
+    <string name="known_connect_open">Свържи и отвори</string>
+    <string name="known_checked">проверен %1$s</string>
+    <string name="known_never_checked">още не е проверяван</string>
+    <string name="known_health_ok">Наред</string>
+    <string name="known_health_warn">Внимание</string>
+    <string name="known_health_bad">Проблем</string>
+    <string name="known_health_unknown">Без проверка</string>
+    <string name="known_pending">След свързване ще се отвори: %1$s</string>
+    <string name="known_not_in_contacts">„%1$s“ не е в контактите на този companion. Потърси го в списъка или го добави отново.</string>
+    <string name="known_pick_companion">Избери companion от списъка, за да се свържеш и да се отвори рипитърът.</string>
+    <string name="known_show_all">Покажи всички (%1$d)</string>
+    <string name="known_show_less">Покажи по-малко</string>
+
+    <!-- Профил към няколко рипитъра -->
+    <string name="pbatch_open">Приложи към няколко</string>
+    <string name="pbatch_title">Профил към няколко рипитъра</string>
+    <string name="pbatch_hint">Всеки рипитър се обработва поред: влизане, автоматичен backup, четене на настройките и запис само на разликите. Име, GPS и пароли никога не се пишат.</string>
+    <string name="pbatch_no_profiles">Няма запазени профили. Запази настройките на един рипитър като профил първо.</string>
+    <string name="pbatch_profile">Профил</string>
+    <plurals name="pbatch_start">
+        <item quantity="one">Приложи към %1$d рипитър</item>
+        <item quantity="other">Приложи към %1$d рипитъра</item>
+    </plurals>
+    <string name="pbatch_confirm_title">Приложи „%1$s“?</string>
+    <string name="pbatch_confirm_count">%1$d рипитъра, около %2$d мин.</string>
+    <string name="pbatch_confirm_text">Преди всеки се прави backup. Записват се само настройките, които се различават. Можеш да спреш с „Спри“; недовършеният остава за повторение.</string>
+    <string name="pbatch_go">Приложи</string>
+    <string name="pbatch_progress">Обработвам %1$d от %2$d…</string>
+    <string name="pbatch_summary_title">Резултат</string>
+    <string name="pbatch_summary_counts">Приложен: %1$d (%2$d параметъра) · Без промяна: %3$d · Неуспешни: %4$d · Чакащи: %5$d</string>
+    <string name="pbatch_retry">Повтори неуспешните (%1$d)</string>
+    <string name="pbatch_new">Нов избор</string>
+    <string name="pbatch_st_applied">приложен: %1$d параметъра</string>
+    <string name="pbatch_st_unchanged">без промяна</string>
+    <string name="pbatch_st_skipped">пропуснат</string>
+    <string name="pbatch_st_failed">неуспешен</string>
+    <string name="pbatch_st_running">работя…</string>
+    <string name="pbatch_st_pending">чака</string>
+    <string name="pbatch_profile_gone">Профилът „%1$s“ вече го няма.</string>
+    <string name="pbatch_notif">Профил „%1$s“ към рипитъри</string>
+    <string name="pbatch_report">Приложени: %1$d · без промяна: %2$d · пропуснати: %3$d · неуспешни: %4$d</string>
+    <string name="pbatch_invalid">невалидни стойности: %1$s</string>
+    <string name="pbatch_unsupported">%1$d параметъра, които рипитърът няма</string>
+    <string name="pbatch_applied_keys">записани %1$d: %2$s</string>
+    <string name="pbatch_restart">радиото се променя след рестарт</string>
+
+    <!-- Сравнение на два backup-а -->
+    <string name="compare_title">Сравнение на backup-и</string>
+    <string name="compare_old">Старо: %1$s</string>
+    <string name="compare_new">Ново: %1$s</string>
+    <string name="compare_other_device">Двата backup-а са от различни устройства.</string>
+    <string name="compare_none">Няма разлики между двата backup-а.</string>
+    <string name="compare_settings">Настройки</string>
+    <string name="compare_channels">Канали</string>
+    <string name="compare_contacts">Контакти</string>
+    <string name="compare_contacts_count">%1$d → %2$d (%3$s)</string>
+    <string name="compare_secret_changed">стойността е различна (скрита)</string>
+    <string name="map_title">Карта на мрежата</string>
+    <string name="map_open">Карта на мрежата</string>
+    <string name="map_open_hint">Ретранслатори с GPS и връзките между тях (SNR)</string>
+    <string name="map_back">Назад</string>
+    <string name="map_fit">Побери всичко</string>
+    <string name="map_close">Затвори</string>
+    <string name="map_cancel">Отказ</string>
+    <string name="map_download">Изтегли</string>
+    <string name="map_save_offline">Запази района офлайн</string>
+    <string name="map_saving">Изтегляне на плочки…</string>
+    <string name="map_save_done">Районът е запазен за офлайн ползване.</string>
+    <string name="map_save_failed">Изтеглянето не успя напълно. Опитайте пак с връзка към интернет.</string>
+    <string name="map_no_nodes">Няма ретранслатори с GPS координати (lat/lon = 0 се пропускат).</string>
+    <string name="map_save_confirm">Ще се изтеглят %1$d плочки (мащаб %2$d–%3$d) от OpenStreetMap за текущия видим район. Продължавате ли?</string>
+    <string name="map_save_too_many">Районът е твърде голям: %1$d плочки (максимум %2$d). Приближете картата и опитайте пак.</string>
 </resources>

@@ -77,6 +77,8 @@ fun SettingsScreen(
     themeMode: ThemeMode,
     setThemeMode: (ThemeMode) -> Unit,
     setLang: (String) -> Unit,
+    dynamicColor: Boolean = false,
+    setDynamicColor: (Boolean) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val uri = LocalUriHandler.current
@@ -148,6 +150,13 @@ fun SettingsScreen(
                     ) {
                         Text(stringResource(labelRes), maxLines = 1)
                     }
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.settings_dynamic_color), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = dynamicColor, onCheckedChange = setDynamicColor)
                 }
             }
 
@@ -423,7 +432,7 @@ fun SettingsScreen(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(stringResource(R.string.settings_about), style = MaterialTheme.typography.titleMedium)
-            Text("LoRa OTA · v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
+            Text("MeshCore Service · v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
             Text(vm.repo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
@@ -431,7 +440,7 @@ fun SettingsScreen(
                         val report = vm.buildDiagnosticReport()
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "LoRa OTA Diagnostics v${BuildConfig.VERSION_NAME}")
+                            putExtra(Intent.EXTRA_SUBJECT, "MeshCore Service Diagnostics v${BuildConfig.VERSION_NAME}")
                             putExtra(Intent.EXTRA_TEXT, report)
                         }
                         runCatching { ctx.startActivity(Intent.createChooser(intent, ctx.getString(R.string.diag_share))) }

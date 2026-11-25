@@ -116,6 +116,10 @@ class ToolsLogicTest {
         assertTrue(CliHelper.isSecretWriteCommand("password foo bar"))
         assertTrue(CliHelper.isSecretWriteCommand("set guest.password 123"))
         assertTrue(CliHelper.isSecretWriteCommand("set wifi.pwd abc"))
+        assertTrue(CliHelper.isSecretWriteCommand("set mqtt.password hunter2"))
+        assertTrue(CliHelper.isSecretWriteCommand("set mqtt.secret x"))
+        assertFalse(CliHelper.isSecretWriteCommand("set tx 20"))
+        assertFalse(CliHelper.isSecretWriteCommand("setperm abcd 3"))
         assertFalse(CliHelper.isSecretWriteCommand("get name"))
 
         val redactedEntries = CliHelper.redactCliEntries(
@@ -191,7 +195,7 @@ class ToolsLogicTest {
         assertTrue(CliHelper.isSecretWriteCommand("ab|set pin 123456"))
         assertTrue(CliHelper.isSecretReadCommand("ab|get bridge.secret"))
         assertTrue(CliHelper.isSecretReadCommand("get guest.password extra"))
-        assertTrue("LoRa OTA Diagnostic Report" in report)
+        assertTrue("MeshCore Service Diagnostic Report" in report)
     }
 
     @Test

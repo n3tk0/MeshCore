@@ -59,9 +59,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.R
+import io.github.n3tk0.loraota.tools.CliCommandInfo
+import io.github.n3tk0.loraota.tools.CliCommands
 import io.github.n3tk0.loraota.tools.CliHelper
+import io.github.n3tk0.loraota.tools.CliHistory
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -75,7 +79,7 @@ import java.util.Locale
 @Composable
 fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
     val ctx = LocalContext.current
-    var input by rememberSaveable(isCompanion) { mutableStateOf("") }
+    var input by (if (isCompanion) vm.toolsState::companionCliInput else vm.toolsState::repeaterCliInput)
     var historyIdx by remember { mutableIntStateOf(-1) }
     var pendingConfirm by remember { mutableStateOf<String?>(null) }
     var copiedNotice by remember { mutableStateOf(false) }
@@ -85,7 +89,15 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
 
     val lines = if (isCompanion) vm.companionCliLog else vm.repeaterCliLog
     val quickCmds = if (isCompanion) CliHelper.COMPANION_QUICK_COMMANDS else CliHelper.REPEATER_QUICK_COMMANDS
-    val suggestions = remember(input, isCompanion) { CliHelper.suggestions(input, isCompanion) }
+    val history = vm.cliHistory(isCompanion)
+    val suggestions = remember(input, isCompanion) {
+        val known = CliCommands.match(input, isCompanion)
+        // the setting names the firmware accepts (`get <key>` / `set <key>`) that the catalog does not list
+        val extra = CliHelper.suggestions(input, isCompanion, 5)
+            .filter { s -> known.none { it.fillText == s || it.template == s } }
+            .map { CliCommandInfo(it, "") }
+        (known + extra).take(5)
+    }
     val timeFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.ROOT) }
     val transcriptScroll = rememberScrollState()
 
@@ -280,14 +292,29 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
         )
     }
 
-    // Live autocomplete suggestions when typing
+    // Live command suggestions when typing: tap fills the input (never sends)
     if (suggestions.isNotEmpty()) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             for (s in suggestions) {
-                SuggestionChip(
-                    onClick = { input = s },
-                    label = { Text(s, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall) },
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { input = s.fillText; historyIdx = -1 }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(s.template, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelMedium)
+                    if (s.hint.isNotEmpty()) {
+                        Text(
+                            s.hint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
     }
@@ -308,29 +335,23 @@ fun CliConsole(vm: AppViewModel, isCompanion: Boolean) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { submit(input) }),
         )
-        if (vm.cliCommandHistory.isNotEmpty()) {
-            IconButton(
-                onClick = {
-                    val next = (historyIdx + 1).coerceAtMost(vm.cliCommandHistory.lastIndex)
-                    historyIdx = next
-                    input = vm.cliCommandHistory[next]
-                },
-                enabled = !vm.busy,
-            ) {
-                Icon(Icons.Default.KeyboardArrowUp, stringResource(R.string.cli_hist_prev))
-            }
-            if (historyIdx >= 0) {
-                IconButton(
-                    onClick = {
-                        val next = historyIdx - 1
-                        historyIdx = next
-                        input = if (next >= 0) vm.cliCommandHistory[next] else ""
-                    },
-                    enabled = !vm.busy,
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.cli_hist_next))
-                }
-            }
+        IconButton(
+            onClick = {
+                CliHistory.older(history.size, historyIdx)?.let { historyIdx = it; input = history[it] }
+            },
+            enabled = !vm.busy && history.isNotEmpty(),
+        ) {
+            Icon(Icons.Default.KeyboardArrowUp, stringResource(R.string.cli_hist_prev))
+        }
+        IconButton(
+            onClick = {
+                val next = CliHistory.newer(historyIdx)
+                historyIdx = next
+                input = if (next >= 0) history[next] else ""
+            },
+            enabled = !vm.busy && historyIdx >= 0,
+        ) {
+            Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.cli_hist_next))
         }
         IconButton(onClick = { submit(input) }, enabled = !vm.busy && input.isNotBlank()) {
             Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.cli_send),

@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
-/** A LoRa OTA Android app release published on GitHub (tags starting with `lora-ota-app-`). */
+/** A MeshCore Service Android app release published on GitHub (tags starting with `lora-ota-app-`). */
 data class AppRelease(
     val tag: String,
     val version: String,
@@ -33,7 +33,7 @@ data class AppRelease(
 )
 
 /**
- * Checks GitHub Releases for newer LoRa OTA Android APK builds and downloads them for installation.
+ * Checks GitHub Releases for newer MeshCore Service Android APK builds and downloads them for installation.
  */
 object AppUpdater {
     const val TAG_PREFIX = "lora-ota-app-"

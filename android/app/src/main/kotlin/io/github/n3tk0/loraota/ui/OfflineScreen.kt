@@ -68,7 +68,6 @@ import io.github.n3tk0.loraota.ota.HealthSeverity
 import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.ota.SelfTest
 import io.github.n3tk0.loraota.tools.AuditIssueKind
-import io.github.n3tk0.loraota.tools.ConfigProfileLogic
 import io.github.n3tk0.loraota.tools.DeltaReadinessStatus
 import io.github.n3tk0.loraota.tools.FleetAuditLogic
 import io.github.n3tk0.loraota.tools.MeshGeoTopology
@@ -85,7 +84,9 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OfflineScreen(vm: AppViewModel) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(vm.offlineFocusTab) }
+    // the starting tab/search are read once (by this and the first list); after that the hub starts clean
+    androidx.compose.runtime.LaunchedEffect(Unit) { vm.consumeOfflineFocus() }
     var deleteCandidate by remember { mutableStateOf<Backup?>(null) }
     var deleteFirmwareCandidate by remember { mutableStateOf<FirmwareFile?>(null) }
     var showExportDialog by rememberSaveable { mutableStateOf(false) }
@@ -135,8 +136,10 @@ fun OfflineScreen(vm: AppViewModel) {
                 selected = tab == i,
                 onClick = { tab = i },
                 shape = SegmentedButtonDefaults.itemShape(i, tabs.size),
+                icon = {},   // no check mark: four labels need the whole width
             ) {
-                Text("${stringResource(labelRes)} ($count)", maxLines = 1, style = MaterialTheme.typography.labelSmall)
+                Text("${stringResource(labelRes)} ($count)", maxLines = 2, style = MaterialTheme.typography.labelSmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
         }
     }
@@ -169,6 +172,7 @@ fun OfflineScreen(vm: AppViewModel) {
                 showExportDialog = true
             },
             onDelete = { b -> deleteCandidate = b },
+            initialQuery = vm.offlineFocusQuery,
         )
         2 -> OfflineFirmwareTab(
             vm = vm,
@@ -273,42 +277,8 @@ fun OfflineScreen(vm: AppViewModel) {
         )
     }
 
-    // Backup Diff comparison dialog
-    diffTarget?.let { (b1, b2) ->
-        val diffs = remember(b1, b2) { ConfigProfileLogic.diffBackups(b1, b2) }
-        AlertDialog(
-            onDismissRequest = { diffTarget = null },
-            title = {
-                Text(
-                    stringResource(
-                        R.string.offline_backup_diff_title,
-                        b1.deviceName.ifEmpty { b1.deviceKey.take(8) },
-                        b2.deviceName.ifEmpty { b2.deviceKey.take(8) },
-                    ),
-                )
-            },
-            text = {
-                if (diffs.isEmpty()) {
-                    Text(stringResource(R.string.offline_backup_diff_none))
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(280.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        for (row in diffs) {
-                            BackupDiffRowView(row)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { diffTarget = null }) { Text(stringResource(R.string.build_close)) }
-            },
-        )
-    }
+    // Backup comparison: settings, channels and contacts, old to new, secrets redacted
+    diffTarget?.let { (b1, b2) -> BackupCompareDialog(b1, b2) { diffTarget = null } }
 
     deleteFirmwareCandidate?.let { f ->
         AlertDialog(
@@ -385,30 +355,12 @@ fun OfflineScreen(vm: AppViewModel) {
 }
 
 @Composable
-private fun BackupDiffRowView(row: Triple<String, String, String>) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(
-            row.first,
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            "${row.second}  →  ${row.third}",
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-        )
-        HorizontalDivider(Modifier.padding(top = 4.dp))
-    }
-}
-
-@Composable
 private fun OfflineHealthList(vm: AppViewModel) {
     val locale = LocalConfiguration.current.locales[0]
     val fmt = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale) }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val warnTint = if (dark) Color(0xFFFFB74D) else Color(0xFF9A5B00)
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf(vm.offlineFocusQuery) }
 
     if (vm.offlineHealth.isEmpty()) {
         InfoCard(stringResource(R.string.offline_no_health))
@@ -534,10 +486,11 @@ private fun OfflineBackupsList(
     onSaveAsProfile: (Backup) -> Unit,
     onExport: (Backup) -> Unit,
     onDelete: (Backup) -> Unit,
+    initialQuery: String = "",
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val fmt = remember(locale) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf(initialQuery) }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1102,6 +1055,37 @@ private fun OfflineAuditAndMeshTab(
                 }
             }
         }
+    }
+
+    // Network map (osmdroid) as a full-screen dialog
+    var showMap by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth().clickable { showMap = true }) {
+        Column(Modifier.padding(12.dp)) {
+            Text(stringResource(R.string.map_open), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.map_open_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (showMap) {
+        // derivedStateOf: rebuilt when the (snapshot) collections change while the map is open
+        val mapData by remember { androidx.compose.runtime.derivedStateOf {
+            val snippets = HashMap<String, String>()
+            for ((k, list) in vm.offlineHealth) {
+                val st = list.lastOrNull()?.let { io.github.n3tk0.loraota.ota.SelfTest.parse(it.line) } ?: continue
+                val txt = listOfNotNull(
+                    st.batteryPercent?.let { "$it%" },
+                    st.batteryMv?.let { "$it mV" },
+                ).joinToString(" · ")
+                if (txt.isNotEmpty()) snippets[k.lowercase(Locale.ROOT)] = txt
+            }
+            io.github.n3tk0.loraota.tools.NetworkMapLogic.build(
+                vm.offlineBackups.toList(), vm.observedNeighbors.toMap(), vm.knownDeviceNames.toMap(), snippets,
+            )
+        } }
+        NetworkMapDialog(mapData) { showMap = false }
     }
 
     // 3. Mesh Link Topology & SNR Asymmetry Matrix
