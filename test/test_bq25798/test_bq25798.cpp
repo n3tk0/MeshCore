@@ -1660,7 +1660,7 @@ TEST(BQ25798, ScanWithTooFewStepsIsNotRun) {
   ASSERT_EQ(bq.scanStart(), 0);
   ASSERT_TRUE(tickUntilIdle(bq, t, 90000));
   EXPECT_FALSE(bq.scanHasResult());
-  EXPECT_EQ(f.r[0x05], BQ25798::vindpmFromVoc(4500, 81) / 100);   // only the restore
+  EXPECT_EQ(f.r[0x05], BQ_VINDPM_FLOOR / 100);   // only the restore (81 % of 4.5 V is under the 4.3 V floor)
   EXPECT_EQ(f.r[0x0F] & 0x04, 0);                       // EN_HIZ back off
   EXPECT_EQ(f.r[0x15] & 1, 1);                          // EN_MPPT back
   EXPECT_EQ(bq.vocPct(), 81);

@@ -744,7 +744,9 @@ void BQ25798::scanFinish(uint32_t now, uint8_t fail) {
   }
   // put back: VINDPM for the share in force, EN_HIZ off, EN_MPPT on (what it was)
   if (_sc_voc >= BQ_VOC_MIN_MV && _s.vindpm_mv == 0) {
-    uint8_t reg = (uint8_t)(vindpmFromVoc(_sc_voc, _s.voc_pct) / 100);
+    uint16_t vin = vindpmFromVoc(_sc_voc, _s.voc_pct);
+    if (vin < BQ_VINDPM_FLOOR) vin = BQ_VINDPM_FLOOR;   // the same floor as the auto VINDPM
+    uint8_t reg = (uint8_t)(vin / 100);
     if (write8(BQ_REG_VINDPM, reg)) _vindpm_reg = reg;
   }
   if (_sc_hiz_set) {
