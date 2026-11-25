@@ -15,6 +15,8 @@ void smpptCommand(TwoWire& wire, const char* args, char* reply, size_t max);
 
 // true when a solar-smart-mppt (or xiao-solar v0.5) MSPM0 answers on 0x42
 bool smpptPresent(TwoWire& wire);
+// the pack voltage (mV, R_VPACK) and whether the panel is there (R_STATUS bit 2, VBUS present); false: no answer
+bool smpptPowerState(TwoWire& wire, uint16_t* vpack_mv, bool* sun);
 // `charger <sub> <val>` for a board whose BQ25798 sits behind the MSPM0: the same words as for a
 // BQ25798 on the node's own bus, mapped to the 0x42 settings (each change saved in the board's flash).
 void smpptCharger(TwoWire& wire, const char* sub, const char* val, char* reply, size_t max);

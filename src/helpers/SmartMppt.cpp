@@ -216,6 +216,14 @@ bool smpptPresent(TwoWire& w) {
   return readReg(w, R_ID, id) && id == 0x534D;
 }
 
+bool smpptPowerState(TwoWire& w, uint16_t* vpack_mv, bool* sun) {
+  uint16_t st, vp;
+  if (!readReg(w, R_STATUS, st) || !readReg(w, R_VPACK, vp)) return false;
+  if (vpack_mv) *vpack_mv = vp;
+  if (sun) *sun = (st & 0x0004) != 0;   // ST_SUN (smppt.h): VBUS present
+  return true;
+}
+
 namespace {
 // a whole number, nothing else after it (-1 if not)
 long wholeNumber(const char* s) {

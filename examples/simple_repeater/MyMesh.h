@@ -42,6 +42,9 @@
 #endif
 
 #include <helpers/PowerSaver.h>
+#ifdef SOLAR_MPPT_PWM_PIN
+  #include <helpers/sensors/SolarMppt.h>
+#endif
 #include <helpers/I2CHealth.h>
 
 #if !defined(NO_TELEMETRY_HISTORY) && !defined(STM32_PLATFORM)
@@ -173,6 +176,21 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void handlePowerSaveCommand(char* args, char* reply);
   void handleBatteryCommand(char* args, char* reply);
   void loadBatteryCapacity();
+#ifdef SOLAR_MPPT_PWM_PIN
+  void loadMppt();
+  bool saveMppt(SolarMppt* m);
+#endif
+#if defined(SOLAR_MPPT_PWM_PIN) || ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
+  void handleMpptCommand(char* args, char* reply);
+#endif
+#if SOLAR_BOARD_AUTO && defined(SOLAR_MPPT_PWM_PIN) && ENV_INCLUDE_BQ25798
+  void handleCn3791Charger(const char* args, const char* val, char* reply);
+#endif
+#if SOLAR_BOARD_AUTO
+  uint8_t _solar_board_kept = 0;   // SOLAR_BOARD_* in /board
+  void loadSolarBoard();
+  void handleSolarBoardCommand(char* args, char* reply);
+#endif
 #if ENV_INCLUDE_BQ25798
   void loadCharger();
  public:
