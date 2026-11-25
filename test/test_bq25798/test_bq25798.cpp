@@ -638,7 +638,7 @@ TEST(BQ25798, VocPctSettingParseAndReject) {
 
 TEST(BQ25798, Reg15FollowsVocPct) {
   EXPECT_EQ(BQ25798::mpptBase(81), BQ_MPPT_BASE);
-  const struct { uint8_t pct, base; } cases[] = { {63, 0x2A}, {69, 0x4A}, {75, 0x6A}, {81, 0x8A}, {88, 0xAA} };
+  const struct { uint8_t pct, base; } cases[] = { {63, 0x2C}, {69, 0x4C}, {75, 0x6C}, {81, 0x8C}, {88, 0xAC} };
   for (auto& c : cases) {
     FakeBQ f;
     BQ25798 bq(f);
@@ -649,11 +649,11 @@ TEST(BQ25798, Reg15FollowsVocPct) {
     bq.apply(s);
     runFor(bq, t, 30000);
     EXPECT_EQ(f.r[0x15] & 0xFE, c.base) << (int)c.pct;   // VOC_PCT in 7:5, DLY / RATE as before
-    EXPECT_EQ(f.r[0x15] & 0x1F, 0x0A | (f.r[0x15] & 1)) << (int)c.pct;
+    EXPECT_EQ(f.r[0x15] & 0x1F, 0x0C | (f.r[0x15] & 1)) << (int)c.pct;
     s.voc_pct = 75;                                       // changed later: written again
     bq.apply(s);
     runFor(bq, t, 30000);
-    EXPECT_EQ(f.r[0x15] & 0xFE, 0x6A);
+    EXPECT_EQ(f.r[0x15] & 0xFE, 0x6C);
   }
 }
 
@@ -799,8 +799,8 @@ TEST(BQ25798, VindpmIsSetAgainAtEachDropOut) {
   f.r[0x15] &= ~0x01;
   f.r[0x05] = 0x24;                                  // the chip put its own 3.6 V back
   runFor(bq, t, 60000);
-  EXPECT_EQ(f.r[0x05], 36);
-  EXPECT_EQ(bq.autoVindpm(), 3600);
+  EXPECT_EQ(f.r[0x05], 43);                          // 81 % of 4.5 V is 3.6 V: the 4.3 V floor
+  EXPECT_EQ(bq.autoVindpm(), 4300);
   EXPECT_TRUE(bq.powerGood());
   f.voc = 7000;                                      // and again, brighter
   f.r[0x1B] &= ~0x08;
@@ -836,10 +836,10 @@ TEST(BQ25798, LoadedVbusIsNeverTakenForVoc) {
   t = 0;
   bq2.begin(t);
   g.dawn();
-  g.voc = 5000; g.loaded = 4000;                     // 80 % of 4.0 V would be 3.2 V -> 3600
+  g.voc = 6000; g.loaded = 5000;                     // 81 % of 5.0 V would be 4.0 V -> the 4.3 V floor
   bq2.apply(settings());
   runFor(bq2, t, 60000);
-  EXPECT_EQ(g.r[0x05], 40);                          // 81.25 % of 5.0 V, not of the loaded 4.0 V
+  EXPECT_EQ(g.r[0x05], 48);                          // 81.25 % of 6.0 V, not of the loaded 5.0 V
 }
 
 TEST(BQ25798, LatchedPoorSourceFlagAloneIsNotUnloaded) {
@@ -948,7 +948,7 @@ TEST(BQ25798, VbusAdcChannelIsAlwaysOn) {
 
 TEST(BQ25798, PoorSourceIsCountedAndShown) {
   DawnBQ f;
-  f.voc = 4000;                                      // 3.2 V: VINDPM stays at the clamp, the loop goes on
+  f.voc = 4000;                                      // 3.2 V: VINDPM at the 4.3 V floor, over Voc: the loop goes on
   f.stubborn = true;
   BQ25798 bq(f);
   uint32_t t = 0;
@@ -961,7 +961,7 @@ TEST(BQ25798, PoorSourceIsCountedAndShown) {
   char buf[160];
   bq.formatStatus(buf, sizeof(buf));
   EXPECT_NE(strstr(buf, "mppt off"), nullptr) << buf;
-  EXPECT_NE(strstr(buf, ", vin 3.6V"), nullptr) << buf;
+  EXPECT_NE(strstr(buf, ", vin 4.3V"), nullptr) << buf;
   EXPECT_NE(strstr(buf, ", poor src x"), nullptr) << buf;
   EXPECT_NE(strstr(buf, ", hiz"), nullptr) << buf;
   EXPECT_NE(strstr(buf, ", no PG"), nullptr) << buf;
@@ -2491,4 +2491,112 @@ TEST(BQ25798, InaPositionIsKnownWithoutTheChip) {
   bq.formatIna(buf, 155);
   EXPECT_NE(strstr(buf, "ina sun"), nullptr) << buf;
   EXPECT_NE(strstr(buf, "no BQ25798 at 0x6B"), nullptr) << buf;
+}
+
+// ---- small panels, as a BQ25606 (floor 4.3 V, 2 s retries, hybrid weak / MPPT) ----
+
+TEST(BQ25798, AutoVindpmHasA43VFloor) {
+  DawnBQ f;
+  f.voc = 4800;                                      // 81 % = 3.9 V -> 4.3 V
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  runFor(bq, t, 60000);
+  EXPECT_EQ(bq.autoVindpm(), 4300);
+  EXPECT_EQ(f.r[0x05], 43);
+}
+
+TEST(BQ25798, PollsEvery2sWhilePoorSourceKeepsHiz) {
+  DawnBQ f;
+  f.voc = 4000;
+  f.stubborn = true;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  uint32_t p0 = bq.polls();
+  for (int i = 0; i < 10; i++) bq.loop(t += 2000);   // 20 s
+  EXPECT_GE(bq.polls() - p0, 8u);                    // not 2 (10 s)
+  // the panel gone: back to 10 s
+  f.sun(false);
+  f.r[0x0F] &= ~0x04;
+  bq.loop(t += 2000);
+  p0 = bq.polls();
+  for (int i = 0; i < 10; i++) bq.loop(t += 2000);
+  EXPECT_LE(bq.polls() - p0, 2u);
+}
+
+TEST(BQ25798, HybridStartsWeakThenMpptThenFallsBack) {
+  DawnBQ f;
+  f.voc = 6000;
+  BQ25798 bq(f);
+  bq.setHybrid(true);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.weak());
+  EXPECT_EQ(f.r[0x05], 44);                          // fixed 4.4 V
+  EXPECT_EQ(f.r[0x15] & 1, 0);                       // no MPPT, no Voc stops
+  EXPECT_TRUE(bq.powerGood());
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, ", weak 4.4V"), nullptr) << buf;
+  // weak sun: stays weak
+  f.put16(0x31, 80);
+  runFor(bq, t, 180000);
+  EXPECT_TRUE(bq.weak());
+  // strong sun for a minute: MPPT
+  f.put16(0x31, 300);
+  runFor(bq, t, 90000);
+  EXPECT_FALSE(bq.weak());
+  EXPECT_EQ(f.r[0x15] & 1, 1);
+  // a poor source in MPPT: weak at once, MPPT not tried again for 10 min
+  f.r[0x22] |= 0x10;
+  runFor(bq, t, 20000);
+  EXPECT_TRUE(bq.weak());
+  EXPECT_EQ(bq.weakFalls(), 1);
+  EXPECT_EQ(f.r[0x15] & 1, 0);
+  EXPECT_EQ(f.r[0x05], 44);
+  runFor(bq, t, 300000);
+  EXPECT_TRUE(bq.weak());
+  runFor(bq, t, 400000);
+  EXPECT_FALSE(bq.weak());
+  // MPPT with little current for 5 min: weak again
+  f.put16(0x31, 50);
+  runFor(bq, t, 330000);
+  EXPECT_TRUE(bq.weak());
+  EXPECT_EQ(bq.weakFalls(), 2);
+  // evening, next morning: starts weak
+  f.put16(0x31, 300);
+  runFor(bq, t, 700000);
+  EXPECT_FALSE(bq.weak());
+  f.sun(false);
+  runFor(bq, t, 20000);
+  f.dawn();
+  runFor(bq, t, 20000);
+  EXPECT_TRUE(bq.weak());
+}
+
+TEST(BQ25798, HybridOffOrFixedVinLeavesTheModesAlone) {
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  runFor(bq, t, 60000);
+  EXPECT_FALSE(bq.weak());                           // BQ_HYBRID_DEFAULT 0 in the tests
+  EXPECT_EQ(f.r[0x05], 48);
+  BQ25798Settings s = settings();
+  s.vindpm_mv = 5000;
+  bq.setHybrid(true);
+  bq.apply(s);
+  runFor(bq, t, 30000);
+  EXPECT_FALSE(bq.weak());
+  EXPECT_EQ(f.r[0x05], 50);
 }

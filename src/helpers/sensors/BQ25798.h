@@ -55,6 +55,19 @@
 #define BQ_HIZ_HOLD_PERIOD     6               // ... in every this many polls of a poor-source loop
 #define BQ_POORSRC_KEEP_MS     (30 * 60000UL)  // `charger` shows a poor source seen this long ago
 #define BQ_CUTOFF_MIN          2900
+// small panels, as a BQ25606 does it (fixed input voltage, quick retries)
+#define BQ_VINDPM_FLOOR        4300            // auto VINDPM from Voc never lower (the chip's own 3.6 V drags a weak panel under VPOORSRC)
+#define BQ_POLL_FAST_MS        2000UL          // poll this often while a poor source keeps the chip in HIZ ...
+#define BQ_POORSRC_FAST_MS     60000UL         // ... i.e. one was seen this recently and the panel is still not loaded
+#ifndef BQ_HYBRID_DEFAULT
+#define BQ_HYBRID_DEFAULT      0               // the lite env sets 1; `charger hybrid on|off` (RAM only)
+#endif
+#define BQ_WEAK_VINDPM         4400            // hybrid: fixed VINDPM, EN_MPPT off, while the sun is weak
+#define BQ_WEAK_ENTER_MA       100             // MPPT -> weak: IBUS under this (or MPPT not running) ...
+#define BQ_WEAK_ENTER_MS       300000UL        // ... this long, or a poor source at once
+#define BQ_WEAK_EXIT_MA        150             // weak -> MPPT: IBUS at least this with PG ...
+#define BQ_WEAK_EXIT_MS        60000UL         // ... this long
+#define BQ_WEAK_HOLD_MS        600000UL        // after a fall back to weak: MPPT is not tried again for this long
 
 // MPPT scan
 #define BQ_SCAN_N              12              // shares 62.5, 65.0 ... 90.0 % (0.1 % units below)
@@ -121,8 +134,9 @@
 
 // values written
 #define BQ_IINDPM_MA           3000   // the panel limits itself through VINDPM / MPPT
-#define BQ_MPPT_DLYRATE        0x0A   // REG15 bits 4:1: VOC_DLY 300 ms, VOC_RATE 2 min (VOC_PCT 7:5, EN_MPPT 0 apart)
-#define BQ_MPPT_BASE           0x8A   // the default: VOC_PCT 0.8125 + BQ_MPPT_DLYRATE (see BQ25798::mpptBase)
+#define BQ_MPPT_DLYRATE        0x0C   // REG15 bits 4:1: VOC_DLY 300 ms, VOC_RATE 10 min (VOC_PCT 7:5, EN_MPPT 0 apart);
+                                      // each Voc measurement stops the converter, and a weak panel may fail the poor-source check after it
+#define BQ_MPPT_BASE           0x8C   // the default: VOC_PCT 0.8125 + BQ_MPPT_DLYRATE (see BQ25798::mpptBase)
 #define BQ_ADC_START           0xD0   // ADC_EN, one shot, 14 bit (12 ms a channel)
 #define BQ_ADC_CONTINUOUS      0x90   // ADC_EN, continuous, 14 bit (fallback, see adc())
 #define BQ_ADC_DIS0_VAL        0x04   // TS off: with it on, the ADC stops under 3.2 V on battery alone
@@ -221,6 +235,11 @@ class BQ25798 {
   uint8_t  _vindpm_reg;        // REG05 as last read / written
   uint16_t _auto_vin_mv;       // the last VINDPM set from Voc (0 = none yet)
   uint16_t _auto_vin_count;
+  // hybrid (BQ_WEAK_*): fixed VINDPM 4.4 V while the sun is weak, MPPT when it is strong
+  bool     _hybrid, _weak, _weak_timing;
+  uint32_t _weak_t, _weak_hold_until;
+  uint16_t _weak_poorsrc;      // _poorsrc_count at the last weakTick()
+  uint16_t _weak_falls;        // MPPT -> weak changes since boot
   // MPPT scan: state machine (BQ_SC_*), see scanTick()
   uint8_t  _sc_state, _sc_idx, _sc_tries;
   uint8_t  _sc_lo, _sc_table_lo;    // first step measured (lower ones skipped: VINDPM too low); of the last accepted scan
@@ -270,6 +289,8 @@ class BQ25798 {
   void adc(uint32_t now);
   bool readAdc(uint32_t now);
   void lowBattery(uint32_t now);
+  bool weakTick(uint32_t now);   // true: the mode changed (poll again at once)
+  bool fastPoll(uint32_t now) const;
   bool scanConditions(bool need_fast) const;
   void scanSchedule(uint32_t now);
   void scanTick(uint32_t now);
@@ -313,6 +334,11 @@ public:
   bool chargeHeld() const { return _jumper == 1 && _s.chem != BQ_CHEM_LIFEPO4; }
   bool adcContinuous() const { return _adc_continuous; }
   bool mpptOn() const;
+  // hybrid mode (MPPT settings only): weak sun = fixed BQ_WEAK_VINDPM without MPPT, as a BQ25606 works
+  void setHybrid(bool on);
+  bool hybrid() const { return _hybrid; }
+  bool weak() const { return _hybrid && _weak && _s.vindpm_mv == 0; }
+  uint16_t weakFalls() const { return _weak_falls; }
   uint8_t vocPct() const { return _s.voc_pct; }
   bool mpptAuto() const { return _s.mppt_auto; }
   // MPPT scan. scanStart(): 0 = started (runs from the next loop(), ~30 s; any mppt mode, the result is

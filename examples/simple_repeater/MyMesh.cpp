@@ -2594,6 +2594,13 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
                 : "Err - scan needs the panel on: sun, PG, no HIZ");
     return;
   }
+  if (strcmp(args, "hybrid") == 0) {   // test: weak sun = fixed 4.4 V without MPPT (as a BQ25606), MPPT in strong sun; RAM only
+    if (strcmp(val, "on") == 0) c->setHybrid(true);
+    else if (strcmp(val, "off") == 0) c->setHybrid(false);
+    else if (*val) { strcpy(reply, "Err - charger hybrid [on|off]"); return; }
+    sprintf(reply, "hybrid %s%s, falls %u", c->hybrid() ? "on" : "off", c->weak() ? " (weak 4.4V)" : "", (unsigned)c->weakFalls());
+    return;
+  }
   if (strcmp(args, "reg") == 0) {
     char* v2 = strchr(val, ' ');
     if (v2) { *v2++ = 0; while (*v2 == ' ') v2++; }
