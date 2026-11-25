@@ -256,6 +256,8 @@ data class CachedFirmwareItem(
     val firmware: FirmwareFile,
     val hasCachedOta: Boolean,
     val hasCachedDfu: Boolean,
+    /** The cached LoRa-OTA .bin is an ESP32 app image (Wi-Fi flashable even with no repeater logged in). */
+    val otaIsEsp32: Boolean = false,
 )
 
 /**

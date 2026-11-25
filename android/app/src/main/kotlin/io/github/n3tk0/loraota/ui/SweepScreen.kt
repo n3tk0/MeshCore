@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -30,6 +31,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -146,9 +151,41 @@ fun SweepScreen(vm: AppViewModel) {
         }
     }
 
-    val pickedCount = candidates.count { vm.sweepPicked[hex(it.publicKey)] == true }
+    val picked = candidates.filter { vm.sweepPicked[hex(it.publicKey)] == true }
+    val pickedCount = picked.size
+    val pickedFar = picked.count { it.hops != 0 }
+    var confirmStart by remember { mutableStateOf(false) }
+    if (confirmStart) {
+        // rough estimate: ~15 s per direct repeater (login + selftest), ~40 s when the login has to flood
+        val seconds = (pickedCount - pickedFar) * 15 + pickedFar * 40
+        val minutes = maxOf(1, (seconds + 59) / 60)
+        AlertDialog(
+            onDismissRequest = { confirmStart = false },
+            title = { Text(stringResource(R.string.sweep_confirm_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.sweep_confirm_text, pickedCount, minutes))
+                    if (pickedFar > 0) {
+                        Text(
+                            stringResource(R.string.sweep_confirm_far, pickedFar),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmStart = false
+                    vm.startSweep()
+                }) { Text(stringResource(R.string.sweep_confirm_go)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmStart = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
     Button(
-        onClick = { vm.startSweep() },
+        onClick = { confirmStart = true },
         enabled = !vm.busy && pickedCount > 0,
         modifier = Modifier.fillMaxWidth(),
     ) {

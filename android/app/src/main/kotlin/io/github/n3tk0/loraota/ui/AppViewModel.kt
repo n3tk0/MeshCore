@@ -92,6 +92,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -251,6 +252,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var companionVersion by mutableStateOf("")
     private var companionDevice: BluetoothDevice? = null
     val hasCompanionConnection: Boolean get() = companionDevice != null
+    /** Offline flash of another device while a companion stays connected: flashCheck/flashBle ignore the companion. */
+    private var flashStandalone = false
+    private val flashCompanionDevice: BluetoothDevice? get() = if (flashStandalone) null else companionDevice
     private var flashingCompanion = false   // its link drops on purpose
 
     // backups of the settings (the companion's or the repeater's), kept on the phone
@@ -413,6 +417,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         BuildWatcher.resume(app)
+        viewModelScope.launch {
+            AppUpdater.installResults.collect { r ->
+                if (!r.success) appUpdateError = r.message ?: ""
+            }
+        }
         viewModelScope.launch {
             BuildWatcher.state.collect { j ->
                 val before = buildJob
@@ -948,8 +957,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun savePassword(contact: Contact, password: String) {
         val key = hex(contact.publicKey)
-        passwordStore.set(key, password)
+        val secure = passwordStore.set(key, password)
         if (key !in savedKeys) savedKeys.add(key)
+        if (!secure) message = str(R.string.msg_password_not_secure)
     }
 
     fun forgetPassword(contact: Contact) {
@@ -1332,6 +1342,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The companion's own flash screen, or (repeater) the Bluetooth / Wi-Fi tab of the repeater's screen. */
     fun openFlash(target: FlashTarget) {
+        flashStandalone = false
         if (target == FlashTarget.COMPANION) flashReturn = step
         flashTarget = target
         flashImage = null
@@ -1363,6 +1374,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // after a flash (or a failed one) the companion is gone: back to the start (or back to Offline if opened from there)
             if (flashDone || flashingCompanion) {
                 flashingCompanion = false
+                // its link is gone after the flash: no stale connected-companion state behind Back
+                if (!flashStandalone) clearDeviceSession()
                 devices.clear()
                 step = if (flashReturn == Step.OFFLINE) Step.OFFLINE else Step.COMPANION
             } else {
@@ -1382,14 +1395,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * allowing field flashing of any nRF52 (in bootloader `*_OTA`) or ESP32 (`MeshCore-OTA` AP)
      * without requiring a connected companion.
      */
-    fun startDirectOfflineFlash(f: FirmwareFile) = work {
-        val useDfu = Releases.isDfuCached(f, ctx.filesDir)
+    fun startDirectOfflineFlash(f: FirmwareFile, standalone: Boolean = false) = work {
+        // the DFU file when there is one; the LoRa-OTA .bin only as a Wi-Fi image of an ESP32
+        if (!f.hasDfu && !f.hasLoraOta) throw Exception(str(R.string.err_flash_need_dfu))
         val bytes = withContext(Dispatchers.IO) {
-            Releases.readCachedFile(f, dfu = useDfu, cache = ctx.filesDir)
+            Releases.readCachedFile(f, dfu = f.hasDfu, cache = ctx.filesDir)
                 ?: if (f.hasDfu) Releases.downloadDfu(f, ctx.filesDir) else Releases.download(f, ctx.filesDir)
         }
-        val name = (if (useDfu || f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
+        // the target is not the logged-in repeater, so the image itself decides (ESP32 magic byte)
+        if (!f.hasDfu && !f.plainBinFlashable(null, Releases.isEsp32Image(bytes))) {
+            throw Exception(str(R.string.err_flash_need_dfu))
+        }
+        val name = (if (f.hasDfu) f.dfu else f.file).ifEmpty { "${f.env}.bin" }
         flashReturn = step
+        flashStandalone = standalone
         flashTarget = FlashTarget.COMPANION
         flashSource = Source.RELEASES
         flashUpstream = false
@@ -1410,11 +1429,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun flashCandidates(): List<FirmwareFile> {
         val platform = info?.platform
         val running = oldImage?.env
-        val offlineFlash = flashTarget == FlashTarget.COMPANION && companionDevice == null
+        val offlineFlash = flashTarget == FlashTarget.COMPANION && flashCompanionDevice == null
         val selectedEnv = flashImage?.env
         return (if (flashUpstream) upstream else allFirmware).filter {
             if (offlineFlash) {
-                it.hasDfu || (!it.dfuIsZip && it.hasLoraOta)
+                it.hasDfu || it.plainBinFlashable(platform)
             } else {
                 it.hasDfu && when (flashTarget) {
                     FlashTarget.COMPANION -> BoardCheck.fitsCompanion(it.env) && it.dfuIsZip
@@ -1463,8 +1482,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun pickFlashRelease(f: FirmwareFile) = work {
-        val data = withContext(Dispatchers.IO) { Releases.downloadDfu(f, ctx.filesDir) }
-        flashImage = FlashImage(f.dfu, data, f.env, f.version.ifEmpty { f.release })
+        if (!f.hasDfu && !f.plainBinFlashable(info?.platform)) throw Exception(str(R.string.err_flash_need_dfu))
+        val data = withContext(Dispatchers.IO) {
+            if (f.hasDfu) Releases.downloadDfu(f, ctx.filesDir) else Releases.download(f, ctx.filesDir)
+        }
+        flashImage = FlashImage(if (f.hasDfu) f.dfu else f.file, data, f.env, f.version.ifEmpty { f.release })
     }
 
     fun pickFlashFile(uri: Uri) = work {
@@ -1492,7 +1514,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (env == null) warnings.add(str(R.string.warn_board_unknown))
 
         if (flashTarget == FlashTarget.COMPANION) {
-            val dev = companionDevice
+            val dev = flashCompanionDevice
             if (dev != null) {
                 if (!img.isZip) throw Exception(str(R.string.err_flash_need_zip))
                 if (env != null && !BoardCheck.fitsCompanion(env)) warnings.add(str(R.string.warn_not_companion, env))
@@ -1585,7 +1607,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 flashPercent = -1
             }
             flashDone = true
-            message = str(if (flashTarget == FlashTarget.COMPANION && companionDevice != null) R.string.msg_flash_done_companion else R.string.msg_flash_done)
+            message = str(if (flashTarget == FlashTarget.COMPANION && flashCompanionDevice != null) R.string.msg_flash_done_companion else R.string.msg_flash_done)
         }
     }
 
@@ -1593,7 +1615,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val address = p.address ?: return
         val zip = java.io.File(ctx.cacheDir, "flash.zip")
         withContext(Dispatchers.IO) { zip.writeBytes(p.image.data) }
-        val isConnectedCompanion = flashTarget == FlashTarget.COMPANION && companionDevice != null
+        val isConnectedCompanion = flashTarget == FlashTarget.COMPANION && flashCompanionDevice != null
         if (isConnectedCompanion) {
             // the DFU library needs the device to itself
             flashingCompanion = true
@@ -1821,6 +1843,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var loadingHistoryKey by mutableStateOf<Pair<Int, Int>?>(null)
     /** Pending (ring, field) pairs queued while another chart is loading. */
     val queuedHistoryKeys = mutableStateListOf<Pair<Int, Int>>()
+    /** Series the device did not answer: not asked again until an explicit refresh. */
+    private val failedHistoryKeys = HashSet<Pair<Int, Int>>()
     /** Incremented on openHealth/refreshHealth so UI resets expanded chart cards. */
     var healthGeneration by mutableStateOf(0)
     var historyMissing by mutableStateOf(false)    // the node keeps no history (stock or older firmware)
@@ -1838,6 +1862,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         selfTestMissing = false
         healthWarnings = emptyList()
         historyCache.clear()
+        failedHistoryKeys.clear()
         queuedHistoryKeys.clear()
         loadingHistoryKey = null
         healthGeneration++
@@ -1910,6 +1935,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         healthWarnings = warnings.toList()
         historyCache.clear()
+        failedHistoryKeys.clear()
         queuedHistoryKeys.clear()
         loadingHistoryKey = null
         healthGeneration++
@@ -1963,13 +1989,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun showHistory(ring: Int, field: Int) {
         historyRing = ring
         historyField = field
+        failedHistoryKeys.remove(ring to field)
         loadHistoryField(ring, field)
     }
 
     /** Enqueues a chart series to be fetched from the device; runs sequentially if another chart is already loading. */
     fun loadHistoryField(ring: Int, field: Int) {
         val key = ring to field
-        if (historyMissing || historyCache.containsKey(key) || loadingHistoryKey == key) return
+        if (historyMissing || historyCache.containsKey(key) || loadingHistoryKey == key || key in failedHistoryKeys) return
         if (busy && loadingHistoryKey == null) return
         if (key !in queuedHistoryKeys) queuedHistoryKeys.add(key)
         if (!busy) drainHistoryQueue()
@@ -1992,7 +2019,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         queuedHistoryKeys.removeAll { it.first != ring }
         for (f in openFields) {
             val key = ring to f
-            if (!historyCache.containsKey(key) && loadingHistoryKey != key && key !in queuedHistoryKeys) {
+            if (!historyCache.containsKey(key) && loadingHistoryKey != key && key !in queuedHistoryKeys && key !in failedHistoryKeys) {
                 queuedHistoryKeys.add(key)
             }
         }
@@ -2007,7 +2034,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (historyCache.containsKey(key)) continue
                 loadingHistoryKey = key
                 val s = loadSeries(key.first, key.second)
-                if (s != null) checkFasterDrain()
+                if (s != null) checkFasterDrain() else failedHistoryKeys.add(key)
             }
         } finally {
             loadingHistoryKey = null
@@ -2066,9 +2093,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = ""
         step = Step.BACKUP
         loadBackups()
-        if (kind == DeviceKind.REPEATER && canReadRepeater == null) {
-            viewModelScope.launch { canReadRepeater = runCatching { RepeaterBackup.supported(companion) }.getOrDefault(false) }
-        }
     }
 
     fun closeBackup() {
@@ -2473,7 +2497,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (manual) appUpdateError = null
         updateCheckJob = viewModelScope.launch {
             try {
-                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get()) }
+                val rel = withContext(Dispatchers.IO) { AppUpdater.checkLatest(repo, tokens.get(), includePrerelease = BuildConfig.IS_PRERELEASE) }
                 val prevTag = availableUpdate?.tag
                 latestAppRelease = rel
                 val newer = rel != null && AppUpdater.isNewer(rel.version, BuildConfig.VERSION_NAME)
@@ -2513,18 +2537,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val safeName = rel.apkName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "LoraOta-update.apk" }
                 val dest = java.io.File(dir, safeName)
                 withContext(Dispatchers.IO) {
-                    AppUpdater.downloadApk(rel, dest, tokens.get()) { pct ->
+                    AppUpdater.downloadApk(rel, dest, tokens.get(), { isActive }) { pct ->
                         viewModelScope.launch(Dispatchers.Main) { appUpdateProgress = pct }
                     }
                     @Suppress("DEPRECATION")
                     val pkgInfo = ctx.packageManager.getPackageArchiveInfo(dest.absolutePath, 0)
-                    val archiveCode = pkgInfo?.let { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it) }
-                    if (archiveCode != null && archiveCode < BuildConfig.VERSION_CODE.toLong()) {
+                    if (pkgInfo == null || pkgInfo.packageName != ctx.packageName) {
+                        dest.delete()
+                        throw Exception(str(R.string.err_update_bad_apk))
+                    }
+                    val archiveCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pkgInfo)
+                    if (archiveCode < BuildConfig.VERSION_CODE.toLong()) {
                         dest.delete()
                         throw Exception("APK versionCode ($archiveCode) < installed (${BuildConfig.VERSION_CODE})")
                     }
                     if (tokens.hasBuiltInGroup || tokens.hasSavedGroup) {
-                        if (keepGroupToken) tokens.persistGroupToken() else tokens.clearSavedGroup()
+                        if (keepGroupToken) {
+                            if (!tokens.persistGroupToken()) {
+                                dest.delete()
+                                throw Exception(str(R.string.err_update_token))
+                            }
+                        } else tokens.clearSavedGroup()
                     }
                 }
                 syncTokenFlags()
@@ -2536,6 +2569,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appUpdateError = releasesWhy(e)
             } finally {
                 appUpdateDownloading = false
+            }
+        }
+    }
+
+    /** Installs [apk] via a PackageInstaller session; the outcome comes back through [AppUpdater.installResults]. */
+    fun installAppUpdate(apk: java.io.File) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { AppUpdater.installApk(ctx, apk) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appUpdateError = e.message ?: e.toString()
             }
         }
     }
@@ -2662,6 +2708,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             toolsState.appendCli(false, str(R.string.cli_timeout), CliLineKind.ERROR, durationMs = rtt)
         } else {
             toolsState.appendCli(false, reply.trim(), CliLineKind.REPLY, durationMs = rtt)
+            // the repeater took the new admin password: keep the saved one in step with it
+            val newPw = CliHelper.newPasswordOf(cmd)
+            if (newPw != null && reply.trim().removePrefix("> ").startsWith("password now", ignoreCase = true) &&
+                hasSavedPassword(r)) {
+                savePassword(r, newPw)
+            }
         }
     }
 
@@ -2743,6 +2795,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = str(R.string.qa_reboot_sent)
     }
 
+    /** Lets the neighbors card ask again after an error. */
+    fun clearNeighborsError() { toolsState.neighborsError = null }
+
     fun loadNeighbors() = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
@@ -2756,6 +2811,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         working = str(R.string.working_neighbors)
         val reply = try {
             RepeaterBackup.ask(companion, r, "neighbors")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // set an error so the card does not ask again in a loop
+            toolsState.neighborsError = e.message ?: e.toString()
+            return@work
         } finally {
             withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
         }
@@ -2964,7 +3025,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fleetState.sweepFinished = false
         fleetState.sweepRunning = false
         for (c in repeaters) {
-            if (hasSavedPassword(c)) {
+            // only direct repeaters are pre-ticked: a flood login to a far one costs much more airtime
+            if (hasSavedPassword(c) && c.hops == 0) {
                 val k = hex(c.publicKey)
                 if (k !in fleetState.sweepPicked) fleetState.sweepPicked[k] = true
             }
@@ -3136,6 +3198,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             firmware = f,
                             hasCachedOta = Releases.isFileCached(f, ctx.filesDir),
                             hasCachedDfu = Releases.isDfuCached(f, ctx.filesDir),
+                            otaIsEsp32 = Releases.cachedOtaIsEsp32(f, ctx.filesDir),
                         )
                     }
                     Triple(h, b, fw)
@@ -3163,6 +3226,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { backupStore.delete(b) }
             fleetState.offlineBackups.remove(b)
+            loadOfflineData()
         }
     }
 
@@ -3262,7 +3326,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         fleetState.pendingWorkspaceImportJson = null
         fleetState.workspaceArchivePassword = ""
-        withContext(Dispatchers.IO) {
+        val unsavedPasswords = withContext(Dispatchers.IO) {
             for (b in data.backups) runCatching { backupStore.save(b) }
             for ((devKey, records) in data.healthRecords) {
                 val existingTimes = healthStore.records(devKey).map { it.time }.toHashSet()
@@ -3270,9 +3334,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (r.time !in existingTimes) healthStore.add(devKey, r.line, r.time)
                 }
             }
-            for ((k, pw) in data.passwords) {
-                passwordStore.set(k, pw)
-            }
+            data.passwords.count { (k, pw) -> !passwordStore.set(k, pw) }
         }
         savedKeys.clear()
         savedKeys.addAll(passwordStore.keys())
@@ -3291,7 +3353,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             data.healthRecords.size,
             data.passwords.size,
             data.profiles.size,
-        )
+        ) + if (unsavedPasswords > 0) "\n" + str(R.string.workspace_passwords_not_saved, unsavedPasswords) else ""
     }
 
     fun deleteOfflineFirmware(f: FirmwareFile) {
@@ -3379,7 +3441,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Releases.apiToken = tokens.get()
             var downloaded = 0
             var failed = 0
+            var boardsDone = 0
             for ((i, f) in toDownload.withIndex()) {
+                val before = downloaded
                 val stepText = str(R.string.field_prep_downloading, i + 1, toDownload.size, f.env.replace('_', ' '))
                 fleetState.fieldPrepProgress = stepText
                 working = stepText
@@ -3396,10 +3460,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             .onFailure { if (it is CancellationException) throw it else failed++ }
                     }
                 }
+                if (downloaded > before) boardsDone++
             }
-            message = if (failed == 0) str(R.string.field_prep_done, downloaded, toDownload.size)
-            else str(R.string.field_prep_done_partial, downloaded, toDownload.size, failed)
-            messageIsError = downloaded == 0 && failed > 0
+            message = if (failed == 0) str(R.string.field_prep_done, downloaded, boardsDone)
+            else str(R.string.field_prep_done_partial, downloaded, boardsDone, failed)
+            messageIsError = failed > 0
         } finally {
             fleetState.fieldPrepProgress = null
             refreshCacheStats()

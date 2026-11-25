@@ -43,6 +43,7 @@ const uint8_t emoji_icons_5x8[EMOJI_ICON_COUNT][5] = {
   {0x08, 0x18, 0x3F, 0x18, 0x08},  // 35: EMOJI_ARROW_DOWN
   {0x08, 0x1C, 0x3E, 0x08, 0x08},  // 36: EMOJI_ARROW_LEFT
   {0x08, 0x08, 0x3E, 0x1C, 0x08},  // 37: EMOJI_ARROW_RIGHT
+  {0x08, 0x14, 0x22, 0x14, 0x08},  // 38: EMOJI_GENERIC (hollow diamond)
 };
 
 namespace {
@@ -216,6 +217,12 @@ bool isIgnoredEmojiModifier(uint32_t cp) {
          (cp >= 0x1F3FB && cp <= 0x1F3FF);
 }
 
+// Emoji blocks: misc symbols & dingbats, misc symbols & arrows, and the supplementary emoji planes.
+bool isEmojiCodepoint(uint32_t cp) {
+  return (cp >= 0x2600 && cp <= 0x27BF) || (cp >= 0x2B00 && cp <= 0x2BFF) ||
+         (cp >= 0x1F000 && cp <= 0x1FAFF);
+}
+
 }  // namespace
 
 const char* emojiToAscii(uint32_t cp) {
@@ -300,9 +307,33 @@ void translateUTF8ForDisplay(char* dest, const char* src, size_t dest_size,
     }
 
     const EmojiEntry* entry = findEmojiEntry(cp);
+
+    // Every emoji becomes exactly ONE displayed cell (fixed-width lines on small OLEDs):
+    // its own icon, else the generic icon; without icons a single ASCII character or '?'.
+    if (isEmojiCodepoint(cp)) {
+      if (allow_icons) {
+        int icon = (entry && entry->icon >= 0 && entry->icon < 64) ? entry->icon : EMOJI_GENERIC;
+        // Encode U+E000 + icon as 3-byte UTF-8: 0xEE 0x80 (0x80 | icon)
+        if (j + 3 < dest_size) {
+          dest[j++] = (char)0xEE;
+          dest[j++] = (char)0x80;
+          dest[j++] = (char)(0x80 | (uint8_t)icon);
+        } else {
+          break;
+        }
+      } else {
+        char ch = (entry && entry->ascii && entry->ascii[0] && entry->ascii[1] == 0) ? entry->ascii[0] : '?';
+        if (j + 1 < dest_size) dest[j++] = ch;
+        else break;
+      }
+      last_was_block = false;
+      i += seq_len;
+      continue;
+    }
+
+    // Smart punctuation and arrows from the table
     if (entry) {
       if (allow_icons && entry->icon >= 0 && entry->icon < 64) {
-        // Encode U+E000 + icon as 3-byte UTF-8: 0xEE 0x80 (0x80 | icon)
         if (j + 3 < dest_size) {
           dest[j++] = (char)0xEE;
           dest[j++] = (char)0x80;

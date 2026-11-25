@@ -842,4 +842,18 @@
     <string name="workspace_import_btn">Импорт архив</string>
     <string name="workspace_exported">Архивът на работното място е запазен.</string>
     <string name="workspace_imported">Възстановени: %1$d backup-а, %2$d устройства със здраве, %3$d пароли, %4$d профила.</string>
+    <string name="err_update_token">Не може да се запази груповият токен; обновяването е спряно</string>
+    <string name="err_update_bad_apk">Свален файл, който не е това приложение; обновяването е спряно</string>
+    <string name="neighbors_retry">Опитай пак</string>
+    <string name="err_flash_need_dfu">Този фърмуер няма DFU файл; без известна платформа ESP32 не може да се зареди директно</string>
+    <string name="workspace_passwords_not_saved">%1$d пароли не можаха да се запазят сигурно; пазят се само докато приложението е отворено.</string>
+    <string name="msg_password_not_secure">Паролата не можа да се запази сигурно; пази се само докато приложението е отворено</string>
+    <string name="offline_flash_which_title">Кое устройство да се прошие?</string>
+    <string name="offline_flash_which_text">Има свързан компаньон. Изберете кое устройство да получи този фърмуер.</string>
+    <string name="offline_flash_which_companion">Свързаният компаньон (%1$s)</string>
+    <string name="offline_flash_which_other">Друго устройство (самостоятелно, търсене за Bluetooth DFU)</string>
+    <string name="sweep_confirm_title">Да се стартира ли проверката?</string>
+    <string name="sweep_confirm_text">Ще бъдат проверени %1$d ретранслатора. Приблизително време: ~%2$d мин (груба оценка; зависи от обхвата и трафика в ефира).</string>
+    <string name="sweep_confirm_far">%1$d от избраните не са директни: влизането при тях е с flood и изразходва повече ефирно време.</string>
+    <string name="sweep_confirm_go">Старт</string>
 </resources>

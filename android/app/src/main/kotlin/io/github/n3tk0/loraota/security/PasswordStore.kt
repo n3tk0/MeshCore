@@ -52,22 +52,29 @@ class PasswordStore private constructor(
         for ((k, v) in entries) {
             val saved = runCatching {
                 if (encryptedPrefs.getString(k) == null) {
-                    encryptedPrefs.putString(k, cipher.encrypt(v))
-                }
-                true
+                    // commit() so the encrypted entry is on disk before the legacy one is removed
+                    encryptedPrefs.putStringSync(k, cipher.encrypt(v))
+                } else true
             }.getOrDefault(false)
             if (saved) legacy.remove(k)
         }
     }
 
+    /** Passwords that could not be encrypted: kept only for this process, never written to disk in plaintext. */
+    private val sessionOnly = HashMap<String, String>()
+
+    @Synchronized
     fun keys(): Set<String> {
         val all = LinkedHashSet<String>()
+        all.addAll(sessionOnly.keys)
         all.addAll(encryptedPrefs.keys())
         legacyPrefs?.keys()?.let { all.addAll(it) }
         return all
     }
 
+    @Synchronized
     fun get(key: String): String? {
+        sessionOnly[key]?.let { return it }
         encryptedPrefs.getString(key)?.let { enc ->
             when (val res = cipher.decrypt(enc)) {
                 is DecryptResult.Ok -> return res.plain
@@ -79,21 +86,30 @@ class PasswordStore private constructor(
         return legacyPrefs?.getString(key)
     }
 
-    fun set(key: String, password: String) {
+    /**
+     * Stores [password] encrypted. Returns false when Keystore encryption failed: the password is then
+     * kept in memory only (until the app closes) and nothing is written to disk in plaintext.
+     */
+    @Synchronized
+    fun set(key: String, password: String): Boolean {
         val ok = runCatching {
             encryptedPrefs.putString(key, cipher.encrypt(password))
             legacyPrefs?.remove(key)
             true
         }.getOrDefault(false)
-        if (!ok) {
-            // If Keystore is transiently unavailable, drop any stale encrypted entry so the newer
-            // fallback is returned on get() and cleanly re-encrypted on next startup migration.
-            encryptedPrefs.remove(key)
-            legacyPrefs?.putString(key, password)
+        if (ok) {
+            sessionOnly.remove(key)
+        } else {
+            // keep any saved entry: get() returns the session value first, and after a restart the old
+            // password is better than none (the caller tells the user it was not saved)
+            sessionOnly[key] = password
         }
+        return ok
     }
 
+    @Synchronized
     fun remove(key: String) {
+        sessionOnly.remove(key)
         encryptedPrefs.remove(key)
         legacyPrefs?.remove(key)
     }
@@ -104,6 +120,8 @@ class PasswordStore private constructor(
         fun allStrings(): Map<String, String>
         fun getString(key: String): String?
         fun putString(key: String, value: String)
+        /** Writes synchronously; false when it could not be stored. */
+        fun putStringSync(key: String, value: String): Boolean { putString(key, value); return true }
         fun remove(key: String)
     }
 
@@ -113,6 +131,7 @@ class PasswordStore private constructor(
             prefs.all.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
         override fun getString(key: String): String? = prefs.getString(key, null)
         override fun putString(key: String, value: String) { prefs.edit().putString(key, value).apply() }
+        override fun putStringSync(key: String, value: String): Boolean = prefs.edit().putString(key, value).commit()
         override fun remove(key: String) { prefs.edit().remove(key).apply() }
     }
 

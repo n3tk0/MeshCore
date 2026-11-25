@@ -10,7 +10,8 @@ const char* emojiToAscii(uint32_t cp);
 // - Keeps printable ASCII (32..126)
 // - Keeps 2-byte Cyrillic UTF-8 when allow_cyrillic is true
 // - Maps common emojis to 5x8 PUA icons (U+E000..) when allow_icons is true and an icon exists,
-//   otherwise falls back to ASCII replacements (and smart punctuation to ASCII)
+//   otherwise the generic emoji icon; every emoji is exactly ONE displayed cell. Without icons an emoji
+//   becomes a single ASCII character (or '?'). Smart punctuation maps to ASCII.
 // - Collapses consecutive unknown non-ASCII characters into a single CP437 full block (0xDB)
 void translateUTF8ForDisplay(char* dest, const char* src, size_t dest_size,
                              bool allow_cyrillic, bool allow_icons = false);

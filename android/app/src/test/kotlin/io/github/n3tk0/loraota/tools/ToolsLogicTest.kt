@@ -6,9 +6,22 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ToolsLogicTest {
+
+    @Test
+    fun redactSecretsHidesPasswordInConfirmText() {
+        assertEquals("password [REDACTED]", CliHelper.redactSecrets("password hunter2"))
+    }
+
+    @Test
+    fun newPasswordOfParsesPasswordCommand() {
+        assertEquals("abc def", CliHelper.newPasswordOf("ab|Password  abc def "))
+        assertNull(CliHelper.newPasswordOf("password"))
+        assertNull(CliHelper.newPasswordOf("set guest.password 1"))
+    }
 
     @Test
     fun neighborsParserHandlesNoneAndValidLines() {
@@ -50,6 +63,13 @@ class ToolsLogicTest {
         assertTrue(CliHelper.isDangerous("clear stats"))
         assertTrue(CliHelper.isDangerous("password mysecret"))
         assertTrue(CliHelper.isDangerous("set guest.password 1234"))
+        assertTrue(CliHelper.isDangerous("set radio 869.618,125,8,5"))
+        assertTrue(CliHelper.isDangerous("set freq 869.5"))
+        assertTrue(CliHelper.isDangerous("SET TX 20"))
+        assertTrue(CliHelper.isDangerous("tempradio 869.5 125 8 5 30"))
+        assertTrue(CliHelper.isDangerous("start ota"))
+        assertFalse(CliHelper.isDangerous("tempradio off"))
+        assertFalse(CliHelper.isDangerous("get radio"))
         assertFalse(CliHelper.isDangerous("ver"))
         assertFalse(CliHelper.isDangerous("get name"))
         assertFalse(CliHelper.isDangerous("clock sync"))

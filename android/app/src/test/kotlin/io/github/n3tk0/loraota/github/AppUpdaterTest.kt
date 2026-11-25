@@ -128,4 +128,29 @@ class AppUpdaterTest {
         assertNotNull(found)
         assertEquals("0.4.0", found!!.version)
     }
+
+    @Test
+    fun skipsPrereleasesUnlessAsked() {
+        val json = JSONArray(
+            """
+            [
+              {"tag_name": "lora-ota-app-v0.3.0-build.5", "draft": false, "prerelease": true,
+               "assets": [{"name": "LoraOta-x.apk", "browser_download_url": "https://example.com/pre.apk", "size": 1}]},
+              {"tag_name": "lora-ota-app-v0.2.0", "draft": false, "prerelease": false,
+               "assets": [{"name": "LoraOta-y.apk", "browser_download_url": "https://example.com/fin.apk", "size": 1}]}
+            ]
+            """.trimIndent()
+        )
+        assertEquals("0.2.0", AppUpdater.parseLatest(json, includePrerelease = false)!!.version)
+        assertEquals("0.3.0-build.5", AppUpdater.parseLatest(json, includePrerelease = true)!!.version)
+    }
+
+    @Test
+    fun downloadRefusedWithoutSha256Digest() {
+        val rel = AppRelease("t", "1.0.0", "n", "", "a.apk", "https://example.com/a.apk", 1L, "", "")
+        val ex = org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+            AppUpdater.downloadApk(rel, java.io.File("unused-test-dest.apk")) { }
+        }
+        assertTrue(ex.message!!.contains("no SHA-256"))
+    }
 }

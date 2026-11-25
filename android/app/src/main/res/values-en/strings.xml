@@ -841,4 +841,18 @@
     <string name="workspace_import_btn">Import archive</string>
     <string name="workspace_exported">Workspace archive saved.</string>
     <string name="workspace_imported">Restored: %1$d backups, %2$d health devices, %3$d passwords, %4$d profiles.</string>
+    <string name="err_update_token">Could not keep the group token; update stopped</string>
+    <string name="err_update_bad_apk">The downloaded file is not this app; update stopped</string>
+    <string name="neighbors_retry">Retry</string>
+    <string name="err_flash_need_dfu">This firmware has no DFU file; it can only be flashed directly to a known ESP32</string>
+    <string name="workspace_passwords_not_saved">%1$d passwords could not be stored securely; they are kept only until the app closes.</string>
+    <string name="msg_password_not_secure">Could not store the password securely; it is kept only until the app closes</string>
+    <string name="offline_flash_which_title">Which device to flash?</string>
+    <string name="offline_flash_which_text">A companion is connected. Choose which device gets this firmware.</string>
+    <string name="offline_flash_which_companion">Connected companion (%1$s)</string>
+    <string name="offline_flash_which_other">Another device (standalone, over Bluetooth DFU scan)</string>
+    <string name="sweep_confirm_title">Start the sweep?</string>
+    <string name="sweep_confirm_text">%1$d repeaters will be checked. Estimated time: ~%2$d min (rough estimate; depends on range and airtime traffic).</string>
+    <string name="sweep_confirm_far">%1$d of the selected are not direct: their login uses a flood and costs more airtime.</string>
+    <string name="sweep_confirm_go">Start</string>
 </resources>
