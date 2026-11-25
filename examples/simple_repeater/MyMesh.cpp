@@ -118,6 +118,8 @@
 #define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
 #define BATT_CAP_FILE            "/batt_cap"
 #define CHARGER_FILE             "/charger"
+#define SOLAR_BOARD_FILE         "/board"        // the solar board kept (SOLAR_BOARD_AUTO), one byte
+#define MPPT_FILE                "/mppt"         // solar panel set-point (SolarMppt.h): auto / off / fixed volts, ichg limit
 #define IBATCAL_FILE             "/ibatcal"      // IBAT calibration curve (IbatCal.h)
 #define IBATCAL_TMP              "/ibatcal.tmp"
 #define IBUSCAL_FILE             "/ibuscal"      // IBUS (solar input) calibration curve, `charger ina sun`
@@ -391,10 +393,15 @@ uint8_t MyMesh::handleAnonClockReq(const mesh::Identity& sender, uint32_t sender
   return 0;
 }
 
-// the battery: from a sensor that measures it (INA219) when there is one, else the board's own reading
+// the battery: from a sensor that measures it (INA219) when there is one, else the board's own reading.
+// With the battery INA226 (or, on a SOLAR_BOARD_AUTO build, a BQ25798) the sensor is the only source: the board has
+// no battery connected there (the XIAO's BAT pad is open, its ADC reads noise), so 0 means unknown, and every
+// caller treats 0 as "no reading": PowerSaver (under 2500 mV: no change, no battsave step), the OTA power check
+// (under 1000 mV: allowed), status.
 static uint16_t battMilliVolts() {
   uint16_t mv = sensors.getBatteryMilliVolts();
-  return mv ? mv : board.getBattMilliVolts();
+  if (mv || sensors.batteryOnlyFromSensor()) return mv;
+  return board.getBattMilliVolts();
 }
 
 // external power: a charger chip that sees its panel (BQ25798) knows; else the board (USB). On
@@ -1244,6 +1251,12 @@ void MyMesh::begin(FILESYSTEM *fs) {
 #if ENV_INCLUDE_BQ25798
   loadCharger();
 #endif
+#if SOLAR_BOARD_AUTO
+  loadSolarBoard();   // before loadMppt(): the PWM tracker exists only on the CN3791 board
+#endif
+#ifdef SOLAR_MPPT_PWM_PIN
+  loadMppt();
+#endif
   sensors.setDayClock([]() -> uint32_t { return the_instance->getRTCClock()->getCurrentTime(); });
 #ifdef WITH_TELEMETRY_HISTORY
   loadHistory();
@@ -1612,6 +1625,14 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
 #if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
   } else if (memcmp(command, "charger", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleChargerCommand(&command[7], reply);
+#endif
+#if defined(SOLAR_MPPT_PWM_PIN) || ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
+  } else if (memcmp(command, "mppt", 4) == 0 && (command[4] == 0 || command[4] == ' ')) {
+    handleMpptCommand(&command[4], reply);
+#endif
+#if SOLAR_BOARD_AUTO
+  } else if (memcmp(command, "solar", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
+    handleSolarBoardCommand(&command[5], reply);
 #endif
 #if ENV_INCLUDE_INA260
   } else if (memcmp(command, "smppt", 5) == 0 && (command[5] == 0 || command[5] == ' ')) {
@@ -2233,6 +2254,124 @@ void MyMesh::otaLoop() {
 }
 #endif
 
+#if SOLAR_BOARD_AUTO
+/* ------------------------- Solar board (one firmware for the XIAO solar boards) ------------------------- */
+
+// /board: one byte, SOLAR_BOARD_*. Written the first time a board is found; after that a different find does
+// not take over by itself (`solar auto` does): on a BQ25798 board whose charger did not answer at a boot,
+// two INA226 must not start PWM on D0 (its ~CE there).
+void MyMesh::loadSolarBoard() {
+  uint8_t stored = SOLAR_BOARD_NONE;
+  if (!readSmallFile(_fs, SOLAR_BOARD_FILE, &stored, 1) || stored > SOLAR_BOARD_MSPM0) stored = SOLAR_BOARD_NONE;
+  uint8_t found = sensors.solarBoardDetected();
+  if (stored == SOLAR_BOARD_NONE && found != SOLAR_BOARD_NONE && writeSmallFile(_fs, SOLAR_BOARD_FILE, &found, 1)) stored = found;
+  _solar_board_kept = stored;
+  sensors.solarBoardLock(stored);
+}
+
+// solar        "solar cn3791 (mppt on)" / "solar bq25798" / "solar none" / with a mismatch:
+//              "solar bq25798, kept cn3791: check, then `solar auto`"
+// solar auto   keep what was found now (none: forget the kept board)
+void MyMesh::handleSolarBoardCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+  uint8_t found = sensors.solarBoardDetected();
+  const char* note = "";
+  if (strcmp(args, "auto") == 0) {
+    bool ok = found == SOLAR_BOARD_NONE ? (!_fs->exists(SOLAR_BOARD_FILE) || _fs->remove(SOLAR_BOARD_FILE))
+                                        : writeSmallFile(_fs, SOLAR_BOARD_FILE, &found, 1);
+    if (!ok) {
+      note = " (not saved, unchanged)";   // the lock follows the file only: a reboot must not undo it
+    } else {
+      _solar_board_kept = found;
+      sensors.solarBoardLock(found);
+    #ifdef SOLAR_MPPT_PWM_PIN
+      if (found == SOLAR_BOARD_CN3791) loadMppt();   // the tracker's saved mode
+    #endif
+    }
+  } else if (*args) {
+    strcpy(reply, "Err - solar [auto]");
+    return;
+  }
+  int n = sprintf(reply, "solar %s", solarBoardName(found));
+  if (_solar_board_kept != SOLAR_BOARD_NONE && _solar_board_kept != found) {
+    n += sprintf(reply + n, ", kept %s: check, then `solar auto`", solarBoardName(_solar_board_kept));
+  }
+  if (found == SOLAR_BOARD_CN3791) {
+  #ifdef SOLAR_MPPT_PWM_PIN
+    SolarMppt* m = sensors.getSolarMppt();
+    n += sprintf(reply + n, " (mppt %s)", m ? SolarMppt::stateName(m->state()) : "held: kept board differs");
+  #endif
+  }
+  sprintf(reply + n, "%s", note);
+}
+#endif
+
+#ifdef SOLAR_MPPT_PWM_PIN
+/* ------------------------- Solar panel set-point (mppt) ------------------------- */
+
+void MyMesh::loadMppt() {
+  SolarMppt* m = sensors.getSolarMppt();
+  uint8_t raw[SolarMppt::FILE_LEN] = {0};
+  int len = m ? readSmallFileLen(_fs, MPPT_FILE, raw, sizeof(raw)) : 0;   // the old file: 3 bytes, no limit
+  if (len > 0) m->fromFile(raw, len);   // else: auto, no limit
+}
+
+bool MyMesh::saveMppt(SolarMppt* m) {
+  uint8_t raw[SolarMppt::FILE_LEN];
+  m->toFile(raw);
+  return writeSmallFile(_fs, MPPT_FILE, raw, sizeof(raw));
+}
+#endif
+
+#if defined(SOLAR_MPPT_PWM_PIN) || ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
+// mppt                  CN3791: mode, duty, set-point, panel, limit; BQ25798 / MSPM0 boards: the charger's state
+// mppt <x>              the same as `charger vin <x>`: auto|mppt, off (CN3791), <mV> or <volts> ("5.5")
+void MyMesh::handleMpptCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+#ifdef SOLAR_MPPT_PWM_PIN
+  SolarMppt* m = sensors.getSolarMppt();
+  if (*args == 0 && m != NULL) {
+    // integers only: no float printf on the small libc
+    #define MPPT_X100(v) ((int)lroundf((v) * 100.0f) / 100), ((int)lroundf((v) * 100.0f) % 100)
+    SolarMppt::State st = m->state();
+    int n = sprintf(reply, "%s", SolarMppt::stateName(st));
+    if (st == SolarMppt::ST_RELEASED && m->releaseReason()[0]) n += sprintf(reply + n, " (%s)", m->releaseReason());
+    if (st == SolarMppt::ST_FIXED) n += sprintf(reply + n, " %d.%02dV", MPPT_X100(m->fixedVolts()));
+    if (m->scanning()) n += sprintf(reply + n, " (scan)");
+    if (m->driven()) n += sprintf(reply + n, ", duty %d%%", (int)lroundf(m->duty() * 100.0f));
+    else n += sprintf(reply + n, ", pin hi-Z");
+    n += sprintf(reply + n, ", set %d.%02dV", MPPT_X100(m->setpoint()));
+    if (m->hasPanel()) n += sprintf(reply + n, ", panel %d.%02dV %dmA %d.%02dW", MPPT_X100(m->panelV()), (int)lroundf(m->panelA() * 1000.0f), MPPT_X100(m->panelW()));
+    else n += sprintf(reply + n, ", panel n/a");
+    if (m->limitSet()) sprintf(reply + n, ", ichg %u%s", m->ichg(), m->limitStuck() ? " (stuck)" : m->limiting() ? " (limiting)" : "");
+    #undef MPPT_X100
+    return;
+  }
+#endif
+#if ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
+  char cmd[32];
+  if (*args == 0) {
+    cmd[0] = 0;   // the charger's state
+  } else if (strcmp(args, "auto") == 0 || strcmp(args, "mppt") == 0) {
+    strcpy(cmd, "vin mppt");
+  } else if (strchr(args, '.') != NULL || (args[0] >= '0' && args[0] <= '9' && atol(args) < 100)) {
+    char* end = NULL;   // volts, as the old `mppt 5.5`
+    float v = strtof(args, &end);
+    if (end == args || *end != 0 || !(v > 0 && v < 100)) { strcpy(reply, "Err - mppt [auto|off|<mV>|<volts>]"); return; }
+    sprintf(cmd, "vin %ld", lroundf(v * 1000.0f));
+  } else if (strlen(args) < sizeof(cmd) - 5) {
+    sprintf(cmd, "vin %s", args);
+  } else {
+    strcpy(reply, "Err - mppt [auto|off|<mV>|<volts>]");
+    return;
+  }
+  handleChargerCommand(cmd, reply);
+#else
+  strcpy(reply, "Err - no mppt");
+#endif
+}
+#endif
+
 /* ------------------------- Power steps (battery) ------------------------- */
 
 void MyMesh::loadPowerSave() {
@@ -2577,7 +2716,19 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   strcpy(reply, "Err - no charger found (BQ25798 or solar-smart-mppt)");
 }
 #else
+#if SOLAR_BOARD_AUTO && defined(SOLAR_MPPT_PWM_PIN)
+  if (!direct && sensors.solarBoardDetected() == SOLAR_BOARD_CN3791) {
+    handleCn3791Charger(args, val, reply);
+    return;
+  }
+#endif
   if (c == NULL) {
+    strcpy(reply, "Err - no BQ25798 charger found");
+    return;
+  }
+  // without the chip only the status and the INA219's position: a setting would go to /charger and move the
+  // battery chemistry (battsave thresholds) of a board that has no BQ25798
+  if (!direct && *args != 0 && strcmp(args, "ina") != 0) {
     strcpy(reply, "Err - no BQ25798 charger found");
     return;
   }
@@ -2591,7 +2742,14 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     int r = c->scanStart();
     strcpy(reply, r == 0 ? "OK - scan started, ~30 s; `charger scan last` for the result"
                 : r == -1 ? "Err - scan needs MPPT mode (charger vin mppt)"
-                : "Err - scan needs the panel on: sun, PG, no HIZ");
+                : "Err - scan needs the panel on: sun, PG, no HIZ, not weak (charger hybrid)");
+    return;
+  }
+  if (strcmp(args, "hybrid") == 0) {   // test: weak sun = fixed 4.4 V without MPPT (as a BQ25606), MPPT in strong sun; RAM only
+    if (strcmp(val, "on") == 0) c->setHybrid(true);
+    else if (strcmp(val, "off") == 0) c->setHybrid(false);
+    else if (*val) { strcpy(reply, "Err - charger hybrid [on|off]"); return; }
+    sprintf(reply, "hybrid %s%s, falls %u", c->hybrid() ? "on" : "off", c->weak() ? " (weak 4.4V)" : "", (unsigned)c->weakFalls());
     return;
   }
   if (strcmp(args, "reg") == 0) {
@@ -2773,7 +2931,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     s.cutoff_mv = (uint16_t)mv;
   } else {
-    strcpy(reply, "Err - charger [chem|ichg|vin|scan|ntc|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
+    strcpy(reply, "Err - charger [chem|ichg|vin|scan|hybrid|ntc|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
     return;
   }
   if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {
@@ -2789,6 +2947,136 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   }
   sprintf(reply, "OK%s", note);
 }
+
+#if SOLAR_BOARD_AUTO && defined(SOLAR_MPPT_PWM_PIN)
+// `charger` on the CN3791 board (xiao-solar-lite v0.6): the same words as on the BQ25798, done with the panel
+// set-point (SolarMppt: the PWM on D0) and the battery steps; the charge voltage (4.20 V) and the most current
+// (SOLAR_MPPT_ICHG_HW_MA) are set by the parts.
+// charger                       "sun 5.62V 210mA, batt 3.950V +180mA charging, vin mppt 5.40V tracking, ichg 400/600mA limiting, 4.20V liion, cutoff 3000mV"
+// charger vin mppt|off|<mV>     P&O on the panel power / the pin hi-Z (the divider: ~5.2 V) / a fixed point 4600..6900
+// charger ichg <mA>             100..600: under 600 the set-point goes up while the battery takes more (~10 s, +-20 mA)
+// charger scan [last]           the set-point from 6.9 V down to 4.7 V (~24 s), the power at each; P&O from the best
+// charger chem liion            the only cell it charges (4.20 V)
+// charger cutoff <mV>|off       the `battsave` off step (System OFF; there is no ship FET)
+void MyMesh::handleCn3791Charger(const char* args, const char* val, char* reply) {
+  #define X100(v) ((int)lroundf((v) * 100.0f) / 100), ((int)lroundf((v) * 100.0f) % 100)
+  SolarMppt* m = sensors.getSolarMppt();
+  PowerSaverConfig& ps = psave.config();
+  if (*args == 0) {
+    // bounded like BQ25798::formatStatus(reply, 155): the 160-byte reply may already hold a 3-byte "xx|" tag
+    const int MAX = 155;
+    int n = 0;
+    #define ADD(...) do { if (n < MAX) { int k = snprintf(reply + n, MAX - n, __VA_ARGS__); if (k > 0) n += k; if (n > MAX - 1) n = MAX - 1; } } while (0)
+    if (m && m->hasPanel()) ADD("sun %d.%02dV %dmA", X100(m->panelV()), (int)lroundf(m->panelA() * 1000.0f));
+    else ADD("sun ?");
+    uint16_t mv; int ma;
+    if (sensors.inaBatteryNow(&mv, &ma)) {
+      ADD(", batt %u.%03uV %+dmA %s", mv / 1000, mv % 1000, ma, ma > 5 ? "charging" : ma < -5 ? "discharging" : "idle");
+    } else {
+      ADD(", batt ?");
+    }
+    if (m) {
+      const char* mode = m->mode() == SOLAR_MPPT_MODE_AUTO ? "mppt" : m->mode() == SOLAR_MPPT_MODE_OFF ? "off" : "fixed";
+      SolarMppt::State st = m->state();
+      ADD(", vin %s %d.%02dV%s%s", mode, X100(m->setpoint()),
+          m->scanning() ? " scan" : st == SolarMppt::ST_TRACKING ? " tracking" : st == SolarMppt::ST_RELEASED || st == SolarMppt::ST_NO_SENSOR ? " released" : "",
+          st == SolarMppt::ST_NO_SENSOR ? " (no panel INA226)" : "");
+      ADD(", ichg %u/%umA%s", m->ichg(), (unsigned)SOLAR_MPPT_ICHG_HW_MA,
+          m->limitStuck() ? " stuck" : m->limiting() ? " limiting" : m->limitSet() && m->mode() != SOLAR_MPPT_MODE_AUTO ? " (mppt only)" : "");
+    } else {
+      ADD(", vin held (solar), ichg %umA", (unsigned)SOLAR_MPPT_ICHG_HW_MA);
+    }
+    ADD(", 4.20V liion");
+    if (ps.enabled && ps.off_mv) ADD(", cutoff %umV", ps.off_mv);
+    else ADD(", cutoff off");
+    #undef ADD
+    return;
+  }
+  if (strcmp(args, "chem") == 0) {
+    if (strcmp(val, "liion") == 0) strcpy(reply, "OK - liion (CN3791: 4.20V)");
+    else if (strcmp(val, "lifepo4") == 0 || strcmp(val, "lto") == 0 || strcmp(val, "auto") == 0) strcpy(reply, "Err - CN3791 charges to 4.20V: Li-ion/LiPo only");
+    else strcpy(reply, "Err - charger chem liion");
+    return;
+  }
+  if (strcmp(args, "cutoff") == 0) {
+    if (*val == 0) {
+      if (ps.enabled && ps.off_mv) sprintf(reply, "> cutoff %umV (battsave off step)", ps.off_mv);
+      else strcpy(reply, ps.enabled ? "> cutoff off" : "> cutoff off (battsave off)");
+      return;
+    }
+    int mv = strcmp(val, "off") == 0 ? 0 : parseMilli(val);
+    PowerSaverConfig old = ps;
+    if (mv != 0) {
+      ps.off_mv = (uint16_t)mv;
+      if (mv < 3000 || mv > 4500 || !psave.valid()) {
+        ps = old;
+        // the step under it: crit, else low (psave.valid() wants off < both); none: 4500
+        uint16_t above = ps.crit_mv ? ps.crit_mv : ps.low_mv;
+        unsigned top = above && above - 1 < 4500 ? above - 1 : 4500;
+        if (above) sprintf(reply, "Err - charger cutoff off|3000..%u (mV, under battsave %s %u)", top, ps.crit_mv ? "crit" : "low", above);
+        else strcpy(reply, "Err - charger cutoff off|3000..4500 (mV)");
+        return;
+      }
+    } else {
+      ps.off_mv = 0;
+    }
+    if (!savePowerSave()) { ps = old; strcpy(reply, "Err - could not save"); return; }
+    psave_next_check = 0;   // apply at once
+    strcpy(reply, ps.enabled ? "OK - battsave off step" : "OK - battsave off step; battsave is off: `battsave on`");
+    return;
+  }
+  if (strcmp(args, "hybrid") == 0 || strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0 || strcmp(args, "ship") == 0 ||
+      strcmp(args, "ibat") == 0 || strcmp(args, "ibus") == 0 || strcmp(args, "ina") == 0 || strcmp(args, "reg") == 0) {
+    sprintf(reply, "Err - charger %s: n/a on CN3791", args);
+    return;
+  }
+  if (strcmp(args, "vin") != 0 && strcmp(args, "ichg") != 0 && strcmp(args, "scan") != 0) {
+    strcpy(reply, "Err - charger [vin|ichg|scan|chem|cutoff] (CN3791)");
+    return;
+  }
+  if (m == NULL) { strcpy(reply, "Err - held: the kept board differs (see `solar`)"); return; }
+  if (strcmp(args, "scan") == 0) {
+    if (strcmp(val, "last") == 0 || m->scanning()) { m->formatScan(reply, 155); return; }
+    if (*val) { strcpy(reply, "Err - charger scan [last]"); return; }
+    if (!m->scanStart(millis())) {
+      strcpy(reply, m->mode() != SOLAR_MPPT_MODE_AUTO ? "Err - scan needs vin mppt" : "Err - scan needs sun: mppt tracking (see `mppt`)");
+      return;
+    }
+    sprintf(reply, "OK - scan started, ~%d s; `charger scan last` for the result",
+            (int)(SOLAR_MPPT_SCAN_POINTS * SOLAR_MPPT_SCAN_MS / 1000));
+    return;
+  }
+  const char* note = "";
+  if (strcmp(args, "ichg") == 0) {
+    int ma = parseMilli(val);
+    if (ma < SOLAR_MPPT_ICHG_MIN_MA || ma > SOLAR_MPPT_ICHG_HW_MA) {
+      sprintf(reply, "Err - charger ichg %u..%u (mA; %u = the CN3791's own)", (unsigned)SOLAR_MPPT_ICHG_MIN_MA,
+              (unsigned)SOLAR_MPPT_ICHG_HW_MA, (unsigned)SOLAR_MPPT_ICHG_HW_MA);
+      return;
+    }
+    m->setIchg(ma);
+    if (m->limitSet() && m->mode() != SOLAR_MPPT_MODE_AUTO) note = ", works with vin mppt only";
+  } else {   // vin
+    if (strcmp(val, "mppt") == 0) {
+      m->setAuto();
+    } else if (strcmp(val, "off") == 0) {
+      m->setOff();
+      note = ", pin hi-Z (~5.18V)";
+    } else if (strncmp(val, "mppt ", 5) == 0) {
+      strcpy(reply, "Err - charger vin mppt: no share on CN3791 (P&O on the panel power)");
+      return;
+    } else {
+      int mv = parseMilli(val);
+      int lo = (int)lroundf(SOLAR_MPPT_V_MIN * 1000.0f), hi = (int)lroundf(SOLAR_MPPT_V_MAX * 1000.0f);
+      if (mv < lo || mv > hi) { sprintf(reply, "Err - charger vin mppt|off|%d..%d (mV)", lo, hi); return; }
+      m->setFixed(mv / 1000.0f);
+    }
+  }
+  if (!saveMppt(m)) { strcpy(reply, "Err - could not save (set until a restart)"); return; }
+  sprintf(reply, "OK%s", note);
+  #undef X100
+}
+#endif
 #endif   // ENV_INCLUDE_BQ25798
 #endif   // ENV_INCLUDE_BQ25798 || ENV_INCLUDE_INA260
 

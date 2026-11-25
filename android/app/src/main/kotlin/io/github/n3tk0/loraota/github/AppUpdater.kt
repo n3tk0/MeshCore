@@ -1,8 +1,10 @@
 package io.github.n3tk0.loraota.github
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.FileProvider
+import android.content.pm.PackageInstaller
+import android.os.Build
 import io.github.n3tk0.loraota.ota.HttpError
 import io.github.n3tk0.loraota.ota.Releases
 import org.json.JSONArray
@@ -12,8 +14,11 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
-/** A LoRa OTA Android app release published on GitHub (tags starting with `lora-ota-app-`). */
+/** A MeshCore Service Android app release published on GitHub (tags starting with `lora-ota-app-`). */
 data class AppRelease(
     val tag: String,
     val version: String,
@@ -28,7 +33,7 @@ data class AppRelease(
 )
 
 /**
- * Checks GitHub Releases for newer LoRa OTA Android APK builds and downloads them for installation.
+ * Checks GitHub Releases for newer MeshCore Service Android APK builds and downloads them for installation.
  */
 object AppUpdater {
     const val TAG_PREFIX = "lora-ota-app-"
@@ -90,11 +95,12 @@ object AppUpdater {
     }
 
     /** Parses GitHub releases JSON array and returns the newest app release (by version, then list order). */
-    internal fun parseLatest(releases: JSONArray): AppRelease? {
+    internal fun parseLatest(releases: JSONArray, includePrerelease: Boolean = true): AppRelease? {
         val found = ArrayList<AppRelease>()
         for (i in 0 until releases.length()) {
             val rel = releases.getJSONObject(i)
             if (rel.optBoolean("draft")) continue
+            if (!includePrerelease && rel.optBoolean("prerelease")) continue
             val tag = rel.optString("tag_name")
             if (!tag.startsWith(TAG_PREFIX, ignoreCase = true)) continue
             val assets = rel.optJSONArray("assets") ?: continue
@@ -134,10 +140,14 @@ object AppUpdater {
     }
 
     /** Searches up to [maxPages] pages of GitHub releases (newest first) until an app release is found. */
-    internal fun findLatestAcrossPages(maxPages: Int = MAX_PAGES, fetchPage: (Int) -> JSONArray): AppRelease? {
+    internal fun findLatestAcrossPages(
+        maxPages: Int = MAX_PAGES,
+        includePrerelease: Boolean = true,
+        fetchPage: (Int) -> JSONArray,
+    ): AppRelease? {
         for (page in 1..maxPages) {
             val arr = fetchPage(page)
-            parseLatest(arr)?.let { return it }
+            parseLatest(arr, includePrerelease)?.let { return it }
             if (arr.length() < PER_PAGE) break
         }
         return null
@@ -146,15 +156,19 @@ object AppUpdater {
     private const val PER_PAGE = 50
     private const val MAX_PAGES = 5
 
-    /** Fetches the latest app release from GitHub across up to 5 pages of releases. */
-    fun checkLatest(repo: String = Releases.DEFAULT_REPO, token: String? = null): AppRelease? =
-        findLatestAcrossPages { page ->
+    /**
+     * Fetches the latest app release from GitHub across up to 5 pages of releases.
+     * GitHub pre-releases are skipped unless [includePrerelease] (the installed build is itself a pre-release).
+     */
+    fun checkLatest(repo: String = Releases.DEFAULT_REPO, token: String? = null, includePrerelease: Boolean = false): AppRelease? =
+        findLatestAcrossPages(includePrerelease = includePrerelease) { page ->
             val url = "https://api.github.com/repos/$repo/releases?per_page=$PER_PAGE&page=$page"
             JSONArray(String(getBytes(url, token)))
         }
 
     /** Downloads the release APK into [destFile] over HTTPS only, verifying byte count and SHA-256 digest. */
-    fun downloadApk(release: AppRelease, destFile: File, token: String? = null, onProgress: (Int) -> Unit) {
+    fun downloadApk(release: AppRelease, destFile: File, token: String? = null, isActive: () -> Boolean = { true }, onProgress: (Int) -> Unit) {
+        if (release.apkSha256.isEmpty()) throw IOException("The release has no SHA-256 checksum; update refused")
         destFile.parentFile?.mkdirs()
         val tmp = File(destFile.parentFile, "${destFile.name}.part")
         var target = release.apkUrl
@@ -189,6 +203,7 @@ object AppUpdater {
                         while (true) {
                             val n = input.read(buf)
                             if (n < 0) break
+                            if (!isActive()) throw kotlinx.coroutines.CancellationException("APK download cancelled")
                             out.write(buf, 0, n)
                             digest.update(buf, 0, n)
                             read += n
@@ -202,13 +217,12 @@ object AppUpdater {
                         }
                     }
                 }
+                if (!isActive()) throw kotlinx.coroutines.CancellationException("APK download cancelled")
                 if (read <= 0L) throw IOException("empty APK download")
                 if (contentLen > 0L && read != contentLen) throw IOException("truncated APK download ($read / $contentLen bytes)")
                 if (release.apkSize > 0L && read != release.apkSize) throw IOException("APK size mismatch ($read / ${release.apkSize} bytes)")
-                if (release.apkSha256.isNotEmpty()) {
-                    val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
-                    if (actualSha != release.apkSha256) throw IOException("APK SHA-256 checksum mismatch")
-                }
+                val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+                if (actualSha != release.apkSha256) throw IOException("APK SHA-256 checksum mismatch")
                 if (destFile.exists()) destFile.delete()
                 if (!tmp.renameTo(destFile)) {
                     tmp.copyTo(destFile, overwrite = true)
@@ -256,12 +270,50 @@ object AppUpdater {
         throw IOException("too many redirects for $url")
     }
 
-    /** Creates an Intent to launch Android's package installer for [apkFile]. */
-    fun installIntent(ctx: Context, apkFile: File): Intent {
-        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apkFile)
-        return Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    private const val ACTION_INSTALL_STATUS = "io.github.n3tk0.loraota.INSTALL_STATUS"
+
+    /** Result of a PackageInstaller session, reported by [InstallResultReceiver]. */
+    data class InstallResult(val success: Boolean, val message: String?)
+
+    private val installResultsFlow = MutableSharedFlow<InstallResult>(extraBufferCapacity = 8)
+
+    /** Install outcomes (the ViewModel observes this to show errors). */
+    val installResults: SharedFlow<InstallResult> = installResultsFlow.asSharedFlow()
+
+    internal fun reportInstallResult(result: InstallResult) {
+        installResultsFlow.tryEmit(result)
+    }
+
+    /**
+     * Installs [apkFile] through a PackageInstaller session. Blocking (writes the whole APK):
+     * call from a background thread. The outcome arrives through [installResults].
+     */
+    fun installApk(ctx: Context, apkFile: File) {
+        val installer = ctx.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(ctx.packageName)
+        val sessionId = installer.createSession(params)
+        val session = installer.openSession(sessionId)
+        try {
+            apkFile.inputStream().use { input ->
+                session.openWrite("base.apk", 0, apkFile.length()).use { out ->
+                    input.copyTo(out)
+                    session.fsync(out)
+                }
+            }
+            val intent = Intent(ACTION_INSTALL_STATUS)
+                .setPackage(ctx.packageName)
+                .setClass(ctx, InstallResultReceiver::class.java)
+            // the installer fills in the status extras, so the intent must be mutable on API 31+
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+            val pi = PendingIntent.getBroadcast(ctx, sessionId, intent, flags)
+            session.commit(pi.intentSender)
+        } catch (e: Exception) {
+            session.abandon()
+            throw e
+        } finally {
+            session.close()
         }
     }
 }

@@ -100,7 +100,18 @@ object CliHelper {
         if (c.startsWith("password ") || c == "password") return true
         if (c.startsWith("set guest.password ") || c.startsWith("set wifi.clear")) return true
         if (c.startsWith("set prv.key ")) return true
+        // radio changes can cut the repeater off the mesh; `tempradio off` only restores the saved ones
+        if (c.startsWith("set radio ") || c.startsWith("set freq ") || c.startsWith("set tx ")) return true
+        if (c == "tempradio" || (c.startsWith("tempradio ") && c != "tempradio off")) return true
+        if (c == "start ota") return true
         return false
+    }
+
+    /** The new password of a `password <new>` command (tag prefix removed), or null for any other command. */
+    fun newPasswordOf(command: String): String? {
+        val trimmed = TAG_PREFIX.replaceFirst(command.trim(), "").trimStart()
+        if (!trimmed.lowercase(Locale.ROOT).startsWith("password ")) return null
+        return trimmed.substring("password ".length).trim().ifEmpty { null }
     }
 
     /** True when the firmware executes the command immediately without returning a CLI reply. */
@@ -145,8 +156,12 @@ object CliHelper {
             c.startsWith("set wifi.pwd ") ||
             c.startsWith("set prv.key ") ||
             c.startsWith("set bridge.secret ") ||
-            c.startsWith("set pin ")
+            c.startsWith("set pin ") ||
+            SECRET_SET.containsMatchIn(c)
     }
+
+    /** Any `set <key> <value>` whose key names a password, secret or private key (e.g. mqtt.password). */
+    private val SECRET_SET = Regex("^set [a-z0-9._-]*(password|passwd|pwd|secret|prv|private)[a-z0-9._-]* ")
 
     /** True when the command's reply contains a secret value that must be redacted in exported transcripts. */
     fun isSecretReadCommand(command: String): Boolean {
@@ -260,7 +275,7 @@ object DiagnosticReport {
         cliHistory: List<String>,
     ): String {
         val sb = StringBuilder()
-        sb.append("=== LoRa OTA Diagnostic Report ===\n")
+        sb.append("=== MeshCore Service Diagnostic Report ===\n")
         sb.append("App: v").append(appVersion).append(" (").append(versionCode).append(")")
             .append(if (isGroupApk) " [Group]\n" else " [Public]\n")
         sb.append("Device: ").append(deviceModel).append(" (Android ").append(androidVersion).append(")\n")

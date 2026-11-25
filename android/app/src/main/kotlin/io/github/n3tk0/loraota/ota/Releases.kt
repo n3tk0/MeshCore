@@ -22,6 +22,13 @@ data class FirmwareFile(val release: String, val env: String, val version: Strin
     val publishedMillis get() = runCatching { java.time.Instant.parse(published).toEpochMilli() }.getOrDefault(0L)
     val hasLoraOta get() = file.isNotEmpty()
     val hasDfu get() = dfu.isNotEmpty()
+    /** The plain app .bin can be flashed over Wi-Fi only on an ESP32; for an unknown platform use the DFU file. */
+    /**
+     * The LoRa-OTA .bin is flashable over Wi-Fi only on an ESP32. [platform] is the running repeater's; when it is
+     * unknown (offline, nobody logged in) [esp32Image] says whether the cached .bin is an ESP32 app image.
+     */
+    fun plainBinFlashable(platform: Int?, esp32Image: Boolean = false) = !hasDfu && hasLoraOta &&
+        (platform == OtaProtocol.PLATFORM_ESP32 || (platform == null && esp32Image))
     val dfuIsZip get() = dfu.endsWith(".zip", ignoreCase = true)
     /** Made by "Build Firmware for Boards" from the app ([release] is build-<run number>), not a release. */
     val isBuild get() = release.startsWith(BUILD_PREFIX)
@@ -438,6 +445,17 @@ object Releases {
 
     fun isFileCached(f: FirmwareFile, cache: File): Boolean =
         f.hasLoraOta && f.sha256.isNotEmpty() && File(binDir(cache), "${f.sha256}.bin").isFile
+
+    /** ESP32 app images start with magic byte 0xE9; an nRF52 .bin starts with the stack pointer (0x..20). */
+    fun isEsp32Image(data: ByteArray?): Boolean = data != null && data.size > 24 && data[0] == 0xE9.toByte()
+
+    /** True when the cached LoRa-OTA .bin of [f] is an ESP32 app image (reads only its first byte). */
+    fun cachedOtaIsEsp32(f: FirmwareFile, cache: File): Boolean {
+        if (!isFileCached(f, cache)) return false
+        return runCatching {
+            File(binDir(cache), "${f.sha256}.bin").inputStream().use { it.read() == 0xE9 }
+        }.getOrDefault(false)
+    }
 
     fun isDfuCached(f: FirmwareFile, cache: File): Boolean =
         f.hasDfu && f.dfuSha256.isNotEmpty() && File(binDir(cache), "${f.dfuSha256}.bin").isFile

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="companion_hint">Updates a repeater over LoRa through your companion. Turn the companion on and find it.</string>
+    <string name="app_name">MeshCore Service</string>
+    <string name="tools_backup_short">Backup</string>
+    <string name="companion_hint">Connect your companion to manage, check and update your repeaters. Without one, see “My repeaters” and Offline.</string>
     <string name="scan">Find companion</string>
     <string name="scanning">Searching…</string>
     <string name="no_repeaters">The companion has no repeaters in its contacts.</string>
@@ -20,7 +22,7 @@
     <string name="msg_stopped">Stopped. The repeater keeps its old firmware.</string>
     <string name="msg_bluetooth_off">Bluetooth is off.</string>
     <string name="msg_location_off">Turn on Location in the phone settings: on Android 7-11 a Bluetooth scan finds nothing without it.</string>
-    <string name="msg_no_location_permission">The app may not use Location (on Android 7-11 a Bluetooth scan needs it). Allow it in the phone settings: Apps → LoRa OTA → Permissions.</string>
+    <string name="msg_no_location_permission">The app may not use Location (on Android 7-11 a Bluetooth scan needs it). Allow it in the phone settings: Apps → MeshCore Service → Permissions.</string>
     <string name="msg_connect_failed">Could not connect to the companion.</string>
     <string name="msg_not_admin">Not logged in as admin. Check the password.</string>
     <string name="msg_releases_failed">Releases did not load: %1$s</string>
@@ -112,6 +114,19 @@
     <string name="status_batt_uptime">Battery %1$.2f V · up %2$s</string>
     <string name="status_radio">Noise %1$d dBm · last packet RSSI %2$d dBm</string>
     <string name="status_packets">Packets: received %1$d, sent %2$d · airtime %3$s</string>
+    <string name="status_battery">Battery</string>
+    <string name="status_route_direct">Direct</string>
+    <string name="status_route_unknown">Route ?</string>
+    <plurals name="status_route_hops">
+        <item quantity="one">%d hop</item>
+        <item quantity="other">%d hops</item>
+    </plurals>
+    <string name="status_uptime">Uptime</string>
+    <string name="status_noise">Noise</string>
+    <string name="status_rx_tx">RX / TX</string>
+    <string name="status_noise_value">%1$d dBm</string>
+    <string name="status_airtime">Airtime %1$s</string>
+    <string name="status_snr">SNR %1$.1f dB</string>
     <string name="status_none">The repeater sent no status.</string>
     <string name="dur_days">%1$dd %2$dh</string>
     <string name="dur_hours">%1$dh %2$dmin</string>
@@ -537,6 +552,7 @@
     <string name="settings_title">Settings</string>
     <string name="menu_update_available">New version v%1$s</string>
     <string name="settings_appearance">Appearance</string>
+    <string name="settings_dynamic_color">Colors from wallpaper (Android 12+)</string>
     <string name="settings_theme">Theme</string>
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
@@ -579,7 +595,7 @@
     <string name="settings_group_keep_token">Keep group token after update</string>
     <string name="settings_group_drop_warning">If unchecked, the group token will be removed and “New build” will require a personal token.</string>
     <string name="settings_unknown_sources_title">Allow installing APKs</string>
-    <string name="settings_unknown_sources_text">Android requires “Install unknown apps” permission for LoRa OTA. Enable it, then tap “Install downloaded APK” again.</string>
+    <string name="settings_unknown_sources_text">Android requires “Install unknown apps” permission for MeshCore Service. Enable it, then tap “Install downloaded APK” again.</string>
     <string name="settings_open_android_settings">Open settings</string>
     <string name="settings_redownload">Download again</string>
     <string name="build_options_badge">Options</string>
@@ -841,4 +857,94 @@
     <string name="workspace_import_btn">Import archive</string>
     <string name="workspace_exported">Workspace archive saved.</string>
     <string name="workspace_imported">Restored: %1$d backups, %2$d health devices, %3$d passwords, %4$d profiles.</string>
+    <string name="err_update_token">Could not keep the group token; update stopped</string>
+    <string name="err_update_bad_apk">The downloaded file is not this app; update stopped</string>
+    <string name="neighbors_retry">Retry</string>
+    <string name="err_flash_need_dfu">This firmware has no DFU file; it can only be flashed directly to a known ESP32</string>
+    <string name="workspace_passwords_not_saved">%1$d passwords could not be stored securely; they are kept only until the app closes.</string>
+    <string name="msg_password_not_secure">Could not store the password securely; it is kept only until the app closes</string>
+    <string name="offline_flash_which_title">Which device to flash?</string>
+    <string name="offline_flash_which_text">A companion is connected. Choose which device gets this firmware.</string>
+    <string name="offline_flash_which_companion">Connected companion (%1$s)</string>
+    <string name="offline_flash_which_other">Another device (standalone, over Bluetooth DFU scan)</string>
+    <string name="sweep_confirm_title">Start the sweep?</string>
+    <string name="sweep_confirm_text">%1$d repeaters will be checked. Estimated time: ~%2$d min (rough estimate; depends on range and airtime traffic).</string>
+    <string name="sweep_confirm_far">%1$d of the selected are not direct: their login uses a flood and costs more airtime.</string>
+    <string name="sweep_confirm_go">Start</string>
+
+    <!-- My repeaters (start screen) -->
+    <string name="known_title">My repeaters</string>
+    <string name="known_empty">No repeaters known yet. After the first health check or backup, their name, battery and state show here even without a connection.</string>
+    <string name="known_connect_open">Connect and open</string>
+    <string name="known_checked">checked %1$s</string>
+    <string name="known_never_checked">never checked</string>
+    <string name="known_health_ok">OK</string>
+    <string name="known_health_warn">Attention</string>
+    <string name="known_health_bad">Problem</string>
+    <string name="known_health_unknown">Not checked</string>
+    <string name="known_pending">After connecting, this opens: %1$s</string>
+    <string name="known_not_in_contacts">“%1$s” is not in this companion\'s contacts. Look for it in the list or add it again.</string>
+    <string name="known_pick_companion">Pick a companion from the list to connect and open the repeater.</string>
+    <string name="known_show_all">Show all (%1$d)</string>
+    <string name="known_show_less">Show less</string>
+
+    <!-- Profile to several repeaters -->
+    <string name="pbatch_open">Apply to several</string>
+    <string name="pbatch_title">Profile to several repeaters</string>
+    <string name="pbatch_hint">Each repeater is handled in turn: login, automatic backup, read its settings, and write only the differences. Name, GPS and passwords are never written.</string>
+    <string name="pbatch_no_profiles">No saved profiles. Save one repeater\'s settings as a profile first.</string>
+    <string name="pbatch_profile">Profile</string>
+    <plurals name="pbatch_start">
+        <item quantity="one">Apply to %1$d repeater</item>
+        <item quantity="other">Apply to %1$d repeaters</item>
+    </plurals>
+    <string name="pbatch_confirm_title">Apply “%1$s”?</string>
+    <string name="pbatch_confirm_count">%1$d repeaters, about %2$d min.</string>
+    <string name="pbatch_confirm_text">A backup is made before each one. Only settings that differ are written. Tap Stop to end it; the unfinished one stays for a retry.</string>
+    <string name="pbatch_go">Apply</string>
+    <string name="pbatch_progress">Working on %1$d of %2$d…</string>
+    <string name="pbatch_summary_title">Result</string>
+    <string name="pbatch_summary_counts">Applied: %1$d (%2$d settings) · Unchanged: %3$d · Failed: %4$d · Waiting: %5$d</string>
+    <string name="pbatch_retry">Retry failed (%1$d)</string>
+    <string name="pbatch_new">New selection</string>
+    <string name="pbatch_st_applied">applied: %1$d settings</string>
+    <string name="pbatch_st_unchanged">unchanged</string>
+    <string name="pbatch_st_skipped">skipped</string>
+    <string name="pbatch_st_failed">failed</string>
+    <string name="pbatch_st_running">working…</string>
+    <string name="pbatch_st_pending">waiting</string>
+    <string name="pbatch_profile_gone">The profile “%1$s” is gone.</string>
+    <string name="pbatch_notif">Profile “%1$s” to repeaters</string>
+    <string name="pbatch_report">Applied: %1$d · unchanged: %2$d · skipped: %3$d · failed: %4$d</string>
+    <string name="pbatch_invalid">invalid values: %1$s</string>
+    <string name="pbatch_unsupported">%1$d settings the repeater does not have</string>
+    <string name="pbatch_applied_keys">wrote %1$d: %2$s</string>
+    <string name="pbatch_restart">radio changes after a restart</string>
+
+    <!-- Compare two backups -->
+    <string name="compare_title">Compare backups</string>
+    <string name="compare_old">Old: %1$s</string>
+    <string name="compare_new">New: %1$s</string>
+    <string name="compare_other_device">The two backups are from different devices.</string>
+    <string name="compare_none">No differences between the two backups.</string>
+    <string name="compare_settings">Settings</string>
+    <string name="compare_channels">Channels</string>
+    <string name="compare_contacts">Contacts</string>
+    <string name="compare_contacts_count">%1$d → %2$d (%3$s)</string>
+    <string name="compare_secret_changed">value differs (hidden)</string>
+    <string name="map_title">Network map</string>
+    <string name="map_open">Network map</string>
+    <string name="map_open_hint">Repeaters with GPS and the links between them (SNR)</string>
+    <string name="map_back">Back</string>
+    <string name="map_fit">Fit all</string>
+    <string name="map_close">Close</string>
+    <string name="map_cancel">Cancel</string>
+    <string name="map_download">Download</string>
+    <string name="map_save_offline">Save area offline</string>
+    <string name="map_saving">Downloading tiles…</string>
+    <string name="map_save_done">The area is saved for offline use.</string>
+    <string name="map_save_failed">The download did not fully succeed. Try again with an internet connection.</string>
+    <string name="map_no_nodes">No repeaters with GPS coordinates (lat/lon = 0 are skipped).</string>
+    <string name="map_save_confirm">%1$d tiles (zoom %2$d–%3$d) will be downloaded from OpenStreetMap for the visible area. Continue?</string>
+    <string name="map_save_too_many">The area is too large: %1$d tiles (maximum %2$d). Zoom in and try again.</string>
 </resources>

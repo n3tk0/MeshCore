@@ -12,7 +12,11 @@ void GenericVibration::drive(bool on) {
     for (int i = 0; i < HWPWM_MODULE_NUM; i++) {
       if (HwPWMx[i]->checkPin(PIN_VIBRATION)) {
         HwPWMx[i]->removePin(PIN_VIBRATION);
-        if (HwPWMx[i]->releaseOwnership(0x676f6c41)) HwPWMx[i]->stop();   // analogWrite()'s token
+        // stop() first: releaseOwnership() refuses while the module is enabled (and removePin() leaves it on)
+        if (HwPWMx[i]->isOwner(0x676f6c41) && HwPWMx[i]->usedChannelCount() == 0) {   // analogWrite()'s token
+          HwPWMx[i]->stop();
+          HwPWMx[i]->releaseOwnership(0x676f6c41);
+        }
       }
     }
   #endif

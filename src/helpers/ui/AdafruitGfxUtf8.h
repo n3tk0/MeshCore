@@ -130,7 +130,8 @@ public:
       else if (c != '\r') drawCodepoint(c);
       return 1;
     }
-    if (c == 0xDB) { drawBlock(); return 1; }   // CP437 solid block from translateUTF8ToBlocks
+    // 0xDB is both the CP437 block (from translateUTF8ForDisplay, followed by ASCII or end) and a valid
+    // 2-byte lead (U+06C0..): as a lead it draws the block itself when no continuation byte follows.
     if ((c & 0xE0) == 0xC0) { _u8_cp = c & 0x1F; _u8_rem = 1; return 1; }
     if ((c & 0xF0) == 0xE0) { _u8_cp = c & 0x0F; _u8_rem = 2; return 1; }
     if ((c & 0xF8) == 0xF0) { _skip = 3; drawBlock(); return 1; }

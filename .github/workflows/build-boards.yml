@@ -123,7 +123,7 @@ on:
           - Xiao_C3_repeater
           - Xiao_nrf52_repeater
           - Xiao_nrf52_solar_lite_repeater
-          - Xiao_nrf52_solar_ultralite_repeater
+          - Xiao_nrf52_solar_repeater
           - Xiao_rp2040_repeater
           - Xiao_S3_repeater
           - Xiao_S3_WIO_repeater

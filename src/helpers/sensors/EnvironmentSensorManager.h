@@ -5,6 +5,28 @@
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
 
+// INA226_BATTERY=1: the primary INA226 (0x44) is the battery (voltage and charge gauge); else it is telemetry only.
+// INA226_LOW_POWER=1: INA226s are read in triggered mode with averaging (they rest at ~2 uA in between).
+#ifndef INA226_BATTERY
+#define INA226_BATTERY 0
+#endif
+#ifndef INA226_LOW_POWER
+#define INA226_LOW_POWER 0
+#endif
+// SOLAR_BOARD_AUTO=1: one firmware for the XIAO solar boards, the board is found at boot (see begin()):
+// BQ25798 on 0x6B = xiao-solar-lite v0.5 (D0 = ~CE), INA226 on 0x44 and 0x45 = xiao-solar-lite v0.6 (CN3791,
+// D0 = MPPT PWM, 0x44 = battery), MSPM0 on 0x42 = xiao-solar / solar-smart-mppt. Build with the flags of all
+// of them (ENV_INCLUDE_BQ25798, ENV_INCLUDE_INA226, INA226_BATTERY, SOLAR_MPPT_PWM_PIN, BQ25798_PIN_CE ...):
+// INA226_BATTERY and the PWM then apply only on the board that has them.
+#ifndef SOLAR_BOARD_AUTO
+#define SOLAR_BOARD_AUTO 0
+#endif
+#define SOLAR_BOARD_NONE     0
+#define SOLAR_BOARD_BQ25798  1
+#define SOLAR_BOARD_CN3791   2
+#define SOLAR_BOARD_MSPM0    3
+const char* solarBoardName(uint8_t b);   // "none" | "bq25798" | "cn3791" | "mspm0" | "?"
+
 class EnvironmentSensorManager : public SensorManager {
 protected:
   static const int MAX_ACTIVE_SENSORS = 16;
@@ -26,9 +48,6 @@ protected:
   ActiveSensor _active_sensors[MAX_ACTIVE_SENSORS];
   int          _active_sensor_count = 0;
   uint8_t      next_available_channel = TELEM_CHANNEL_SELF + 1;
-  bool         _ina219_found = false;   // its bus is taken as the battery
-  bool         _ina226_found = false;   // primary INA226 (0x44): its bus is taken as the battery
-  bool         _bq_found = false;       // a BQ25798 charger: it measures the battery (before an INA219)
   #if ENV_INCLUDE_BQ25798
   bool bqActive() const;
   void bqLoop();
@@ -37,6 +56,8 @@ protected:
   void noteRead(void (*query)(uint8_t, uint8_t, CayenneLPP&), uint32_t errors_before);
   void retryOffSensors();
   void sampleBatteryGauge();
+  bool readIna226Battery(uint16_t* mv, float* ma);
+  void mpptLoop();
   uint32_t gaugeDay() const;
 
   bool     gps_detected = false;
@@ -67,10 +88,21 @@ public:
   uint16_t getBatteryMilliVolts() override;
   void loop() override;
   BatteryGauge* getBatteryGauge() override;
+  #ifdef SOLAR_MPPT_PWM_PIN
+  SolarMppt* getSolarMppt() override;
+  #endif
   #if ENV_INCLUDE_BQ25798
   BQ25798* getCharger() override;
+  #endif
+  #if ENV_INCLUDE_BQ25798 || defined(SOLAR_MPPT_PWM_PIN)
   int externalPower() override;
   #endif
+  uint8_t solarBoardDetected() const override;
+  uint8_t solarBoardActive() const override;
+  void solarBoardLock(uint8_t stored) override;
+  bool batteryOnlyFromSensor() const override;
+  // the battery INA226 (0x44) now: mV and mA, + = charging; false: not the battery sensor here, or no read
+  bool inaBatteryNow(uint16_t* mv, int* ma);
   int getNumSettings() const override;
   const char* getSettingName(int i) const override;
   const char* getSettingValue(int i) const override;

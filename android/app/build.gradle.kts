@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("app.cash.paparazzi")
 }
 
 // The group's GitHub token for "New build" (Petko's choice, risk accepted 2026-10-22): from the environment,
@@ -31,6 +32,8 @@ android {
         buildConfigField("String", "GROUP_TOKEN_A", "\"${hexOf(ByteArray(groupToken.size) { (groupToken[it].toInt() xor groupKey[it].toInt()).toByte() })}\"")
         buildConfigField("String", "GROUP_TOKEN_B", "\"${hexOf(groupKey)}\"")
         buildConfigField("boolean", "IS_GROUP_APK", "${groupToken.isNotEmpty()}")
+        // set by CI for builds published as a GitHub pre-release (branches other than main, -rc tags)
+        buildConfigField("boolean", "IS_PRERELEASE", "${System.getenv("LORAOTA_PRERELEASE")?.trim() == "true"}")
     }
 
     // the release key: from the environment (GitHub Secrets in CI), so every version installs over the last
@@ -71,6 +74,13 @@ android {
     }
 }
 
+// The screenshot tests (Paparazzi, see tools/android-screens.sh) run only with the record/verify tasks,
+// not with the plain unit tests.
+val paparazziRun = gradle.startParameter.taskNames.any { it.contains("paparazzi", ignoreCase = true) }
+tasks.withType<Test>().configureEach {
+    if (!paparazziRun) filter.excludeTestsMatching("io.github.n3tk0.loraota.screens.*")
+}
+
 dependencies {
     implementation(project(":delta"))
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
@@ -82,6 +92,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("no.nordicsemi.android:dfu:2.9.0")   // Bluetooth DFU of nRF52 boards (2.10+ needs compileSdk 36)
+    implementation("org.osmdroid:osmdroid-android:6.1.20")   // network map; own tile cache, no API key
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
