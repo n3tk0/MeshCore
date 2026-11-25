@@ -21,7 +21,7 @@
 #define SOLAR_MPPT_R_BOT   100000
 #endif
 #ifndef SOLAR_MPPT_R_INJ
-#define SOLAR_MPPT_R_INJ   210000   // xiao-solar-ultralite v0.2: R6 200k + the RC filter's R7 10k in series
+#define SOLAR_MPPT_R_INJ   210000   // xiao-solar-lite v0.6: R6 200k + the RC filter's R7 10k in series
 #endif
 #ifndef SOLAR_MPPT_VREF
 #define SOLAR_MPPT_VREF    1.205f   // the CN3791's MPPT pin regulation voltage

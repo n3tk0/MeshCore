@@ -260,7 +260,7 @@ One command for every board with a BQ25798. With the chip on the node's own I2C 
   - `hybrid`, `ntc`, `shipfet`, `ship`, `ibat`, `ibus`, `ina`, `reg`: `Err - charger <x>: n/a on CN3791`.
 - `mppt <x>` on the BQ25798 / MSPM0 boards: the same as `charger vin <x>` (`mppt auto` = `charger vin mppt`; volts are taken as `5.5`); bare `mppt` = `charger`.
 
-### Solar panel set-point - mppt (Repeater, xiao-solar-ultralite)
+### Solar panel set-point - mppt (Repeater, xiao-solar-lite v0.6)
 
 For the xiao-solar-lite v0.6 (CN3791) board in `Xiao_nrf52_solar_repeater` (`-D SOLAR_MPPT_PWM_PIN=D0`, only when `solar` says cn3791): the charger is a CN3791 buck MPPT. Its panel voltage set-point comes from the 330k/100k divider on its MPPT pin; the firmware shifts it with a PWM from D0 (62.5 kHz, 8 bit) through 10k + 1 uF and 200k (in series: 210k): `Vset = 1.205 * (1 + 330/100) + (1.205 - duty * 3.3) * 330/210`. The pin as input without pull (hi-Z) is the default 5.18 V; duty 0 gives ~7.08 V, a higher duty a lower voltage. The resistors are `-D SOLAR_MPPT_R_TOP=330000 / SOLAR_MPPT_R_BOT=100000 / SOLAR_MPPT_R_INJ=210000`. The set-point is kept between 4.6 and 6.9 V.
 
@@ -357,8 +357,8 @@ For the xiao-solar-lite v0.6 (CN3791) board in `Xiao_nrf52_solar_repeater` (`-D 
 
 **INA226 (0x44 and 0x45):**
 - The INA226 at 0x44 is a telemetry channel (voltage, current, power, signed current) on every board. It is the battery (voltage for status, telemetry, `power`, `battsave` and the OTA check, and the charge gauge for the % / time left / mAh) only in a build with `-D INA226_BATTERY=1` (battery on Vin+, load and charger on Vin-, 100 mOhm shunt). The battery percentage (`addPercentage` in telemetry) is carried only by the sensor that feeds the gauge. With an INA219 in the battery line as well, the INA219 is the battery and the INA226 stays telemetry; the voltage always comes from the same sensor as the gauge.
-- With `INA226_BATTERY` the board's own ADC is never used (on the xiao-solar-ultralite the XIAO BAT pad is not connected): if the battery INA226 cannot be read or is turned off, the last good reading is used; before the first good one the battery is unknown (0 mV): `battsave`, the OTA battery check and the status take that as "no reading" (no power step, no refusal).
-- A second INA226 at 0x45 (found by its manufacturer ID) is another telemetry channel: the solar input of the xiao-solar-ultralite (panel on Vin+, charger on Vin-). It is also what `mppt` measures.
+- With `INA226_BATTERY` the board's own ADC is never used (on the xiao-solar-lite v0.6 the XIAO BAT pad is not connected): if the battery INA226 cannot be read or is turned off, the last good reading is used; before the first good one the battery is unknown (0 mV): `battsave`, the OTA battery check and the status take that as "no reading" (no power step, no refusal).
+- A second INA226 at 0x45 (found by its manufacturer ID) is another telemetry channel: the solar input of the xiao-solar-lite v0.6 (panel on Vin+, charger on Vin-). It is also what `mppt` measures.
 - `-D INA226_LOW_POWER=1`: both are read in triggered mode with 16 averages (about 35 ms a reading, the chip rests at ~2 uA in between instead of ~330 uA). A reading that does not finish within 80 ms counts as a failed read, like an I2C error (3 in a row turn the sensor off).
 
 ---
