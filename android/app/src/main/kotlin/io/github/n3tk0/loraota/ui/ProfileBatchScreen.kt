@@ -155,7 +155,7 @@ private fun BatchPicker(vm: AppViewModel) {
     val picked = candidates.count { vm.profileBatchPicked[hex(it.publicKey)] == true }
     Button(
         onClick = { vm.profileBatchAsk = true },
-        enabled = !vm.busy && picked > 0 && vm.profileBatchProfile != null,
+        enabled = !vm.busy && vm.hasCompanionConnection && picked > 0 && vm.profileBatchProfile != null,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(pluralStringResource(R.plurals.pbatch_start, picked, picked))
@@ -174,7 +174,7 @@ private fun BatchPicker(vm: AppViewModel) {
                     Text(stringResource(R.string.pbatch_confirm_text), style = MaterialTheme.typography.bodySmall)
                 }
             },
-            confirmButton = { TextButton(onClick = { vm.startProfileBatch() }, enabled = !vm.busy) { Text(stringResource(R.string.pbatch_go)) } },
+            confirmButton = { TextButton(onClick = { vm.startProfileBatch() }, enabled = !vm.busy && vm.hasCompanionConnection) { Text(stringResource(R.string.pbatch_go)) } },
             dismissButton = { TextButton(onClick = { vm.profileBatchAsk = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
@@ -245,7 +245,7 @@ private fun BatchReport(vm: AppViewModel, b: ProfileBatchState) {
     if (!running && !vm.busy) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (b.retryable > 0) {
-                Button(onClick = { vm.retryProfileBatch() }) { Text(stringResource(R.string.pbatch_retry, b.retryable)) }
+                Button(onClick = { vm.retryProfileBatch() }, enabled = !vm.busy && vm.hasCompanionConnection) { Text(stringResource(R.string.pbatch_retry, b.retryable)) }
             }
             OutlinedButton(onClick = { vm.newProfileBatch() }) { Text(stringResource(R.string.pbatch_new)) }
         }

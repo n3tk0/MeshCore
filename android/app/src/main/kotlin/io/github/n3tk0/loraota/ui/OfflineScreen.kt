@@ -85,6 +85,8 @@ import java.util.Locale
 @Composable
 fun OfflineScreen(vm: AppViewModel) {
     var tab by rememberSaveable { mutableIntStateOf(vm.offlineFocusTab) }
+    // the starting tab/search are read once (by this and the first list); after that the hub starts clean
+    androidx.compose.runtime.LaunchedEffect(Unit) { vm.consumeOfflineFocus() }
     var deleteCandidate by remember { mutableStateOf<Backup?>(null) }
     var deleteFirmwareCandidate by remember { mutableStateOf<FirmwareFile?>(null) }
     var showExportDialog by rememberSaveable { mutableStateOf(false) }
@@ -1068,7 +1070,8 @@ private fun OfflineAuditAndMeshTab(
         }
     }
     if (showMap) {
-        val mapData = remember(vm.observedNeighbors, vm.offlineBackups, vm.knownDeviceNames, vm.offlineHealth) {
+        // derivedStateOf: rebuilt when the (snapshot) collections change while the map is open
+        val mapData by remember { androidx.compose.runtime.derivedStateOf {
             val snippets = HashMap<String, String>()
             for ((k, list) in vm.offlineHealth) {
                 val st = list.lastOrNull()?.let { io.github.n3tk0.loraota.ota.SelfTest.parse(it.line) } ?: continue
@@ -1081,7 +1084,7 @@ private fun OfflineAuditAndMeshTab(
             io.github.n3tk0.loraota.tools.NetworkMapLogic.build(
                 vm.offlineBackups.toList(), vm.observedNeighbors.toMap(), vm.knownDeviceNames.toMap(), snippets,
             )
-        }
+        } }
         NetworkMapDialog(mapData) { showMap = false }
     }
 

@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -110,40 +111,42 @@ private fun NetworkMapContent(data: NetworkMapData, onBack: () -> Unit) {
             minZoomLevel = 3.0
             maxZoomLevel = 19.0
             zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.SHOW_AND_FADEOUT)
-            for (l in data.links) {
-                val line = Polyline(this).apply {
-                    setPoints(listOf(GeoPoint(l.a.lat, l.a.lon), GeoPoint(l.b.lat, l.b.lon)))
-                    outlinePaint.color = linkColor(l.snrClass)
-                    outlinePaint.strokeWidth = if (l.asymmetric) 11f else 8f
-                    if (l.asymmetric) outlinePaint.pathEffect = DashPathEffect(floatArrayOf(28f, 16f), 0f)
-                    setOnClickListener { _, _, _ -> selected = l; true }
-                }
-                overlays.add(line)
-            }
-            for (n in data.nodes) {
-                overlays.add(
-                    Marker(this).apply {
-                        position = GeoPoint(n.lat, n.lon)
-                        title = n.name
-                        if (n.snippet.isNotEmpty()) snippet = n.snippet
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                    },
-                )
-            }
         }
     }
 
-    fun fit() {
-        val b = data.bounds ?: return
-        mapView.post {
-            if (b.north - b.south < 0.002 && b.east - b.west < 0.002) {
-                mapView.controller.setZoom(14.0)
-                mapView.controller.setCenter(GeoPoint((b.north + b.south) / 2, (b.east + b.west) / 2))
-            } else {
-                mapView.zoomToBoundingBox(BoundingBox(b.north, b.east, b.south, b.west), false, 96)
+    // markers and links follow the data: the Offline hub may still be loading when the map opens
+    var fitted by remember { mutableStateOf(false) }
+    LaunchedEffect(data) {
+        mapView.overlays.clear()
+        selected = null
+        for (l in data.links) {
+            val line = Polyline(mapView).apply {
+                setPoints(listOf(GeoPoint(l.a.lat, l.a.lon), GeoPoint(l.b.lat, l.b.lon)))
+                outlinePaint.color = linkColor(l.snrClass)
+                outlinePaint.strokeWidth = if (l.asymmetric) 11f else 8f
+                if (l.asymmetric) outlinePaint.pathEffect = DashPathEffect(floatArrayOf(28f, 16f), 0f)
+                setOnClickListener { _, _, _ -> selected = l; true }
             }
+            mapView.overlays.add(line)
+        }
+        for (n in data.nodes) {
+            mapView.overlays.add(
+                Marker(mapView).apply {
+                    position = GeoPoint(n.lat, n.lon)
+                    title = n.name
+                    if (n.snippet.isNotEmpty()) snippet = n.snippet
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                },
+            )
+        }
+        mapView.invalidate()
+        if (!fitted && data.bounds != null) {
+            fitted = true
+            fit(mapView, data)
         }
     }
+
+    fun fit() = fit(mapView, data)
 
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
@@ -155,7 +158,6 @@ private fun NetworkMapContent(data: NetworkMapData, onBack: () -> Unit) {
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         mapView.onResume()
-        fit()
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(obs)
             task?.cancel(true)
@@ -284,5 +286,18 @@ private fun NetworkMapContent(data: NetworkMapData, onBack: () -> Unit) {
             confirmButton = { TextButton(onClick = { dl = DlState.Idle }) { Text(stringResource(R.string.map_close)) } },
         )
         DlState.Idle -> {}
+    }
+}
+
+/** Zooms [mapView] to all repeaters of [data] (a single one: zoom 14 around it). */
+private fun fit(mapView: MapView, data: NetworkMapData) {
+    val b = data.bounds ?: return
+    mapView.post {
+        if (b.north - b.south < 0.002 && b.east - b.west < 0.002) {
+            mapView.controller.setZoom(14.0)
+            mapView.controller.setCenter(GeoPoint((b.north + b.south) / 2, (b.east + b.west) / 2))
+        } else {
+            mapView.zoomToBoundingBox(BoundingBox(b.north, b.east, b.south, b.west), false, 96)
+        }
     }
 }

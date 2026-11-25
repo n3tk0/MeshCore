@@ -156,8 +156,12 @@ object CliHelper {
             c.startsWith("set wifi.pwd ") ||
             c.startsWith("set prv.key ") ||
             c.startsWith("set bridge.secret ") ||
-            c.startsWith("set pin ")
+            c.startsWith("set pin ") ||
+            SECRET_SET.containsMatchIn(c)
     }
+
+    /** Any `set <key> <value>` whose key names a password, secret or private key (e.g. mqtt.password). */
+    private val SECRET_SET = Regex("^set [a-z0-9._-]*(password|passwd|pwd|secret|prv|private)[a-z0-9._-]* ")
 
     /** True when the command's reply contains a secret value that must be redacted in exported transcripts. */
     fun isSecretReadCommand(command: String): Boolean {

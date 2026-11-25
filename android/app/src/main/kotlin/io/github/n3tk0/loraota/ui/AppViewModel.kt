@@ -387,6 +387,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         patch = null
         flashImage = null
         repeaterHealthLoadedFor = null
+        repeaters.clear()   // that companion's contacts: nothing may act on them without it
+        profileBatchAsk = false
+        if (profileBatchCurrent == null) profileBatchOpen = false   // a running batch shows its own end first
     }
 
     private fun finishDisconnect(flashMsg: String?) {
@@ -2159,7 +2162,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 canReadRepeater = true
                 val items = readRepeater(r)
-                Backup(kind, deviceKey(kind), r.name, System.currentTimeMillis(), auto, info?.ident?.replace('|', ' ') ?: "", items)
+                // no OTA INFO (stock firmware, or the profile batch, which skips it): ask `ver` for the label
+                val fw = info?.ident?.replace('|', ' ')
+                    ?: try {
+                        RepeaterBackup.ask(companion, r, "ver")?.trim()?.lineSequence()?.firstOrNull()?.take(80)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }
+                Backup(kind, deviceKey(kind), r.name, System.currentTimeMillis(), auto, fw.orEmpty(), items)
             }
         }
         val saved = withContext(Dispatchers.IO) { backupStore.save(b) }
@@ -3307,7 +3321,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startProfileBatch() {
         profileBatchAsk = false
-        if (busy || reconnecting) return
+        if (busy || reconnecting || !hasCompanionConnection) return
         val p = profileBatchProfile ?: return
         val picked = profileBatchCandidates().filter { profileBatchPicked[hex(it.publicKey)] == true }
         if (picked.isEmpty()) return
@@ -3319,7 +3333,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The ones that failed or were left (stopped) go once more. */
     fun retryProfileBatch() {
-        if (busy || reconnecting) return
+        if (busy || reconnecting || !hasCompanionConnection) return
         val b = profileBatch ?: return
         b.retryFailed()
         profileBatch = b.refreshed()
@@ -3443,6 +3457,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- offline viewer (saved backups, past health checks & offline firmware hub without companion) ----
 
     private var offlineLoadJob: Job? = null
+
+    /** The Offline hub took its starting tab and search: later openings (menu, back from Settings) start clean. */
+    fun consumeOfflineFocus() {
+        offlineFocusTab = 0
+        offlineFocusQuery = ""
+    }
 
     fun openOffline() {
         if (step != Step.OFFLINE) offlineReturn = step
