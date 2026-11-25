@@ -13,6 +13,8 @@
 #include "glcdfont.h"
 #include <helpers/ui/CyrillicFont5x8.h>
 #include <helpers/ui/TextFont.h>
+#include <helpers/ui/Utf8DisplayText.h>
+#include <helpers/ui/AdafruitGfxUtf8.h>
 
 // ---------------------------------------------------------------- hardware stand-ins
 
@@ -46,110 +48,88 @@ ColorVal UIColor::window_bkg = 0, UIColor::title_bkg = 0, UIColor::title_txt = 1
 
 // ---------------------------------------------------------------- display: SSD1306 + Adafruit GFX text
 
+// The part of Adafruit_GFX / Adafruit_SSD1306 that AdafruitGfxUtf8.h uses, drawing into a 128x64 framebuffer.
+// The text decoding itself is the firmware's AdafruitGfxUtf8.h, so the screenshots match the device.
+class SimGfx {
+public:
+  uint8_t fb[64][128];
+  int16_t _width = 128, cursor_x = 0, cursor_y = 0;
+  uint8_t textsize_x = 1, textsize_y = 1;
+  uint16_t textcolor = 1, textbgcolor = 1;   // as setTextColor(c): no background
+  bool wrap = true;
+  SimGfx() { memset(fb, 0, sizeof(fb)); }
+  virtual ~SimGfx() {}
+  void setCursor(int16_t x, int16_t y) { cursor_x = x; cursor_y = y; }
+  void setTextSize(uint8_t s) { textsize_x = textsize_y = s; }
+  void setTextColor(uint16_t c) { textcolor = textbgcolor = c; }
+  void drawPixel(int16_t x, int16_t y, uint16_t c) { if (x >= 0 && x < 128 && y >= 0 && y < 64) fb[y][x] = c ? 1 : 0; }
+  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) {
+    for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) drawPixel(i, j, c);
+  }
+  void drawBitmap(int16_t x, int16_t y, const uint8_t* bits, int16_t w, int16_t h, uint16_t c) {   // MSB first
+    int bw = (w + 7) / 8;
+    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) {
+      if (bits[j * bw + i / 8] & (0x80 >> (i & 7))) drawPixel(x + i, y + j, c);
+    }
+  }
+  void drawBitmap(int16_t x, int16_t y, const uint8_t* bits, int16_t w, int16_t h, uint16_t c, uint16_t bg) {
+    int bw = (w + 7) / 8;
+    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) {
+      drawPixel(x + i, y + j, (bits[j * bw + i / 8] & (0x80 >> (i & 7))) ? c : bg);
+    }
+  }
+  // Adafruit_GFX::write with the classic 5x7 font (CP437)
+  virtual size_t write(uint8_t c) {
+    if (c == '\n') { cursor_x = 0; cursor_y += textsize_y * 8; return 1; }
+    if (c == '\r') return 1;
+    if (wrap && cursor_x + textsize_x * 6 > _width) { cursor_x = 0; cursor_y += textsize_y * 8; }
+    for (int i = 0; i < 5; i++) {
+      uint8_t line = font[c * 5 + i];
+      for (int j = 0; j < 8; j++, line >>= 1) {
+        if (line & 1) fillRect(cursor_x + i * textsize_x, cursor_y + j * textsize_y, textsize_x, textsize_y, textcolor);
+      }
+    }
+    cursor_x += textsize_x * 6;
+    return 1;
+  }
+};
+
 class SimDisplay : public DisplayDriver {
-  uint8_t _fb[64][128];
+  AdafruitGfxUtf8<SimGfx> gfx;
   uint8_t _shown[64][128];
   bool _on = false;
-  int _cx = 0, _cy = 0, _size = 1;
   uint8_t _color = 1;
-  uint8_t _lead = 0, _skip = 0;
-  const TextFont* _font = NULL;
 public:
   int contrast = 0xFF;
-  SimDisplay() : DisplayDriver(128, 64) { memset(_fb, 0, sizeof(_fb)); memset(_shown, 0, sizeof(_shown)); }
+  SimDisplay() : DisplayDriver(128, 64) { memset(_shown, 0, sizeof(_shown)); }
   bool isOn() override { return _on; }
   void turnOn() override { _on = true; }
   void turnOff() override { _on = false; }
   void setContrast(uint8_t level) override { contrast = level; }
-  void clear() override { memset(_fb, 0, sizeof(_fb)); }
-  void startFrame(ColorVal) override { memset(_fb, 0, sizeof(_fb)); _color = 1; _size = 1; _font = NULL; }
-  void setTextSize(int sz) override { _size = sz; _font = NULL; }
-  void setTextFont(const TextFont* f) override { _size = 1; _font = f; }
-  void setColor(ColorVal c) override { _color = c ? 1 : 0; }
-  void setCursor(int x, int y) override { _cx = x; _cy = y; }
-  void pixel(int x, int y, uint8_t c) { if (x >= 0 && x < 128 && y >= 0 && y < 64) _fb[y][x] = c; }
-  void fillRect(int x, int y, int w, int h) override {
-    for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) pixel(i, j, _color);
-  }
+  void clear() override { memset(gfx.fb, 0, sizeof(gfx.fb)); }
+  void startFrame(ColorVal) override { clear(); setColor(1); gfx.setTextSize(1); gfx.setTextFont(NULL); }
+  void setTextSize(int sz) override { gfx.setTextSize(sz); gfx.setTextFont(NULL); }
+  void setTextFont(const TextFont* f) override { gfx.setTextSize(1); gfx.setTextFont(f); }
+  void setColor(ColorVal c) override { _color = c ? 1 : 0; gfx.setTextColor(_color); }
+  void setCursor(int x, int y) override { gfx.setCursor(x, y); }
+  void fillRect(int x, int y, int w, int h) override { gfx.fillRect(x, y, w, h, _color); }
   void drawRect(int x, int y, int w, int h) override {
-    for (int i = x; i < x + w; i++) { pixel(i, y, _color); pixel(i, y + h - 1, _color); }
-    for (int j = y; j < y + h; j++) { pixel(x, j, _color); pixel(x + w - 1, j, _color); }
+    for (int i = x; i < x + w; i++) { gfx.drawPixel(i, y, _color); gfx.drawPixel(i, y + h - 1, _color); }
+    for (int j = y; j < y + h; j++) { gfx.drawPixel(x, j, _color); gfx.drawPixel(x + w - 1, j, _color); }
   }
-  void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override {   // Adafruit drawBitmap: MSB first
-    int bw = (w + 7) / 8;
-    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) {
-      if (bits[j * bw + i / 8] & (0x80 >> (i & 7))) pixel(x + i, y + j, _color);
-    }
-  }
-  void fontGlyph(uint16_t cp) {   // SSD1306Utf8::drawCodepoint / drawBlock
-    if (_cx + _font->w > 128) { _cx = 0; _cy += _font->h; }
-    int idx = textFontIndex(cp);
-    if (idx < 0) fillRect(_cx, _cy + 1, _font->w - 1, _font->h - 2);
-    else drawXbm(_cx, _cy, textFontGlyph(_font, idx), _font->w, _font->h);
-    _cx += _font->w;
-  }
-  void glyph(const uint8_t* cols) {
-    if (_font) { fontGlyph(0xFFFF); return; }   // with a custom font glyph() only draws blocks
-    if (_cx + _size * 6 > 128) { _cx = 0; _cy += _size * 8; }   // Adafruit wraps at the right edge
-    for (int i = 0; i < 5; i++) {
-      uint8_t line = cols[i];
-      for (int j = 0; j < 8; j++, line >>= 1) {
-        if (line & 1) for (int a = 0; a < _size; a++) for (int b = 0; b < _size; b++) pixel(_cx + i * _size + a, _cy + j * _size + b, _color);
-      }
-    }
-    _cx += _size * 6;
-  }
-  void writeByte(uint8_t c) {   // SSD1306Utf8::write
-    if (_skip) { if ((c & 0xC0) == 0x80) { _skip--; return; } _skip = 0; }
-    if (_lead) {
-      if ((c & 0xC0) == 0x80) {
-        uint16_t cp = ((uint16_t)(_lead & 0x1F) << 6) | (c & 0x3F);
-        _lead = 0;
-        if (_font) { fontGlyph(cp); return; }
-        int idx = cyrillicGlyphIndex(cp);
-        if (idx >= 0) glyph(cyrillic_font_5x8[idx]); else glyph(&font[0xDB * 5]);
-        return;
-      }
-      _lead = 0;
-      glyph(&font[0xDB * 5]);
-    }
-    if (c == '\n') { _cx = 0; _cy += _font ? _font->h : _size * 8; return; }
-    if (c == '\r') return;
-    if (c < 0x80) { if (_font) fontGlyph(c); else glyph(&font[c * 5]); return; }
-    if ((c & 0xE0) == 0xC0) { _lead = c; return; }
-    if ((c & 0xF0) == 0xE0) { _skip = 2; glyph(&font[0xDB * 5]); return; }
-    if ((c & 0xF8) == 0xF0) { _skip = 3; glyph(&font[0xDB * 5]); return; }
-    glyph(&font[c * 5]);
-  }
+  void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override { gfx.drawBitmap(x, y, bits, w, h, _color); }
   void print(const char* s) override {
-    for (const uint8_t* p = (const uint8_t*)s; *p; p++) writeByte(*p);
-    if (_lead) { _lead = 0; glyph(&font[0xDB * 5]); }
-    _skip = 0;
+    for (const uint8_t* p = (const uint8_t*)s; *p; p++) gfx.write(*p);
+    gfx.flushUtf8();
   }
   uint16_t getTextWidth(const char* str) override {
-    uint16_t n = 0;
-    for (const unsigned char* p = (const unsigned char*)str; *p; p++) if ((*p & 0xC0) != 0x80) n++;
-    return n * (_font ? _font->w : 6 * _size);
+    const TextFont* f = gfx.textFont();
+    return utf8CharCount(str) * (f ? f->w : 6 * gfx.textsize_x);
   }
   void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override {
-    size_t j = 0;
-    for (size_t i = 0; src[i] != 0 && j < dest_size - 1; i++) {
-      unsigned char c = (unsigned char)src[i];
-      if (c >= 32 && c <= 126) {
-        dest[j++] = c;
-      } else if ((c & 0xE0) == 0xC0 && ((unsigned char)src[i+1] & 0xC0) == 0x80) {
-        uint16_t cp = ((uint16_t)(c & 0x1F) << 6) | ((unsigned char)src[i+1] & 0x3F);
-        if (cyrillicGlyphIndex(cp) >= 0 && j + 2 < dest_size) { dest[j++] = c; dest[j++] = src[i+1]; }
-        else dest[j++] = '\xDB';
-        i++;
-      } else if (c >= 0x80) {
-        dest[j++] = '\xDB';
-        while (src[i+1] && ((unsigned char)src[i+1] & 0xC0) == 0x80) i++;
-      }
-    }
-    dest[j] = 0;
+    translateUTF8ForDisplay(dest, src, dest_size, true, true);   // as SSD1306Display with DISPLAY_CYRILLIC
   }
-  void endFrame() override { memcpy(_shown, _fb, sizeof(_fb)); }
+  void endFrame() override { memcpy(_shown, gfx.fb, sizeof(_shown)); }
   uint8_t shown(int x, int y) const { return _shown[y][x]; }
 };
 

@@ -11,6 +11,8 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -52,12 +54,18 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             var themeMode by remember { mutableStateOf(AppPrefs.theme(this)) }
+            var dynamicColor by remember { mutableStateOf(AppPrefs.dynamicColor(this)) }
             val darkTheme = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
             }
-            val colorScheme = if (darkTheme) DarkColors else LightColors
+            val colorScheme = when {
+                dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+                    if (darkTheme) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
+                darkTheme -> DarkColors
+                else -> LightColors
+            }
             val view = LocalView.current
             if (!view.isInEditMode) {
                 SideEffect {
@@ -84,6 +92,11 @@ class MainActivity : ComponentActivity() {
                     setThemeMode = { mode ->
                         themeMode = mode
                         AppPrefs.setTheme(this, mode)
+                    },
+                    dynamicColor = dynamicColor,
+                    setDynamicColor = { on ->
+                        dynamicColor = on
+                        AppPrefs.setDynamicColor(this, on)
                     },
                     setLang = { lang ->
                         Lang.set(this, lang)
