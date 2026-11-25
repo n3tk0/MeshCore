@@ -1025,6 +1025,19 @@ void EnvironmentSensorManager::solarBoardLock(uint8_t stored) {
   #endif
 }
 
+bool EnvironmentSensorManager::inaBatteryNow(uint16_t* mv, int* ma) {
+  #if ENV_INCLUDE_INA226 && INA226_BATTERY
+  if (!s_ina226_found || !s_ina226_bat) return false;
+  float a;
+  if (!readIna226Battery(mv, &a)) return false;
+  if (ma) *ma = -(int)lroundf(a);   // the sensor's + is out of the battery
+  return true;
+  #else
+  (void)mv; (void)ma;
+  return false;
+  #endif
+}
+
 bool EnvironmentSensorManager::batteryOnlyFromSensor() const {
   #if SOLAR_BOARD_AUTO
   return true;   // the XIAO's BAT pad is open on every board this build is for, found or not

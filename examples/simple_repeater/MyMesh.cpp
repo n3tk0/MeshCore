@@ -118,6 +118,9 @@
 #define PSAVE_OFF_WAKE_MV          150   // ... this much above the 'off' limit (or external power)
 #define BATT_CAP_FILE            "/batt_cap"
 #define CHARGER_FILE             "/charger"
+#ifndef SOLAR_CN3791_ICHG_MA
+#define SOLAR_CN3791_ICHG_MA     600             // xiao-solar-lite v0.6: 120 mV / (2 x 100 mOhm in series)
+#endif
 #define SOLAR_BOARD_FILE         "/board"        // the solar board kept (SOLAR_BOARD_AUTO), one byte
 #define MPPT_FILE                "/mppt"         // solar panel set-point mode (SolarMppt.h): auto / off / fixed volts
 #define IBATCAL_FILE             "/ibatcal"      // IBAT calibration curve (IbatCal.h)
@@ -2698,6 +2701,30 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
   strcpy(reply, "Err - no charger found (BQ25798 or solar-smart-mppt)");
 }
 #else
+#if SOLAR_BOARD_AUTO && defined(SOLAR_MPPT_PWM_PIN)
+  if (!direct && sensors.solarBoardDetected() == SOLAR_BOARD_CN3791) {
+    // CN3791 (xiao-solar-lite v0.6): nothing to set here (4.20 V and the current are set by the parts; the panel
+    // point is `mppt`), only one status line from the two INA226:
+    // "sun 5.62V 210mA, batt 3.950V +180mA charging, mppt auto 5.40V, cn3791 4.20V 600mA"
+    if (*args != 0) { strcpy(reply, "Err - CN3791: nothing to set (panel point: mppt)"); return; }
+    #define X100(v) ((int)lroundf((v) * 100.0f) / 100), ((int)lroundf((v) * 100.0f) % 100)
+    SolarMppt* m = sensors.getSolarMppt();
+    int n;
+    if (m && m->hasPanel()) n = sprintf(reply, "sun %d.%02dV %dmA", X100(m->panelV()), (int)lroundf(m->panelA() * 1000.0f));
+    else n = sprintf(reply, "sun ?");
+    uint16_t mv; int ma;
+    if (sensors.inaBatteryNow(&mv, &ma)) {
+      n += sprintf(reply + n, ", batt %u.%03uV %+dmA %s", mv / 1000, mv % 1000, ma, ma > 5 ? "charging" : "idle");
+    } else {
+      n += sprintf(reply + n, ", batt ?");
+    }
+    if (m) n += sprintf(reply + n, ", mppt %s %d.%02dV", SolarMppt::stateName(m->state()), X100(m->setpoint()));
+    else n += sprintf(reply + n, ", mppt held (solar)");
+    sprintf(reply + n, ", cn3791 4.20V %umA", (unsigned)SOLAR_CN3791_ICHG_MA);
+    #undef X100
+    return;
+  }
+#endif
   if (c == NULL) {
     strcpy(reply, "Err - no BQ25798 charger found");
     return;

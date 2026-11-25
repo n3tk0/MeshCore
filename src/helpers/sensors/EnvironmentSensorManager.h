@@ -101,6 +101,8 @@ public:
   uint8_t solarBoardActive() const override;
   void solarBoardLock(uint8_t stored) override;
   bool batteryOnlyFromSensor() const override;
+  // the battery INA226 (0x44) now: mV and mA, + = charging; false: not the battery sensor here, or no read
+  bool inaBatteryNow(uint16_t* mv, int* ma);
   int getNumSettings() const override;
   const char* getSettingName(int i) const override;
   const char* getSettingValue(int i) const override;
