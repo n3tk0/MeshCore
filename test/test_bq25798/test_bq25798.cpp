@@ -2566,7 +2566,8 @@ TEST(BQ25798, HybridStartsWeakThenMpptThenFallsBack) {
   EXPECT_TRUE(bq.weak());
   runFor(bq, t, 400000);
   EXPECT_FALSE(bq.weak());
-  // MPPT with little current for 5 min: weak again
+  // MPPT with little current in fast charge for 5 min: weak again
+  f.r[0x1C] = 3 << 5;
   f.put16(0x31, 50);
   runFor(bq, t, 330000);
   EXPECT_TRUE(bq.weak());
@@ -2599,4 +2600,44 @@ TEST(BQ25798, HybridOffOrFixedVinLeavesTheModesAlone) {
   runFor(bq, t, 30000);
   EXPECT_FALSE(bq.weak());
   EXPECT_EQ(f.r[0x05], 50);
+}
+
+TEST(BQ25798, HybridLittleCurrentOutsideFastChargeIsNotWeakSun) {
+  DawnBQ f;
+  f.voc = 6000;
+  BQ25798 bq(f);
+  bq.setHybrid(true);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  f.put16(0x31, 300);
+  f.r[0x1C] = 3 << 5;                                // fast charge
+  runFor(bq, t, 120000);
+  ASSERT_FALSE(bq.weak());
+  runFor(bq, t, 60000);
+  f.r[0x1C] = 7 << 5;                                // done: the battery, not the sun, limits IBUS
+  f.put16(0x31, 15);
+  runFor(bq, t, 600000);
+  EXPECT_FALSE(bq.weak());
+  EXPECT_EQ(bq.weakFalls(), 0);
+}
+
+TEST(BQ25798, HybridWeakIsNotShownAtNightAndBlocksAScan) {
+  DawnBQ f;
+  f.voc = 6000;
+  BQ25798 bq(f);
+  bq.setHybrid(true);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  bq.apply(settings());
+  runFor(bq, t, 30000);
+  ASSERT_TRUE(bq.weak());
+  EXPECT_EQ(bq.scanStart(), -2);
+  f.sun(false);
+  runFor(bq, t, 20000);
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_EQ(strstr(buf, "weak"), nullptr) << buf;
 }

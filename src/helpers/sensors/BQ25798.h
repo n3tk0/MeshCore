@@ -342,7 +342,7 @@ public:
   uint8_t vocPct() const { return _s.voc_pct; }
   bool mpptAuto() const { return _s.mppt_auto; }
   // MPPT scan. scanStart(): 0 = started (runs from the next loop(), ~30 s; any mppt mode, the result is
-  // kept; with `vin mppt auto` it also sets VOC_PCT), -1 = fixed VINDPM mode, -2 = no panel / PG / EN_HIZ,
+  // kept; with `vin mppt auto` it also sets VOC_PCT), -1 = fixed VINDPM mode, -2 = no panel / PG / EN_HIZ / hybrid weak,
   // -3 = already running
   int scanStart();
   bool scanning() const { return _sc_state != 0; }

@@ -2591,7 +2591,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     int r = c->scanStart();
     strcpy(reply, r == 0 ? "OK - scan started, ~30 s; `charger scan last` for the result"
                 : r == -1 ? "Err - scan needs MPPT mode (charger vin mppt)"
-                : "Err - scan needs the panel on: sun, PG, no HIZ");
+                : "Err - scan needs the panel on: sun, PG, no HIZ, not weak (charger hybrid)");
     return;
   }
   if (strcmp(args, "hybrid") == 0) {   // test: weak sun = fixed 4.4 V without MPPT (as a BQ25606), MPPT in strong sun; RAM only
@@ -2780,7 +2780,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     s.cutoff_mv = (uint16_t)mv;
   } else {
-    strcpy(reply, "Err - charger [chem|ichg|vin|scan|ntc|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
+    strcpy(reply, "Err - charger [chem|ichg|vin|scan|hybrid|ntc|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
     return;
   }
   if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {

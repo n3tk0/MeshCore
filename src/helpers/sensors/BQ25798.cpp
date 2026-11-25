@@ -461,7 +461,7 @@ void BQ25798::loop(uint32_t now) {
   if (state == 7 && _prev_state != 7) _full = true;   // charge done: the cell is full
   _prev_state = state;
   lowBattery(now);
-  if (_applied) scanSchedule(now);
+  if (_applied && !mode_changed) scanSchedule(now);   // a mode change is written first (scanConditions also needs !weak)
 }
 
 // A poor source with the panel still there: EN_HIZ is cleared (enforce) every 2 s instead of 10 s, as a
@@ -478,6 +478,7 @@ void BQ25798::setHybrid(bool on) {
   _weak = true;   // starts weak: MPPT once the panel gives enough
   _weak_timing = false;
   _weak_hold_until = _now;
+  _weak_poorsrc = _poorsrc_count;
   _next_poll = _now;   // the next loop() polls and enforce() writes the mode
 }
 
@@ -505,7 +506,8 @@ bool BQ25798::weakTick(uint32_t now) {
       return true;
     }
     bool running = mpptOn() && powerGood() && !_hiz_seen;
-    cond = !running || _r.ibus_ma < BQ_WEAK_ENTER_MA;
+    // little current counts only in fast charge: in taper / top-off / done the battery, not the sun, limits it
+    cond = !running || (_ce_on && chargeState() == 3 && _r.ibus_ma < BQ_WEAK_ENTER_MA);
   }
   if (!cond) { _weak_timing = false; return false; }
   if (!_weak_timing) { _weak_timing = true; _weak_t = now; return false; }
@@ -595,7 +597,7 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
       n = addf(buf, len, n, ", mppt %s", mpptOn() ? "on" : "off");
       if (_s.voc_pct != BQ_VOC_PCT_DEFAULT) n = addf(buf, len, n, " %u%%", _s.voc_pct);
     }
-    if (weak()) n = addf(buf, len, n, ", weak %u.%uV", BQ_WEAK_VINDPM / 1000, BQ_WEAK_VINDPM % 1000 / 100);
+    if (weak() && vbusPresent()) n = addf(buf, len, n, ", weak %u.%uV", BQ_WEAK_VINDPM / 1000, BQ_WEAK_VINDPM % 1000 / 100);
     if (_sc_state) n = addf(buf, len, n, ", scan %u/%u", (unsigned)(_sc_idx > BQ_SCAN_N ? BQ_SCAN_N : _sc_idx) + 1, BQ_SCAN_N + 1);
   }
   if (vbusPresent()) {
@@ -642,7 +644,7 @@ uint8_t BQ25798::nearestVocPct(uint16_t share_x10) {
 
 // the panel there, loaded and held (PG), not in HIZ; for the automatic start also fast charge with MPPT on
 bool BQ25798::scanConditions(bool need_fast) const {
-  if (!_found || !_applied || _s.vindpm_mv != 0) return false;
+  if (!_found || !_applied || _s.vindpm_mv != 0 || weak()) return false;
   if (!vbusPresent() || !powerGood() || _hiz_seen || !_r.valid) return false;
   if (need_fast && (!_ce_on || chargeState() != 3 || !mpptOn())) return false;
   return true;
@@ -651,7 +653,7 @@ bool BQ25798::scanConditions(bool need_fast) const {
 int BQ25798::scanStart() {
   if (!_found || !_applied || _s.vindpm_mv != 0) return -1;
   if (_sc_state) return -3;
-  if (!vbusPresent() || !powerGood() || _hiz_seen) return -2;
+  if (!vbusPresent() || !powerGood() || _hiz_seen || weak()) return -2;   // weak: the restore would turn MPPT on
   _sc_state = BQ_SC_BEGIN;
   _learn.gap(); _learnBus.gap();   // the ADC pauses during the scan: no pair may join one from before it
   _sc_forced = true;
