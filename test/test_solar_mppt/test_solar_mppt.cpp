@@ -241,3 +241,24 @@ int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+TEST(SolarMppt, FixedReleasesThePinWithoutSunAndDrivesAgain) {
+  SolarMppt m;
+  m.setFixed(5.5f);
+  uint32_t t = 1000;
+  m.update(t, 5.5f, 0.2f, 3.9f);                    // sun
+  EXPECT_TRUE(m.driven());
+  m.update(t += 60000, 3.9f, 0.0f, 3.9f);           // dark: panel under the battery
+  EXPECT_FALSE(m.driven());
+  EXPECT_EQ(m.state(), SolarMppt::ST_FIXED);
+  EXPECT_NEAR(m.fixedVolts(), 5.5f, 0.001f);
+  m.update(t += 60000, 4.0f, 0.001f, 3.9f);         // a little light, not enough to start
+  EXPECT_FALSE(m.driven());
+  m.update(t += 60000, 5.2f, 0.2f, 3.9f);           // sun again
+  EXPECT_TRUE(m.driven());
+  EXPECT_NEAR(m.setpoint(), 5.5f, 0.02f);
+  m.update(t += 60000, 3.9f, 0.0f, 3.9f);
+  EXPECT_FALSE(m.driven());
+  m.panelUnavailable(t += 60000, false);            // no reading: driven as before
+  EXPECT_TRUE(m.driven());
+}

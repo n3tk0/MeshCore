@@ -228,8 +228,9 @@ const bq_bus_t hal_bq_bus = { bq_read, bq_write };
 // ---------------- flash ----------------
 
 // One flash bank: while it erases or programs, nothing may be fetched from it, and the vector table
-// and the ISRs live there. So interrupts stay off for each command (the command loop runs from RAM).
-// An erase holds them off for a few ms: the I2C target stretches the clock meanwhile.
+// and the ISRs live there. So interrupts are masked (PRIMASK) around each single erase or 8-byte program
+// call only, not for a whole save; the call itself runs from RAM. A sector erase holds them off for a few
+// ms (the COMP0 short-circuit ISR waits too): the I2C target stretches the clock meanwhile.
 static bool fl_erase(uint32_t addr) {
   uint32_t pm = __get_PRIMASK();
   __disable_irq();

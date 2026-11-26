@@ -130,6 +130,8 @@ void regs_write(uint8_t addr7, uint8_t reg, uint16_t v) {
     return;
   }
   if (reg < R_SET_FIRST || reg > R_SET_LAST) { R.result = ERR_BAD_REG; return; }
+  // a command (LOAD / DEFAULTS / SAVE) is about to take or save R.set: a write now would be lost or half saved
+  if (R.pending_cmd != CMD_NONE) { R.result = ERR_BUSY; return; }
 
   // a settings field: change a copy, check it, take it
   settings_t tmp = R.set;

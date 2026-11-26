@@ -253,7 +253,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var companionDevice: BluetoothDevice? = null
     val hasCompanionConnection: Boolean get() = companionDevice != null
     /** Offline flash of another device while a companion stays connected: flashCheck/flashBle ignore the companion. */
-    private var flashStandalone = false
+    private var flashStandalone by mutableStateOf(false)
+    val isStandaloneFlash: Boolean get() = flashStandalone
+    /** What the flash screen calls the device: the companion, or (another device) the plan's name / the board. */
+    val flashDeviceName: String
+        get() = if (flashStandalone) flashPlan?.name?.takeIf { it.isNotEmpty() } ?: flashImage?.env?.replace('_', ' ') ?: ""
+        else companionName.ifEmpty { flashImage?.env?.replace('_', ' ') ?: "" }
     private val flashCompanionDevice: BluetoothDevice? get() = if (flashStandalone) null else companionDevice
     private var flashingCompanion = false   // its link drops on purpose
 
@@ -1355,7 +1360,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             resumable = false
             done = true
             info = after
-            oldImage = new
+            // the repeater runs the image without the .uf2 padding: the next delta must start from that
+            val n = after.imageSize
+            oldImage = if (n in 1 until new.data.size && new.data.size - n < 256) Image(new.name, new.data.copyOf(n), new.env) else new
             newImage = null
             patch = null
             message = str(R.string.msg_verified, after.ident.replace('|', ' '))
@@ -3698,6 +3705,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             oldImage?.env?.let { knownEnvs.add(it) }
             newImage?.env?.let { knownEnvs.add(it) }
             flashImage?.env?.let { knownEnvs.add(it) }
+            // the boards of the saved backups (repeaters are the ones that get a delta)
+            withContext(Dispatchers.IO) { backupStore.all() }
+                .filter { it.kind == DeviceKind.REPEATER }
+                .mapNotNull { it.firmware.takeIf { f -> f.isNotBlank() } }
+                .forEach { f ->
+                    // as OfflineDeltaInspector reads it: "<env>|<version>", else the last word of the label
+                    val env = if ('|' in f) f.substringBefore('|').trim() else f.trim().substringAfterLast(' ')
+                    latestByEnv.keys.firstOrNull { it.equals(env, ignoreCase = true) }?.let { knownEnvs.add(it) }
+                }
             if (companionModel.isNotEmpty()) {
                 latestByEnv.keys.firstOrNull { BoardCheck.fitsCompanion(it) && BoardCheck.matches(it, companionModel) == true }
                     ?.let { knownEnvs.add(it) }

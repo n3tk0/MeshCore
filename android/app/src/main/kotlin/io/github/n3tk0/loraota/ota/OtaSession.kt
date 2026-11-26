@@ -202,7 +202,10 @@ class OtaSession(
                 ?: throw OtaFailed(R.string.err_after_restart)
             // the END never got there: the repeater paused the update and keeps it
             if (i.state == OtaProtocol.STATE_PAUSED) throw OtaFailed(R.string.err_end_lost, resumable = true)
-            if (!i.imageSha.contentEquals(newSha)) throw OtaFailed(R.string.err_old_still_runs, listOf(i.ident))
+            // a .uf2 image is padded to 256 B; the repeater hashes only the bytes it runs (imageSize)
+            val padded = i.imageSize in 1 until new.size && new.size - i.imageSize < 256 &&
+                io.github.n3tk0.loraota.delta.DetoolsPatch.sha256(new.copyOf(i.imageSize)).contentEquals(i.imageSha)
+            if (!i.imageSha.contentEquals(newSha) && !padded) throw OtaFailed(R.string.err_old_still_runs, listOf(i.ident))
             log("the repeater runs the new firmware")
             after = i
         } catch (e: Throwable) {

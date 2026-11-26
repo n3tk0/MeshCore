@@ -105,6 +105,7 @@ public:
     _fixed_v = clampSetpoint(volts);
     _duty = dutyForSetpoint(_fixed_v);
     _driven = true;
+    _due_now = true;   // look at the panel at once: no sun releases the pin
   }
   // charge current limit, mA: SOLAR_MPPT_ICHG_HW_MA = none (the CN3791's own); kept only in auto mode
   uint16_t ichg() const { return _ichg_ma; }
@@ -185,6 +186,7 @@ public:
     _due_now = false;
     _next_ms = now + (_mode == SOLAR_MPPT_MODE_AUTO && _driven ? SOLAR_MPPT_STEP_MS : SOLAR_MPPT_RETRY_MS);
     if (_mode == SOLAR_MPPT_MODE_AUTO) release("panel not readable");
+    else if (_mode == SOLAR_MPPT_MODE_FIXED) { _driven = true; _reason = ""; }   // no way to tell the sun: keep driving
   }
 
   // ---- scan ----
@@ -232,6 +234,19 @@ public:
     _pa = panel_a < 0 ? 0 : panel_a;
     _have_panel = true;
     float p = _pv * _pa;
+    if (_mode == SOLAR_MPPT_MODE_FIXED) {
+      // as in auto: the pin is released without sun (same limits and hysteresis), the fixed value comes back with it
+      bool no_sun = p < SOLAR_MPPT_MIN_W || (batt_v > 0 && _pv < batt_v + SOLAR_MPPT_BATT_MARGIN_V);
+      if (_driven && no_sun) {
+        _driven = false;
+        _reason = "no sun";
+      } else if (!_driven && !no_sun && p >= SOLAR_MPPT_START_W) {
+        _driven = true;
+        _reason = "";
+      }
+      _next_ms = now + SOLAR_MPPT_RETRY_MS;
+      return;
+    }
     if (_mode != SOLAR_MPPT_MODE_AUTO) {
       _next_ms = now + SOLAR_MPPT_RETRY_MS;   // only for the display
       return;

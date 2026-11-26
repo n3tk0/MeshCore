@@ -18,6 +18,8 @@ class SerialBLEInterface : public BaseSerialInterface {
   volatile unsigned long _secured_at;     // millis() when the link got encrypted
   volatile bool _got_frame;               // the phone sent at least one frame on this link
   bool _secure_kick;                      // we asked the SoftDevice to drop an unsecured link
+  bool _kick_failed;                      // ... and it refused: asked again every second
+  unsigned long _kick_retry_at;           // millis() of the last refused disconnect request
   unsigned long _last_health_check;
   unsigned long _last_retry_attempt;
 
@@ -67,6 +69,8 @@ public:
     _secured_at = 0;
     _got_frame = false;
     _secure_kick = false;
+    _kick_failed = false;
+    _kick_retry_at = 0;
     _last_health_check = 0;
     _last_retry_attempt = 0;
     send_queue_len = 0;

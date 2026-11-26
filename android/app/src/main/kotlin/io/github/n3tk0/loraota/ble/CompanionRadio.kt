@@ -299,7 +299,11 @@ class CompanionRadio(private val link: CompanionLink) {
         fun his(f: ByteArray) = code(f) == PUSH_CLI_REPLY_CAPTURED && f.size >= 11 && f.copyOfRange(1, 7).contentEquals(prefix)
         while (true) {
             val f = link.frames.tryReceive().getOrNull() ?: break
-            if (code(f) == PUSH_BINARY_RESPONSE || (code(f) == PUSH_CLI_REPLY_CAPTURED && !his(f))) pending.addLast(f)
+            val c = code(f)
+            if (c == PUSH_BINARY_RESPONSE || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL || (c == PUSH_CLI_REPLY_CAPTURED && !his(f))) {
+                pending.addLast(f)
+                while (pending.size > 32) pending.removeFirst()   // as in await()
+            }
         }
         pending.removeAll { his(it) }
     }

@@ -162,6 +162,17 @@ class FleetIntelligenceTest {
         val r2Ready = readiness.first { it.deviceName == "R2" }
         assertEquals(DeltaReadinessStatus.READY, r1Ready.status)
         assertEquals(DeltaReadinessStatus.UP_TO_DATE, r2Ready.status)
+
+        // a backup label without '|' ("<version> <date> <commit> <env>"), the base .bin not cached
+        val plain = listOf(
+            Backup(
+                DeviceKind.REPEATER, "k4", "R4", 100L, false, "v1.16.0 25-Nov-2026 abc1234 Xiao_nrf52_repeater",
+                emptyList(),
+            ),
+        )
+        val missingBase = OfflineDeltaInspector.inspect(plain, cachedFw) { true }.first()
+        assertEquals("Xiao_nrf52_repeater", missingBase.boardEnv)
+        assertEquals(DeltaReadinessStatus.MISSING_BASE, missingBase.status)
     }
 
     @Test

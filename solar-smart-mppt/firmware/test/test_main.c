@@ -164,6 +164,9 @@ static void test_regs(void) {
   CHECK(R.result == 0xFFFF && R.pending_cmd == CMD_SAVE);
   wr(ADDR_SMPPT, R_CMD, CMD_LOAD);
   CHECK(R.result == ERR_BUSY);
+  { uint16_t before = R.set.ichg_ma;                        // a setting write waits for the command too
+    wr(ADDR_SMPPT, R_ICHG, (uint16_t)(before ? before - 1 : 1));
+    CHECK(R.result == ERR_BUSY && R.set.ichg_ma == before); }
   R.pending_cmd = CMD_NONE;
   wr(ADDR_SMPPT, R_CMD, CMD_SAVE);
   CHECK(R.result == ERR_LOCKED);                         // one command per unlock

@@ -21,3 +21,6 @@ platformio.local.ini
 # bootloader build (bootloader/build.sh)
 bootloader/_work/
 bootloader/_out/
+
+# built test images (flashed by hand, not for the repo)
+firmware/test/*.uf2

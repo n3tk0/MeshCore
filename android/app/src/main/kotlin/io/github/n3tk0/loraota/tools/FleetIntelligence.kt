@@ -4,8 +4,11 @@ import io.github.n3tk0.loraota.backup.Backup
 import io.github.n3tk0.loraota.backup.BackupItem
 import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.backup.PasswordBox
+import io.github.n3tk0.loraota.ota.AirtimeBudget
 import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.HealthStore
+import io.github.n3tk0.loraota.ota.SideRadio
+import io.github.n3tk0.loraota.ota.estimateMinutes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -85,11 +88,11 @@ object LoraRadioCalculator {
         }
         val sensitivityDbm = -174.0 + 10.0 * (ln(bwHz) / ln(10.0)) + 6.0 + snrLimit
 
-        // Typical 25 KB delta patch = ~175 blocks of 148 B + protocol overhead + 10% duty-cycle pacing
-        val blocks = 175
-        val totalAirSec = (blocks * packetAirMs * 2.1) / 1000.0
-        val dutyFactor = if (freqMhz in 863.0..870.0) 1.35 else 1.15
-        val estOtaMins = ceil((totalAirSec * dutyFactor) / 60.0).toInt().coerceAtLeast(1)
+        // A typical 25 KB delta patch, as the OTA session itself plans it: its airtime (MeshCore's preamble
+        // per SF, SF5/6 header) and the 10 % hourly limit in the EU 863-870 MHz band
+        val side = SideRadio((freqMhz * 1000.0).roundToInt(), (bwKhz * 1000.0).roundToInt(), sf, cr)
+        val budget = AirtimeBudget(if (freqMhz in 863.0..870.0) 0.1 else 1.0)
+        val estOtaMins = ceil(estimateMinutes(side, budget, 25 * 1024)).toInt().coerceAtLeast(1)
 
         // EU 869.40 - 869.65 MHz 10% duty sub-band check when frequency is in 868/869 MHz band
         val halfBwMhz = (bwKhz / 1000.0) / 2.0
@@ -374,9 +377,20 @@ object OfflineDeltaInspector {
 
         for ((devKey, b) in latestBackupByDevice) {
             // b.firmware is typically "<env>|<version>" or "<version> (Build: ...)"
-            val parts = b.firmware.split('|')
-            val envHint = parts.firstOrNull()?.trim().orEmpty()
-            val verHint = parts.getOrNull(1)?.trim() ?: b.firmware.trim()
+            val envHint: String
+            val verHint: String
+            if ('|' in b.firmware) {
+                val parts = b.firmware.split('|')
+                envHint = parts.firstOrNull()?.trim().orEmpty()
+                verHint = parts.getOrNull(1)?.trim() ?: b.firmware.trim()
+            } else {
+                // a backup keeps the OTA ident as "<version> <date> <commit> <env>" (its '|' made a space)
+                val words = b.firmware.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                val envWord = words.firstOrNull { w -> cachedFirmwares.any { it.env.equals(w, ignoreCase = true) } }
+                    ?: words.lastOrNull().orEmpty()
+                envHint = envWord
+                verHint = words.filter { it != envWord }.joinToString(" ")
+            }
 
             val boardMatches = otaFirmwares.filter { f ->
                 (envHint.isNotEmpty() && f.env.equals(envHint, ignoreCase = true)) ||

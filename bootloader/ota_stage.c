@@ -207,7 +207,13 @@ static bool src_crc(uint32_t flags, uint32_t addr, uint32_t size, uint32_t want)
 }
 
 static bool app_crc(uint32_t size, uint32_t want) {
-  return ota_stage_crc32(0, (const uint8_t*)(uintptr_t) DFU_BANK_0_REGION_START, size) == want;
+  const uint8_t* p = (const uint8_t*)(uintptr_t) DFU_BANK_0_REGION_START;
+  uint32_t crc = 0;
+  for (uint32_t off = 0; off < size; off += 4096u) {   // the same CRC in chunks, the watchdog fed between them
+    wdt_feed();
+    crc = ota_stage_crc32(crc, p + off, size - off < 4096u ? size - off : 4096u);
+  }
+  return crc == want;
 }
 
 // the image at src over the app, page by page; pages already the same are left as they are
@@ -301,6 +307,7 @@ static void install(const ota_stage_t* r) {
 }
 
 void ota_stage_run(void) {
+  wdt_feed();
   const ota_stage_t* r = ota_stage_find();
   if (r == 0 || r->failed == OTA_STAGE_SET || r->rb_done == OTA_STAGE_SET) return;
   if (r->dst != DFU_BANK_0_REGION_START) {
