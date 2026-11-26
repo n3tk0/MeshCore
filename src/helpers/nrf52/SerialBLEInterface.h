@@ -14,7 +14,9 @@ class SerialBLEInterface : public BaseSerialInterface {
   bool _isDeviceConnected;
   volatile uint16_t _conn_handle;
   volatile unsigned long _conn_started;   // millis() at connect (or at our disconnect request)
-  volatile bool _pairing;                 // a passkey was shown for this link
+  volatile uint16_t _pairing_handle;      // link on which pairing started (PIN may be typed)
+  volatile unsigned long _secured_at;     // millis() when the link got encrypted
+  volatile bool _got_frame;               // the phone sent at least one frame on this link
   bool _secure_kick;                      // we asked the SoftDevice to drop an unsecured link
   unsigned long _last_health_check;
   unsigned long _last_retry_attempt;
@@ -61,7 +63,9 @@ public:
     _isDeviceConnected = false;
     _conn_handle = BLE_CONN_HANDLE_INVALID;
     _conn_started = 0;
-    _pairing = false;
+    _pairing_handle = BLE_CONN_HANDLE_INVALID;
+    _secured_at = 0;
+    _got_frame = false;
     _secure_kick = false;
     _last_health_check = 0;
     _last_retry_attempt = 0;

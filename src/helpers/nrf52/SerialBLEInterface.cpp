@@ -18,6 +18,13 @@
 #ifndef BLE_PAIRING_TIMEOUT_MS
 #define BLE_PAIRING_TIMEOUT_MS     90000  // a passkey is shown: the user is typing the PIN on the phone
 #endif
+// A bonded phone usually encrypts the background reconnect by itself (stored LTK), so the link
+// looks secured although no app is using it. Bluefruit also restores the bonded peer's CCCDs, so
+// "notifications on" proves nothing either. Every app sends a command right after connecting
+// (MeshCore: APP_START), so a secured link that sends nothing is dropped as well.
+#ifndef BLE_IDLE_SECURED_TIMEOUT_MS
+#define BLE_IDLE_SECURED_TIMEOUT_MS 30000 // secured, but no frame from the phone yet
+#endif
 
 // Connection parameters (units: interval=1.25ms, timeout=10ms)
 #define BLE_MIN_CONN_INTERVAL      12     // 15ms
@@ -41,7 +48,7 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
     instance->_conn_handle = connection_handle;
     instance->_isDeviceConnected = false;
     instance->_conn_started = millis();
-    instance->_pairing = false;
+    instance->_got_frame = false;
     instance->_secure_kick = false;
     instance->requestFlush();
   }
@@ -53,7 +60,6 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     if (instance->_conn_handle == connection_handle) {
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
       instance->_isDeviceConnected = false;
-      instance->_pairing = false;
       instance->_secure_kick = false;
       instance->requestFlush();
     }
@@ -63,7 +69,15 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
 void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured handle=0x%04X", connection_handle);
   if (instance) {
+    // Bluefruit calls this for every CONN_SEC_UPDATE, even when the link stayed open (mode 1 level 1)
+    BLEConnection* conn = Bluefruit.Connection(connection_handle);
+    if (conn == nullptr || !conn->secured()) {
+      BLE_DEBUG_PRINTLN("onSecured: handle=0x%04X not encrypted, ignoring", connection_handle);
+      return;
+    }
     if (instance->isValidConnection(connection_handle, true)) {
+      instance->_secured_at = millis();
+      instance->_got_frame = false;
       instance->_isDeviceConnected = true;
       
       // Connection interval units: 1.25ms, supervision timeout units: 10ms
@@ -94,8 +108,9 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
 bool SerialBLEInterface::onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request) {
   (void)passkey;
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing passkey request match=%d", match_request);
-  if (instance && instance->_conn_handle == connection_handle) {
-    instance->_pairing = true;   // give the user time to type the PIN
+  if (instance) {
+    instance->_pairing_handle = connection_handle;   // give the user time to type the PIN
+    if (instance->_conn_handle == connection_handle) instance->_conn_started = millis();  // from now on
   }
   return true;
 }
@@ -119,9 +134,13 @@ void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t a
 void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   if (!instance) return;
 
-  if (evt->header.evt_id == BLE_GAP_EVT_SEC_PARAMS_REQUEST || evt->header.evt_id == BLE_GAP_EVT_PASSKEY_DISPLAY) {
+  // This runs synchronously in the BLE task, before the queued onConnect() callback, so it keys
+  // on the handle and is not reset by onConnect().
+  if (evt->header.evt_id == BLE_GAP_EVT_CONNECTED) {
+    instance->_pairing_handle = BLE_CONN_HANDLE_INVALID;
+  } else if (evt->header.evt_id == BLE_GAP_EVT_SEC_PARAMS_REQUEST || evt->header.evt_id == BLE_GAP_EVT_PASSKEY_DISPLAY) {
     // pairing has started: the PIN may still have to be typed on the phone
-    if (instance->_conn_handle == evt->evt.gap_evt.conn_handle) instance->_pairing = true;
+    instance->_pairing_handle = evt->evt.gap_evt.conn_handle;
   }
 
   if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST) {
@@ -405,7 +424,6 @@ void SerialBLEInterface::checkStaleConnection(unsigned long now) {
       if (_conn_handle == handle) {
         _conn_handle = BLE_CONN_HANDLE_INVALID;
         _isDeviceConnected = false;
-        _pairing = false;
         _secure_kick = false;
       }
       taskEXIT_CRITICAL();
@@ -414,12 +432,17 @@ void SerialBLEInterface::checkStaleConnection(unsigned long now) {
     return;
   }
 
-  if (_isDeviceConnected) return;   // encrypted, all good
-
-  unsigned long limit = _pairing ? BLE_PAIRING_TIMEOUT_MS : BLE_SECURE_TIMEOUT_MS;
+  bool stale;
   unsigned long age = now - _conn_started;
-  if (!_secure_kick && age >= limit) {
-    BLE_DEBUG_PRINTLN("SerialBLEInterface: handle=0x%04X not secured after %lu ms, disconnecting", handle, age);
+  if (_isDeviceConnected) {
+    if (_got_frame) return;   // an app is talking to us, all good
+    stale = (now - _secured_at) >= BLE_IDLE_SECURED_TIMEOUT_MS;
+  } else {
+    stale = age >= (_pairing_handle == handle ? BLE_PAIRING_TIMEOUT_MS : BLE_SECURE_TIMEOUT_MS);
+  }
+  if (!_secure_kick && stale) {
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: handle=0x%04X idle (secured=%d) after %lu ms, disconnecting",
+                      handle, (int)_isDeviceConnected, age);
     bool ok = sd_ble_gap_disconnect(handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION) == NRF_SUCCESS;
     taskENTER_CRITICAL();
     if (_conn_handle == handle) {   // not replaced by a new connection meanwhile
@@ -434,7 +457,7 @@ void SerialBLEInterface::checkStaleConnection(unsigned long now) {
     taskENTER_CRITICAL();
     if (_conn_handle == handle) {
       _conn_handle = BLE_CONN_HANDLE_INVALID;
-      _pairing = false;
+      _isDeviceConnected = false;
       _secure_kick = false;
     }
     taskEXIT_CRITICAL();
@@ -482,6 +505,7 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
     instance->bleuart.readBytes(instance->recv_queue[tail].buf, read_len);
     __DMB();   // publish the slot contents before the new tail
     instance->recv_tail = next;
+    instance->_got_frame = true;
   }
 }
 
