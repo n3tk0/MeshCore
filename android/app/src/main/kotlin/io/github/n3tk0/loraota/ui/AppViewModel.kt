@@ -210,6 +210,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var linkTime by mutableStateOf(0L)
     var linkSamples by mutableStateOf<List<LinkSample>>(emptyList())
     var following by mutableStateOf(false)
+    /** The signal card on the overview shows only its bars row until opened; kept for the session. */
+    var linkCardExpanded by mutableStateOf(false)
     var followLeft by mutableStateOf(0)             // traces left of the two minutes
     private val linkFollow = LinkFollow()
     private var followJob: Job? = null

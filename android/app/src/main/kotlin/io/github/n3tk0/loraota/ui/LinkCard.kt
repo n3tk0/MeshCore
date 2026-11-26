@@ -1,6 +1,11 @@
 package io.github.n3tk0.loraota.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
@@ -186,16 +191,33 @@ internal fun LinkCard(vm: AppViewModel) {
     val out = vm.linkOut ?: if (direct) s?.lastSnr?.takeIf { vm.linkTime == 0L } else s?.lastSnr
     val inn = vm.linkIn
     val noTrace = hops == null || vm.linkState == LinkState.NOT_DIRECT
+    val expanded = vm.linkCardExpanded
+    val toggleDesc = stringResource(if (expanded) R.string.link_hide_details else R.string.link_show_details)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Row(
+                Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = toggleDesc) { vm.linkCardExpanded = !expanded },
+                verticalAlignment = Alignment.Top,
+            ) {
                 val lastHop = if (direct) null else if (routeView != null && vm.linkOut != null) {
                     pluralStringResource(R.plurals.link_weakest, hops!!, hops)
                 } else stringResource(R.string.link_last_hop)
                 LinkSide(stringResource(R.string.link_out), OUT_COLOR, out, if (routeView == null) s?.lastRssi else null, lastHop, Modifier.weight(1f))
                 VerticalDivider(Modifier.height(52.dp).padding(horizontal = 8.dp))
                 LinkSide(stringResource(R.string.link_in), IN_COLOR, inn, null, null, Modifier.weight(1f))
+                Column(Modifier.padding(start = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                        if (vm.linkState == LinkState.MEASURING) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                    }
+                    Icon(
+                        if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = toggleDesc,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+            AnimatedVisibility(expanded) {
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (direct) asymmetryText(vm.linkOut, vm.linkIn)?.let {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = Color(0xFFF57C00))
             }
@@ -264,6 +286,8 @@ internal fun LinkCard(vm: AppViewModel) {
             }
             if (vm.linkSamples.size >= 2) {
                 LinkGraph(vm.linkSamples, OUT_COLOR, IN_COLOR)
+            }
+              }
             }
         }
     }

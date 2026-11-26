@@ -1055,6 +1055,8 @@
     <string name="link_tap_measure">Докосни, за да измериш пак</string>
     <string name="link_asym_phone">Телефонът чува рипитъра по-слабо: шум около теб или нисък tx на рипитъра</string>
     <string name="link_asym_repeater">Рипитърът те чува по-слабо: слаб tx или антена на companion-а</string>
+    <string name="link_show_details">Покажи подробности</string>
+    <string name="link_hide_details">Скрий подробности</string>
     <string name="link_check_direct">Провери директно</string>
     <plurals name="link_direct_ok">
         <item quantity="one">директно, въпреки маршрута през %d скок</item>

@@ -240,6 +240,7 @@ class ScreenshotsTest {
         vm.linkOut = route.weakestOut
         vm.linkIn = route.weakestIn
         vm.directState = LinkState.NO_REPLY
+        vm.linkCardExpanded = true
         app(vm)
     }
 
