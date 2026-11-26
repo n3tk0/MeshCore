@@ -8,6 +8,7 @@ Below are a few quick start guides.
 - [CLI Commands](./cli_commands.md)
 - [Companion Protocol](./companion_protocol.md)
 - [Packet Format](./packet_format.md)
+- [Packet filter and block list](./packet_filter.md)
 - [QR Codes](./qr_codes.md)
 
 If you find a mistake in any of our documentation, or find something is missing, please feel free to open a pull request for us to review.

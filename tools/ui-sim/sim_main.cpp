@@ -350,7 +350,7 @@ static void scenario(uint8_t lang) {
   the_mesh.addContact(bg ? "Добри" : "Dobri", ADV_TYPE_CHAT, 0x70, now0 - 120, 1);
   the_mesh.addContact("Repeater Lozen", ADV_TYPE_REPEATER, 0x80, now0 - 60, 1);
   the_mesh.addChannel(0, "Public");
-  the_mesh.addChannel(1, "bg-mesh");
+  the_mesh.addChannel(1, "#bg-mesh");
 
   ui->begin(&display, &sensors, &prefs);
   run(200);
@@ -399,7 +399,7 @@ static void scenario(uint8_t lang) {
   run(500);
   shot("standby_new", bg ? "Ново съобщение: инверсна лента за 3 s" : "New message: inverted for 3 s");
   run(3000);
-  receive(*ui, true, 1, NULL, "bg-mesh", bg ? "Добри: Някой чува ли ме от Лозен?" : "Dobri: Can anyone hear me from Lozen?");
+  receive(*ui, true, 1, NULL, "#bg-mesh", bg ? "Добри: Някой чува ли ме от Лозен?" : "Dobri: Can anyone hear me from Lozen?");
   receive(*ui, false, 0, maria, NULL, bg ? "Ок, до после" : "OK, see you later");
   run(3200);
   shot("standby_unread", bg ? "Standby: 3 непрочетени" : "Standby: 3 unread");
@@ -461,6 +461,12 @@ static void scenario(uint8_t lang) {
   turn(1);
   hold();
   shot("contact_actions", bg ? "Задържане на контакт" : "Hold on a contact");
+  turn(4);
+  shot("contact_actions_block", bg ? "Последен ред: Блокирай" : "Last row: Block");
+  press();
+  shot("confirm_block", bg ? "Блокиране иска потвърждение" : "Blocking asks first");
+  back();
+  hold();
   turn(2); press();
   shot("contact_info", bg ? "Информация за контакт" : "Contact details");
   back();
@@ -500,6 +506,11 @@ static void scenario(uint8_t lang) {
   shot("channels", bg ? "Канали: възраст на последното съобщение" : "Channels: age of the last message");
   turn(1); press();
   shot("channel_thread", bg ? "Натискане на канал: неговият разговор" : "Press on a channel: its conversation");
+  hold(); turn(5);
+  shot("msg_actions_channel", bg ? "Съобщение в канал: Заглуши подател / канал" : "Channel message: Mute sender / channel");
+  press();
+  shot("confirm_mute_channel", bg ? "Заглушаване на канал иска потвърждение" : "Muting a channel asks first");
+  back();
   back();
   hold();
   shot("channel_actions", bg ? "Задържане на канал: пиши, заглуши, изтрий" : "Hold on a channel: write, mute, delete");
@@ -566,6 +577,13 @@ static void scenario(uint8_t lang) {
   turn(1); press();   // stop
   back(); back();
 
+  {   // something in the block list, so the screen has rows (a made-up key, not a contact)
+    uint8_t spam[PUB_KEY_SIZE];
+    for (int i = 0; i < PUB_KEY_SIZE; i++) spam[i] = 0xE0 + i;
+    the_mesh.filter().blockKey(spam);
+    the_mesh.muteSender("Spammer");
+    the_mesh.hideChannel(1);
+  }
   turn(1); press();
   shot("settings", bg ? "Настройки: групи" : "Settings: groups");
   for (int g = 0; g < 5; g++) {
@@ -597,7 +615,14 @@ static void scenario(uint8_t lang) {
     }
     if (g == 2) {
       turn(1); press(); shot("edit_wake", bg ? "Кога светва екранът за съобщение" : "When a message turns the screen on"); back();
-      turn(4); press(); shot("words", bg ? "Научени думи: изтриване (още няма)" : "Learned words: clear (none yet)"); run(2000);
+      turn(4); press(); shot("templates", bg ? "Бързи отговори" : "Quick replies"); run(300);
+      back();   // out of the templates editor (the shot above shows it)
+      turn(1); press(); shot("words", bg ? "Научени думи: изтриване (още няма)" : "Learned words: clear (none yet)"); run(2000);
+      turn(1); press();
+      shot("blocked_list", bg ? "Блокирани: ключ, подател (@), канал (#)" : "Blocked: key, sender (@), channel (#)");
+      press();
+      shot("blocked_remove_q", bg ? "Махане от списъка иска потвърждение" : "Removing an entry asks first");
+      back(); back();
     }
     if (g == 3) {
       turn(2); press(); turn(-1); press(); shot("antenna_never", bg ? "Антена: никога иска потвърждение" : "Antenna: never asks first"); back(); back();

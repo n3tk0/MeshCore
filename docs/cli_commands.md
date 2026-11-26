@@ -9,6 +9,7 @@ This document provides an overview of CLI commands that can be sent to MeshCore 
 - [Statistics](#statistics)
 - [Logging](#logging)
 - [Information](#info)
+- [Packet filter](#packet-filter-filter)
 - [Configuration](#configuration)
   - [Radio](#radio)
   - [System](#system)
@@ -361,6 +362,76 @@ For the xiao-solar-lite v0.6 (CN3791) board in `Xiao_nrf52_solar_repeater` (`-D 
 - With `INA226_BATTERY` the board's own ADC is never used (on the xiao-solar-lite v0.6 the XIAO BAT pad is not connected): if the battery INA226 cannot be read or is turned off, the last good reading is used; before the first good one the battery is unknown (0 mV): `battsave`, the OTA battery check and the status take that as "no reading" (no power step, no refusal).
 - A second INA226 at 0x45 (found by its manufacturer ID) is another telemetry channel: the solar input of the xiao-solar-lite v0.6 (panel on Vin+, charger on Vin-). It is also what `mppt` measures.
 - `-D INA226_LOW_POWER=1`: both are read in triggered mode with 16 averages (about 35 ms a reading, the chip rests at ~2 uA in between instead of ~330 uA). A reading that does not finish within 80 ms counts as a failed read, like an I2C error (3 in a row turn the sensor off).
+
+---
+
+## Packet filter (`filter`)
+
+Optional traffic filter and public-key block list (repeater, room server; the companion has a subset).
+Everything is off by default. Full description, limits and what is not possible:
+[packet_filter.md](packet_filter.md).
+
+### Show state, switch, reset
+**Usage:**
+- `filter`
+- `filter on` / `filter off`
+- `filter reset`
+- `filter dryrun [on|off]`
+
+`dryrun` counts what the filter would do and lets everything through.
+
+**Serial Only:** No
+
+---
+
+### Path hash size, advert window
+**Usage:**
+- `filter hash <1-3>`: drop flood packets whose path hash is smaller than this (1 = off)
+- `filter advert <hours>`: one flood advert per origin and window, 0-720 (0 = off)
+- `filter advert clear`
+
+---
+
+### Blocked paths and channels
+**Usage:**
+- `filter path [list|add|remove] <hex prefix, 2-8 digits>`: drop flood packets that went through this repeater
+- `filter channel [list|add|remove] <#name>`: drop group texts of this channel
+- `filter watch [list|add|remove] <#name>`: decrypt this channel (besides Public) for the content checks
+
+---
+
+### Content checks
+**Usage:**
+- `filter malformed [on|off]`
+- `filter age <minutes|off>`: 1-10080
+- `filter sender [list|add|remove] <name> [secs] [prob]`
+- `filter text [list|add|remove] <text> [secs] [prob]`
+
+`secs` 0 = block, otherwise one message per `secs`; `prob` 1-100 is the share of matches the rule decides.
+A sender ending in `*` is a prefix; a text starting with `^` must start the message.
+
+---
+
+### Block list
+**Usage:** `filter block [list [page] [full]|add|remove|clear] <hex key>`
+
+- `hex key`: 8-64 hex digits (a public key prefix, 4-32 bytes), 32 entries. Short entries block a family of keys.
+- `list` shows 6 entries a page, 8 bytes each (`+` = the entry is longer), ending in ` [6/10 p0]`; `list <page> full` shows whole keys, 2 a page. `remove` also takes the printed 8-byte prefix when only one entry starts with it.
+- A blocked key gets no forwarding of its ADVERT / ANON_REQ, no login, no neighbour or ACL entry, no posts (room server) and no mailbox store or delivery.
+
+---
+
+### Ingress limit, new-key quota
+**Usage:**
+- `filter ingress <n> [secs] [soft]` / `filter ingress off`: flood packets per entry repeater (key = first path entry, or "direct")
+- `filter newkey <hours> [mins]` / `filter newkey off` / `filter newkey clear`: a key first seen less than `hours` ago gets one flood advert per `mins` (default 60) and one anonymous request a minute
+
+---
+
+### Statistics
+**Usage:** `filter stats <hash|path|advert|channel|malformed|age|sender|text|block|ingress|newkey|air|top|reset>`
+
+The companion has `malformed`, `age`, `path`, `sender`, `text` and `block`.
 
 ---
 

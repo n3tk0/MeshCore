@@ -29,6 +29,17 @@ class BackupTest {
     }
 
     @Test
+    fun anIncompleteItemSurvivesTheJson() {
+        val inc = Backup(DeviceKind.REPEATER, "ab".repeat(32), "R", 1L, false, "",
+            listOf(s("filter.list.sender", "A block").copy(incomplete = true), s("name", "x")))
+        val b = Backup.fromJson(JSONObject(inc.toJson().toString()))
+        assertTrue(b.hasIncomplete)
+        assertEquals(listOf(true, false), b.items.map { it.incomplete })
+        assertFalse(backup.hasIncomplete)
+        assertFalse(backup.toJson().toString().contains("\"inc\""))
+    }
+
+    @Test
     fun withAPasswordAllIsEncryptedWithoutOneNoSecrets() {
         val withPw = PasswordBox.export(backup, "secret")
         assertTrue(PasswordBox.needsPassword(withPw))

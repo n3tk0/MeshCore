@@ -84,7 +84,10 @@ import io.github.n3tk0.loraota.ota.SelfTest
 import io.github.n3tk0.loraota.security.PasswordStore
 import io.github.n3tk0.loraota.tools.CliHelper
 import io.github.n3tk0.loraota.tools.DiagnosticReport
+import io.github.n3tk0.loraota.tools.FilterConfig
+import io.github.n3tk0.loraota.tools.FilterList
 import io.github.n3tk0.loraota.tools.NeighborEntry
+import io.github.n3tk0.loraota.tools.RepeaterFilter
 import io.github.n3tk0.loraota.tools.NeighborsParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -2150,7 +2153,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun backupNow() = work { makeBackup(backupKind, false) ; message = str(R.string.msg_backup_done) }
+    fun backupNow() = work {
+        val saved = makeBackup(backupKind, false)
+        message = str(R.string.msg_backup_done)
+        // a filter list the repeater's replies did not give whole: saved as far as it was read, and said so
+        if (saved.hasIncomplete) {
+            message = str(R.string.backup_filter_incomplete)
+            messageIsError = true
+        }
+    }
 
     private suspend fun makeBackup(kind: DeviceKind, auto: Boolean): Backup {
         val b = when (kind) {
@@ -2191,7 +2202,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Its console settings, and the admin password the app logged in with (the repeater does not give it). */
     private suspend fun readRepeater(r: Contact): List<BackupItem> {
         val items = try {
-            RepeaterBackup.read(companion, r, info != null) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
+            RepeaterBackup.read(companion, r, info != null, withFilter = true) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
         } catch (e: NoAnswer) {
             throw Exception(str(R.string.backup_no_answer))
         }
@@ -2229,7 +2240,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // the identity only with its private key (a file imported without its password has none)
-        val rows = BackupDiff.diff(b.items, now).filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+        val rows = BackupDiff.diff(b.items, now)
+            .filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+            .filter { it.item.id != RepeaterFilter.INCOMPLETE_ID }   // a note about the backup, not a setting
         restoreChecked.clear()
         // the identity only when the user ticks it: it changes who the device is for the network
         for (r in rows) restoreChecked[r.item.ref] = r.item.group != BackupItem.GROUP_KEY
@@ -2958,6 +2971,113 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteConfigProfile(name: String) = toolsState.deleteProfile(name)
+
+    // ---- the repeater's packet filter (Filter card in Settings) ----
+
+    /** The filter shown in the card; read with [loadFilter], changed with [filterCommand]. */
+    val filterConfig get() = toolsState.filter
+    val filterLoaded get() = toolsState.filterLoaded
+    val filterUnsupported get() = toolsState.filterUnsupported
+    val filterStatsStatus get() = toolsState.filterStatsStatus
+    val filterStatsAir get() = toolsState.filterStatsAir
+
+    /** One CLI command to the repeater and its reply (null: none came); the capture is switched off again by the caller. */
+    private suspend fun filterAsk(r: Contact, cmd: String): String? = RepeaterBackup.ask(companion, r, cmd)
+
+    private suspend fun filterCaptureOff() = withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+
+    /** Reads the filter: `filter` first (no filter in the firmware: stop), then each setting and list. */
+    fun loadFilter() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) canReadRepeater = probeCanReadRepeater()
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        val queries = RepeaterFilter.LOAD_QUERIES
+        var cfg = FilterConfig()
+        var missed = 0
+        try {
+            for ((i, q) in queries.withIndex()) {
+                working = "${str(R.string.filter_working_read)} (${i + 1}/${queries.size})"
+                val list = RepeaterFilter.listOfQuery(q)
+                if (list != null) {
+                    // all pages (a reply holds only as many entries as fit the repeater's buffer)
+                    val read = RepeaterFilter.readList(list, full = false) { filterAsk(r, it) }
+                    if (read == null) { if (++missed >= 3) throw Exception(str(R.string.health_no_answer)); continue }
+                    missed = 0
+                    cfg = RepeaterFilter.withList(cfg, list, read)
+                    continue
+                }
+                val reply = filterAsk(r, q)
+                if (reply == null) {
+                    if (i == 0 || ++missed >= 3) throw Exception(str(R.string.health_no_answer))
+                    continue
+                }
+                missed = 0
+                if (i == 0 && RepeaterFilter.isUnsupported(reply)) {
+                    toolsState.clearFilter()
+                    toolsState.filterUnsupported = true
+                    toolsState.filterLoaded = true
+                    return@work
+                }
+                cfg = RepeaterFilter.apply(cfg, q, reply)
+            }
+        } finally {
+            filterCaptureOff()
+        }
+        toolsState.filter = cfg
+        toolsState.filterUnsupported = false
+        toolsState.filterLoaded = true
+        message = str(R.string.filter_loaded)
+    }
+
+    /**
+     * Sends one changing command (`filter hash 2`, `filter block add ...`); when it took (`> Filter: OK`), reads
+     * back [refresh] (the commands that show the changed setting) so the card shows what the repeater has now.
+     */
+    fun filterCommand(cmd: String, refresh: List<String>) = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        working = cmd
+        try {
+            val reply = filterAsk(r, cmd) ?: throw Exception(str(R.string.health_no_answer))
+            if (!RepeaterFilter.isOk(reply)) {
+                if (RepeaterFilter.isUnsupported(reply)) toolsState.filterUnsupported = true
+                message = str(R.string.filter_failed, RepeaterFilter.errorText(reply))
+                messageIsError = true
+                return@work
+            }
+            var cfg = toolsState.filter
+            for (q in refresh) {
+                working = q
+                val list = RepeaterFilter.listOfQuery(q)
+                if (list != null) {
+                    RepeaterFilter.readList(list, full = false) { filterAsk(r, it) }?.let { cfg = RepeaterFilter.withList(cfg, list, it) }
+                    continue
+                }
+                val back = filterAsk(r, q) ?: continue
+                cfg = RepeaterFilter.apply(cfg, q, back)
+            }
+            toolsState.filter = cfg
+            message = str(R.string.filter_saved)
+        } finally {
+            filterCaptureOff()
+        }
+    }
+
+    /** The statistics: the status line with its drop totals and the airtime the drops saved. */
+    fun loadFilterStats() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        try {
+            working = RepeaterFilter.STATUS
+            val status = filterAsk(r, RepeaterFilter.STATUS) ?: throw Exception(str(R.string.health_no_answer))
+            working = RepeaterFilter.STATS_AIR
+            val air = filterAsk(r, RepeaterFilter.STATS_AIR)
+            toolsState.filterStatsStatus = RepeaterFilter.clean(status).ifEmpty { status.trim() }
+            toolsState.filterStatsAir = air?.let { RepeaterFilter.clean(it).ifEmpty { it.trim() } }
+        } finally {
+            filterCaptureOff()
+        }
+    }
 
     fun loadRepeaterSettings() = work {
         val r = repeater ?: return@work

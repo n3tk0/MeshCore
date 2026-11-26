@@ -40,6 +40,7 @@ import io.github.n3tk0.loraota.backup.BackupItem
 import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.backup.DiffRow
 import io.github.n3tk0.loraota.backup.RepeaterBackup
+import io.github.n3tk0.loraota.tools.RepeaterFilter
 import java.text.DateFormat
 import java.util.Date
 
@@ -178,6 +179,9 @@ private fun BackupRow(vm: AppViewModel, b: Backup, other: Boolean, onOpen: () ->
                     stringResource(if (b.auto) R.string.backup_auto else R.string.backup_manual), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(summary(b), style = MaterialTheme.typography.bodySmall)
+                if (b.hasIncomplete) {
+                    Text(stringResource(R.string.backup_filter_incomplete_short), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
@@ -253,6 +257,9 @@ private fun DiffLine(vm: AppViewModel, b: Backup, r: DiffRow) {
         Checkbox(checked = on, onCheckedChange = { vm.restoreChecked[ref] = it }, enabled = !vm.busy)
         Column(Modifier.weight(1f).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(itemLabel(r.item), style = MaterialTheme.typography.bodyLarge)
+            if (r.item.incomplete) {
+                Text(stringResource(R.string.backup_filter_incomplete_short), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
             if (r.item.group != BackupItem.GROUP_CONTACT) {
                 // the backup's value, and what the device has now
                 Text(itemValue(r.item, r.item.value), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
@@ -297,7 +304,7 @@ private fun itemLabel(i: BackupItem): String = when (i.group) {
         "owner.info" -> stringResource(R.string.set_owner_info)
         "flood.max" -> stringResource(R.string.set_flood_max)
         RepeaterBackup.OTA -> stringResource(R.string.set_ota)
-        else -> i.id
+        else -> if (RepeaterFilter.isBackupId(i.id)) stringResource(R.string.set_filter, i.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)) else i.id
     }
 }
 

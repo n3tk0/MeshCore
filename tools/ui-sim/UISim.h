@@ -7,6 +7,8 @@
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/TelemetryHistory.h>
 #include <Utils.h>
+#include <Packet.h>
+#include <helpers/filter/CompanionFilter.h>
 #include "../../examples/companion_radio/NodePrefs.h"
 
 #define FIRMWARE_VERSION     "v1.9.0-sim"
@@ -30,15 +32,6 @@ namespace mesh {
   struct Identity { uint8_t pub_key[PUB_KEY_SIZE]; };
   struct LocalIdentity : Identity { };
   struct GroupChannel { uint8_t hash[PATH_HASH_SIZE]; uint8_t secret[PUB_KEY_SIZE]; };
-  struct Packet {
-    uint8_t header = 0, path_len = 0;
-    int8_t _snr = 0;
-    uint8_t payload[184];
-    uint16_t payload_len = 0;
-    bool flood = true;
-    bool isRouteFlood() const { return flood; }
-    float getSNR() const { return _snr / 4.0f; }
-  };
 }
 
 struct ContactInfo {
@@ -138,6 +131,28 @@ public:
   void saveHistoryNow() { }
   void enterCLIRescue() { }
   void resetContactPath(ContactInfo& c) { c.out_path_len = OUT_PATH_UNKNOWN; }
+  // block list: the real filter class, kept in RAM only
+  CompanionFilter cfilter;
+  CompanionFilter& filter() { return cfilter; }
+  CBlockResult blockContact(const ContactInfo& c) {   // as the firmware: the contact stays, hidden
+    return cfilter.blockKey(c.id.pub_key);
+  }
+  bool isContactBlocked(const ContactInfo& c) const { return cfilter.isBlockedQuiet(c.id.pub_key); }
+  bool unblockSlot(int slot) { return cfilter.c.removeBlockSlot(slot); }
+  bool muteSender(const char* name) { if (!cfilter.c.addSenderName(name)) return false; cfilter.enabled = true; return true; }
+  bool removeSenderSlot(int slot) {
+    if (slot < 0 || slot >= FILTER_RULE_COUNT) return false;
+    memset(&cfilter.c.sender_rules[slot], 0, sizeof(SenderRule));
+    return true;
+  }
+  bool hideChannel(int idx) {
+    if (idx < 0 || idx >= MAX_GROUP_CHANNELS || !channels[idx].name[0]) return false;
+    uint32_t k;
+    memcpy(&k, channels[idx].channel.secret, sizeof(k));
+    return cfilter.hideChannel(k, channels[idx].name);
+  }
+  bool unhideSlot(int slot) { return cfilter.unhideSlot(slot); }
+  bool isPrefixBlocked(const uint8_t* p, size_t n) const { return cfilter.isPrefixBlocked(p, n); }
   void setTxPower(int8_t dbm) { if (prefs) prefs->tx_power_dbm = dbm; }
   bool setRepeat(bool on) {   // the Faketec build allows 869.495 and 869.618 MHz
     if (on && prefs && !(fabsf(prefs->freq - 869.495f) < 0.0005f || fabsf(prefs->freq - 869.618f) < 0.0005f)) return false;

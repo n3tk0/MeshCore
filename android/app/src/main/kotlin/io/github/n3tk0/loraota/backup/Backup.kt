@@ -6,8 +6,11 @@ import org.json.JSONObject
 /** What a backup is of: a companion (over Bluetooth) or a repeater (over LoRa, its console). */
 enum class DeviceKind { COMPANION, REPEATER }
 
-/** One thing kept: [group] is one of the GROUP_ names, [id] says which (a setting's name, a slot, a key). */
-data class BackupItem(val group: String, val id: String, val label: String, val value: String) {
+/**
+ * One thing kept: [group] is one of the GROUP_ names, [id] says which (a setting's name, a slot, a key).
+ * [incomplete]: what was read is not all of it (a list the repeater's reply buffer or a lost message cut short).
+ */
+data class BackupItem(val group: String, val id: String, val label: String, val value: String, val incomplete: Boolean = false) {
     val ref get() = "$group/$id"
 
     companion object {
@@ -36,6 +39,9 @@ class Backup(
 ) {
     fun count(group: String) = items.count { it.group == group }
 
+    /** Some item (a filter list or setting of a repeater) is only partly in this backup. */
+    val hasIncomplete get() = items.any { it.incomplete }
+
     /** Without the private key: what goes in the JSON (the key is added encrypted, one way or another). */
     fun toJson(): JSONObject = JSONObject()
         .put("format", FORMAT)
@@ -46,7 +52,7 @@ class Backup(
         .put("auto", auto)
         .put("firmware", firmware)
         .put("items", JSONArray().also { a ->
-            for (i in items) a.put(JSONObject().put("g", i.group).put("id", i.id).put("label", i.label).put("v", i.value))
+            for (i in items) a.put(JSONObject().put("g", i.group).put("id", i.id).put("label", i.label).put("v", i.value).also { o -> if (i.incomplete) o.put("inc", true) })
         })
 
     fun with(privateKey: ByteArray?, file: String = this.file) =
@@ -62,7 +68,7 @@ class Backup(
             val a = o.getJSONArray("items")
             val items = (0 until a.length()).map {
                 val i = a.getJSONObject(it)
-                BackupItem(i.getString("g"), i.getString("id"), i.optString("label"), i.getString("v"))
+                BackupItem(i.getString("g"), i.getString("id"), i.optString("label"), i.getString("v"), i.optBoolean("inc"))
             }
             return Backup(kind, o.getString("device"), o.optString("name"), o.getLong("time"), o.optBoolean("auto"),
                 o.optString("firmware"), items, null, file)
