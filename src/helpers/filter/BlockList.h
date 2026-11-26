@@ -79,6 +79,20 @@ namespace FilterBlock {
     return -1;
   }
 
+  // Slot of the first entry that agrees with a PARTIAL key (`known_len` >= 4 bytes of it): the
+  // known bytes equal the start of the entry. For a place that only has a short prefix of a key
+  // (a discovery answer carries 8 bytes), so a long entry still hides the node it was made from.
+  inline int findLoose(const BlockEntry* list, int n, const uint8_t* key, size_t known_len) {
+    if (list == nullptr || key == nullptr || known_len < FILTER_BLOCK_MIN_LEN) return -1;
+    for (int i = 0; i < n; i++) {
+      const BlockEntry& e = list[i];
+      if (e.len == 0) continue;
+      size_t m = e.len < known_len ? e.len : known_len;
+      if (memcmp(e.key, key, m) == 0) return i;
+    }
+    return -1;
+  }
+
   // Raw add: false when the entry is malformed, already present (same bytes) or the list is full.
   // `slot` receives where it went, or the slot already holding it.
   inline bool addRaw(BlockEntry* list, int n, const uint8_t* key, size_t len, int* slot = nullptr) {

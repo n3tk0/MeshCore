@@ -380,7 +380,7 @@ public:
     }
     const char* sub = parts[1];
 
-    int r = c.cli(parts, n, reply, cap, now_secs);
+    int r = c.runCmd(parts, n, reply, cap, now_secs);
     if (r >= 0) return r ? SAVE_PREFS : 0;
 
     if (strcmp(sub, "help") == 0) {
@@ -643,31 +643,9 @@ public:
     w.put(hdr, 4);
     uint8_t b[4] = { p.enabled, p.dryrun, p.min_hash, c.malformed };
     w.put(b, 4);
-    put16(w, p.advert_hours); put16(w, c.age_mins); put16(w, p.ing_limit); put16(w, p.ing_secs);
-    put16(w, p.ing_soft); put16(w, p.nk_hours); put16(w, p.nk_mins);
-    for (int i = 0; i < FILTER_PATH_COUNT; i++) {
-      uint8_t row[1 + FILTER_PATH_MAX_LEN];
-      row[0] = c.path_block[i].len;
-      memcpy(&row[1], c.path_block[i].bytes, FILTER_PATH_MAX_LEN);
-      w.put(row, sizeof(row));
-    }
-    for (int i = 0; i < FILTER_RULE_COUNT; i++) {
-      w.put(c.sender_rules[i].name, FILTER_SENDER_LEN);
-      put16(w, c.sender_rules[i].secs);
-      w.put(&c.sender_rules[i].prob, 1);
-    }
-    for (int i = 0; i < FILTER_RULE_COUNT; i++) {
-      w.put(c.text_rules[i].text, FILTER_TEXT_LEN);
-      put16(w, c.text_rules[i].secs);
-      w.put(&c.text_rules[i].prob, 1);
-    }
-    uint8_t nb = (uint8_t)FilterBlock::count(c.block, FILTER_BLOCK_COUNT);
-    w.put(&nb, 1);
-    for (int i = 0; i < FILTER_BLOCK_COUNT; i++) {
-      if (c.block[i].len == 0) continue;
-      w.put(&c.block[i].len, 1);
-      w.put(c.block[i].key, c.block[i].len);
-    }
+    FilterCommon::put16(w, p.advert_hours); FilterCommon::put16(w, c.age_mins); FilterCommon::put16(w, p.ing_limit); FilterCommon::put16(w, p.ing_secs);
+    FilterCommon::put16(w, p.ing_soft); FilterCommon::put16(w, p.nk_hours); FilterCommon::put16(w, p.nk_mins);
+    c.writeLists(w);
     putChannels(w, p.blocked_ch, FILTER_CHANNEL_COUNT);
     putChannels(w, p.watch_ch, FILTER_WATCH_COUNT);
   }
@@ -683,27 +661,8 @@ public:
     uint8_t b[4];
     ok = ok && r.get(b, 4);
     uint16_t v[7] = {};
-    for (int i = 0; i < 7 && ok; i++) ok = get16(r, &v[i]);
-    for (int i = 0; i < FILTER_PATH_COUNT && ok; i++) {
-      uint8_t row[1 + FILTER_PATH_MAX_LEN];
-      ok = r.get(row, sizeof(row));
-      c.path_block[i].len = row[0];
-      memcpy(c.path_block[i].bytes, &row[1], FILTER_PATH_MAX_LEN);
-    }
-    for (int i = 0; i < FILTER_RULE_COUNT && ok; i++) {
-      ok = r.get(c.sender_rules[i].name, FILTER_SENDER_LEN) && get16(r, &c.sender_rules[i].secs) && r.get(&c.sender_rules[i].prob, 1);
-    }
-    for (int i = 0; i < FILTER_RULE_COUNT && ok; i++) {
-      ok = r.get(c.text_rules[i].text, FILTER_TEXT_LEN) && get16(r, &c.text_rules[i].secs) && r.get(&c.text_rules[i].prob, 1);
-    }
-    uint8_t nb = 0;
-    ok = ok && r.get(&nb, 1) && nb <= FILTER_BLOCK_COUNT;
-    for (int i = 0; i < nb && ok; i++) {
-      uint8_t len;
-      uint8_t key[FILTER_BLOCK_MAX_LEN];
-      ok = r.get(&len, 1) && len >= FILTER_BLOCK_MIN_LEN && len <= FILTER_BLOCK_MAX_LEN && r.get(key, len);
-      if (ok) FilterBlock::addRaw(c.block, FILTER_BLOCK_COUNT, key, len);
-    }
+    for (int i = 0; i < 7 && ok; i++) ok = FilterCommon::get16(r, &v[i]);
+    ok = ok && c.readLists(r);
     ok = ok && getChannels(r, p.blocked_ch, FILTER_CHANNEL_COUNT) && getChannels(r, p.watch_ch, FILTER_WATCH_COUNT);
     if (!ok) {
       resetPrefs();
@@ -736,16 +695,6 @@ public:
   void markPrefsSaved() { _saved_sig = prefsSignature(); }
 
 private:
-  template <typename Sink> static void put16(Sink& w, uint16_t v) {
-    uint8_t b[2] = { (uint8_t)v, (uint8_t)(v >> 8) };
-    w.put(b, 2);
-  }
-  template <typename Src> static bool get16(Src& r, uint16_t* v) {
-    uint8_t b[2];
-    if (!r.get(b, 2)) return false;
-    *v = (uint16_t)(b[0] | (b[1] << 8));
-    return true;
-  }
   template <typename Sink> static void putChannels(Sink& w, const FilterChannel* list, int count) {
     uint8_t n = 0;
     for (int i = 0; i < count; i++) if (list[i].name[0]) n++;

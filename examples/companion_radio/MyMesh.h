@@ -68,6 +68,10 @@
 
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#ifndef NO_PACKET_FILTER
+  #define WITH_PACKET_FILTER     // off until `filter on` or "Block" in the menu; see docs/packet_filter.md
+  #include <helpers/filter/CompanionFilter.h>
+#endif
 #ifdef TELEMETRY_HISTORY
   #include <helpers/TelemetryHistory.h>
 #endif
@@ -214,6 +218,20 @@ public:
     _store->savePrefs(_prefs);
     _prefs.clearDirty();
   }
+#ifdef WITH_PACKET_FILTER
+  // The receive filter and block list (see docs/packet_filter.md). The UI edits it through these.
+  CompanionFilter& filter() { return _cfilter; }
+  bool saveFilter();                                 // written only when it changed
+  bool blockContact(const ContactInfo& contact);     // block list + remove the contact; saved
+  bool unblockSlot(int slot);
+  bool muteSender(const char* name);                 // a sender rule on the exact name; saved
+  bool hideChannel(int channel_idx);                 // this channel is not shown here, but still repeated; saved
+  bool unhideSlot(int slot);
+  bool removeSenderSlot(int slot);
+  bool isPrefixBlocked(const uint8_t* prefix, size_t len) const { return _cfilter.isPrefixBlocked(prefix, len); }
+#else
+  bool isPrefixBlocked(const uint8_t*, size_t) const { return false; }
+#endif
   // small UI-owned files (e.g. quick replies) on the primary filesystem
   int loadUIFile(const char* filename, uint8_t* dest, int max_len) { return _store->loadSmallFile(filename, dest, max_len); }
   bool saveUIFile(const char* filename, const uint8_t* src, int len) { return _store->saveSmallFile(filename, src, len); }
@@ -301,6 +319,15 @@ private:
   // helpers, short-cuts
   void saveChannels() { _store->saveChannels(this); }
   void saveContacts();
+
+#ifdef WITH_PACKET_FILTER
+  CompanionFilter _cfilter;
+  uint8_t _cfilter_hidden[MAX_HASH_SIZE];   // hash of the message let through only so it could be repeated
+  bool _cfilter_hidden_set = false;
+  bool cfilterFlood(mesh::Packet* packet);
+  bool cfilterHidden(const mesh::Packet* packet);
+  void loadCFilter();
+#endif
 
   DataStore* _store;
   NodePrefs _prefs;

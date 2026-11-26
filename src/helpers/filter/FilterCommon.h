@@ -89,6 +89,74 @@ struct FilterCommon {
     return FilterRules::addRule(sender_rules, FILTER_RULE_COUNT, name, 0, 100);
   }
 
+  // ---- the stream format of the lists (shared by both filters' files) ----
+  //   8 x path (u8 len + 4) ; 8 x sender (name 16, u16 secs, u8 prob) ; 8 x text (24, u16, u8) ;
+  //   u8 n, n x (u8 len, key[len]) block
+
+  template <typename Sink>
+  void writeLists(Sink& w) const {
+    for (int i = 0; i < FILTER_PATH_COUNT; i++) {
+      uint8_t row[1 + FILTER_PATH_MAX_LEN];
+      row[0] = path_block[i].len;
+      memcpy(&row[1], path_block[i].bytes, FILTER_PATH_MAX_LEN);
+      w.put(row, sizeof(row));
+    }
+    for (int i = 0; i < FILTER_RULE_COUNT; i++) {
+      w.put(sender_rules[i].name, FILTER_SENDER_LEN);
+      put16(w, sender_rules[i].secs);
+      w.put(&sender_rules[i].prob, 1);
+    }
+    for (int i = 0; i < FILTER_RULE_COUNT; i++) {
+      w.put(text_rules[i].text, FILTER_TEXT_LEN);
+      put16(w, text_rules[i].secs);
+      w.put(&text_rules[i].prob, 1);
+    }
+    uint8_t nb = (uint8_t)FilterBlock::count(block, FILTER_BLOCK_COUNT);
+    w.put(&nb, 1);
+    for (int i = 0; i < FILTER_BLOCK_COUNT; i++) {
+      if (block[i].len == 0) continue;
+      w.put(&block[i].len, 1);
+      w.put(block[i].key, block[i].len);
+    }
+  }
+
+  template <typename Src>
+  bool readLists(Src& r) {
+    bool ok = true;
+    for (int i = 0; i < FILTER_PATH_COUNT && ok; i++) {
+      uint8_t row[1 + FILTER_PATH_MAX_LEN];
+      ok = r.get(row, sizeof(row));
+      path_block[i].len = row[0];
+      memcpy(path_block[i].bytes, &row[1], FILTER_PATH_MAX_LEN);
+    }
+    for (int i = 0; i < FILTER_RULE_COUNT && ok; i++) {
+      ok = r.get(sender_rules[i].name, FILTER_SENDER_LEN) && get16(r, &sender_rules[i].secs) && r.get(&sender_rules[i].prob, 1);
+    }
+    for (int i = 0; i < FILTER_RULE_COUNT && ok; i++) {
+      ok = r.get(text_rules[i].text, FILTER_TEXT_LEN) && get16(r, &text_rules[i].secs) && r.get(&text_rules[i].prob, 1);
+    }
+    uint8_t nb = 0;
+    ok = ok && r.get(&nb, 1) && nb <= FILTER_BLOCK_COUNT;
+    for (int i = 0; i < nb && ok; i++) {
+      uint8_t len;
+      uint8_t key[FILTER_BLOCK_MAX_LEN];
+      ok = r.get(&len, 1) && len >= FILTER_BLOCK_MIN_LEN && len <= FILTER_BLOCK_MAX_LEN && r.get(key, len);
+      if (ok) FilterBlock::addRaw(block, FILTER_BLOCK_COUNT, key, len);
+    }
+    return ok;
+  }
+
+  template <typename Sink> static void put16(Sink& w, uint16_t v) {
+    uint8_t b[2] = { (uint8_t)v, (uint8_t)(v >> 8) };
+    w.put(b, 2);
+  }
+  template <typename Src> static bool get16(Src& r, uint16_t* v) {
+    uint8_t b[2];
+    if (!r.get(b, 2)) return false;
+    *v = (uint16_t)(b[0] | (b[1] << 8));
+    return true;
+  }
+
   // Splits `s` in place on single spaces (runs of spaces collapse). Returns the number of parts.
   static int split(char* s, const char** parts, int max) {
     int n = 0;
@@ -105,7 +173,7 @@ struct FilterCommon {
   // The subcommands both filters have. `parts[0]` is "filter", `parts[1]` the subcommand.
   // Returns 1 when the command was handled and the settings changed, 0 when it was handled and
   // nothing changed, -1 when it is not one of these (the caller handles it).
-  int cli(const char* const* parts, int n, char* reply, size_t cap, uint32_t now_secs) {
+  int runCmd(const char* const* parts, int n, char* reply, size_t cap, uint32_t now_secs) {
     if (n < 2) return -1;
     const char* sub = parts[1];
 

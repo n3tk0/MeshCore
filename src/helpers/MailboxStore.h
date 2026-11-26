@@ -105,6 +105,7 @@ public:
       _blocked[k] = _blocked[k + 1];
     }
     _cfg.num_owners--;
+    _blocked[_cfg.num_owners] = false;   // the vacated slot
     return true;
   }
 

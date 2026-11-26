@@ -437,6 +437,10 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
 
 void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                           const uint8_t* app_data, size_t app_data_len) {
+#ifdef WITH_PACKET_FILTER
+  // a blocked key: no contact added or updated, nothing for the app (a zero-hop advert did not pass the flood filter)
+  if (_cfilter.isBlocked(id.pub_key)) return;
+#endif
 #ifdef CLOCK_FROM_ADVERT
   // No clock yet (no RTC, no phone since boot): take the time from signed adverts. One node with a
   // wrong clock must not set ours, so two adverts from different nodes have to agree within
@@ -622,7 +626,11 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
   // REVISIT: try to determine which Region (from transport_codes[1]) that Sender is indicating for replies/responses
   //    if unknown, fallback to finding Region from transport_codes[0], the 'scope' used by Sender
+#ifdef WITH_PACKET_FILTER
+  return cfilterFlood(packet);
+#else
   return false;
+#endif
 }
 
 bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
@@ -678,6 +686,10 @@ bool MyMesh::isRepeatedMsg(const ContactInfo &from, uint32_t sender_timestamp) {
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
+#ifdef WITH_PACKET_FILTER
+  // a blocked contact: dropped here, the sender still gets its ACK (sent by the caller) so it learns nothing
+  if (_cfilter.isBlocked(from.id.pub_key)) return;
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   // shown once; the sender still gets its ACK (sent by the caller)
   if (isRepeatedMsg(from, sender_timestamp)) return;
@@ -692,6 +704,9 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp, const char *text) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(from.id.pub_key)) return;
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   // an app reading a server's settings (a backup) asked for its console replies directly, so the
   // user's unread messages stay in the queue untouched
@@ -711,6 +726,9 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
 
 void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text, char* reply) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(from.id.pub_key)) return;   // no command, no reply
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   if (from.isRemoteCLIAllowed()) {
     if (!handleCommand(text, sender_timestamp, reply)) {
@@ -723,6 +741,9 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(from.id.pub_key)) return;
+#endif
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -731,6 +752,9 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
+#ifdef WITH_PACKET_FILTER
+  if (cfilterHidden(pkt)) return;   // hidden by the filter: still repeated, not shown
+#endif
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
@@ -1241,6 +1265,9 @@ void MyMesh::begin() {
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure public channel
   _store->loadChannels(this);
   loadOfflineQueue();   // messages the app had not fetched before the last power off or reset
+#ifdef WITH_PACKET_FILTER
+  loadCFilter();
+#endif
 #ifdef TELEMETRY_HISTORY
   loadHistory();
   _history_next = futureMillis(TH_DAY_MINS * 60000UL);
@@ -2370,6 +2397,13 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     *reply = 0;
     command += 3;
   }
+
+#ifdef WITH_PACKET_FILTER
+  if (CompanionFilter::isCommand(command)) {
+    if (_cfilter.handleCommand(command, reply, getRTCClock()->getCurrentTime())) saveFilter();
+    return true;
+  }
+#endif
 
   if (_prefs.getRadioPrefs()->handleCommand(command, sender_timestamp, reply)) {  // is radio CLI command?
     if (_prefs.getRadioPrefs()->isDirty()) { savePrefs(); }

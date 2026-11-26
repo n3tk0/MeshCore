@@ -36,6 +36,28 @@ TEST(MailboxStore, KeepsMessagesForAnAwayOwnerOnly) {
   EXPECT_EQ(1, m.count());
 }
 
+TEST(MailboxStore, BlockedOwnerKeepsNothingAndFlagFollowsRemoval) {
+  MailboxStore& m = *makeStore();
+  uint8_t key2[MAILBOX_KEY_SIZE];
+  memset(key2, 0x22, sizeof(key2));
+  key2[0] = 0x66;
+  m.addOwner(key2);
+  m.setBlocked(0, true);
+  EXPECT_TRUE(m.isBlocked(0));
+  EXPECT_FALSE(m.isBlocked(1));
+  uint8_t p[40], h[MAILBOX_HASH_SIZE];
+  hashOf(h, 1);
+  EXPECT_FALSE(m.onPacket(0x02, p, msg(p, OWNER, SENDER, 20, 1), h, 1000));   // blocked: not kept
+  hashOf(h, 2);
+  EXPECT_TRUE(m.onPacket(0x02, p, msg(p, 0x66, SENDER, 20, 2), h, 1000));     // the other owner still is
+  m.setBlocked(1, true);
+  m.removeOwner(0);                                                           // the flag moves with its owner
+  EXPECT_TRUE(m.isBlocked(0));
+  EXPECT_FALSE(m.isBlocked(1));
+  m.setBlocked(0, false);
+  EXPECT_FALSE(m.isBlocked(0));
+}
+
 TEST(MailboxStore, NothingKeptWhileOwnerIsHere) {
   MailboxStore& m = *makeStore();
   uint8_t p[40], h[MAILBOX_HASH_SIZE];

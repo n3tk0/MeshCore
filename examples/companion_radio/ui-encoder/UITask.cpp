@@ -13,6 +13,12 @@
 #include "UIHelpers.h"
 #include "target.h"
 
+// Block / mute actions and the Blocked list need the companion filter (MyMesh.h defines
+// WITH_PACKET_FILTER unless NO_PACKET_FILTER; the simulator has its own stand-in).
+#if defined(WITH_PACKET_FILTER) || defined(UI_SIM)
+  #define UI_FILTER
+#endif
+
 #if !defined(UI_HAS_ROTARY_INPUT) || !defined(PIN_ENCODER_BTN) || !defined(PIN_USER_BTN)
   #error "ui-encoder needs UI_HAS_ROTARY_INPUT, PIN_ENCODER_BTN (Enter) and PIN_USER_BTN (Back)"
 #endif
@@ -167,6 +173,9 @@ enum StrId {
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
   S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
   S_SET_QUIET, S_MAIL_FMT, S_LEFT_DH_FMT, S_LEFT_H_FMT, S_HIST_24H, S_NO_HISTORY,
+  // block list
+  S_BLOCK, S_BLOCK_Q_FMT, S_BLOCKED, S_BLOCKED_DONE, S_MUTE_SENDER, S_MUTE_SENDER_Q_FMT, S_MUTE_CHANNEL, S_MUTE_CHANNEL_Q_FMT,
+  S_REMOVE_Q, S_REMOVED, S_LIST_FULL,
   S_COUNT
 };
 
@@ -421,6 +430,18 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "~%dч", "~%dh" },
   { "24ч", "24h" },
   { "Няма данни", "No data yet" },
+  // block list
+  { "Блокирай", "Block" },
+  { "Блокирай %s?", "Block %s?" },
+  { "Блокирани", "Blocked" },
+  { "Блокиран", "Blocked" },
+  { "Заглуши подател", "Mute sender" },
+  { "Заглуши %s?", "Mute %s?" },
+  { "Заглуши канал", "Mute channel" },
+  { "Заглуши канал %s?", "Mute chan. %s?" },
+  { "Махни?", "Remove?" },
+  { "Махнато", "Removed" },
+  { "Списъкът е пълен", "List is full" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -2101,11 +2122,50 @@ static void openMessageInfo(UITask* task, uint32_t seq) {
   task->push(message_info);
 }
 
+#ifdef UI_FILTER
+// What the pop-ups ask about, kept for the confirmation that follows.
+static uint8_t confirm_key[PUB_KEY_SIZE];
+static char confirm_name[32];
+static int confirm_slot = 0;
+
+// The sender of a channel message: the text is "name: message". False when there is no such
+// prefix or the name is too long for a sender rule. `out` may be NULL (only asks).
+static bool senderOf(const UIMsgEntry* m, char* out, size_t cap) {
+  const char* sep = strstr(m->text, ": ");
+  if (sep == NULL || sep == m->text || (size_t)(sep - m->text) >= FILTER_SENDER_LEN) return false;
+  if (out != NULL) {
+    size_t n = (size_t)(sep - m->text);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, m->text, n);
+    out[n] = '\0';
+  }
+  return true;
+}
+
+static void doMuteSender(UITask* task) {
+  if (the_mesh.muteSender(confirm_name)) {
+    task->haptic(UI_HAPTIC_ACK_MS);
+    task->showAlert(T(S_MUTED), 800);
+  } else {
+    task->showAlert(T(S_LIST_FULL), 1500);
+  }
+}
+
+static void doMuteChannel(UITask* task) {
+  if (the_mesh.hideChannel(confirm_slot)) {
+    task->haptic(UI_HAPTIC_ACK_MS);
+    task->showAlert(T(S_MUTED), 800);
+  } else {
+    task->showAlert(T(S_LIST_FULL), 1500);
+  }
+}
+#endif
+
 // pop-up for one message: reply, send again (when not delivered), delete, delete conversation
 class MessageActionsScreen : public ListScreen {
   uint32_t _seq = 0;   // the message acted on, independent of history shifts
-  enum { A_REPLY, A_RETRY, A_INFO, A_DEL, A_DEL_CONV };
-  uint8_t _acts[5];
+  enum { A_REPLY, A_RETRY, A_INFO, A_DEL, A_DEL_CONV, A_MUTE_SND, A_MUTE_CH };
+  uint8_t _acts[7];
   int _n = 0;
 protected:
   void title(char* buf, size_t n) override {
@@ -2114,7 +2174,7 @@ protected:
   }
   int count() override { return _n; }
   void label(int i, char* buf, size_t n) override {
-    static const StrId L[] = { S_REPLY, S_RETRY, S_INFO, S_DEL, S_DEL_CONV };
+    static const StrId L[] = { S_REPLY, S_RETRY, S_INFO, S_DEL, S_DEL_CONV, S_MUTE_SENDER, S_MUTE_CHANNEL };
     snprintf(buf, n, "%s", T(L[_acts[i]]));
   }
   bool onEnter(int i) override;
@@ -2129,6 +2189,12 @@ public:
     _acts[_n++] = A_INFO;
     _acts[_n++] = A_DEL;
     _acts[_n++] = A_DEL_CONV;
+#ifdef UI_FILTER
+    if (m && m->src == MSG_SRC_CHANNEL && m->state == MSG_IN) {
+      if (senderOf(m, NULL, 0)) _acts[_n++] = A_MUTE_SND;
+      _acts[_n++] = A_MUTE_CH;
+    }
+#endif
     reset();
   }
 };
@@ -2171,6 +2237,22 @@ bool MessageActionsScreen::onEnter(int i) {
       if (_task->prefs()->ui_delconf) doDeleteOne(_task);
       else askConfirm(_task, T(S_DEL_Q), doDeleteOne);
       break;
+#ifdef UI_FILTER
+    case A_MUTE_SND: {
+      if (!senderOf(m, confirm_name, sizeof(confirm_name))) break;
+      char q[64];
+      snprintf(q, sizeof(q), T(S_MUTE_SENDER_Q_FMT), confirm_name);
+      askConfirm(_task, q, doMuteSender);
+      break;
+    }
+    case A_MUTE_CH: {
+      confirm_slot = m->channel_idx;
+      char q[64];
+      snprintf(q, sizeof(q), T(S_MUTE_CHANNEL_Q_FMT), m->from);
+      askConfirm(_task, q, doMuteChannel);
+      break;
+    }
+#endif
     default:
       askDeleteConv(_task, _seq);
       break;
@@ -2230,15 +2312,32 @@ static ContactInfoScreen* contact_info;
 
 static void traceContact(UITask* task, const ContactInfo& c);
 
-// pop-up on a contact: write, trace, details, reset path
+#ifdef UI_FILTER
+static void doBlockContact(UITask* task) {
+  ContactInfo* c = the_mesh.lookupContactByPubKey(confirm_key, PUB_KEY_SIZE);
+  if (c == NULL) { task->showAlert(T(S_NO_TARGET), 1200); return; }
+  if (the_mesh.blockContact(*c)) {
+    task->haptic(UI_HAPTIC_ACK_MS);
+    task->showAlert(T(S_BLOCKED_DONE), 800);
+  } else {
+    task->showAlert(T(S_LIST_FULL), 1500);
+  }
+}
+#endif
+
+// pop-up on a contact: write, trace, details, reset path, block
 class ContactActionsScreen : public ListScreen {
   uint8_t _key[PUB_KEY_SIZE];
   char _name[32];
 protected:
   void title(char* buf, size_t n) override { snprintf(buf, n, "%s", _name); }
+#ifdef UI_FILTER
+  int count() override { return 5; }
+#else
   int count() override { return 4; }
+#endif
   void label(int i, char* buf, size_t n) override {
-    static const StrId L[] = { S_WRITE, S_TRACE, S_INFO, S_RESET_PATH };
+    static const StrId L[] = { S_WRITE, S_TRACE, S_INFO, S_RESET_PATH, S_BLOCK };
     snprintf(buf, n, "%s", T(L[i]));
   }
   bool onEnter(int i) override {
@@ -2254,10 +2353,17 @@ protected:
     } else if (i == 2) {
       contact_info->open(c->id.pub_key);
       _task->push(contact_info);
-    } else {
+    } else if (i == 3) {
       the_mesh.resetContactPath(*c);
       _task->haptic(UI_HAPTIC_ACK_MS);
       _task->showAlert(T(S_PATH_RESET), 1000);
+#ifdef UI_FILTER
+    } else {
+      memcpy(confirm_key, c->id.pub_key, PUB_KEY_SIZE);
+      char q[64];
+      snprintf(q, sizeof(q), T(S_BLOCK_Q_FMT), c->name);
+      askConfirm(_task, q, doBlockContact);
+#endif
     }
     return true;
   }
@@ -2687,7 +2793,7 @@ enum SettingId : uint8_t {
   ST_TX, ST_TXPOW, ST_ANT, ST_PRESET,
   ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE,
   ST_WORDS, ST_HW, ST_REPEAT, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN,
-  ST_QUIET,
+  ST_QUIET, ST_BLOCKED,
 };
 
 // the EU/UK radio presets of the MeshCore app (api.meshcore.nz/api/v1/config, 2026-10-12):
@@ -2725,7 +2831,7 @@ static StrId settingName(uint8_t id) {
     S_TX_FMT, S_SET_TXPOW, S_SET_ANT, S_SET_PRESET,
     S_SET_NAME, S_SET_LANG, S_SET_TZ, S_SET_DST, S_SET_BATT, S_ABOUT, S_RESCUE, S_SET_DFU_USB, S_SET_DFU_BLE,
     S_WORDS, S_HARDWARE, S_SET_REPEAT, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
-    S_SET_QUIET,
+    S_SET_QUIET, S_BLOCKED,
   };
   return N[id];
 }
@@ -3018,6 +3124,69 @@ static void openScreenTest(UITask* task);
 static void doDfuUsb(UITask* task) { task->enterBootloader(true); }
 static void doDfuBle(UITask* task) { task->enterBootloader(false); }
 
+#ifdef UI_FILTER
+// Settings > Messages > Blocked: blocked keys (first 4 bytes), muted senders and muted channels in
+// one list. Press asks "Remove?"; the entry goes when answered yes.
+class BlockedScreen : public ListScreen {
+  enum { K_KEY, K_SENDER, K_CHANNEL };
+  struct Row { uint8_t kind; uint8_t slot; char text[24]; };
+  Row _rows[FILTER_BLOCK_COUNT + FILTER_RULE_COUNT + CFILTER_HIDDEN_COUNT];
+  int _n = 0;
+  static BlockedScreen* _self;
+
+  void build() {
+    CompanionFilter& f = the_mesh.filter();
+    _n = 0;
+    for (int i = 0; i < FILTER_BLOCK_COUNT; i++) {
+      if (f.c.block[i].len == 0) continue;
+      Row& r = _rows[_n++];
+      r.kind = K_KEY; r.slot = (uint8_t)i;
+      FilterBlock::format(r.text, sizeof(r.text), f.c.block[i], 4);
+    }
+    for (int i = 0; i < FILTER_RULE_COUNT; i++) {
+      if (f.c.sender_rules[i].name[0] == '\0') continue;
+      Row& r = _rows[_n++];
+      r.kind = K_SENDER; r.slot = (uint8_t)i;
+      snprintf(r.text, sizeof(r.text), "@%s", f.c.sender_rules[i].name);
+    }
+    for (int i = 0; i < CFILTER_HIDDEN_COUNT; i++) {
+      if (f.hidden[i].key == 0) continue;
+      Row& r = _rows[_n++];
+      r.kind = K_CHANNEL; r.slot = (uint8_t)i;
+      snprintf(r.text, sizeof(r.text), "#%s", f.hidden[i].name);
+    }
+  }
+  static void doRemove(UITask* task) {
+    BlockedScreen* me = _self;
+    if (me == NULL || confirm_slot < 0 || confirm_slot >= me->_n) return;
+    const Row& r = me->_rows[confirm_slot];
+    bool ok = r.kind == K_KEY ? the_mesh.unblockSlot(r.slot)
+            : r.kind == K_SENDER ? the_mesh.removeSenderSlot(r.slot)
+            : the_mesh.unhideSlot(r.slot);
+    task->showAlert(T(ok ? S_REMOVED : S_SAVE_FAIL), 800);
+    me->build();
+    me->select(me->_sel);
+  }
+protected:
+  bool isContent() override { return true; }
+  void title(char* buf, size_t n) override { snprintf(buf, n, "%s", T(S_BLOCKED)); }
+  int count() override { return _n; }
+  void label(int i, char* buf, size_t n) override { snprintf(buf, n, "%s", _rows[i].text); }
+  bool onEnter(int i) override {
+    if (i < 0 || i >= _n) return false;
+    confirm_slot = i;
+    _self = this;
+    askConfirm(_task, T(S_REMOVE_Q), doRemove);
+    return true;
+  }
+public:
+  BlockedScreen(UITask* task) : ListScreen(task) { }
+  void open() { build(); reset(); }
+};
+BlockedScreen* BlockedScreen::_self = NULL;
+static BlockedScreen* blocked_screen;
+#endif
+
 class SettingsGroupScreen : public ListScreen {
   const uint8_t* _items = NULL;
   int _n = 0;
@@ -3076,6 +3245,11 @@ protected:
       char q[64];
       snprintf(q, sizeof(q), T(S_WORDS_Q_FMT), n);
       askConfirm(_task, q, doClearWords);
+#ifdef UI_FILTER
+    } else if (id == ST_BLOCKED) {
+      blocked_screen->open();
+      _task->push(blocked_screen);
+#endif
     } else if (id == ST_HW) {
       openHardware(_task);
     } else if (id == ST_TEST_INPUT) {
@@ -3105,7 +3279,11 @@ static SettingsGroupScreen* settings_group;
 static const uint8_t GROUP_DISPLAY[] = { ST_MENU_SZ, ST_TEXT_SZ, ST_OFF, ST_BRIGHT, ST_DOTS };
 // controls and hardware in one place: the input settings, the tests, then the readings
 static const uint8_t GROUP_INPUT[]   = { ST_ENC, ST_STEPS, ST_VIBE, ST_SKIP, ST_LOCK, ST_TEST_INPUT, ST_TEST_VIBE, ST_TEST_SCREEN, ST_HW };
-static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_QUIET, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS };
+static const uint8_t GROUP_MSGS[]    = { ST_NOTIFY, ST_WAKE, ST_QUIET, ST_DELCONF, ST_CSORT, ST_QUICK, ST_WORDS
+#ifdef UI_FILTER
+  , ST_BLOCKED
+#endif
+};
 static const uint8_t GROUP_RADIO[]   = { ST_TX, ST_TXPOW, ST_ANT, ST_PRESET, ST_REPEAT };
 static const uint8_t GROUP_SYSTEM[]  = { ST_NAME, ST_LANG, ST_TZ, ST_DST, ST_BATT, ST_ABOUT, ST_RESCUE, ST_DFU_USB, ST_DFU_BLE };
 
@@ -3746,6 +3924,7 @@ void UITask::onControlDataRecv(const mesh::Packet* pkt) {
   memcpy(&tag, &pkt->payload[2], 4);
   if (!nearbyListening() || tag != nearby.tag) return;
   const uint8_t* prefix = &pkt->payload[6];
+  if (the_mesh.isPrefixBlocked(prefix, 8)) return;   // a blocked node is not listed
   for (int i = 0; i < nearby.n; i++) if (memcmp(nearby.nodes[i].prefix, prefix, 8) == 0) return;   // twice
   NearbyNode node;
   memcpy(node.prefix, prefix, 8);
@@ -4326,6 +4505,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channels_screen = new ChannelsScreen(this);
   channel_actions = new ChannelActionsScreen(this);
   settings_screen = new SettingsScreen(this);
+#ifdef UI_FILTER
+  blocked_screen = new BlockedScreen(this);
+#endif
   settings_group = new SettingsGroupScreen(this);
   value_edit = new ValueEditScreen(this);
   about_screen = new AboutScreen(this);
