@@ -40,6 +40,7 @@ import io.github.n3tk0.loraota.backup.BackupItem
 import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.backup.DiffRow
 import io.github.n3tk0.loraota.backup.RepeaterBackup
+import io.github.n3tk0.loraota.tools.RepeaterFilter
 import java.text.DateFormat
 import java.util.Date
 
@@ -297,7 +298,7 @@ private fun itemLabel(i: BackupItem): String = when (i.group) {
         "owner.info" -> stringResource(R.string.set_owner_info)
         "flood.max" -> stringResource(R.string.set_flood_max)
         RepeaterBackup.OTA -> stringResource(R.string.set_ota)
-        else -> i.id
+        else -> if (RepeaterFilter.isBackupId(i.id)) stringResource(R.string.set_filter, i.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)) else i.id
     }
 }
 

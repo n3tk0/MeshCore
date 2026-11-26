@@ -14,6 +14,7 @@ import io.github.n3tk0.loraota.tools.CliHelper
 import io.github.n3tk0.loraota.tools.CliHistory
 import io.github.n3tk0.loraota.tools.ConfigProfile
 import io.github.n3tk0.loraota.tools.ConfigProfileLogic
+import io.github.n3tk0.loraota.tools.FilterConfig
 import io.github.n3tk0.loraota.tools.NeighborEntry
 import io.github.n3tk0.loraota.tools.PingSample
 import org.json.JSONArray
@@ -199,7 +200,7 @@ class RepeaterToolsState(ctx: Context) {
     val customCliSnippets = mutableStateListOf<String>().apply { addAll(snippetStore.load()) }
     val configProfiles = mutableStateListOf<ConfigProfile>().apply { addAll(profileStore.load()) }
 
-    /** The Tools tab's section (0 CLI, 1 settings, 2 backup) and the Overview's neighbors card: kept here, not in a composable. */
+    /** The Tools tab's section (0 CLI, 1 settings) and the Overview's neighbors card: kept here, not in a composable. */
     var toolSection by mutableIntStateOf(0)
     var neighborsExpanded by mutableStateOf(false)
 
@@ -222,6 +223,22 @@ class RepeaterToolsState(ctx: Context) {
     val settingsDraft = mutableStateMapOf<String, String>()
     var settingsLoaded by mutableStateOf(false)
     var settingsProgress by mutableStateOf<Pair<Int, Int>?>(null)
+
+    /** The repeater's packet filter (the Filter card in Settings): read with `filter ...` commands, on request. */
+    var filter by mutableStateOf(FilterConfig())
+    var filterLoaded by mutableStateOf(false)
+    /** The firmware answered `filter` with an unknown-command error: it has no filter. */
+    var filterUnsupported by mutableStateOf(false)
+    var filterStatsStatus by mutableStateOf<String?>(null)
+    var filterStatsAir by mutableStateOf<String?>(null)
+
+    fun clearFilter() {
+        filter = FilterConfig()
+        filterLoaded = false
+        filterUnsupported = false
+        filterStatsStatus = null
+        filterStatsAir = null
+    }
 
     fun addSnippet(raw: String): Boolean {
         val cmd = raw.trim()
@@ -298,6 +315,7 @@ class RepeaterToolsState(ctx: Context) {
         settingsDraft.clear()
         settingsLoaded = false
         settingsProgress = null
+        clearFilter()
         repeaterCliLog.clear()
     }
 }
