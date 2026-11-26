@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MeshCore Service</string>
-    <string name="tools_backup_short">Backup</string>
     <string name="companion_hint">Connect your companion to manage, check and update your repeaters. Without one, see “My repeaters” and Offline.</string>
     <string name="scan">Find companion</string>
     <string name="scanning">Searching…</string>
@@ -615,6 +614,75 @@
     <string name="tools_settings">Settings</string>
     <string name="tools_backup_title">Backup &amp; Restore</string>
     <string name="tools_backup_desc">Save the repeater’s current configuration to this phone or restore an earlier backup.</string>
+    <!-- repeater filter (Settings) -->
+    <string name="filter_title">Filter</string>
+    <string name="filter_subtitle">What the repeater should not forward. Off by default.</string>
+    <string name="filter_hint_load">Press Load to read the filter from the repeater (a few LoRa messages).</string>
+    <string name="filter_working_read">Reading the filter…</string>
+    <string name="filter_loaded">Filter loaded.</string>
+    <string name="filter_saved">Filter updated.</string>
+    <string name="filter_failed">The filter refused: %1$s</string>
+    <string name="filter_unsupported">This repeater\'s firmware has no filter.</string>
+    <string name="filter_enabled">Filter is on</string>
+    <string name="filter_dryrun">Count only (dry-run)</string>
+    <string name="filter_dryrun_hint">Counts what it would drop, but forwards everything.</string>
+    <string name="filter_malformed">Drop malformed group messages</string>
+    <string name="filter_hash">Min. path hash size (1-3)</string>
+    <string name="filter_hash_warn">At 2 or 3 every packet with a 1-byte path is dropped, and that is nearly all flood traffic. Use it only during an attack.</string>
+    <string name="filter_advert">One advert per key every N hours (0-720, 0 = off)</string>
+    <string name="filter_age">Max. message age, minutes (1-10080)</string>
+    <string name="filter_age_warn">Needs a correct clock on the repeater. Without one (before 2026) it does nothing, and a wrong clock or a phone with the wrong time gets good messages dropped.</string>
+    <string name="filter_age_inactive">The repeater\'s clock is not set: the age limit is inactive.</string>
+    <string name="filter_ingress">Limit per entry repeater</string>
+    <string name="filter_ingress_n">Packets</string>
+    <string name="filter_ingress_secs">Per secs</string>
+    <string name="filter_ingress_soft">Soft (optional)</string>
+    <string name="filter_newkey">Small quota for new keys</string>
+    <string name="filter_newkey_hours">New for (hours)</string>
+    <string name="filter_newkey_mins">Advert every (min)</string>
+    <string name="filter_set">Set</string>
+    <string name="filter_turn_off">Turn off</string>
+    <string name="filter_now">Now: %1$s</string>
+    <string name="filter_value_off">off</string>
+    <string name="filter_value_hours">%1$d h</string>
+    <string name="filter_value_mins">%1$d min</string>
+    <string name="filter_value_ingress">%1$d packets per %2$d s</string>
+    <string name="filter_value_soft">, soft from %1$d</string>
+    <string name="filter_value_newkey">%1$d h, advert every %2$d min</string>
+    <string name="filter_err_range">Out of range.</string>
+    <string name="filter_err_hex">Hex characters only (0-9, a-f).</string>
+    <string name="filter_err_block_len">8 to 64 characters.</string>
+    <string name="filter_err_path_len">2 to 8 characters.</string>
+    <string name="filter_err_odd">An even number of characters.</string>
+    <string name="filter_err_hash">Starts with #.</string>
+    <string name="filter_err_space">No spaces or commas.</string>
+    <string name="filter_err_name_long">Too long.</string>
+    <string name="filter_err_sender">Up to 15 characters.</string>
+    <string name="filter_err_text">Up to 23 characters.</string>
+    <string name="filter_err_secs">Seconds: 0-65535.</string>
+    <string name="filter_err_prob">Probability: 1-100.</string>
+    <string name="filter_list_block">Blocked keys</string>
+    <string name="filter_list_path">Blocked paths</string>
+    <string name="filter_list_channel">Blocked channels</string>
+    <string name="filter_list_watch">Watched channels</string>
+    <string name="filter_list_sender">Sender rules</string>
+    <string name="filter_list_text">Text rules</string>
+    <string name="filter_hint_block">Public key (8-64 hex characters)</string>
+    <string name="filter_hint_path">Path (2-8 hex characters)</string>
+    <string name="filter_hint_channel">#name or Public</string>
+    <string name="filter_hint_watch">#name</string>
+    <string name="filter_hint_sender">Name (up to 15 chars, * at the end = prefix)</string>
+    <string name="filter_hint_text">Text (up to 23 chars, ^ in front = start)</string>
+    <string name="filter_hint_secs">Secs (optional)</string>
+    <string name="filter_hint_prob">Probability (optional)</string>
+    <string name="filter_list_empty">Empty</string>
+    <string name="filter_list_add">Add</string>
+    <string name="filter_list_remove">Remove</string>
+    <string name="filter_list_truncated">The list is cut: the reply was longer than the repeater\'s buffer.</string>
+    <string name="filter_stats">Statistics</string>
+    <string name="filter_stats_load">Load statistics</string>
+    <string name="filter_stats_air">Airtime saved: %1$s</string>
+    <string name="set_filter">Filter: %1$s</string>
     <string name="cli_title_companion">CLI · %1$s</string>
     <string name="cli_quick_commands">Quick commands</string>
     <string name="cli_input_hint">Command (e.g. ver, get name, set tx 20)</string>

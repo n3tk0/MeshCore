@@ -3,6 +3,9 @@ package io.github.n3tk0.loraota.backup
 import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.ota.hex
+import io.github.n3tk0.loraota.tools.FilterConfig
+import io.github.n3tk0.loraota.tools.FilterList
+import io.github.n3tk0.loraota.tools.RepeaterFilter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
@@ -156,13 +159,20 @@ object RepeaterBackup {
     /** False: the companion cannot hand over console replies (stock firmware). */
     suspend fun supported(c: CompanionRadio) = c.captureCli(0)
 
-    suspend fun read(c: CompanionRadio, r: Contact, withOta: Boolean, progress: (Int, Int) -> Unit): List<BackupItem> {
+    /**
+     * [withFilter]: also the packet filter (`filter ...`, ids `filter.*`), when the firmware has one: its settings and
+     * lists, so a restore brings the whole config back. Not for the settings editor (these are no `get` / `set` keys).
+     */
+    suspend fun read(
+        c: CompanionRadio, r: Contact, withOta: Boolean, withFilter: Boolean = false, progress: (Int, Int) -> Unit,
+    ): List<BackupItem> {
         val keys = if (withOta) KEYS + OTA else KEYS
+        val total = keys.size + if (withFilter) RepeaterFilter.LOAD_QUERIES.size else 0
         val out = ArrayList<BackupItem>()
         var missed = 0
         try {
             for ((i, k) in keys.withIndex()) {
-                progress(i + 1, keys.size)
+                progress(i + 1, total)
                 val reply = ask(c, r, if (k == OTA) "ota status" else "get $k")
                 if (reply == null) {
                     if (++missed >= 3) throw NoAnswer()
@@ -174,10 +184,53 @@ object RepeaterBackup {
                 val v = reply.removePrefix("> ")
                 out.add(setting(k, if (k == OTA) v.substringBefore(',').trim() else v))
             }
+            if (withFilter && missed == 0) out.addAll(readFilter(c, r, keys.size, total, progress))
         } finally {
             withContext(NonCancellable) { runCatching { c.captureCli(0) } }   // also after Stop
         }
         return out
+    }
+
+    /** The filter as backup items; nothing when the firmware has none (or stops answering: the settings are already read). */
+    private suspend fun readFilter(c: CompanionRadio, r: Contact, offset: Int, total: Int, progress: (Int, Int) -> Unit): List<BackupItem> {
+        var cfg = FilterConfig()
+        for ((i, q) in RepeaterFilter.LOAD_QUERIES.withIndex()) {
+            progress(offset + i + 1, total)
+            val reply = ask(c, r, q) ?: if (i == 0) return emptyList() else continue
+            if (i == 0 && (RepeaterFilter.isUnsupported(reply) || RepeaterFilter.parseStatus(reply) == null)) return emptyList()
+            cfg = RepeaterFilter.apply(cfg, q, reply)
+        }
+        val out = ArrayList<BackupItem>()
+        for ((name, v) in RepeaterFilter.backupScalars(cfg)) out.add(setting(RepeaterFilter.backupId(name), v))
+        for (l in FilterList.entries) {
+            val entries = cfg.lists[l].orEmpty()
+            if (entries.isNotEmpty()) out.add(setting(RepeaterFilter.backupId("list.${l.cmd}"), entries.joinToString(",") { it.display }))
+        }
+        return out
+    }
+
+    /** One filter item of a restore: a setting back, or a list's missing entries added; the reason in the Exception message. */
+    private suspend fun applyFilter(c: CompanionRadio, r: Contact, item: BackupItem): String? {
+        val name = item.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)
+        val cmds: List<String> = if (name.startsWith("list.")) {
+            val list = FilterList.entries.firstOrNull { it.cmd == name.removePrefix("list.") } ?: return "?"
+            val now = ask(c, r, list.listCommand) ?: return ""
+            val cur = RepeaterFilter.parseList(list, now) ?: return RepeaterFilter.errorText(now)
+            RepeaterFilter.restoreAdds(list, item.value, cur.first)
+        } else {
+            listOf(RepeaterFilter.restoreScalar(name, item.value) ?: return "?")
+        }
+        for (cmd in cmds) {
+            val reply = ask(c, r, cmd) ?: return ""
+            if (!RepeaterFilter.isOk(reply)) return RepeaterFilter.errorText(reply)
+        }
+        return null
+    }
+
+    /** The order of a restore's filter items: lists first, the settings, `enabled` last (a half-restored filter never runs). */
+    private fun filterRank(item: BackupItem): Int {
+        val name = item.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)
+        return if (name.startsWith("list.")) 0 else 1 + RepeaterFilter.RESTORE_SCALAR_ORDER.indexOf(name).let { if (it < 0) 0 else it }
     }
 
     suspend fun apply(c: CompanionRadio, r: Contact, items: List<BackupItem>, progress: (Int, Int) -> Unit): RestoreResult {
@@ -185,8 +238,16 @@ object RepeaterBackup {
         var done = 0
         try {
             // the admin password last: the rest still goes with the one logged in with
-            for ((i, item) in items.sortedBy { it.id == PASSWORD }.withIndex()) {
+            val ordered = items.filter { !RepeaterFilter.isBackupId(it.id) && it.id != PASSWORD } +
+                items.filter { RepeaterFilter.isBackupId(it.id) }.sortedBy { filterRank(it) } +
+                items.filter { it.id == PASSWORD }
+            for ((i, item) in ordered.withIndex()) {
                 progress(i + 1, items.size)
+                if (RepeaterFilter.isBackupId(item.id)) {
+                    val err = applyFilter(c, r, item)
+                    if (err == null) done++ else failed.add(item to err)
+                    continue
+                }
                 val pw = item.id == PASSWORD
                 val reply = ask(c, r, if (pw) "password ${item.value}" else "set ${item.id} ${item.value}")
                 when {
