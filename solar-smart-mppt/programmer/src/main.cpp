@@ -206,6 +206,7 @@ button{background:#2a2e32;color:#e6e8ea}.muted{color:#9aa0a6}}
 <div class="muted" id="ver"></div></div>
 <script>
 let st={},pt;
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 async function post(u,b){const r=await fetch(u,{method:'POST',body:b});return r.text()}
 async function setMode(m){await post('/mode?m='+m);poll()}
 async function sel(i){await post('/select?i='+i);poll()}
@@ -220,7 +221,7 @@ async function poll(){clearTimeout(pt);try{st=await (await fetch('/status')).jso
  vt.innerHTML=st.vt?'<b class="ok">3V3M: има напрежение</b>':'<b class="err">3V3M: няма напрежение</b>';
  net.textContent=st.net;ver.textContent='Версия '+st.ver+', образи от '+st.rev;
  let h='';st.imgs.forEach((im,i)=>{h+='<label><input type="radio" name="im" '+(i==st.sel?'checked':'')+
-  (im.len?'':' disabled')+' onchange="sel('+i+')"> '+im.name+' <span class="muted">'+(im.len?im.len+' байта':'няма')+'</span></label>'});
+  (im.len?'':' disabled')+' onchange="sel('+i+')"> '+esc(im.name)+' <span class="muted">'+(im.len?im.len+' байта':'няма')+'</span></label>'});
  imgs.innerHTML=h;document.querySelectorAll('input[name=pm]').forEach(r=>r.checked=(r.value==st.mode));
  go.disabled=st.busy;pr.max=st.total||1;pr.value=st.busy?st.done:0;
  res.innerHTML=st.busy?('<span class="muted">'+st.step+'…</span>'):(st.res?('<span class="'+(st.ok?'ok':'err')+'">'+st.res+'</span>'):'');
@@ -305,8 +306,12 @@ static void parseUpload() {
     return;
   }
   int n;
-  if (upload_text[0] == ':') {
-    n = hexToBin(upload_text, upload_text_len, upload_img, IMAGE_MAX);
+  // a .hex saved by an editor may start with a UTF-8 BOM and blank lines: skip them before the ':' check
+  size_t skip = 0;
+  if (upload_text_len >= 3 && (uint8_t)upload_text[0] == 0xEF && (uint8_t)upload_text[1] == 0xBB && (uint8_t)upload_text[2] == 0xBF) skip = 3;
+  while (skip < upload_text_len && (upload_text[skip] == ' ' || upload_text[skip] == '\t' || upload_text[skip] == '\r' || upload_text[skip] == '\n')) skip++;
+  if (skip < upload_text_len && upload_text[skip] == ':') {
+    n = hexToBin(upload_text + skip, upload_text_len - skip, upload_img, IMAGE_MAX);
     if (n < 0) {
       upload_len = 0;
       server.send(400, "text/plain", n == -2 ? "HEX: грешна контролна сума" : n == -3 ? "HEX: адрес извън 0..0xEFFF" : "HEX: невалиден файл");
