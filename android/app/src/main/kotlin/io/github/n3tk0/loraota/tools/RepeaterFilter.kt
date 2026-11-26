@@ -88,7 +88,7 @@ object RepeaterFilter {
             c == "failed" || USAGE.containsMatchIn(c) || isUnsupported(reply)
     }
 
-    private val USAGE = Regex("""^filter( \w+)* \[ """)
+    private val USAGE = Regex("""^filter[\w| ]* \[ """)
 
     fun isOk(reply: String?) = !isError(reply)
 

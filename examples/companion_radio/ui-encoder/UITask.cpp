@@ -3785,6 +3785,7 @@ struct TraceTarget {
 // back the same way. false = nothing to trace: a chat contact heard directly, or no path known.
 static bool traceTargetFor(const ContactInfo& c, TraceTarget& t) {
   memset(&t, 0, sizeof(t));
+  if (the_mesh.isContactBlocked(c)) return false;   // blocked: stored but hidden, not offered for Trace/Range
   StrHelper::strncpy(t.name, c.name, sizeof(t.name));
   bool known = c.out_path_len != OUT_PATH_UNKNOWN;
   int k = known ? (c.out_path_len & 63) : 0;

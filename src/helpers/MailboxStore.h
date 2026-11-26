@@ -125,9 +125,9 @@ public:
     if (!isEnabled() || !isMessage(payload_type, len)) return false;
     int owner = -1;
     for (int i = 0; i < _cfg.num_owners; i++) {
-      if (_cfg.owners[i][0] == payload[0]) { owner = i; break; }
+      if (!_blocked[i] && _cfg.owners[i][0] == payload[0]) { owner = i; break; }   // a blocked owner must not shadow another with the same first byte
     }
-    if (owner < 0 || _blocked[owner] || isPresent(owner, now)) return false;
+    if (owner < 0 || isPresent(owner, now)) return false;
 
     for (int i = 0; i < _count; i++) {
       if (memcmp(_items[i].hash, pkt_hash, MAILBOX_HASH_SIZE) == 0) return false;   // already kept

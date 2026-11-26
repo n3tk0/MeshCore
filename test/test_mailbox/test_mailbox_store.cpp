@@ -58,6 +58,21 @@ TEST(MailboxStore, BlockedOwnerKeepsNothingAndFlagFollowsRemoval) {
   EXPECT_FALSE(m.isBlocked(0));
 }
 
+TEST(MailboxStore, BlockedOwnerDoesNotShadowSameFirstByte) {
+  MailboxStore& m = *makeStore();
+  uint8_t key2[MAILBOX_KEY_SIZE];
+  memset(key2, 0x33, sizeof(key2));
+  key2[0] = OWNER;                                                            // same first byte as owner 0
+  m.addOwner(key2);
+  m.setBlocked(0, true);
+  uint8_t p[40], h[MAILBOX_HASH_SIZE];
+  hashOf(h, 1);
+  EXPECT_TRUE(m.onPacket(0x02, p, msg(p, OWNER, SENDER, 20, 1), h, 1000));    // kept for the unblocked owner 1
+  m.setBlocked(1, true);
+  hashOf(h, 2);
+  EXPECT_FALSE(m.onPacket(0x02, p, msg(p, OWNER, SENDER, 20, 2), h, 1000));   // both blocked: nothing kept
+}
+
 TEST(MailboxStore, NothingKeptWhileOwnerIsHere) {
   MailboxStore& m = *makeStore();
   uint8_t p[40], h[MAILBOX_HASH_SIZE];

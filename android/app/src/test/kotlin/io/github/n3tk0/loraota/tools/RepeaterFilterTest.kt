@@ -27,6 +27,8 @@ class RepeaterFilterTest {
         assertFalse(RepeaterFilter.isOk("> Filter: command error"))
         assertFalse(RepeaterFilter.isOk(null))
         assertFalse(RepeaterFilter.isOk("  "))
+        assertTrue(RepeaterFilter.isError("> filter path [ list | add <hex> | remove <hex> ]"))
+        assertTrue(RepeaterFilter.isError("> filter sender|text [ list [page] | add <pattern> [secs] [prob] | remove <pattern> ]"))
         assertEquals("hash bytes range is 1-3", RepeaterFilter.errorText("> Filter: error hash bytes range is 1-3"))
     }
 
