@@ -66,6 +66,11 @@ class RepeaterFilterTest {
         assertEquals(FilterNewKey(0, 0), RepeaterFilter.parseNewKey("> Filter: newkey off"))
         assertEquals(FilterNewKey(24, 60), RepeaterFilter.parseNewKey("> Filter: newkey 24h"))
         assertEquals(FilterNewKey(24, 30), RepeaterFilter.parseNewKey("> Filter: newkey 24h, 30 min"))
+        // the firmware's own wording
+        assertEquals(FilterIngress(0, 0, 0), RepeaterFilter.parseIngress("> Ingress limit off"))
+        assertEquals(FilterIngress(5, 60, 3), RepeaterFilter.parseIngress("> Ingress limit 5 per 60s, soft 3 (4 keys)"))
+        assertEquals(FilterNewKey(0, 0), RepeaterFilter.parseNewKey("> Newkey quota off (12 keys known)"))
+        assertEquals(FilterNewKey(24, 60), RepeaterFilter.parseNewKey("> Newkey: keys under 24h get 1 advert per 60m (12 keys known)"))
     }
 
     @Test fun listsAreCommaSeparatedOrNone() {

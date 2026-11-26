@@ -167,9 +167,13 @@ object RepeaterFilter {
         if (isError(reply)) return null
         val s = clean(reply)
         if (WORD_OFF.containsMatchIn(s)) return FilterNewKey(0, 0)
-        val n = ints(s)
-        val h = n.getOrNull(0) ?: return null
-        return FilterNewKey(h, n.getOrNull(1) ?: 60)
+        // firmware: "> Newkey: keys under 24h get 1 advert per 60m (12 keys known)"
+        val h = Regex("""(\d+)\s*h""", RegexOption.IGNORE_CASE).find(s)?.groupValues?.get(1)?.toIntOrNull()
+            ?: ints(s).getOrNull(0) ?: return null
+        val m = Regex("""per\s+(\d+)\s*m""", RegexOption.IGNORE_CASE).find(s)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""(\d+)\s*min""", RegexOption.IGNORE_CASE).find(s)?.groupValues?.get(1)?.toIntOrNull()
+            ?: 60
+        return FilterNewKey(h, m)
     }
 
     /** A list reply: comma-separated, `None` (or blank) for empty. Returns null for an error reply. */
