@@ -33,6 +33,7 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus), _learnBus(true) {
   _hybrid = BQ_HYBRID_DEFAULT;
   _weak = true;
   _weak_timing = false;
+  _cold = _cold_stop = false;
   _weak_t = _weak_hold_until = 0;
   _weak_poorsrc = _weak_falls = 0;
   _sc_state = _sc_idx = _sc_tries = 0;
@@ -81,6 +82,7 @@ bool BQ25798::valid(const BQ25798Settings& s) {
   if (s.vindpm_mv != 0 && (s.vindpm_mv < BQ_VINDPM_MIN || s.vindpm_mv > BQ_VINDPM_MAX)) return false;
   if (vocCode(s.voc_pct) < 0 || s.mppt_auto > 1) return false;
   if (s.ntc > 1 || s.shipfet > 1 || s.ina_pos > BQ_INA_SUN) return false;
+  if (s.cold_10ma != 0 && s.cold_10ma != BQ_COLD_OFF && (s.cold_10ma < BQ_COLD_MA_MIN / 10 || s.cold_10ma > BQ_COLD_MA_MAX / 10)) return false;
   if (s.cutoff_mv != 0 && (s.cutoff_mv < BQ_CUTOFF_MIN || s.cutoff_mv > cutoffMax(s.chem))) return false;
   return true;
 }
@@ -141,7 +143,7 @@ bool BQ25798::fromFile(const void* data, int len, BQ25798Settings& s) {
   if (len <= (int)offsetof(BQ25798Settings, mppt_auto)) s.mppt_auto = 0;
   // the calibration is all or nothing: a file cut short inside it has none
   if (len < (int)(offsetof(BQ25798Settings, cal) + sizeof(IbatLegacyCal))) memset(&s.cal, 0, sizeof(s.cal));
-  if (len <= (int)offsetof(BQ25798Settings, ina_pos)) { s.ina_pos = BQ_INA_BAT; s.reserved = 0; }   // a file from before the INA position
+  if (len <= (int)offsetof(BQ25798Settings, ina_pos)) { s.ina_pos = BQ_INA_BAT; s.cold_10ma = 0; }   // a file from before the INA position
   if (s.voc_pct == 0) s.voc_pct = BQ_VOC_PCT_DEFAULT;
   // auto always starts from the default share: what a file holds with auto on (an earlier manual share or a scan
   // result saved along with another setting) is not the starting point
@@ -250,7 +252,10 @@ void BQ25798::enforce() {
     read(BQ_REG_STAT3, &_status[BQ_REG_STAT3 - BQ_REG_STAT0], 1);   // VSYS_STAT follows at once (MPPT below)
   }
 
-  uint16_t want_ichg = _s.ichg_ma / 10;
+  coldTick();
+  uint16_t ichg = _s.ichg_ma;
+  if (cold() && coldMa() < ichg) ichg = coldMa();
+  uint16_t want_ichg = ichg / 10;
   if ((((c[BQ_REG_ICHG] << 8) | c[BQ_REG_ICHG + 1]) & 0x1FF) != want_ichg) write16(BQ_REG_ICHG, want_ichg);
 
   // D+/D- are not connected: no USB detection, which could set the input limit to 500 mA
@@ -304,7 +309,7 @@ void BQ25798::enforce() {
   }
 
   // EN_CHG on, EN_ICO and EN_HIZ off (only one of ICO / VINDPM detection / MPPT may run)
-  uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x14) | 0x20 | (hold_hiz ? 0x04 : 0);
+  uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x34) | (coldStop() ? 0 : 0x20) | (hold_hiz ? 0x04 : 0);   // EN_CHG off only for a frozen cell
   if (c0 != c[BQ_REG_CTRL0]) write8(BQ_REG_CTRL0, c0);
   _unl_now = unloaded && !(hiz && !hold_hiz);   // the converter restarts when EN_HIZ goes: not a no-load poll
 
@@ -330,12 +335,28 @@ void BQ25798::enforce() {
   }
   _mppt_reg = m;
 
-  uint8_t n1 = (c[BQ_REG_NTC1] & ~0x01) | (_s.ntc ? 0 : 1);
+  uint8_t n1 = (c[BQ_REG_NTC1] & ~0x01) | (!_s.ntc || cold() ? 1 : 0);   // a cold cell: past the chip's T1 (our limits instead)
   if (n1 != c[BQ_REG_NTC1]) write8(BQ_REG_NTC1, n1);
 
   if (!chargeHeld() && vreg == want_vreg && !_ce_on) setCE(true);
 
   _configured = true;
+}
+
+// Cold cell (BQ_COLD_*): from our own NTC reading, with hysteresis. Off without `ntc on`, without a reading
+// or with `charger cold off`: then TS is the chip's again (it stops under its T1 by itself).
+void BQ25798::coldTick() {
+  int t = _r.tcell_dc;
+  if (!_s.ntc || coldMa() == 0 || t == BQ_TCELL_NONE) {
+    _cold = _cold_stop = false;
+    return;
+  }
+  bool chip_cold = _status[0x1F - BQ_REG_STAT0] & 0x08;   // TS_COLD_STAT
+  if (!_cold) _cold = t < BQ_COLD_ON_DC || (chip_cold && t < BQ_COLD_OFF_DC);
+  else if (t >= BQ_COLD_OFF_DC) _cold = false;
+  if (!_cold) _cold_stop = false;
+  else if (!_cold_stop) _cold_stop = t < BQ_COLD_STOP_DC;
+  else if (t >= BQ_COLD_RESUME_DC) _cold_stop = false;
 }
 
 // the results: false when they read as zeros (SYS feeds this MCU, so it is never 0 V while we run)
@@ -613,6 +634,8 @@ int BQ25798::formatLine(char* buf, int len, uint8_t trim) const {
   if (_r.valid && trim < 2) n = addf(buf, len, n, ", die %dC", _r.tdie_dc / 10);
   if (_r.valid && _r.tcell_dc != BQ_TCELL_NONE && trim < 3) n = addf(buf, len, n, ", cell %dC", _r.tcell_dc / 10);
   else if (_r.valid && ntcOpen() && trim < 3) n = addf(buf, len, n, ", NTC open?");
+  if (cold()) n = addf(buf, len, n, ", cold %umA", coldMa());
+  else if (coldStop()) n = addf(buf, len, n, ", cold stop");
   n = addf(buf, len, n, ", %s %u.%02uV %umA", _s.chem == BQ_CHEM_LIFEPO4 ? "lifepo4" : "liion",
            vregFor(_s.chem) / 1000, vregFor(_s.chem) % 1000 / 10, _s.ichg_ma);
   if (trim < 1) n = addf(buf, len, n, ", ntc %s, shipfet %s, cut %umV", _s.ntc ? "on" : "off", _s.shipfet ? "on" : "off", _s.cutoff_mv);
