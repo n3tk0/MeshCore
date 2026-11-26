@@ -258,6 +258,12 @@ void BQ25798::enforce() {
   uint16_t want_ichg = ichg / 10;
   if ((((c[BQ_REG_ICHG] << 8) | c[BQ_REG_ICHG + 1]) & 0x1FF) != want_ichg) write16(BQ_REG_ICHG, want_ichg);
 
+  // termination at ICHG/10 (40 mA steps, at least 40 mA): the chip's 200 mA would end a 250 mA charge as soon as
+  // CV starts, with the cell resting at ~4.1 V and counted as full
+  uint8_t want_iterm = (uint8_t)((ichg / 10 + 20) / 40);
+  if (want_iterm < 1) want_iterm = 1;
+  if ((c[BQ_REG_ITERM] & 0x1F) != want_iterm) write8(BQ_REG_ITERM, (c[BQ_REG_ITERM] & ~0x1F) | want_iterm);
+
   // D+/D- are not connected: no USB detection, which could set the input limit to 500 mA
   if (c[BQ_REG_CTRL2] & 0x40) write8(BQ_REG_CTRL2, c[BQ_REG_CTRL2] & ~0x40);
   if ((((c[BQ_REG_IINDPM] << 8) | c[BQ_REG_IINDPM + 1]) & 0x1FF) != BQ_IINDPM_MA / 10) {
