@@ -45,6 +45,7 @@ class MailboxStore {
   MailboxEntry  _items[MAILBOX_MAX];   // oldest first
   int           _count;
   uint32_t      _heard[MAILBOX_MAX_OWNERS];   // RTC seconds the owner was last heard with no hop, 0 = not since boot
+  bool          _blocked[MAILBOX_MAX_OWNERS]; // on the packet filter's block list: nothing is kept or handed over (RAM only)
 
   void removeAt(int i) {
     for (int k = i; k < _count - 1; k++) _items[k] = _items[k + 1];
@@ -66,6 +67,7 @@ public:
     _cfg.away_mins = 10;
     _count = 0;
     memset(_heard, 0, sizeof(_heard));
+    memset(_blocked, 0, sizeof(_blocked));
   }
 
   MailboxConfig& config() { return _cfg; }
@@ -89,6 +91,7 @@ public:
     if (_cfg.num_owners >= MAILBOX_MAX_OWNERS) return false;
     memcpy(_cfg.owners[_cfg.num_owners], pub_key, MAILBOX_KEY_SIZE);
     _heard[_cfg.num_owners] = 0;
+    _blocked[_cfg.num_owners] = false;
     _cfg.num_owners++;
     return true;
   }
@@ -99,10 +102,15 @@ public:
     for (int k = owner; k < _cfg.num_owners - 1; k++) {
       memcpy(_cfg.owners[k], _cfg.owners[k + 1], MAILBOX_KEY_SIZE);
       _heard[k] = _heard[k + 1];
+      _blocked[k] = _blocked[k + 1];
     }
     _cfg.num_owners--;
     return true;
   }
+
+  // the owner's key is blocked: nothing is kept for it and nothing is handed over
+  void setBlocked(int owner, bool blocked) { if (owner >= 0 && owner < MAILBOX_MAX_OWNERS) _blocked[owner] = blocked; }
+  bool isBlocked(int owner) const { return owner >= 0 && owner < MAILBOX_MAX_OWNERS && _blocked[owner]; }
 
   // the owner was heard with no hop between (its advert, or a flood packet it just sent)
   void markHeard(int owner, uint32_t now) { if (owner >= 0 && owner < MAILBOX_MAX_OWNERS) _heard[owner] = now ? now : 1; }
@@ -118,7 +126,7 @@ public:
     for (int i = 0; i < _cfg.num_owners; i++) {
       if (_cfg.owners[i][0] == payload[0]) { owner = i; break; }
     }
-    if (owner < 0 || isPresent(owner, now)) return false;
+    if (owner < 0 || _blocked[owner] || isPresent(owner, now)) return false;
 
     for (int i = 0; i < _count; i++) {
       if (memcmp(_items[i].hash, pkt_hash, MAILBOX_HASH_SIZE) == 0) return false;   // already kept

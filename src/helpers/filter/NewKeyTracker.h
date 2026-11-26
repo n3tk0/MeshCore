@@ -82,6 +82,7 @@ public:
   // True when a write is due: something changed and an hour passed since the last write.
   bool saveDue(uint32_t now_ms) const { return _dirty && (uint32_t)(now_ms - _last_save_ms) >= NEWKEY_SAVE_MS; }
   void markSaved(uint32_t now_ms) { _dirty = false; _last_save_ms = now_ms; }
+  void retryLater(uint32_t now_ms) { _last_save_ms = now_ms; }   // a write failed: still dirty, try in an hour
 
   // How long ago the key was first seen, in hours; -1 = not in the table.
   int ageHours(const uint8_t* key, uint32_t now_secs) const {

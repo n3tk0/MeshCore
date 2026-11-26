@@ -47,6 +47,11 @@
 #endif
 #include <helpers/I2CHealth.h>
 
+#ifndef NO_PACKET_FILTER
+  #define WITH_PACKET_FILTER     // off until `filter on`; see docs/packet_filter.md
+  #include <helpers/filter/FilterStore.h>
+#endif
+
 #if !defined(NO_TELEMETRY_HISTORY) && !defined(STM32_PLATFORM)
   #define WITH_TELEMETRY_HISTORY // 24 h every 10 min + a week every hour, in a file; read by the app
   #include <helpers/TelemetryHistory.h>
@@ -148,6 +153,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   unsigned long mailbox_wait_until;     // millis, 0 = not waiting
   unsigned long mailbox_try_after[MAILBOX_MAX_OWNERS];   // millis: no new unproven delivery before
   void startMailboxDelivery(int owner, bool proven);
+  void syncMailboxBlock();              // the owners that are on the filter's block list
   void loadMailbox();
   void saveMailbox();
   void onMailboxPacket(mesh::Packet* pkt);
@@ -164,6 +170,12 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool ota_verdict_done;                // ... and was kept or rolled back
   void applyOtaAction();
   void otaLoop();
+#endif
+#ifdef WITH_PACKET_FILTER
+  PacketFilter filter;
+  void handleFilterCommand(char* command, char* reply);
+  static bool filterKnowsKey(void* ctx, const uint8_t* key4);
+  static uint32_t filterAirtime(void* ctx, int raw_len);
 #endif
   PowerSaver psave;
   unsigned long psave_next_check;       // millis

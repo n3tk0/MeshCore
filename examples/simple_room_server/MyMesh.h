@@ -25,6 +25,11 @@
 #include <RTClib.h>
 #include <target.h>
 
+#ifndef NO_PACKET_FILTER
+  #define WITH_PACKET_FILTER     // off until `filter on`; see docs/packet_filter.md
+  #include <helpers/filter/FilterStore.h>
+#endif
+
 /* ------------------------------ Config -------------------------------- */
 
 #ifndef FIRMWARE_BUILD_DATE
@@ -118,6 +123,12 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t pending_sf;
   uint8_t pending_cr;
   int  matching_peer_indexes[MAX_CLIENTS];
+#ifdef WITH_PACKET_FILTER
+  PacketFilter filter;
+  void handleFilterCommand(char* command, char* reply);
+  static bool filterKnowsKey(void* ctx, const uint8_t* key4);
+  static uint32_t filterAirtime(void* ctx, int raw_len);
+#endif
 
   void addPost(ClientInfo* client, const char* postData);
   void storePost(const mesh::Identity& author, const char* postData);

@@ -303,8 +303,31 @@ bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
       && mesh::isFloodHopLimitExceeded(packet, _prefs.flood_max, _prefs.flood_max_unscoped, _prefs.flood_max_advert)) {
     return false;
   }
+#ifdef WITH_PACKET_FILTER
+  // the last check: it only judges what the checks above would have repeated
+  return filter.allowForward(packet, millis(), getRTCClock()->getCurrentTime());
+#else
   return true;
+#endif
 }
+
+#ifdef WITH_PACKET_FILTER
+// a key the room itself knows (its ACL) is never a "new key"
+bool MyMesh::filterKnowsKey(void* ctx, const uint8_t* key4) {
+  return ((MyMesh*)ctx)->acl.getClient(key4, 4) != NULL;
+}
+
+uint32_t MyMesh::filterAirtime(void* ctx, int raw_len) {
+  return ((MyMesh*)ctx)->_radio->getEstAirtimeFor(raw_len);
+}
+
+// `filter ...`: the same command works locally and over the mesh as an admin. Settings are written
+// only when they changed.
+void MyMesh::handleFilterCommand(char* command, char* reply) {
+  int saves = filter.handleCommand(command, reply, millis(), getRTCClock()->getCurrentTime());
+  if (saves) FilterStore::afterCommand(_fs, filter, saves, millis());
+}
+#endif
 
 mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* pkt) {
   if (pkt->getRouteType() == ROUTE_TYPE_TRANSPORT_FLOOD) {
@@ -325,6 +348,9 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
                             uint8_t *data, size_t len) {
   if (packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) { // received an initial request by a possible admin
                                                            // client (unknown at this stage)
+#ifdef WITH_PACKET_FILTER
+    if (filter.isBlocked(sender.pub_key)) return;   // a blocked key: no login, no answer
+#endif
     uint32_t sender_timestamp, sender_sync_since;
     memcpy(&sender_timestamp, data, 4);
     memcpy(&sender_sync_since, &data[4], 4); // sender's "sync messags SINCE x" timestamp
@@ -438,6 +464,9 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
     return;
   }
   auto client = acl.getClientByIdx(i);
+#ifdef WITH_PACKET_FILTER
+  if (filter.isBlocked(client->id.pub_key)) return;   // a blocked key: no posts, no commands, no ACK
+#endif
   if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) { // a CLI command or new Post
     uint32_t sender_timestamp;
     memcpy(&sender_timestamp, data, 4); // timestamp (by sender's RTC clock - which could be wrong)
@@ -634,6 +663,10 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
       _cli(board, rtc, sensors, region_map, acl, &_prefs, this),
       telemetry(MAX_PACKET_PAYLOAD - 4)
 {
+#ifdef WITH_PACKET_FILTER
+  filter.setKnownFn(&MyMesh::filterKnowsKey, this);
+  filter.setAirFn(&MyMesh::filterAirtime, this);
+#endif
   last_millis = 0;
   uptime_millis = 0;
   next_local_advert = next_flood_advert = 0;
@@ -700,6 +733,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
   _cli.loadPrefs(_fs);
 
   acl.load(_fs, self_id);
+#ifdef WITH_PACKET_FILTER
+  FilterStore::begin(_fs, filter, millis(), getRTCClock()->getCurrentTime());
+#endif
   region_map.load(_fs);
 
   // establish default-scope
@@ -983,6 +1019,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       addSystemPost(msg);
       snprintf(reply, MAX_POST_TEXT_LEN, "OK");
     }
+#ifdef WITH_PACKET_FILTER
+  } else if (memcmp(command, "filter", 6) == 0 && (command[6] == 0 || command[6] == ' ')) {
+    handleFilterCommand(command, reply);
+#endif
   } else if (memcmp(command, "set repeat on", 13) == 0) {
     strcpy(reply, "ERR - repeat now deprecated");
   } else{
@@ -997,6 +1037,10 @@ bool MyMesh::saveFilter(ClientInfo* client) {
 void MyMesh::loop() {
   mesh::Mesh::loop();
 
+#ifdef WITH_PACKET_FILTER
+  FilterStore::loop(_fs, filter, millis(), true);   // the first-seen table, at most hourly
+#endif
+
   if (millisHasNowPassed(next_push) && acl.getNumClients() > 0) {
     // check for ACK timeouts
     for (int i = 0; i < acl.getNumClients(); i++) {
@@ -1010,7 +1054,11 @@ void MyMesh::loop() {
     // check next Round-Robin client, and sync next new post
     auto client = acl.getClientByIdx(next_client_idx);
     bool did_push = false;
-    if (client->extra.room.pending_ack == 0 && client->last_activity != 0 &&
+    bool blocked = false;
+#ifdef WITH_PACKET_FILTER
+    blocked = filter.isBlocked(client->id.pub_key, false);   // a blocked key gets no posts
+#endif
+    if (!blocked && client->extra.room.pending_ack == 0 && client->last_activity != 0 &&
         client->extra.room.push_failures < 3) { // not already waiting for ACK, AND not evicted, AND retries not max
       MESH_DEBUG_PRINTLN("loop - checking for client %02X", (uint32_t)client->id.pub_key[0]);
       uint32_t now = getRTCClock()->getCurrentTime();
