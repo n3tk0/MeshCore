@@ -12,7 +12,10 @@ class SerialBLEInterface : public BaseSerialInterface {
   BLEUart bleuart;
   bool _isEnabled;
   bool _isDeviceConnected;
-  uint16_t _conn_handle;
+  volatile uint16_t _conn_handle;
+  volatile unsigned long _conn_started;   // millis() at connect (or at our disconnect request)
+  volatile bool _pairing;                 // a passkey was shown for this link
+  bool _secure_kick;                      // we asked the SoftDevice to drop an unsecured link
   unsigned long _last_health_check;
   unsigned long _last_retry_attempt;
 
@@ -43,6 +46,7 @@ class SerialBLEInterface : public BaseSerialInterface {
   void shiftSendQueueLeft();
   bool isValidConnection(uint16_t handle, bool requireWaitingForSecurity = false) const;
   bool isAdvertising() const;
+  void checkStaleConnection(unsigned long now);
   static void onConnect(uint16_t connection_handle);
   static void onDisconnect(uint16_t connection_handle, uint8_t reason);
   static void onSecured(uint16_t connection_handle);
@@ -56,6 +60,9 @@ public:
     _isEnabled = false;
     _isDeviceConnected = false;
     _conn_handle = BLE_CONN_HANDLE_INVALID;
+    _conn_started = 0;
+    _pairing = false;
+    _secure_kick = false;
     _last_health_check = 0;
     _last_retry_attempt = 0;
     send_queue_len = 0;

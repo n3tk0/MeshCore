@@ -7,6 +7,17 @@
 // Magic numbers came from actual testing
 #define BLE_HEALTH_CHECK_INTERVAL  10000  // Advertising watchdog check every 10 seconds
 #define BLE_RETRY_THROTTLE_MS      250    // Throttle retries to 250ms when queue buildup detected
+// A central that connects but never encrypts holds the only peripheral slot, and the SoftDevice
+// does not advertise while it is held, so nobody else (not even the same phone's app) can connect
+// until a restart. Seen when a phone comes back in range after minutes: the phone's Bluetooth
+// stack reconnects to the bonded device in the background while the app is idle, and nothing
+// ever touches the encrypted characteristics. Drop such a link and advertise again.
+#ifndef BLE_SECURE_TIMEOUT_MS
+#define BLE_SECURE_TIMEOUT_MS      15000  // connected but not encrypted
+#endif
+#ifndef BLE_PAIRING_TIMEOUT_MS
+#define BLE_PAIRING_TIMEOUT_MS     90000  // a passkey is shown: the user is typing the PIN on the phone
+#endif
 
 // Connection parameters (units: interval=1.25ms, timeout=10ms)
 #define BLE_MIN_CONN_INTERVAL      12     // 15ms
@@ -29,6 +40,9 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   if (instance) {
     instance->_conn_handle = connection_handle;
     instance->_isDeviceConnected = false;
+    instance->_conn_started = millis();
+    instance->_pairing = false;
+    instance->_secure_kick = false;
     instance->requestFlush();
   }
 }
@@ -39,6 +53,8 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     if (instance->_conn_handle == connection_handle) {
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
       instance->_isDeviceConnected = false;
+      instance->_pairing = false;
+      instance->_secure_kick = false;
       instance->requestFlush();
     }
   }
@@ -76,9 +92,11 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
 }
 
 bool SerialBLEInterface::onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request) {
-  (void)connection_handle;
   (void)passkey;
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing passkey request match=%d", match_request);
+  if (instance && instance->_conn_handle == connection_handle) {
+    instance->_pairing = true;   // give the user time to type the PIN
+  }
   return true;
 }
 
@@ -100,7 +118,12 @@ void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t a
 
 void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   if (!instance) return;
-  
+
+  if (evt->header.evt_id == BLE_GAP_EVT_SEC_PARAMS_REQUEST || evt->header.evt_id == BLE_GAP_EVT_PASSKEY_DISPLAY) {
+    // pairing has started: the PIN may still have to be typed on the phone
+    if (instance->_conn_handle == evt->evt.gap_evt.conn_handle) instance->_pairing = true;
+  }
+
   if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST) {
     uint16_t conn_handle = evt->evt.gap_evt.conn_handle;
     if (instance->isValidConnection(conn_handle)) {
@@ -348,9 +371,11 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     return len;
   }
   
+  unsigned long now = millis();
+  checkStaleConnection(now);
+
   // Advertising watchdog: periodically check if advertising is running, restart if not
   // Only run when truly disconnected (no connection handle), not during connection establishment
-  unsigned long now = millis();
   if (_isEnabled && !isConnected() && _conn_handle == BLE_CONN_HANDLE_INVALID) {
     if (now - _last_health_check >= BLE_HEALTH_CHECK_INTERVAL) {
       _last_health_check = now;
@@ -363,6 +388,58 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   }
   
   return 0;
+}
+
+// loop() context only
+void SerialBLEInterface::checkStaleConnection(unsigned long now) {
+  uint16_t handle = _conn_handle;
+  if (handle == BLE_CONN_HANDLE_INVALID) return;
+
+  // the link is gone but the disconnect callback was missed: forget it, so the advertising
+  // watchdog below runs again instead of waiting for a connection that does not exist
+  BLEConnection* conn = Bluefruit.Connection(handle);
+  if (conn == nullptr || !conn->connected()) {
+    if (now - _conn_started >= BLE_HEALTH_CHECK_INTERVAL) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: handle=0x%04X no longer connected, clearing", handle);
+      taskENTER_CRITICAL();
+      if (_conn_handle == handle) {
+        _conn_handle = BLE_CONN_HANDLE_INVALID;
+        _isDeviceConnected = false;
+        _pairing = false;
+        _secure_kick = false;
+      }
+      taskEXIT_CRITICAL();
+      _last_health_check = 0;   // check advertising at once
+    }
+    return;
+  }
+
+  if (_isDeviceConnected) return;   // encrypted, all good
+
+  unsigned long limit = _pairing ? BLE_PAIRING_TIMEOUT_MS : BLE_SECURE_TIMEOUT_MS;
+  unsigned long age = now - _conn_started;
+  if (!_secure_kick && age >= limit) {
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: handle=0x%04X not secured after %lu ms, disconnecting", handle, age);
+    bool ok = sd_ble_gap_disconnect(handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION) == NRF_SUCCESS;
+    taskENTER_CRITICAL();
+    if (_conn_handle == handle) {   // not replaced by a new connection meanwhile
+      _secure_kick = true;
+      // wait up to 10 s for the disconnect event, or give up at once when nothing was sent
+      _conn_started = ok ? now : now - BLE_HEALTH_CHECK_INTERVAL;
+    }
+    taskEXIT_CRITICAL();
+  } else if (_secure_kick && age >= BLE_HEALTH_CHECK_INTERVAL) {
+    // the disconnect did not complete (no event in 10 s): give up on this handle
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: handle=0x%04X disconnect did not complete, clearing", handle);
+    taskENTER_CRITICAL();
+    if (_conn_handle == handle) {
+      _conn_handle = BLE_CONN_HANDLE_INVALID;
+      _pairing = false;
+      _secure_kick = false;
+    }
+    taskEXIT_CRITICAL();
+    _last_health_check = 0;
+  }
 }
 
 void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
