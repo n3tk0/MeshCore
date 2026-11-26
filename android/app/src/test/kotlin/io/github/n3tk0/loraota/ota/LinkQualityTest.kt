@@ -1,6 +1,5 @@
 package io.github.n3tk0.loraota.ota
 
-import io.github.n3tk0.loraota.tools.SnrClass
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -13,7 +12,9 @@ class LinkQualityTest {
     @Test
     fun barsFollowTheSnrSteps() {
         assertEquals(0, LinkQuality.bars(null))
-        assertEquals(4, LinkQuality.bars(12.0))
+        assertEquals(5, LinkQuality.bars(12.0))
+        assertEquals(5, LinkQuality.bars(10.0))
+        assertEquals(4, LinkQuality.bars(9.75))
         assertEquals(4, LinkQuality.bars(5.0))
         assertEquals(3, LinkQuality.bars(4.75))
         assertEquals(3, LinkQuality.bars(0.0))
@@ -24,12 +25,13 @@ class LinkQualityTest {
     }
 
     @Test
-    fun colourIsTheNetworkMapsClass() {
-        assertEquals(SnrClass.GOOD, LinkQuality.level(5.0))
-        assertEquals(SnrClass.FAIR, LinkQuality.level(0.0))
-        assertEquals(SnrClass.FAIR, LinkQuality.level(4.5))
-        assertEquals(SnrClass.BAD, LinkQuality.level(-0.25))
-        assertEquals(SnrClass.UNKNOWN, LinkQuality.level(null))
+    fun colourFollowsTheBarCount() {
+        assertEquals(BarTier.NONE, LinkQuality.tier(0))
+        assertEquals(BarTier.RED, LinkQuality.tier(1))
+        assertEquals(BarTier.ORANGE, LinkQuality.tier(2))
+        assertEquals(BarTier.ORANGE, LinkQuality.tier(3))
+        assertEquals(BarTier.OWN, LinkQuality.tier(4))
+        assertEquals(BarTier.OWN, LinkQuality.tier(5))
     }
 
     @Test

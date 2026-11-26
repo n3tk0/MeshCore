@@ -971,6 +971,8 @@
         <item quantity="other">няма директна връзка (%d скока)</item>
     </plurals>
     <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
+    <string name="link_bars_desc">%1$d от %2$d черти</string>
+    <string name="link_strip_desc">Връзка: към рипитъра %1$s, към теб %2$s</string>
     <string name="running_from_backup">по последен backup</string>
     <string name="paused_update_note">Има спрян ъпдейт → Firmware</string>
     <string name="cached_settings">Настройки от преди %1$d мин</string>

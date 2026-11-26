@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -25,6 +28,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,30 +38,66 @@ import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.ota.LinkFollow
 import io.github.n3tk0.loraota.ota.LinkQuality
 import io.github.n3tk0.loraota.ota.LinkSample
-import io.github.n3tk0.loraota.tools.SnrClass
+import io.github.n3tk0.loraota.ota.BarTier
 
-/** Green, amber, red as on the network map (see NetworkMapScreen); grey when the SNR is not known. */
+private val OUT_COLOR = Color(0xFF2E9E44)
+private val IN_COLOR = Color(0xFF8E5CC9)
+
+/** Red for 1 bar, orange for 2-3, the side's own colour for 4-5; grey outline when nothing is known. */
 @Composable
-private fun levelColor(c: SnrClass): Color = when (c) {
-    SnrClass.GOOD -> Color(0xFF2E9E44)
-    SnrClass.FAIR -> Color(0xFFF2A100)
-    SnrClass.BAD -> Color(0xFFD32F2F)
-    SnrClass.UNKNOWN -> MaterialTheme.colorScheme.outline
+private fun barColor(bars: Int, own: Color): Color = when (LinkQuality.tier(bars)) {
+    BarTier.RED -> Color(0xFFD32F2F)
+    BarTier.ORANGE -> Color(0xFFF57C00)
+    BarTier.OWN -> own
+    BarTier.NONE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
 }
 
-/** Phone-style signal bars: [LinkQuality.bars] of 4 filled in the colour of the level. */
+/** Phone-style signal bars: [LinkQuality.bars] of 5 filled, coloured by the count. */
 @Composable
-internal fun SignalBars(snr: Double?, modifier: Modifier = Modifier) {
+internal fun SignalBars(snr: Double?, own: Color, modifier: Modifier = Modifier, barWidth: Dp = 5.dp, unit: Dp = 4.dp) {
     val filled = LinkQuality.bars(snr)
-    val on = levelColor(LinkQuality.level(snr))
+    val on = barColor(filled, own)
     val off = MaterialTheme.colorScheme.outlineVariant
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
         for (i in 1..LinkQuality.MAX_BARS) {
             Box(
-                Modifier.width(5.dp).height((6 + i * 4).dp)
+                Modifier.width(barWidth).height(unit * i + unit / 2)
                     .background(if (i <= filled) on else off, RoundedCornerShape(1.dp)),
             )
         }
+    }
+}
+
+/**
+ * The compact strip above the tabs other than the overview: left "→" and the outgoing bars, right the incoming
+ * bars and "←". No numbers; grey empty bars when the repeater is not direct or nothing is measured.
+ */
+@Composable
+internal fun LinkStrip(vm: AppViewModel) {
+    val direct = vm.routeHops == 0
+    val out = if (direct) vm.linkOut ?: vm.status?.lastSnr else null
+    val inn = if (direct) vm.linkIn else null
+    val measuring = direct && vm.linkState == LinkState.MEASURING
+    val desc = stringResource(
+        R.string.link_strip_desc,
+        stringResource(R.string.link_bars_desc, LinkQuality.bars(out), LinkQuality.MAX_BARS),
+        stringResource(R.string.link_bars_desc, LinkQuality.bars(inn), LinkQuality.MAX_BARS),
+    )
+    Row(
+        Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = desc },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("→", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = OUT_COLOR)
+        Spacer(Modifier.width(6.dp))
+        SignalBars(out, OUT_COLOR, barWidth = 4.dp, unit = 2.5.dp)
+        Spacer(Modifier.weight(1f))
+        if (measuring) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.weight(1f))
+        }
+        SignalBars(inn, IN_COLOR, barWidth = 4.dp, unit = 2.5.dp)
+        Spacer(Modifier.width(6.dp))
+        Text("←", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = IN_COLOR)
     }
 }
 
@@ -64,12 +106,12 @@ private fun LinkSide(label: String, labelColor: Color, snr: Double?, rssi: Int?,
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = labelColor)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SignalBars(snr)
+            SignalBars(snr, labelColor)
             Column {
                 Text(
                     if (snr == null) stringResource(R.string.link_unknown) else stringResource(R.string.link_snr, snr),
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
-                    color = levelColor(LinkQuality.level(snr)),
+                    color = barColor(LinkQuality.bars(snr), labelColor),
                 )
                 if (rssi != null) {
                     Text(stringResource(R.string.link_rssi, rssi), style = MaterialTheme.typography.labelSmall,
@@ -84,7 +126,7 @@ private fun LinkSide(label: String, labelColor: Color, snr: Double?, rssi: Int?,
 }
 
 /**
- * The link both ways, above every tab of a repeater: left what the repeater hears of us, right what we hear of it
+ * The link both ways, on the overview of a repeater: left what the repeater hears of us, right what we hear of it
  * (a trace, see [io.github.n3tk0.loraota.ota.LinkTrace]). With hops on the route there is no trace, only what the
  * status says of the last hop.
  */
@@ -93,8 +135,8 @@ internal fun LinkCard(vm: AppViewModel) {
     val hops = vm.routeHops
     val direct = hops == 0
     val s = vm.status
-    val outColor = MaterialTheme.colorScheme.primary
-    val inColor = Color(0xFF8E5CC9)   // apart from the outgoing colour and from the green / amber / red of the levels
+    val outColor = OUT_COLOR
+    val inColor = IN_COLOR
     // the status answers the request we sent: its SNR is the same direction as the trace's first byte
     val out = if (direct) vm.linkOut ?: s?.lastSnr else s?.lastSnr
     val inn = if (direct) vm.linkIn else null

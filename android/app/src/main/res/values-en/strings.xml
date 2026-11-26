@@ -971,6 +971,8 @@
         <item quantity="other">no direct link (%d hops)</item>
     </plurals>
     <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
+    <string name="link_bars_desc">%1$d of %2$d bars</string>
+    <string name="link_strip_desc">Link: to repeater %1$s, to you %2$s</string>
     <string name="running_from_backup">from the last backup</string>
     <string name="paused_update_note">An update is paused → Firmware</string>
     <string name="cached_settings">Settings from %1$d min ago</string>

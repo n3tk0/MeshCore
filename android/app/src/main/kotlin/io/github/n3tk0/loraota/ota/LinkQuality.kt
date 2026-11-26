@@ -1,7 +1,5 @@
 package io.github.n3tk0.loraota.ota
 
-import io.github.n3tk0.loraota.tools.NetworkMapLogic
-import io.github.n3tk0.loraota.tools.SnrClass
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -90,21 +88,30 @@ object LinkTrace {
     fun fitsBudget(budget: AirtimeBudget, secs: Double): Boolean = budget.waitMs(secs) == 0L
 }
 
-/** What a reading looks like to people: bars and a colour class from the SNR (thresholds of the network map). */
-object LinkQuality {
-    const val MAX_BARS = 4
+/** How a bar count is coloured: red, orange, or the side's own colour; grey when nothing is known. */
+enum class BarTier { NONE, RED, ORANGE, OWN }
 
-    /** 4 bars from 5 dB, 3 from 0, 2 from -7.5, 1 below; 0 when it is not known. */
+/** What a reading looks like to people: 5 bars from the SNR, and a colour tier from the bar count. */
+object LinkQuality {
+    const val MAX_BARS = 5
+
+    /** 5 bars from 10 dB, 4 from 5, 3 from 0, 2 from -7.5, 1 below; 0 when it is not known. */
     fun bars(snr: Double?): Int = when {
         snr == null -> 0
+        snr >= 10.0 -> 5
         snr >= 5.0 -> 4
         snr >= 0.0 -> 3
         snr >= -7.5 -> 2
         else -> 1
     }
 
-    /** Green from 5 dB, amber from 0, red below (NetworkMapLogic.snrClass). */
-    fun level(snr: Double?): SnrClass = NetworkMapLogic.snrClass(snr?.toFloat(), null)
+    /** 1 bar is red, 2 and 3 are orange, 4 and 5 keep the side's own colour; 0 is none (grey). */
+    fun tier(bars: Int): BarTier = when {
+        bars <= 0 -> BarTier.NONE
+        bars == 1 -> BarTier.RED
+        bars <= 3 -> BarTier.ORANGE
+        else -> BarTier.OWN
+    }
 }
 
 /** One trace in the follow mode (a side that did not come is null). */

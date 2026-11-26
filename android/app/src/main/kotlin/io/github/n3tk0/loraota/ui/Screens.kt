@@ -848,10 +848,11 @@ private fun RepeaterHome(vm: AppViewModel) {
     if (vm.needsRelogin) {
         ReloginBanner(vm)
     }
-    LinkCard(vm)   // the link both ways stays above every tab
+    if (vm.repeaterTab != RepeaterTab.OVERVIEW) LinkStrip(vm)   // the link both ways, compact; the full card is on the overview
     when (vm.repeaterTab) {
         RepeaterTab.OVERVIEW -> {
             StatusCard(vm)
+            LinkCard(vm)
             if (vm.pausedUpdate) PausedUpdateNote(vm)
             RunningNow(vm)
             QuickActionsCard(vm)
