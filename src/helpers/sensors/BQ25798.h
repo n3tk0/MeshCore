@@ -159,6 +159,18 @@
 #define BQ_TS_NIGHT_MIN_MV     3300       // ... and only above this (with TS on the ADC stops under 3.2 V)
 #define BQ_TCELL_KEEP_MS       900000UL   // a cell temperature is shown this long after its conversion
 #define BQ_TCELL_NONE          INT16_MIN  // no reading (no NTC setting, no sun, open or shorted NTC)
+// Cold cell (`charger cold`, needs `ntc on`): the chip stops charging under its T1 (0 °C, by its own TS comparator,
+// which here reads ~3 °C colder than our ADC value). Under BQ_COLD_ON_DC the firmware sets TS_IGNORE and
+// limits ICHG to the cold current (default 100 mA, ~C/50..C/70 for the cells used); under BQ_COLD_STOP_DC it
+// stops charging (EN_CHG off). No reading (NTC open, TS not converted for 15 min): the chip's own TS again.
+#define BQ_COLD_MA_DEFAULT     100
+#define BQ_COLD_MA_MIN         50
+#define BQ_COLD_MA_MAX         250
+#define BQ_COLD_OFF            0xFF
+#define BQ_COLD_ON_DC          50     // 0.1 °C: our reading under +5.0 °C (or the chip says TS_COLD under +7 °C)
+#define BQ_COLD_OFF_DC         70     // ... back to the chip's own TS (JEITA) from +7.0 °C
+#define BQ_COLD_STOP_DC        (-100) // under -10.0 °C: no charging at all
+#define BQ_COLD_RESUME_DC      (-80)  // ... until -8.0 °C
 #define BQ_ADC_DIS1_VAL        0xF0   // D+, D-, VAC2, VAC1 off
 
 class BQ25798Bus {
@@ -184,7 +196,7 @@ struct BQ25798Settings {
   uint8_t  mppt_auto;   // 1 = `charger vin mppt auto`: starts from voc_pct 81 (also after a restart), the scan moves it; 0 (also in older files) = fixed
   IbatLegacyCal cal;    // the IBAT calibration of build 934d2da (two points per direction); now only read (imported into the /ibatcal curve), written as zeros
   uint8_t  ina_pos;     // BQ_INA_BAT (0, default) | BQ_INA_SUN: where the INA219 is (battery line or solar input); a file without it: 0
-  uint8_t  reserved;    // 0
+  uint8_t  cold_10ma;   // charging a cold cell (`charger cold`): 0 = default (BQ_COLD_MA_DEFAULT), BQ_COLD_OFF = off, else 10 mA units
 };
 // The /charger file is the struct as is. Files of 10, 11, 12 and 36 bytes (before voc_pct / mppt_auto / cal /
 // ina_pos) are still read: fromFile().
@@ -237,6 +249,8 @@ class BQ25798 {
   uint16_t _auto_vin_count;
   // hybrid (BQ_WEAK_*): fixed VINDPM 4.4 V while the sun is weak, MPPT when it is strong
   bool     _hybrid, _weak, _weak_timing;
+  bool     _cold, _cold_stop;  // cold cell: TS_IGNORE + low ICHG / EN_CHG off (see BQ_COLD_*)
+  void     coldTick();
   uint32_t _weak_t, _weak_hold_until;
   uint16_t _weak_poorsrc;      // _poorsrc_count at the last weakTick()
   uint16_t _weak_falls;        // MPPT -> weak changes since boot
@@ -338,6 +352,10 @@ public:
   void setHybrid(bool on);
   bool hybrid() const { return _hybrid; }
   bool weak() const { return _hybrid && _weak && _s.vindpm_mv == 0; }
+  // cold cell: the limit in mA (0 = off), and whether the firmware is charging it now (cold) or stopped it (coldStop)
+  uint16_t coldMa() const { return _s.cold_10ma == BQ_COLD_OFF ? 0 : _s.cold_10ma ? _s.cold_10ma * 10 : BQ_COLD_MA_DEFAULT; }
+  bool cold() const { return _cold && !_cold_stop; }
+  bool coldStop() const { return _cold && _cold_stop; }
   uint16_t weakFalls() const { return _weak_falls; }
   uint8_t vocPct() const { return _s.voc_pct; }
   bool mpptAuto() const { return _s.mppt_auto; }

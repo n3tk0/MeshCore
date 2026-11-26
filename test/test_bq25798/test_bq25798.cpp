@@ -392,6 +392,98 @@ TEST(BQ25798, CellTemperatureWithSunAndEvery10MinAtNight) {
   EXPECT_EQ(bq2.reading().tcell_dc, BQ_TCELL_NONE);
 }
 
+// the TS ADC code (0.0977 % of REGN a step) closest to a cell temperature in 0.1 °C
+static uint16_t tsFor(int dc) {
+  uint16_t best = 0; int err = 1 << 30;
+  for (uint16_t raw = 300; raw < 860; raw++) {
+    int t = BQ25798::ntcTemp((uint16_t)((raw * 1000UL + 512) / 1024));
+    if (t != BQ_TCELL_NONE && abs(t - dc) < err) { err = abs(t - dc); best = raw; }
+  }
+  return best;
+}
+
+TEST(BQ25798, ColdCellChargesAtALowCurrentDownToMinus10) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  BQ25798Settings s = settings();
+  s.ntc = 1;
+  s.ichg_ma = 250;
+  bq.apply(s);
+  f.sun(true);
+  f.adcValues(3980, 0, 5800, 50);
+  f.put16(0x3F, tsFor(150));            // 15 °C: the chip's own TS, full current
+  runFor(bq, t, 30000);
+  EXPECT_FALSE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 0);
+  EXPECT_EQ(((f.r[0x03] << 8) | f.r[0x04]) & 0x1FF, 25);
+  EXPECT_TRUE(f.r[0x0F] & 0x20);
+
+  f.put16(0x3F, tsFor(30));             // 3 °C: TS_IGNORE, 100 mA
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 1);
+  EXPECT_EQ(((f.r[0x03] << 8) | f.r[0x04]) & 0x1FF, 10);
+  EXPECT_TRUE(f.r[0x0F] & 0x20);
+  char buf[160];
+  bq.formatStatus(buf, sizeof(buf));
+  EXPECT_NE(strstr(buf, "cold 100mA"), nullptr) << buf;
+
+  f.put16(0x3F, tsFor(60));             // 6 °C: still cold (hysteresis to 7 °C)
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.cold());
+
+  f.put16(0x3F, tsFor(-120));           // -12 °C: no charging, the chip's TS back
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.coldStop());
+  EXPECT_FALSE(f.r[0x0F] & 0x20);
+  EXPECT_EQ(f.r[0x18] & 1, 0);
+  f.put16(0x3F, tsFor(-90));            // -9 °C: still stopped (to -8 °C)
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.coldStop());
+  f.put16(0x3F, tsFor(-50));            // -5 °C: cold charging again
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.cold());
+  EXPECT_TRUE(f.r[0x0F] & 0x20);
+
+  f.put16(0x3F, tsFor(80));             // 8 °C: back to normal
+  runFor(bq, t, 30000);
+  EXPECT_FALSE(bq.cold());
+  EXPECT_FALSE(bq.coldStop());
+  EXPECT_EQ(f.r[0x18] & 1, 0);
+  EXPECT_EQ(((f.r[0x03] << 8) | f.r[0x04]) & 0x1FF, 25);
+}
+
+TEST(BQ25798, ColdOffOrNoNtcLeavesTheChipAlone) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  BQ25798Settings s = settings();
+  s.ntc = 1;
+  s.cold_10ma = BQ_COLD_OFF;
+  bq.apply(s);
+  f.sun(true);
+  f.adcValues(3980, 0, 5800, 50);
+  f.put16(0x3F, tsFor(20));
+  runFor(bq, t, 30000);
+  EXPECT_FALSE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 0);
+  s.cold_10ma = 15;                     // 150 mA
+  bq.apply(s);
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.cold());
+  EXPECT_EQ(((f.r[0x03] << 8) | f.r[0x04]) & 0x1FF, 15);
+  f.put16(0x3F, 870);                   // NTC open: no reading, the chip's TS
+  runFor(bq, t, 30000);
+  EXPECT_FALSE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 0);
+  BQ25798Settings bad = s;
+  bad.cold_10ma = 3;                    // 30 mA: under the range
+  EXPECT_FALSE(BQ25798::valid(bad));
+}
+
 TEST(BQ25798, SunsetDuringATsConversionRestartsWithoutTs) {
   FakeBQ f;
   f.adc_works = false;                  // the conversion hangs (battery under 3.2 V with TS on)

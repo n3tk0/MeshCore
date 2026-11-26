@@ -2678,6 +2678,8 @@ void MyMesh::loadCharger() {
 // charger vin mppt auto|<pct>   MPPT share: auto = a scan (hourly, in fast charge) picks 63|69|75|81|88
 // charger scan [last]           MPPT scan now (~30 s) / its last result
 // charger ntc on|off            an NTC on J3 (TS used) or not (TS_IGNORE)
+// charger cold <mA>|off         with ntc on: a cold cell (under +5 C, 0..-10 C for the chip) charges at this
+//                               current (50..250, default 100) instead of not at all; under -10 C none
 // charger shipfet on|off        Q2 fitted, or JP3 closed (no ship / shutdown mode then)
 // charger cutoff <mV>|off       no sun and the battery under this for 5 min: shutdown until the sun is back
 // charger ship                  disconnect the battery for transport/storage (sun or TP2 to GND wakes it)
@@ -2923,6 +2925,26 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     if (strcmp(val, "on") != 0 && strcmp(val, "off") != 0) { sprintf(reply, "Err - charger %s on|off", args); return; }
     uint8_t on = strcmp(val, "on") == 0;
     if (args[0] == 'n') s.ntc = on; else s.shipfet = on;
+  } else if (strcmp(args, "cold") == 0) {   // charging a cold cell (0 .. -10 °C) at a low current, `ntc on` only
+    if (*val == 0) {
+      int t = c->reading().tcell_dc;
+      int n = c->coldMa() ? sprintf(reply, "> cold %umA (0..-10C)", c->coldMa()) : sprintf(reply, "> cold off");
+      n += sprintf(reply + n, c->cold() ? ", charging cold" : c->coldStop() ? ", stopped (under -10C)" : "");
+      if (!s.ntc) sprintf(reply + n, ", needs ntc on");
+      else if (t != BQ_TCELL_NONE) sprintf(reply + n, ", cell %dC", t / 10);
+      return;
+    }
+    if (strcmp(val, "off") == 0) {
+      s.cold_10ma = BQ_COLD_OFF;
+    } else {
+      int ma = parseMilli(val);
+      if (ma < BQ_COLD_MA_MIN || ma > BQ_COLD_MA_MAX) {
+        sprintf(reply, "Err - charger cold off|%u..%u (mA)", BQ_COLD_MA_MIN, BQ_COLD_MA_MAX);
+        return;
+      }
+      s.cold_10ma = (uint8_t)(ma / 10);
+    }
+    if (!s.ntc) note = ", needs ntc on";
   } else if (strcmp(args, "cutoff") == 0) {
     int mv = strcmp(val, "off") == 0 ? 0 : parseMilli(val);
     if (mv != 0 && (mv < BQ_CUTOFF_MIN || mv > BQ25798::cutoffMax(s.chem))) {
@@ -2931,7 +2953,7 @@ void MyMesh::handleChargerCommand(char* args, char* reply) {
     }
     s.cutoff_mv = (uint16_t)mv;
   } else {
-    strcpy(reply, "Err - charger [chem|ichg|vin|scan|hybrid|ntc|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
+    strcpy(reply, "Err - charger [chem|ichg|vin|scan|hybrid|ntc|cold|shipfet|cutoff|ship|ibat|ibus|ina|reg]");
     return;
   }
   if (!writeSmallFile(_fs, CHARGER_FILE, &s, sizeof(s))) {
@@ -3025,7 +3047,7 @@ void MyMesh::handleCn3791Charger(const char* args, const char* val, char* reply)
     strcpy(reply, ps.enabled ? "OK - battsave off step" : "OK - battsave off step; battsave is off: `battsave on`");
     return;
   }
-  if (strcmp(args, "hybrid") == 0 || strcmp(args, "ntc") == 0 || strcmp(args, "shipfet") == 0 || strcmp(args, "ship") == 0 ||
+  if (strcmp(args, "hybrid") == 0 || strcmp(args, "ntc") == 0 || strcmp(args, "cold") == 0 || strcmp(args, "shipfet") == 0 || strcmp(args, "ship") == 0 ||
       strcmp(args, "ibat") == 0 || strcmp(args, "ibus") == 0 || strcmp(args, "ina") == 0 || strcmp(args, "reg") == 0) {
     sprintf(reply, "Err - charger %s: n/a on CN3791", args);
     return;
