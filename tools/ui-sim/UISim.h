@@ -134,8 +134,9 @@ public:
   // block list: the real filter class, kept in RAM only
   CompanionFilter cfilter;
   CompanionFilter& filter() { return cfilter; }
-  bool blockContact(const ContactInfo& c) {
-    if (!cfilter.blockKey(c.id.pub_key) && !cfilter.c.hasBlock()) return false;
+  CBlockResult blockContact(const ContactInfo& c) {
+    CBlockResult res = cfilter.blockKey(c.id.pub_key);
+    if (res == CBlockResult::FULL) return res;
     for (int i = 0; i < num_contacts; i++) {
       if (memcmp(contacts[MAX_ANON_CONTACTS + i].id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0) {
         for (int k = i; k < num_contacts - 1; k++) contacts[MAX_ANON_CONTACTS + k] = contacts[MAX_ANON_CONTACTS + k + 1];
@@ -143,10 +144,10 @@ public:
         break;
       }
     }
-    return true;
+    return res;
   }
   bool unblockSlot(int slot) { return cfilter.c.removeBlockSlot(slot); }
-  bool muteSender(const char* name) { cfilter.enabled = true; return cfilter.c.addSenderName(name); }
+  bool muteSender(const char* name) { if (!cfilter.c.addSenderName(name)) return false; cfilter.enabled = true; return true; }
   bool removeSenderSlot(int slot) {
     if (slot < 0 || slot >= FILTER_RULE_COUNT) return false;
     memset(&cfilter.c.sender_rules[slot], 0, sizeof(SenderRule));

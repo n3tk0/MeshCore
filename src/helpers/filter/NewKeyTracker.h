@@ -93,20 +93,23 @@ public:
   }
 
   // The quota check. `key` is the first 4 bytes of the sender's public key, `known` says the
-  // node itself knows the key. Returns true when the packet may be forwarded.
-  bool allow(const uint8_t* key, Kind kind, bool known, uint32_t now_secs) {
+  // node itself knows the key. Returns true when the packet may be forwarded. `stamp` false only
+  // looks (the first sighting is still recorded): the caller stamps with a second call once the
+  // packet is really accepted.
+  bool allow(const uint8_t* key, Kind kind, bool known, uint32_t now_secs, bool stamp = true) {
     if (_hours == 0 || key == nullptr || known) return true;
     if (!MessageAge::clockSet(now_secs)) return true;   // no usable time: nothing to compare
 
     uint32_t hour = now_secs / 3600UL;
     int i = find(key);
     if (i < 0) {
-      // new row; the oldest sighting makes room when the table is full
+      // new row; when the table is full the YOUNGEST sighting makes room, so the keys known the
+      // longest (the trusted ones) survive a flood of random keys
       if (_n < NEWKEY_CAP) {
         i = _n++;
       } else {
         i = 0;
-        for (int k = 1; k < NEWKEY_CAP; k++) if (_e[k].first_hour < _e[i].first_hour) i = k;
+        for (int k = 1; k < NEWKEY_CAP; k++) if (_e[k].first_hour > _e[i].first_hour) i = k;
       }
       memset(&_e[i], 0, sizeof(Entry));
       memcpy(_e[i].key, key, NEWKEY_KEY_LEN);
@@ -124,7 +127,7 @@ public:
     uint32_t& last = kind == ADVERT ? e.last_advert : e.last_anon;
     uint32_t gap = kind == ADVERT ? (uint32_t)_mins * 60UL : (uint32_t)NEWKEY_ANON_SECS;
     if (last != 0 && now_secs >= last && now_secs - last < gap) return false;
-    last = now_secs;
+    if (stamp) last = now_secs;
     return true;
   }
 

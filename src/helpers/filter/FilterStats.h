@@ -369,11 +369,12 @@ namespace FilterStat {
     b.markTruncated("..");
   }
 
-  inline void formatStatsAir(char* out, size_t cap, const Counters& c) {
+  // `dryrun`: nothing was really dropped, the airtime is what the drops WOULD have saved.
+  inline void formatStatsAir(char* out, size_t cap, const Counters& c, bool dryrun = false) {
     Buf b(out, cap);
 
     if (c.air_ms == 0) {
-      b.add("> Filter: no airtime saved yet");
+      b.add(dryrun ? "> Filter: dry-run, no airtime would be saved yet" : "> Filter: no airtime saved yet");
       return;
     }
 
@@ -382,7 +383,7 @@ namespace FilterStat {
     unsigned long m = (secs / 60UL) % 60UL;
     unsigned long sec = secs % 60UL;
 
-    b.add("> Filter: saved airtime %lu ms (", (unsigned long)c.air_ms);
+    b.add(dryrun ? "> Filter: dry-run, would save airtime %lu ms (" : "> Filter: saved airtime %lu ms (", (unsigned long)c.air_ms);
     if (h > 0) {
       b.add("%luh %lum)", h, m);
     } else if (m > 0) {
@@ -426,21 +427,26 @@ namespace FilterStat {
     b.markTruncated("..");
   }
 
-  // `filter block list [page]` (counts == nullptr) and `filter stats block` (with drops). Six
-  // entries a page; each shows the first 8 bytes of the key, "+" when the entry is longer.
-  inline void formatBlockList(char* out, size_t cap, const BlockEntry* list, const Counters* counts, int page = 0) {
+  // `filter block list [page] [full]` (counts == nullptr) and `filter stats block <page>` (with drops).
+  // Short form: six entries a page, each the first 8 bytes of the key and "+" when the entry is longer.
+  // Full form (`full`): two entries a page with the whole key, for a backup. A paged list ends in
+  // " [<end>/<total> p<page>]" (no comma: a comma separates the entries).
+  inline void formatBlockList(char* out, size_t cap, const BlockEntry* list, const Counters* counts, int page = 0, bool full = false) {
     Buf b(out, cap);
-    const int PER_PAGE = 6;
-    char hex[17];
+    const int PER_PAGE = full ? 2 : 6;
+    const uint8_t SHOW = full ? FILTER_BLOCK_MAX_LEN : 8;
+    char hex[2 * FILTER_BLOCK_MAX_LEN + 1];
     int seen = 0, listed = 0;
     int total = FilterBlock::count(list, FILTER_BLOCK_COUNT);
+    if (page < 0) page = 0;
 
     for (int i = 0; i < FILTER_BLOCK_COUNT; i++) {
       if (list[i].len == 0) continue;
-      if (seen++ < page * PER_PAGE) continue;
+      if (seen < page * PER_PAGE) { seen++; continue; }
       if (listed >= PER_PAGE) break;
-      FilterBlock::format(hex, sizeof(hex), list[i], 8);
-      const char* more = list[i].len > 8 ? "+" : "";
+      seen++;
+      FilterBlock::format(hex, sizeof(hex), list[i], SHOW);
+      const char* more = list[i].len > SHOW ? "+" : "";
       if (counts != nullptr) {
         b.add(listed > 0 ? ",%s%s: %lu" : "%s%s: %lu", hex, more, (unsigned long)counts->block_slot[i]);
       } else {
@@ -457,7 +463,7 @@ namespace FilterStat {
       b.add("> Filter: no page %d (%d keys)", page, total);
       return;
     }
-    if (total > PER_PAGE) b.add(" [%d/%d, page %d]", seen > total ? total : seen, total, page);
+    if (total > PER_PAGE) b.add(" [%d/%d p%d]", seen, total, page);
     b.markTruncated("..");
   }
 

@@ -28,7 +28,7 @@ companion).
 ## Commands
 
 Repeater and room server: `filter ...` over serial, or remotely by an admin. The companion has
-a subset (see the end of this page). Every command prints a short reply (under 160 characters).
+a subset (see the end of this page). Every command prints a short reply (under 158 characters).
 
 | Command | Meaning |
 |---|---|
@@ -45,7 +45,7 @@ a subset (see the end of this page). Every command prints a short reply (under 1
 | `filter age <minutes\|off>` | drop group texts older or newer than this (1-10080) |
 | `filter sender list\|add\|remove <name> [secs] [prob]` | rules on the sender name; `secs` 0 = block, else one per `secs`; `prob` 1-100; a name ending in `*` is a prefix (8 entries, 15 characters) |
 | `filter text list\|add\|remove <text> [secs] [prob]` | the same on the message text; a leading `^` anchors it at the start (8 entries, 23 characters) |
-| `filter block list [page]\|add\|remove\|clear <hex>` | the block list |
+| `filter block list [page] [full]\|add\|remove\|clear <hex>` | the block list |
 | `filter ingress <n> [secs] [soft]` / `off` | flood limit per entry repeater |
 | `filter newkey <hours> [mins]` / `off` / `clear` | quota for new keys |
 | `filter stats <topic>` | topics: `hash path advert channel malformed age sender text block ingress newkey air top reset` (the companion has `malformed age path sender text block`) |
@@ -67,7 +67,12 @@ A blocked key (repeater and room server):
 - a room server refuses its posts and does not push posts to it;
 - a repeater mailbox does not store or deliver anything for it, and `mailbox add` refuses it.
 
-`filter block list` shows the entries, `filter stats block` the hits per entry.
+`filter block list [page]` shows six entries a page: the first 8 bytes of each key, with a `+` when the entry is
+longer, and ` [<shown>/<total> p<page>]` at the end. `filter block list <page> full` prints the whole keys, two a
+page (the app uses it for a backup). `filter block remove <hex>` takes the whole entry or, when it is the only one
+starting with it, the printed prefix (8 or more digits). `filter stats block` shows the hits per entry.
+In a dry run `filter stats air` says "would save": nothing was really dropped.
+The companion's "Block" in the UI refuses with "List is full" when the list is full: the contact stays.
 
 ### Ingress limit
 

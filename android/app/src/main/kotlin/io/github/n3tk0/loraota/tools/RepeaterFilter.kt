@@ -35,7 +35,7 @@ data class FilterConfig(
     val ingress: FilterIngress? = null,
     val newKey: FilterNewKey? = null,
     val lists: Map<FilterList, List<FilterEntry>> = emptyMap(),
-    /** Lists whose reply was cut by the 160-byte reply buffer (ends in `..`). */
+    /** Lists whose reply was cut by the 158-byte reply buffer (ends in `..`). */
     val truncated: Set<FilterList> = emptySet(),
     val statusRaw: String = "",
 )
@@ -176,22 +176,73 @@ object RepeaterFilter {
         return FilterNewKey(h, m)
     }
 
+    /** The tail of a paged block list: " [6/10 p0]" (end, total, page); the older wording had a comma. */
+    private val PAGE_TAIL = Regex("""\s*\[(\d+)/(\d+)(?:\s+p|,\s*page\s*)(\d+)\]\s*$""")
+
+    /** (entries shown up to and including this page, total) from a paged block list reply; null when it has no tail. */
+    fun blockPageInfo(reply: String?): Pair<Int, Int>? {
+        var s = clean(reply)
+        if (s.endsWith(MAX_ENTRIES_NOTE)) s = s.removeSuffix(MAX_ENTRIES_NOTE).trimEnd(',', ' ')
+        val m = PAGE_TAIL.find(s) ?: return null
+        val end = m.groupValues[1].toIntOrNull() ?: return null
+        val total = m.groupValues[2].toIntOrNull() ?: return null
+        return end to total
+    }
+
     /** A list reply: comma-separated, `None` (or blank) for empty. Returns null for an error reply. */
     fun parseList(list: FilterList, reply: String?): Pair<List<FilterEntry>, Boolean>? {
         if (isError(reply)) return null
         var s = clean(reply)
         val truncated = s.endsWith(MAX_ENTRIES_NOTE)
         if (truncated) s = s.removeSuffix(MAX_ENTRIES_NOTE).trimEnd(',', ' ')
+        if (list == FilterList.BLOCK) s = s.replace(PAGE_TAIL, "")
         if (s.isEmpty() || s.equals("none", ignoreCase = true)) return emptyList<FilterEntry>() to false
         val out = s.split(',').map { it.trim() }.filter { it.isNotEmpty() }.map { entry(list, it) }
         return out to truncated
     }
 
-    private val RULE_MODE = Regex("""^(.+?)\s+(block|throttle|dose)\b.*$""", RegexOption.IGNORE_CASE)
+    /** `filter block list [page] [full]`: page 0 of the short form is the plain command (older firmware has no pages). */
+    fun cmdBlockPage(page: Int, full: Boolean) =
+        if (page == 0 && !full) FilterList.BLOCK.listCommand else FilterList.BLOCK.listCommand + " $page" + if (full) " full" else ""
+
+    /**
+     * The whole block list, page by page ([ask] sends one command and gives its reply). [full]: whole keys (for a backup),
+     * else the first 8 bytes of each with a `+` for longer ones. The Boolean is true when the list is not complete (a page
+     * did not come, or the reply was cut). Null when the first page did not come or was an error.
+     */
+    suspend fun readBlock(full: Boolean, maxPages: Int = 40, ask: suspend (String) -> String?): Pair<List<FilterEntry>, Boolean>? {
+        val firstReply = ask(cmdBlockPage(0, full)) ?: return null
+        val first = parseList(FilterList.BLOCK, firstReply) ?: return null
+        val all = ArrayList(first.first)
+        var incomplete = first.second
+        var info = blockPageInfo(firstReply)
+        var page = 0
+        while (info != null && info.first < info.second && page < maxPages) {
+            page++
+            val reply = ask(cmdBlockPage(page, full))
+            val parsed = reply?.let { parseList(FilterList.BLOCK, it) }
+            if (parsed == null || parsed.first.isEmpty()) { incomplete = true; break }
+            for (e in parsed.first) if (all.none { it.key.equals(e.key, ignoreCase = true) }) all.add(e)
+            if (parsed.second) incomplete = true
+            info = blockPageInfo(reply)
+        }
+        if (info != null && info.first < info.second) incomplete = true
+        return all to incomplete
+    }
+
+    /** [cfg] with the block list of a [readBlock] result. */
+    fun withBlock(cfg: FilterConfig, read: Pair<List<FilterEntry>, Boolean>): FilterConfig = cfg.copy(
+        lists = cfg.lists + (FilterList.BLOCK to read.first),
+        truncated = if (read.second) cfg.truncated + FilterList.BLOCK else cfg.truncated - FilterList.BLOCK,
+    )
+
+    private val RULE_MODE = Regex("""^(.+?)\s+(block|throttle|dose)\b(.*)$""", RegexOption.IGNORE_CASE)
     private val CHANNEL_HASH = Regex("""\s*\([0-9a-fA-F]{2}\)\s*$""")
 
     internal fun entry(list: FilterList, raw: String): FilterEntry = when (list) {
-        FilterList.BLOCK, FilterList.PATH -> FilterEntry(raw, raw.substringBefore(' ').trim())
+        // block: "A0A1A2A3A4A5A6A7+" = the first 8 bytes of a longer key; what `remove` takes is the hex without the '+'
+        FilterList.BLOCK -> FilterEntry(raw, raw.substringBefore(' ').trim().trimEnd('+'))
+        FilterList.PATH -> FilterEntry(raw, raw.substringBefore(' ').trim())
         FilterList.CHANNEL, FilterList.WATCH -> {
             val name = raw.replace(CHANNEL_HASH, "").trim()
             FilterEntry(raw, name, removable = !(list == FilterList.WATCH && name.equals("Public", true)))
@@ -205,7 +256,8 @@ object RepeaterFilter {
         return when (q) {
             STATUS -> {
                 val st = parseStatus(reply)
-                if (st == null) cfg.copy(statusRaw = clean(reply)) else cfg.copy(enabled = st.first, dryRun = st.second, statusRaw = (reply ?: "").trim().removePrefix(">").trim())
+                // the (dry-run) marker is NOT taken from here: the summary line can be cut; `filter dryrun` says it
+                if (st == null) cfg.copy(statusRaw = clean(reply)) else cfg.copy(enabled = st.first, statusRaw = (reply ?: "").trim().removePrefix(">").trim())
             }
             DRYRUN -> parseDryRun(reply)?.let { cfg.copy(dryRun = it) } ?: cfg
             HASH -> parseHash(reply)?.let { cfg.copy(hash = it) } ?: cfg
@@ -260,6 +312,13 @@ object RepeaterFilter {
 
     enum class Err { EMPTY, HEX, BLOCK_LEN, PATH_LEN, ODD, NAME_HASH, NAME_SPACE, NAME_LONG, SENDER_LONG, TEXT_LONG, SECS, PROB, RANGE }
 
+    // the firmware's limits (FILTER_CHAN_NAME_LEN 24 with the NUL, NEWKEY_MAX_*, ingress ranges)
+    const val CHANNEL_NAME_MAX = 23
+    const val NEWKEY_MAX_HOURS = 720
+    const val NEWKEY_MAX_MINS = 1440
+    const val INGRESS_MAX_N = 10000
+    const val INGRESS_MAX_SECS = 3600
+
     private val HEX = Regex("""^[0-9a-fA-F]+$""")
 
     fun validateBlock(v: String): Err? {
@@ -292,7 +351,7 @@ object RepeaterFilter {
             s.any { it.isWhitespace() || it == ',' } -> Err.NAME_SPACE
             allowPublic && s.equals("Public", ignoreCase = true) -> null
             !s.startsWith("#") || s.length < 2 -> Err.NAME_HASH
-            s.length > 30 -> Err.NAME_LONG
+            s.length > CHANNEL_NAME_MAX -> Err.NAME_LONG
             else -> null
         }
     }
@@ -338,7 +397,7 @@ object RepeaterFilter {
     fun validateIngress(n: String, secs: String, soft: String): Err? {
         val nn = n.trim().toIntOrNull()
         val ss = secs.trim().toIntOrNull()
-        if (nn == null || nn !in 1..65535 || ss == null || ss !in 1..65535) return Err.RANGE
+        if (nn == null || nn !in 1..INGRESS_MAX_N || ss == null || ss !in 1..INGRESS_MAX_SECS) return Err.RANGE
         if (soft.isNotBlank()) {
             val so = soft.trim().toIntOrNull()
             if (so == null || so < 1 || so >= nn) return Err.RANGE
@@ -347,10 +406,10 @@ object RepeaterFilter {
     }
     fun validateNewKey(hours: String, mins: String): Err? {
         val h = hours.trim().toIntOrNull()
-        if (h == null || h !in 1..8760) return Err.RANGE
+        if (h == null || h !in 1..NEWKEY_MAX_HOURS) return Err.RANGE
         if (mins.isNotBlank()) {
             val m = mins.trim().toIntOrNull()
-            if (m == null || m !in 1..1440) return Err.RANGE
+            if (m == null || m !in 1..NEWKEY_MAX_MINS) return Err.RANGE
         }
         return null
     }
@@ -375,12 +434,18 @@ object RepeaterFilter {
         return entries.filter { it.key.lowercase() !in have }.mapNotNull { e ->
             when (list) {
                 FilterList.SENDER, FilterList.TEXT -> {
-                    // "Bob throttle 60s", "Bot* block 50%", "SpamBot block": name [secs] [prob]
-                    val secs = Regex("""(\d+)\s*s\b""").find(e.display)?.groupValues?.get(1)?.toIntOrNull()
-                    val prob = Regex("""(\d+)\s*%""").find(e.display)?.groupValues?.get(1)?.toIntOrNull()
+                    // "Bob throttle 60s", "Bot* block 50%", "SpamBot block": name, then the mode token, then secs / prob.
+                    // Digits in the NAME ("Rover7s block") are not a throttle: only what follows the mode counts.
+                    val m = RULE_MODE.find(e.display)
+                    val tail = m?.groupValues?.get(3).orEmpty()
+                    val throttle = m?.groupValues?.get(2).equals("throttle", ignoreCase = true)
+                    val secs = if (throttle) Regex("""^\s*(\d+)\s*s\b""").find(tail)?.groupValues?.get(1)?.toIntOrNull() else null
+                    val prob = Regex("""(\d+)\s*%""").find(tail)?.groupValues?.get(1)?.toIntOrNull()
                     cmdAdd(list, e.key, secs, prob)
                 }
                 FilterList.WATCH -> if (e.removable) cmdAdd(list, e.key) else null
+                // only a whole key can be restored: "...+" is a cut-down prefix of a longer one
+                FilterList.BLOCK -> if (e.display.trim().endsWith("+")) null else cmdAdd(list, e.key)
                 else -> cmdAdd(list, e.key)
             }
         }
@@ -398,11 +463,12 @@ object RepeaterFilter {
             "age" -> if (v == "off") cmdAge(null) else v.toIntOrNull()?.takeIf { it in 1..10080 }?.let { cmdAge(it) }
             "ingress" -> if (v == "off") cmdIngress(null) else {
                 val p = v.split(' ').mapNotNull { it.toIntOrNull() }
-                if (p.size >= 2 && p[0] > 0) cmdIngress(FilterIngress(p[0], p[1], p.getOrElse(2) { 0 })) else null
+                if (p.size >= 2 && p[0] in 1..INGRESS_MAX_N && p[1] in 1..INGRESS_MAX_SECS) cmdIngress(FilterIngress(p[0], p[1], p.getOrElse(2) { 0 })) else null
             }
             "newkey" -> if (v == "off") cmdNewKey(null) else {
                 val p = v.split(' ').mapNotNull { it.toIntOrNull() }
-                if (p.isNotEmpty() && p[0] > 0) cmdNewKey(FilterNewKey(p[0], p.getOrElse(1) { 60 })) else null
+                val mins = p.getOrElse(1) { 60 }
+                if (p.isNotEmpty() && p[0] in 1..NEWKEY_MAX_HOURS && mins in 1..NEWKEY_MAX_MINS) cmdNewKey(FilterNewKey(p[0], mins)) else null
             }
             else -> null
         }

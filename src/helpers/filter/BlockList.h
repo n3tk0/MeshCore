@@ -137,12 +137,30 @@ namespace FilterBlock {
     return addRaw(list, n, e.key, e.len);
   }
 
-  inline bool remove(BlockEntry* list, int n, const char* hex, char* formatted, int* slot = nullptr) {
+  // Removes the entry with exactly these hex digits or, when there is none, the one entry that starts
+  // with them (the list shows the first 8 bytes of a longer key, so that prefix removes it). Two or
+  // more entries starting with it: nothing is removed and `ambiguous` is set.
+  inline bool remove(BlockEntry* list, int n, const char* hex, char* formatted, int* slot = nullptr,
+                     bool* ambiguous = nullptr) {
     formatted[0] = '\0';
+    if (ambiguous) *ambiguous = false;
     BlockEntry e;
     if (!parse(hex, &e)) return false;
     format(formatted, 2 * FILTER_BLOCK_MAX_LEN + 1, e);
     int s = removeRaw(list, n, e.key, e.len);
+    if (s < 0) {
+      int found = -1, matches = 0;
+      for (int i = 0; i < n; i++) {
+        if (list[i].len > e.len && memcmp(list[i].key, e.key, e.len) == 0) { found = i; matches++; }
+      }
+      if (matches == 1) {
+        format(formatted, 2 * FILTER_BLOCK_MAX_LEN + 1, list[found]);
+        memset(&list[found], 0, sizeof(BlockEntry));
+        s = found;
+      } else if (matches > 1 && ambiguous) {
+        *ambiguous = true;
+      }
+    }
     if (slot) *slot = s;
     return s >= 0;
   }

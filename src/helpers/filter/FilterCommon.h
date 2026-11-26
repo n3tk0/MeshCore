@@ -84,9 +84,13 @@ struct FilterCommon {
     return true;
   }
 
-  // Muted sender (UI): a block rule on the exact name.
+  // Muted sender (UI): a block rule on the EXACT name (a trailing '*' is escaped, not a prefix rule).
+  // False when it does not fit or the list is full; true also when the rule is already there.
   bool addSenderName(const char* name) {
-    return FilterRules::addRule(sender_rules, FILTER_RULE_COUNT, name, 0, 100);
+    char pat[FILTER_SENDER_LEN];
+    if (!FilterRules::exactNamePattern(name, pat, sizeof(pat))) return false;
+    for (int i = 0; i < FILTER_RULE_COUNT; i++) if (strcmp(sender_rules[i].name, pat) == 0) return true;
+    return FilterRules::addRule(sender_rules, FILTER_RULE_COUNT, pat, 0, 100);
   }
 
   // ---- the stream format of the lists (shared by both filters' files) ----
@@ -285,7 +289,9 @@ struct FilterCommon {
     if (strcmp(sub, "block") == 0) {
       char hex[2 * FILTER_BLOCK_MAX_LEN + 1];
       if (n >= 3 && strcmp(parts[2], "list") == 0) {
-        FilterStat::formatBlockList(reply, cap, block, nullptr, n >= 4 ? atoi(parts[3]) : 0);
+        // `list [page] [full]`: `full` prints whole keys, two a page, for a backup
+        bool full = n >= 5 && strcmp(parts[4], "full") == 0;
+        FilterStat::formatBlockList(reply, cap, block, nullptr, n >= 4 ? atoi(parts[3]) : 0, full);
         return 0;
       }
       if (n >= 3 && strcmp(parts[2], "clear") == 0) {
@@ -296,18 +302,20 @@ struct FilterCommon {
       }
       bool is_add = n >= 4 && strcmp(parts[2], "add") == 0;
       if (is_add || (n >= 4 && strcmp(parts[2], "remove") == 0)) {
+        bool ambiguous = false;
         bool ok = is_add ? FilterBlock::add(block, FILTER_BLOCK_COUNT, parts[3], hex)
-                         : FilterBlock::remove(block, FILTER_BLOCK_COUNT, parts[3], hex);
+                         : FilterBlock::remove(block, FILTER_BLOCK_COUNT, parts[3], hex, nullptr, &ambiguous);
         if (ok) {
           snprintf(reply, cap, "> Filter: block %.12s%s %s", hex, strlen(hex) > 12 ? ".." : "", is_add ? "added" : "removed");
           return 1;
         }
         if (hex[0] == '\0') snprintf(reply, cap, "> Filter: error key is 8-64 hex digits");
+        else if (ambiguous) snprintf(reply, cap, "> Filter: error more than one key starts with that, add digits");
         else if (is_add && FilterBlock::count(block, FILTER_BLOCK_COUNT) >= FILTER_BLOCK_COUNT) snprintf(reply, cap, "> Filter: error block list is full (%d)", FILTER_BLOCK_COUNT);
         else snprintf(reply, cap, "Failed");
         return 0;
       }
-      snprintf(reply, cap, "> filter block [ list [page] | add | remove | clear ] <hex key, 8-64 digits>");
+      snprintf(reply, cap, "> filter block [ list [page] [full] | add | remove | clear ] <hex key, 8-64 digits>");
       return 0;
     }
 

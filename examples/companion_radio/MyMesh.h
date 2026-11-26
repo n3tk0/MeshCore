@@ -222,7 +222,7 @@ public:
   // The receive filter and block list (see docs/packet_filter.md). The UI edits it through these.
   CompanionFilter& filter() { return _cfilter; }
   bool saveFilter();                                 // written only when it changed
-  bool blockContact(const ContactInfo& contact);     // block list + remove the contact; saved
+  CBlockResult blockContact(const ContactInfo& contact);   // block list + remove the contact; saved (not when full)
   bool unblockSlot(int slot);
   bool muteSender(const char* name);                 // a sender rule on the exact name; saved
   bool hideChannel(int channel_idx);                 // this channel is not shown here, but still repeated; saved

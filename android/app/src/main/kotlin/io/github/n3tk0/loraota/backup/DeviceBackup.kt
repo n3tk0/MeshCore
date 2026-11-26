@@ -4,6 +4,7 @@ import io.github.n3tk0.loraota.ble.CompanionRadio
 import io.github.n3tk0.loraota.ble.Contact
 import io.github.n3tk0.loraota.ota.hex
 import io.github.n3tk0.loraota.tools.FilterConfig
+import io.github.n3tk0.loraota.tools.FilterEntry
 import io.github.n3tk0.loraota.tools.FilterList
 import io.github.n3tk0.loraota.tools.RepeaterFilter
 import kotlinx.coroutines.NonCancellable
@@ -196,6 +197,11 @@ object RepeaterBackup {
         var cfg = FilterConfig()
         for ((i, q) in RepeaterFilter.LOAD_QUERIES.withIndex()) {
             progress(offset + i + 1, total)
+            if (q == FilterList.BLOCK.listCommand) {
+                // a backup keeps the WHOLE keys (the short list shows only the first 8 bytes of a long one)
+                RepeaterFilter.readBlock(full = true) { ask(c, r, it) }?.let { cfg = RepeaterFilter.withBlock(cfg, it) }
+                continue
+            }
             val reply = ask(c, r, q) ?: if (i == 0) return emptyList() else continue
             if (i == 0 && (RepeaterFilter.isUnsupported(reply) || RepeaterFilter.parseStatus(reply) == null)) return emptyList()
             cfg = RepeaterFilter.apply(cfg, q, reply)
@@ -214,9 +220,14 @@ object RepeaterBackup {
         val name = item.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)
         val cmds: List<String> = if (name.startsWith("list.")) {
             val list = FilterList.entries.firstOrNull { it.cmd == name.removePrefix("list.") } ?: return "?"
-            val now = ask(c, r, list.listCommand) ?: return ""
-            val cur = RepeaterFilter.parseList(list, now) ?: return RepeaterFilter.errorText(now)
-            RepeaterFilter.restoreAdds(list, item.value, cur.first)
+            val cur: List<FilterEntry> = if (list == FilterList.BLOCK) {
+                // whole keys, to tell which saved entries the repeater already has
+                RepeaterFilter.readBlock(full = true) { ask(c, r, it) }?.first ?: return ""
+            } else {
+                val now = ask(c, r, list.listCommand) ?: return ""
+                RepeaterFilter.parseList(list, now)?.first ?: return RepeaterFilter.errorText(now)
+            }
+            RepeaterFilter.restoreAdds(list, item.value, cur)
         } else {
             listOf(RepeaterFilter.restoreScalar(name, item.value) ?: return "?")
         }

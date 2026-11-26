@@ -85,6 +85,7 @@ import io.github.n3tk0.loraota.security.PasswordStore
 import io.github.n3tk0.loraota.tools.CliHelper
 import io.github.n3tk0.loraota.tools.DiagnosticReport
 import io.github.n3tk0.loraota.tools.FilterConfig
+import io.github.n3tk0.loraota.tools.FilterList
 import io.github.n3tk0.loraota.tools.NeighborEntry
 import io.github.n3tk0.loraota.tools.RepeaterFilter
 import io.github.n3tk0.loraota.tools.NeighborsParser
@@ -2979,6 +2980,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         try {
             for ((i, q) in queries.withIndex()) {
                 working = "${str(R.string.filter_working_read)} (${i + 1}/${queries.size})"
+                if (q == FilterList.BLOCK.listCommand) {
+                    // all pages (the reply of one holds six entries)
+                    val read = RepeaterFilter.readBlock(full = false) { filterAsk(r, it) }
+                    if (read == null) { if (++missed >= 3) throw Exception(str(R.string.health_no_answer)); continue }
+                    missed = 0
+                    cfg = RepeaterFilter.withBlock(cfg, read)
+                    continue
+                }
                 val reply = filterAsk(r, q)
                 if (reply == null) {
                     if (i == 0 || ++missed >= 3) throw Exception(str(R.string.health_no_answer))
@@ -3021,6 +3030,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             var cfg = toolsState.filter
             for (q in refresh) {
                 working = q
+                if (q == FilterList.BLOCK.listCommand) {
+                    RepeaterFilter.readBlock(full = false) { filterAsk(r, it) }?.let { cfg = RepeaterFilter.withBlock(cfg, it) }
+                    continue
+                }
                 val back = filterAsk(r, q) ?: continue
                 cfg = RepeaterFilter.apply(cfg, q, back)
             }

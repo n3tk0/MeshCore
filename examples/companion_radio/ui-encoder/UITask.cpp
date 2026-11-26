@@ -175,7 +175,7 @@ enum StrId {
   S_SET_QUIET, S_MAIL_FMT, S_LEFT_DH_FMT, S_LEFT_H_FMT, S_HIST_24H, S_NO_HISTORY,
   // block list
   S_BLOCK, S_BLOCK_Q_FMT, S_BLOCKED, S_BLOCKED_DONE, S_MUTE_SENDER, S_MUTE_SENDER_Q_FMT, S_MUTE_CHANNEL, S_MUTE_CHANNEL_Q_FMT,
-  S_REMOVE_Q, S_REMOVED, S_LIST_FULL,
+  S_REMOVE_Q, S_REMOVED, S_LIST_FULL, S_TEST_MODE,
   S_COUNT
 };
 
@@ -442,6 +442,7 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Махни?", "Remove?" },
   { "Махнато", "Removed" },
   { "Списъкът е пълен", "List is full" },
+  { "Тест режим: само брои", "Dry-run: only counts" },
 };
 
 // built-in quick replies, used until the user edits one in Settings
@@ -2133,6 +2134,7 @@ static int confirm_slot = 0;
 static bool senderOf(const UIMsgEntry* m, char* out, size_t cap) {
   const char* sep = strstr(m->text, ": ");
   if (sep == NULL || sep == m->text || (size_t)(sep - m->text) >= FILTER_SENDER_LEN) return false;
+  if (sep[-1] == '*' && (size_t)(sep - m->text) + 1 >= FILTER_SENDER_LEN) return false;   // no room for the escape
   if (out != NULL) {
     size_t n = (size_t)(sep - m->text);
     if (n >= cap) n = cap - 1;
@@ -2142,10 +2144,16 @@ static bool senderOf(const UIMsgEntry* m, char* out, size_t cap) {
   return true;
 }
 
+// The result of a block / mute: in dry-run the filter only counts, so the alert says that instead.
+static void showFilterDone(UITask* task, StrId done) {
+  if (the_mesh.filter().dryrun) task->showAlert(T(S_TEST_MODE), 1800);
+  else task->showAlert(T(done), 800);
+}
+
 static void doMuteSender(UITask* task) {
   if (the_mesh.muteSender(confirm_name)) {
     task->haptic(UI_HAPTIC_ACK_MS);
-    task->showAlert(T(S_MUTED), 800);
+    showFilterDone(task, S_MUTED);
   } else {
     task->showAlert(T(S_LIST_FULL), 1500);
   }
@@ -2154,7 +2162,7 @@ static void doMuteSender(UITask* task) {
 static void doMuteChannel(UITask* task) {
   if (the_mesh.hideChannel(confirm_slot)) {
     task->haptic(UI_HAPTIC_ACK_MS);
-    task->showAlert(T(S_MUTED), 800);
+    showFilterDone(task, S_MUTED);
   } else {
     task->showAlert(T(S_LIST_FULL), 1500);
   }
@@ -2316,11 +2324,18 @@ static void traceContact(UITask* task, const ContactInfo& c);
 static void doBlockContact(UITask* task) {
   ContactInfo* c = the_mesh.lookupContactByPubKey(confirm_key, PUB_KEY_SIZE);
   if (c == NULL) { task->showAlert(T(S_NO_TARGET), 1200); return; }
-  if (the_mesh.blockContact(*c)) {
-    task->haptic(UI_HAPTIC_ACK_MS);
-    task->showAlert(T(S_BLOCKED_DONE), 800);
-  } else {
-    task->showAlert(T(S_LIST_FULL), 1500);
+  switch (the_mesh.blockContact(*c)) {
+    case CBlockResult::ADDED:
+    case CBlockResult::ALREADY:
+      task->haptic(UI_HAPTIC_ACK_MS);
+      showFilterDone(task, S_BLOCKED_DONE);
+      break;
+    case CBlockResult::SAVE_FAILED:
+      task->showAlert(T(S_SAVE_FAIL), 1500);
+      break;
+    default:   // full: nothing was changed, the contact is still there
+      task->showAlert(T(S_LIST_FULL), 1500);
+      break;
   }
 }
 #endif

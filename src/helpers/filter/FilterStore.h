@@ -24,6 +24,13 @@ namespace FilterStore {
     return fs->rename(tmp, path);
   }
 
+  // A reset between the remove and the rename of replace() leaves only the .tmp file (complete: it
+  // is renamed only after a good write). Put it back, as loadMailbox does.
+  template <typename FS>
+  void recover(FS* fs, const char* tmp, const char* path) {
+    if (!fs->exists(path) && fs->exists(tmp)) fs->rename(tmp, path);
+  }
+
   template <typename FS>
   bool savePrefs(FS* fs, PacketFilter& f) {
     if (fs == nullptr) return false;
@@ -73,6 +80,8 @@ namespace FilterStore {
     f.seed(now_secs ^ now_ms);
     f.newkey.setSaveClock(now_ms);
     if (fs == nullptr) return;
+    recover(fs, FILTER_PREFS_FILE ".tmp", FILTER_PREFS_FILE);
+    recover(fs, FILTER_SEEN_FILE ".tmp", FILTER_SEEN_FILE);
     if (fs->exists(FILTER_PREFS_FILE)) {
       File file = openRead(fs, FILTER_PREFS_FILE);
       if (file) {

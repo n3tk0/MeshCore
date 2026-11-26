@@ -28,8 +28,9 @@
 #define FILTER_PREFS_VER     1
 #define FILTER_CHAN_NAME_LEN 24
 
-// Size of the `reply` buffer every CLI command writes into, both over serial and over the mesh.
-#define FILTER_REPLY_SIZE    160
+// Room the filter may use in the `reply` buffer. Over the mesh the reply is temp[166] starting at
+// offset 5, minus the 3-byte `xx|` tag the CLI reflects back: 166 - 5 - 3 = 158 (serial has 160).
+#define FILTER_REPLY_SIZE    158
 
 static const uint8_t FILTER_PUBLIC_SECRET[16] = { 0x8B, 0x33, 0x87, 0xE9, 0xC5, 0xCD, 0xEA, 0x6A,
                                                   0xC9, 0xE5, 0xED, 0xBA, 0xA1, 0x15, 0xCD, 0x72 };
@@ -202,6 +203,7 @@ public:
     if (!p.enabled) return true;
     if (packet->isRouteDirect()) return true;
 
+    advert.tick(now_ms);   // its clock must not miss the millis wrap
     uint8_t type = packet->getPayloadType();
     uint8_t src = 0;
     bool have_src = srcHash(packet, &src);
@@ -233,25 +235,33 @@ public:
       return drop(packet);
     }
 
+    // The limiters that stamp state (a new key's quota, an origin's advert window) only look here;
+    // they are committed below once the packet is accepted, so a packet dropped by a later check
+    // does not use up the budget of a packet that would have been repeated.
+    bool commit_newkey = false, commit_advert = false;
+    const uint8_t* k4 = nullptr;
+
     // new keys get a small quota: their flood adverts and anonymous requests
     if (key != nullptr && newkey.active()) {
-      const uint8_t* k4 = type == PAYLOAD_TYPE_ADVERT ? packet->payload : &packet->payload[1];
+      k4 = type == PAYLOAD_TYPE_ADVERT ? packet->payload : &packet->payload[1];
       bool known = _known != nullptr && _known(_known_ctx, k4);
       bool is_advert = type == PAYLOAD_TYPE_ADVERT;
-      if (!newkey.allow(k4, is_advert ? NewKeyTracker::ADVERT : NewKeyTracker::ANON, known, now_secs)) {
+      if (!newkey.allow(k4, is_advert ? NewKeyTracker::ADVERT : NewKeyTracker::ANON, known, now_secs, false)) {
         if (is_advert) FilterStat::bump(c.cnt.newkey_advert); else FilterStat::bump(c.cnt.newkey_anon);
         if (have_src) FilterStat::recordSrc(c.cnt, src);
         return drop(packet);
       }
+      commit_newkey = !known;
     }
 
     // one advert per origin and window
     if (type == PAYLOAD_TYPE_ADVERT && packet->payload_len >= ADVERT_KEY_LEN) {
-      if (!advert.allow(packet->payload, now_ms)) {
+      if (!advert.allow(packet->payload, now_ms, false)) {
         FilterStat::recordAdvert(c.cnt);
         if (have_src) FilterStat::recordSrc(c.cnt, src);
         return drop(packet);
       }
+      commit_advert = true;
     }
 
     // group text: blocked channels, then the content checks
@@ -283,6 +293,10 @@ public:
     }
 
     if (type == PAYLOAD_TYPE_GRP_TXT && !contentAllows(packet, now_ms, now_secs)) return drop(packet);
+
+    // accepted: now the limiters stamp
+    if (commit_newkey) newkey.allow(k4, type == PAYLOAD_TYPE_ADVERT ? NewKeyTracker::ADVERT : NewKeyTracker::ANON, false, now_secs, true);
+    if (commit_advert) advert.allow(packet->payload, now_ms, true);
     return true;
   }
 
@@ -305,7 +319,9 @@ private:
                                           packet->payload_len - PATH_HASH_SIZE);
     if (len > 255) len = 255;
 
-    if (want_malformed) {
+    // len <= 0: the MAC did not verify (another channel with the same 1-byte hash), so there is no
+    // plaintext to judge
+    if (want_malformed && len > 0) {
       uint8_t reason;
       if (!MessageContent::validate(data, (uint8_t)len, now_secs, &reason)) {
         FilterStat::recordMalformed(c.cnt, reason);
@@ -600,7 +616,7 @@ private:
     else if (strcmp(t, "advert") == 0) FilterStat::formatStatsAdvert(reply, cap, c.cnt, p.advert_hours, advert.getCount(), advert.getCapacity());
     else if (strcmp(t, "channel") == 0) channelList(reply, cap, p.blocked_ch, FILTER_CHANNEL_COUNT, &c.cnt, false);
     else if (strcmp(t, "top") == 0) FilterStat::formatStatsTop(reply, cap, c.cnt);
-    else if (strcmp(t, "air") == 0) FilterStat::formatStatsAir(reply, cap, c.cnt);
+    else if (strcmp(t, "air") == 0) FilterStat::formatStatsAir(reply, cap, c.cnt, p.dryrun);
     else if (strcmp(t, "reset") == 0) { c.cnt.reset(); snprintf(reply, cap, "> Filter: counters reset"); }
     else if (strcmp(t, "ingress") == 0) {
       FilterStat::Buf b(reply, cap);

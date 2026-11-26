@@ -235,6 +235,98 @@ TEST_F(PacketFilterTest, BlockCliRejectsBadKeysAndAFullList) {
   EXPECT_NE(std::string::npos, cli(f, "filter block list 99").find("no page"));
 }
 
+TEST_F(PacketFilterTest, ReplyBufferFitsTheTaggedMeshReply) {
+  // remote CLI: temp[166], reply at offset 5, minus the 3 byte "xx|" tag
+  EXPECT_LE((size_t)FILTER_REPLY_SIZE, (size_t)(166 - 5 - 3));
+}
+
+TEST_F(PacketFilterTest, BlockListPagesWithoutCommasAndWithTheRightCount) {
+  PacketFilter f;
+  for (int i = 0; i < 10; i++) {
+    char cmd[80];
+    snprintf(cmd, sizeof(cmd), "filter block add %02X%02X%02X%02X%02X%02X%02X%02X%02X", 0x10 + i, 1, 2, 3, 4, 5, 6, 7, 8);
+    ASSERT_NE(std::string::npos, cli(f, cmd).find("added"));
+  }
+  EXPECT_EQ("1001020304050607+,1101020304050607+,1201020304050607+,1301020304050607+,"
+            "1401020304050607+,1501020304050607+ [6/10 p0]", cli(f, "filter block list"));
+  EXPECT_EQ("1601020304050607+,1701020304050607+,1801020304050607+,1901020304050607+ [10/10 p1]",
+            cli(f, "filter block list 1"));
+  // full keys, two a page
+  std::string full0 = cli(f, "filter block list 0 full");
+  EXPECT_EQ("100102030405060708,110102030405060708 [2/10 p0]", full0);
+  EXPECT_EQ("180102030405060708,190102030405060708 [10/10 p4]", cli(f, "filter block list 4 full"));
+}
+
+TEST_F(PacketFilterTest, BlockRemoveTakesTheListedPrefixOfALongerKey) {
+  PacketFilter f;
+  std::string longkey(64, 'A');
+  for (int i = 0; i < 64; i++) longkey[i] = "0123456789ABCDEF"[(i * 7 + 3) & 15];
+  std::string pre = longkey.substr(0, 16);
+  ASSERT_NE(std::string::npos, cli(f, ("filter block add " + longkey).c_str()).find("added"));
+  // the list shows the prefix with a '+'; removing by that prefix works
+  EXPECT_EQ(pre + "+", cli(f, "filter block list"));
+  int saves = 0;
+  EXPECT_NE(std::string::npos, cli(f, ("filter block remove " + pre).c_str(), &saves).find("removed"));
+  EXPECT_EQ(PacketFilter::SAVE_PREFS, saves);
+  EXPECT_EQ("None", cli(f, "filter block list"));
+
+  // two entries sharing the prefix: ambiguous, nothing removed; the full key still works
+  std::string other = pre + std::string(48, 'B');
+  cli(f, ("filter block add " + longkey).c_str());
+  cli(f, ("filter block add " + other).c_str());
+  EXPECT_NE(std::string::npos, cli(f, ("filter block remove " + pre).c_str(), &saves).find("more than one"));
+  EXPECT_EQ(0, saves);
+  EXPECT_EQ(2, FilterBlock::count(f.c.block, FILTER_BLOCK_COUNT));
+  EXPECT_NE(std::string::npos, cli(f, ("filter block remove " + longkey).c_str()).find("removed"));
+  EXPECT_EQ(1, FilterBlock::count(f.c.block, FILTER_BLOCK_COUNT));
+}
+
+TEST_F(PacketFilterTest, MalformedScanSkipsAPacketWhoseMacDoesNotVerify) {
+  PacketFilter f;
+  f.p.enabled = true;
+  f.c.malformed = true;
+  mesh::Packet p = makePacket(ROUTE_TYPE_FLOOD, PAYLOAD_TYPE_GRP_TXT);
+  p.payload[0] = FILTER_PUBLIC_HASH;
+  p.payload_len = 1 + CIPHER_MAC_SIZE + 20;
+  // the payload is zeros: the MAC of the Public secret does not verify
+  EXPECT_TRUE(allow(f, p)) << "another channel with the same 1-byte hash, not malformed Public text";
+  EXPECT_EQ(0u, f.c.cnt.malformed);
+}
+
+TEST_F(PacketFilterTest, AdvertWindowIsNotUsedUpByAPacketAnotherCheckDrops) {
+  PacketFilter f;
+  f.p.enabled = true;
+  cli(f, "filter advert 24");
+  cli(f, "filter path add 77");
+  EXPECT_FALSE(allow(f, advertFrom(KEY_A, 1, 0x77), 1000)) << "dropped by the path block";
+  EXPECT_TRUE(allow(f, advertFrom(KEY_A, 1, 0x55), 2000)) << "the dropped copy did not start the window";
+  EXPECT_FALSE(allow(f, advertFrom(KEY_A, 1, 0x56), 3000));
+}
+
+TEST_F(PacketFilterTest, NewKeyQuotaIsNotUsedUpByAPacketAnotherCheckDrops) {
+  PacketFilter f;
+  f.p.enabled = true;
+  cli(f, "filter newkey 24 60");
+  cli(f, "filter ingress 1 60");
+  EXPECT_TRUE(allow(f, floodAck(1, 0x66), 1000)) << "uses the ingress budget of 66";
+  mesh::Packet a = advertFrom(KEY_A, 1, 0x66);
+  EXPECT_FALSE(allow(f, a, 1100, NOW_SECS)) << "dropped by the ingress limit";
+  EXPECT_TRUE(allow(f, advertFrom(KEY_A, 1, 0x67), 1200, NOW_SECS + 1)) << "the quota is still unused";
+  EXPECT_FALSE(allow(f, advertFrom(KEY_A, 1, 0x68), 1300, NOW_SECS + 2));
+}
+
+TEST_F(PacketFilterTest, AirtimeIsLabelledWouldSaveInDryRun) {
+  PacketFilter f;
+  f.setAirFn([](void*, int) -> uint32_t { return 1500; }, nullptr);
+  f.p.enabled = true;
+  f.c.addBlockKey(KEY_A);
+  allow(f, advertFrom(KEY_A));
+  EXPECT_NE(std::string::npos, cli(f, "filter stats air").find("saved airtime 1500"));
+  f.p.dryrun = true;
+  std::string r = cli(f, "filter stats air");
+  EXPECT_NE(std::string::npos, r.find("would save"));
+}
+
 // ---- other checks keep working ------------------------------------------------------------------
 
 TEST_F(PacketFilterTest, MinimalHashSizeAndPathBlock) {
@@ -433,20 +525,29 @@ TEST_F(PacketFilterTest, NewKeyDoesNotLimitOtherPacketsOrDirect) {
   for (int i = 0; i < 5; i++) EXPECT_TRUE(allow(f, ack));
 }
 
-TEST_F(PacketFilterTest, NewKeyTableEvictsTheOldestWhenFull) {
+TEST_F(PacketFilterTest, NewKeyTableEvictsTheYoungestWhenFull) {
   NewKeyTracker t;
   t.configure(24, 60);
   uint8_t key[4];
   for (int i = 0; i < NEWKEY_CAP; i++) {
     key[0] = i & 255; key[1] = i >> 8; key[2] = 9; key[3] = 9;
-    t.allow(key, NewKeyTracker::ADVERT, false, NOW_SECS + (uint32_t)i * 3600 / 4);
+    t.allow(key, NewKeyTracker::ADVERT, false, NOW_SECS + (uint32_t)i * 3600);
   }
   EXPECT_EQ(NEWKEY_CAP, t.count());
   key[0] = 0xEE; key[1] = 0xEE;
   t.allow(key, NewKeyTracker::ADVERT, false, NOW_SECS + 100000);
   EXPECT_EQ(NEWKEY_CAP, t.count());
   uint8_t first[4] = { 0, 0, 9, 9 };
-  EXPECT_EQ(-1, t.ageHours(first, NOW_SECS + 100000)) << "the oldest row made room";
+  EXPECT_GE(t.ageHours(first, NOW_SECS + 100000), 0) << "the longest known key survives a flood";
+  uint8_t youngest[4] = { (uint8_t)((NEWKEY_CAP - 1) & 255), (uint8_t)((NEWKEY_CAP - 1) >> 8), 9, 9 };
+  EXPECT_EQ(-1, t.ageHours(youngest, NOW_SECS + 100000)) << "the youngest row made room";
+  EXPECT_GE(t.ageHours(key, NOW_SECS + 100000), 0);
+  // a flood of random keys never pushes out the first one
+  for (int i = 0; i < 1000; i++) {
+    uint8_t r[4] = { (uint8_t)i, (uint8_t)(i >> 8), 0xCC, 0xDD };
+    t.allow(r, NewKeyTracker::ADVERT, false, NOW_SECS + 100000 + i);
+  }
+  EXPECT_GE(t.ageHours(first, NOW_SECS + 200000), 0);
 }
 
 TEST_F(PacketFilterTest, NewKeySavesAtMostHourlyAndOnlyWhenChanged) {

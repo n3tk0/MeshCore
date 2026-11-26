@@ -105,7 +105,7 @@ fun RepeaterFilterCard(vm: AppViewModel) {
 private fun FilterBody(vm: AppViewModel, cfg: FilterConfig) {
     val busy = vm.busy
     SwitchRow(stringResource(R.string.filter_enabled), null, cfg.enabled, !busy) {
-        vm.filterCommand(RepeaterFilter.cmdEnable(it), listOf(RepeaterFilter.STATUS))
+        vm.filterCommand(RepeaterFilter.cmdEnable(it), listOf(RepeaterFilter.STATUS, RepeaterFilter.DRYRUN))
     }
     SwitchRow(stringResource(R.string.filter_dryrun), stringResource(R.string.filter_dryrun_hint), cfg.dryRun, !busy) {
         vm.filterCommand(RepeaterFilter.cmdOnOff(RepeaterFilter.DRYRUN, it), listOf(RepeaterFilter.DRYRUN))

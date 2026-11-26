@@ -75,11 +75,29 @@ namespace FilterRules {
     return false;
   }
 
+  // Pattern for a sender NAME taken literally: a name that ends in '*' gets a backslash in front of
+  // that '*' ("Rover*" -> "Rover\*") so it is not read as a prefix rule. Returns false when it does
+  // not fit `cap` (with the NUL).
+  inline bool exactNamePattern(const char* name, char* out, size_t cap) {
+    if (name == nullptr || out == nullptr || name[0] == '\0') return false;
+    size_t n = strlen(name);
+    bool star = name[n - 1] == '*';
+    if (n + (star ? 1 : 0) + 1 > cap) return false;
+    memcpy(out, name, n);
+    if (star) { out[n - 1] = '\\'; out[n] = '*'; n++; }
+    out[n] = '\0';
+    return true;
+  }
+
   // Exact match, or prefix match when the pattern ends in '*' (a lone '*'
-  // matches every sender). Case-sensitive.
+  // matches every sender). A pattern ending in "\*" is the exact name with that
+  // backslash removed (see exactNamePattern). Case-sensitive.
   inline bool matchName(const char* pattern, const char* s, size_t n) {
     if (pattern == nullptr || pattern[0] == '\0' || s == nullptr) return false;
     size_t plen = strlen(pattern);
+    if (plen >= 2 && pattern[plen - 1] == '*' && pattern[plen - 2] == '\\') {
+      return n == plen - 1 && memcmp(s, pattern, plen - 2) == 0 && s[plen - 2] == '*';
+    }
     if (pattern[plen - 1] == '*') {
       plen--;
       return n >= plen && memcmp(s, pattern, plen) == 0;

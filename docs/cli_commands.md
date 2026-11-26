@@ -413,9 +413,10 @@ A sender ending in `*` is a prefix; a text starting with `^` must start the mess
 ---
 
 ### Block list
-**Usage:** `filter block [list [page]|add|remove|clear] <hex key>`
+**Usage:** `filter block [list [page] [full]|add|remove|clear] <hex key>`
 
 - `hex key`: 8-64 hex digits (a public key prefix, 4-32 bytes), 32 entries. Short entries block a family of keys.
+- `list` shows 6 entries a page, 8 bytes each (`+` = the entry is longer), ending in ` [6/10 p0]`; `list <page> full` shows whole keys, 2 a page. `remove` also takes the printed 8-byte prefix when only one entry starts with it.
 - A blocked key gets no forwarding of its ADVERT / ANON_REQ, no login, no neighbour or ACL entry, no posts (room server) and no mailbox store or delivery.
 
 ---

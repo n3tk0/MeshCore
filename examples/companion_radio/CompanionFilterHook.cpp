@@ -10,6 +10,10 @@
 
 void MyMesh::loadCFilter() {
   FILESYSTEM* fs = _store->getPrimaryFS();
+  // a reset between the remove and the rename of saveFilter() leaves only the complete .tmp file
+  if (fs != nullptr && !fs->exists(CFILTER_PREFS_FILE) && fs->exists(CFILTER_PREFS_FILE ".tmp")) {
+    fs->rename(CFILTER_PREFS_FILE ".tmp", CFILTER_PREFS_FILE);
+  }
   if (fs != nullptr && fs->exists(CFILTER_PREFS_FILE)) {
     File file = FilterFileIO::openRead(fs, CFILTER_PREFS_FILE);
     if (file) {
@@ -101,17 +105,19 @@ bool MyMesh::cfilterHidden(const mesh::Packet* packet) {
   return true;
 }
 
-// The UI's "Block" on a contact: its key goes on the list, and it leaves the contacts.
-bool MyMesh::blockContact(const ContactInfo& contact) {
+// The UI's "Block" on a contact: its key goes on the list, and it leaves the contacts. A full list
+// changes nothing: the contact stays and the filter is not switched on.
+CBlockResult MyMesh::blockContact(const ContactInfo& contact) {
   uint8_t key[PUB_KEY_SIZE];
   memcpy(key, contact.id.pub_key, PUB_KEY_SIZE);
-  if (!_cfilter.blockKey(key) && !_cfilter.c.hasBlock()) return false;   // list full
+  CBlockResult res = _cfilter.blockKey(key);
+  if (res == CBlockResult::FULL) return res;
   ContactInfo* c = lookupContactByPubKey(key, PUB_KEY_SIZE);
   if (c && removeContact(*c)) {
     _store->deleteBlobByKey(key, PUB_KEY_SIZE);
     dirty_contacts_expiry = futureMillis(5000);   // as LAZY_CONTACTS_WRITE_DELAY in MyMesh.cpp
   }
-  return saveFilter();
+  return saveFilter() ? res : CBlockResult::SAVE_FAILED;
 }
 
 bool MyMesh::unblockSlot(int slot) {
@@ -120,12 +126,8 @@ bool MyMesh::unblockSlot(int slot) {
 }
 
 bool MyMesh::muteSender(const char* name) {
-  if (name == nullptr || name[0] == '\0' || strlen(name) >= FILTER_SENDER_LEN) return false;
-  if (!_cfilter.c.addSenderName(name)) {   // already there counts as done
-    bool there = false;
-    for (int i = 0; i < FILTER_RULE_COUNT; i++) there = there || strcmp(_cfilter.c.sender_rules[i].name, name) == 0;
-    if (!there) return false;
-  }
+  // the name is taken literally (a trailing '*' is escaped); true also when the rule is already there
+  if (name == nullptr || !_cfilter.c.addSenderName(name)) return false;
   _cfilter.enabled = true;
   return saveFilter();
 }

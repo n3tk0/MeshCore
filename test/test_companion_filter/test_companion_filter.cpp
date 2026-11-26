@@ -83,7 +83,7 @@ TEST_F(CompanionFilterTest, OffPassesEverything) {
 
 TEST_F(CompanionFilterTest, BlockedAdvertIsDropped) {
   CompanionFilter f;
-  EXPECT_TRUE(f.blockKey(KEY_A));   // also switches the filter on
+  EXPECT_EQ(CBlockResult::ADDED, f.blockKey(KEY_A));   // also switches the filter on
   EXPECT_TRUE(f.enabled);
   mesh::Packet a = advertFrom(KEY_A), b = advertFrom(KEY_B);
   EXPECT_EQ(CFilterVerdict::DROP, f.checkFlood(&a));
@@ -313,4 +313,37 @@ TEST_F(CompanionFilterTest, DamagedFilesLeaveDefaultsOff) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+
+TEST_F(CompanionFilterTest, BlockKeyIsTriStateAndFullListChangesNothing) {
+  CompanionFilter f;
+  EXPECT_EQ(CBlockResult::ADDED, f.blockKey(KEY_A));
+  EXPECT_TRUE(f.enabled);
+  EXPECT_EQ(CBlockResult::ALREADY, f.blockKey(KEY_A));
+
+  CompanionFilter g;
+  for (int i = 0; i < FILTER_BLOCK_COUNT; i++) {
+    uint8_t k[32] = {};
+    k[0] = 0x40; k[1] = (uint8_t)i;
+    ASSERT_EQ(CBlockResult::ADDED, g.blockKey(k));
+  }
+  g.enabled = false;
+  EXPECT_EQ(CBlockResult::FULL, g.blockKey(KEY_B));
+  EXPECT_FALSE(g.enabled) << "a failed block does not switch the filter on";
+  EXPECT_LT(g.c.blockSlot(KEY_B), 0);
+}
+
+TEST_F(CompanionFilterTest, MutedSenderNameIsExactEvenWithAStar) {
+  CompanionFilter f;
+  ASSERT_TRUE(f.c.addSenderName("Rover*"));
+  ASSERT_TRUE(f.c.addSenderName("Rover*")) << "already there counts as done";
+  EXPECT_TRUE(FilterRules::matchName(f.c.sender_rules[0].name, "Rover*", 6));
+  EXPECT_FALSE(FilterRules::matchName(f.c.sender_rules[0].name, "Rover2", 6)) << "not a prefix rule";
+  EXPECT_FALSE(FilterRules::matchName(f.c.sender_rules[0].name, "Rover", 5));
+  ASSERT_TRUE(f.c.addSenderName("Bob"));
+  EXPECT_TRUE(FilterRules::matchName(f.c.sender_rules[1].name, "Bob", 3));
+  EXPECT_FALSE(FilterRules::matchName(f.c.sender_rules[1].name, "Bobby", 5));
+  // a 15 char name ending in '*' has no room for the escape
+  EXPECT_FALSE(f.c.addSenderName("abcdefghijklmn*"));
 }

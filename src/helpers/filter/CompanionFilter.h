@@ -46,6 +46,9 @@
 
 enum class CFilterVerdict : uint8_t { PASS, HIDE, DROP };
 
+// The UI's "Block": what became of the key.
+enum class CBlockResult : uint8_t { ADDED, ALREADY, FULL, SAVE_FAILED };
+
 struct CHiddenChannel {
   uint32_t key;                      // first 4 bytes of the channel secret, 0 = empty slot
   char name[CFILTER_HIDDEN_NAME];    // to show in the list
@@ -104,11 +107,20 @@ public:
     return FilterBlock::findLoose(c.block, FILTER_BLOCK_COUNT, prefix, len) >= 0;
   }
 
-  // The UI's "Block": a whole key, and the filter is switched on so it takes effect.
-  bool blockKey(const uint8_t* pub_key) {
-    bool added = c.addBlockKey(pub_key);
-    enabled = true;
-    return added;
+  // The UI's "Block": a whole key. The filter is switched on so it takes effect, but only when the key
+  // is on the list afterwards (ADDED, or ALREADY there); a full list changes nothing.
+  CBlockResult blockKey(const uint8_t* pub_key) {
+    if (pub_key == nullptr) return CBlockResult::FULL;
+    int slot = -1;
+    if (FilterBlock::addRaw(c.block, FILTER_BLOCK_COUNT, pub_key, FILTER_BLOCK_MAX_LEN, &slot)) {
+      enabled = true;
+      return CBlockResult::ADDED;
+    }
+    if (slot >= 0) {
+      enabled = true;
+      return CBlockResult::ALREADY;
+    }
+    return CBlockResult::FULL;
   }
 
   // ---- hidden channels -----------------------------------------------------------------------

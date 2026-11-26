@@ -1,5 +1,6 @@
 package io.github.n3tk0.loraota.tools
 
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -104,7 +105,13 @@ class RepeaterFilterTest {
     @Test fun applyUpdatesOnlyWhatItUnderstands() {
         var c = FilterConfig()
         c = RepeaterFilter.apply(c, "filter", "> Filter on: Blocked [ Hash: 0 ] (dry-run)")
-        assertTrue(c.enabled); assertTrue(c.dryRun)
+        assertTrue(c.enabled)
+        assertFalse(c.dryRun, "the dry-run flag comes from `filter dryrun`, not from the summary line")
+        c = RepeaterFilter.apply(c, "filter dryrun", "> Filter: dry-run on")
+        assertTrue(c.dryRun)
+        // a status line without the marker (cut, or a long counter list) does not clear it
+        c = RepeaterFilter.apply(c, "filter", "> Filter on: Blocked [ Hash:1 Path:2 ..")
+        assertTrue(c.dryRun)
         c = RepeaterFilter.apply(c, "filter hash", "> Filter: minimal 2 bytes path hash size")
         assertEquals(2, c.hash)
         c = RepeaterFilter.apply(c, "filter hash", "garbage")
@@ -167,6 +174,18 @@ class RepeaterFilterTest {
         assertEquals(RepeaterFilter.Err.RANGE, RepeaterFilter.validateIngress("", "60", ""))
         assertNull(RepeaterFilter.validateNewKey("24", ""))
         assertEquals(RepeaterFilter.Err.RANGE, RepeaterFilter.validateNewKey("0", ""))
+        // the firmware's ranges: newkey hours 1-720, mins 1-1440; ingress n 1-10000, secs 1-3600; channel name < 24
+        assertNull(RepeaterFilter.validateNewKey("720", "1440"))
+        assertEquals(RepeaterFilter.Err.RANGE, RepeaterFilter.validateNewKey("721", ""))
+        assertEquals(RepeaterFilter.Err.RANGE, RepeaterFilter.validateNewKey("24", "1441"))
+        assertNull(RepeaterFilter.validateIngress("10000", "3600", ""))
+        assertEquals(RepeaterFilter.Err.RANGE, RepeaterFilter.validateIngress("10001", "60", ""))
+        assertEquals(RepeaterFilter.Err.RANGE, RepeaterFilter.validateIngress("20", "3601", ""))
+        assertNull(RepeaterFilter.validateChannel("#" + "a".repeat(22), false))
+        assertEquals(RepeaterFilter.Err.NAME_LONG, RepeaterFilter.validateChannel("#" + "a".repeat(23), false))
+        assertNull(RepeaterFilter.restoreScalar("newkey", "8760 60"))
+        assertNull(RepeaterFilter.restoreScalar("ingress", "20000 60"))
+        assertNull(RepeaterFilter.restoreScalar("ingress", "20 7200"))
     }
 
     @Test fun backupRoundTrip() {
@@ -190,5 +209,77 @@ class RepeaterFilterTest {
         assertEquals(listOf("filter sender add Bob 60", "filter sender add Bot* 0 50", "filter sender add SpamBot"), rules)
         val w = RepeaterFilter.restoreAdds(FilterList.WATCH, "Public (11),#bots (a3)", emptyList())
         assertEquals(listOf("filter watch add #bots"), w)
+    }
+
+    @Test fun restoreDoesNotReadDigitsOfARuleNameAsThrottle() {
+        val rules = RepeaterFilter.restoreAdds(FilterList.SENDER, "Rover7s block,Bot9s throttle 60s 25%,Mix3% block 40%", emptyList())
+        assertEquals(listOf("filter sender add Rover7s", "filter sender add Bot9s 60 25", "filter sender add Mix3% 0 40"), rules)
+    }
+
+    // ---- the block list, with the firmware's own strings ----
+
+    private val K1 = "A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF"
+    private val K2 = "1011121314151617"   // an entry of exactly 8 bytes
+
+    @Test fun blockListShortFormStripsPlusAndPageTail() {
+        val reply = "A0A1A2A3A4A5A6A7+,1011121314151617,2021222324252627+ [3/10 p0]"
+        val r = list(FilterList.BLOCK, reply)!!
+        assertFalse(r.second)
+        assertEquals(listOf("A0A1A2A3A4A5A6A7", "1011121314151617", "2021222324252627"), r.first.map { it.key })
+        assertEquals(3 to 10, RepeaterFilter.blockPageInfo(reply))
+        // the old wording with a comma inside must not split into a bogus entry either
+        assertEquals(1, list(FilterList.BLOCK, "A0A1A2A3A4A5A6A7+ [1/7, page 0]")!!.first.size)
+        assertNull(RepeaterFilter.blockPageInfo("A0A1A2A3A4A5A6A7+"))
+    }
+
+    @Test fun readBlockWalksEveryPageInTheShortAndTheFullForm() = runBlocking {
+        val pages = mapOf(
+            "filter block list" to "A0A1A2A3A4A5A6A7+,B0B1B2B3B4B5B6B7+ [2/3 p0]",
+            "filter block list 1" to "C0C1C2C3C4C5C6C7 [3/3 p1]",
+        )
+        val asked = ArrayList<String>()
+        val r = RepeaterFilter.readBlock(full = false) { asked.add(it); pages[it] }!!
+        assertEquals(listOf("filter block list", "filter block list 1"), asked)
+        assertEquals(listOf("A0A1A2A3A4A5A6A7", "B0B1B2B3B4B5B6B7", "C0C1C2C3C4C5C6C7"), r.first.map { it.key })
+        assertFalse(r.second)
+
+        val full = mapOf(
+            "filter block list 0 full" to "$K1,$K2 [2/3 p0]",
+            "filter block list 1 full" to "C0C1C2C3C4C5C6C7 [3/3 p1]",
+        )
+        val f = RepeaterFilter.readBlock(full = true) { full[it] }!!
+        assertEquals(listOf(K1, K2, "C0C1C2C3C4C5C6C7"), f.first.map { it.key })
+        assertFalse(f.second)
+
+        // a page that never comes: what was read is kept, flagged incomplete
+        val partial = RepeaterFilter.readBlock(full = false) { if (it == "filter block list") pages[it] else null }!!
+        assertEquals(2, partial.first.size)
+        assertTrue(partial.second)
+        // an unsupported / empty first reply
+        assertNull(RepeaterFilter.readBlock(full = false) { null })
+        assertEquals(emptyList(), RepeaterFilter.readBlock(full = false) { "None" }!!.first)
+    }
+
+    @Test fun backupKeepsFullKeysAndRestoreAddsOnlyWholeOnes() {
+        // the backup value is the full list reply: whole keys
+        val saved = "$K1,$K2"
+        val have = list(FilterList.BLOCK, "$K2 [1/1 p0]")!!.first
+        assertEquals(listOf("filter block add $K1"), RepeaterFilter.restoreAdds(FilterList.BLOCK, saved, have))
+        // an entry that is only a printed prefix (a "+" in an old backup) is not restored as a short key
+        assertEquals(listOf("filter block add $K2"), RepeaterFilter.restoreAdds(FilterList.BLOCK, "A0A1A2A3A4A5A6A7+,$K2", emptyList()))
+        // present in either case
+        assertEquals(emptyList(), RepeaterFilter.restoreAdds(FilterList.BLOCK, saved.lowercase(), list(FilterList.BLOCK, "$K1,$K2")!!.first))
+    }
+
+    @Test fun removeUsesThePrintedPrefix() {
+        val e = list(FilterList.BLOCK, "A0A1A2A3A4A5A6A7+")!!.first.single()
+        assertEquals("filter block remove A0A1A2A3A4A5A6A7", RepeaterFilter.cmdRemove(FilterList.BLOCK, e.key))
+        assertNull(RepeaterFilter.validateBlock(e.key))
+    }
+
+    @Test fun replyBufferComment() {
+        assertEquals("filter block list 2 full", RepeaterFilter.cmdBlockPage(2, true))
+        assertEquals("filter block list", RepeaterFilter.cmdBlockPage(0, false))
+        assertEquals("filter block list 3", RepeaterFilter.cmdBlockPage(3, false))
     }
 }

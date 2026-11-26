@@ -104,6 +104,34 @@ TEST(AdvertLimiter, SurvivesMillisWrapAround) {
   EXPECT_TRUE(lim.allow(key, HOUR_MS));
 }
 
+TEST(AdvertLimiter, AnEntryOlderThanTheMillisWrapIsNotRecentAgain) {
+  AdvertLimiter lim;
+  lim.setWindowHours(24);
+  uint8_t key[4];
+  origin(key, 3);
+  uint32_t ms = 1000;
+  ASSERT_TRUE(lim.allow(key, ms));
+  // 60 days pass with a packet every day; millis wraps at 49.7 days
+  for (int day = 1; day <= 60; day++) {
+    ms += 24u * 3600u * 1000u;   // unsigned wrap is intended
+    lim.tick(ms);
+  }
+  EXPECT_TRUE(lim.allow(key, ms)) << "60 days old: the window (24h) is long over";
+  EXPECT_FALSE(lim.allow(key, ms + 1000)) << "and a new window has started";
+}
+
+TEST(AdvertLimiter, LookingDoesNotRecord) {
+  AdvertLimiter lim;
+  lim.setWindowHours(1);
+  uint8_t key[4];
+  origin(key, 9);
+  EXPECT_TRUE(lim.allow(key, 1000, false));
+  EXPECT_EQ(0, lim.getCount());
+  EXPECT_TRUE(lim.allow(key, 1001, false)) << "still nothing recorded";
+  EXPECT_TRUE(lim.allow(key, 1002, true));
+  EXPECT_FALSE(lim.allow(key, 1003, false));
+}
+
 TEST(AdvertLimiter, ClearForgetsEveryOrigin) {
   AdvertLimiter lim;
   lim.setWindowHours(1);
