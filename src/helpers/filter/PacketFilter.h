@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include <Packet.h>
 #include <Utils.h>
@@ -50,6 +51,7 @@ namespace FilterChan {
     char copy[FILTER_CHAN_NAME_LEN];   // `name` may be ch->name itself
     strncpy(copy, name, sizeof(copy) - 1);
     copy[sizeof(copy) - 1] = '\0';
+    if (strcasecmp(copy, "Public") == 0) strcpy(copy, "Public");   // the one name that is not hashed
     memset(ch, 0, sizeof(*ch));
     memcpy(ch->name, copy, sizeof(copy));
     name = ch->name;
@@ -59,6 +61,7 @@ namespace FilterChan {
       mesh::Utils::sha256(ch->secret, sizeof(ch->secret), (const uint8_t*)name, (int)strlen(name));
     }
     mesh::Utils::sha256(&ch->hash, 1, ch->secret, sizeof(ch->secret));
+    if (strcmp(name, "Public") == 0) ch->hash = FILTER_PUBLIC_HASH;
     return true;
   }
 }
@@ -79,6 +82,7 @@ class PacketFilter {
 public:
   typedef bool (*KnownFn)(void* ctx, const uint8_t* key4);      // does this node itself know the key?
   typedef uint32_t (*AirFn)(void* ctx, int raw_len);            // estimated TX airtime of a packet, ms
+  typedef int (*DecryptFn)(const uint8_t* secret32, uint8_t* dest, const uint8_t* src, int src_len);   // MACThenDecrypt
 
   enum { SAVE_PREFS = 1, SAVE_SEEN = 2 };
 
@@ -93,6 +97,7 @@ private:
   void* _known_ctx = nullptr;
   AirFn _air = nullptr;
   void* _air_ctx = nullptr;
+  DecryptFn _decrypt = nullptr;   // nullptr: Utils::MACThenDecrypt (tests inject a keyed fake: the native crypto is a mock)
   uint32_t _rng = 0xA5A5F00D;
   uint32_t _saved_sig = 0;   // signature of the prefs as last written
 
@@ -123,6 +128,7 @@ public:
 
   void setKnownFn(KnownFn fn, void* ctx) { _known = fn; _known_ctx = ctx; }
   void setAirFn(AirFn fn, void* ctx) { _air = fn; _air_ctx = ctx; }
+  void setDecryptFn(DecryptFn fn) { _decrypt = fn; }
   void seed(uint32_t s) { _rng ^= (s << 1) | 1u; if (_rng == 0) _rng = 0xA5A5F00D; }
 
   bool enabled() const { return p.enabled; }
@@ -189,14 +195,9 @@ public:
     }
   }
 
-  const uint8_t* watchedSecret(uint8_t channel_hash) const {
-    if (channel_hash == FILTER_PUBLIC_HASH) return FILTER_PUBLIC_SECRET;
-    for (int i = 0; i < FILTER_WATCH_COUNT; i++) {
-      const FilterChannel& ch = p.watch_ch[i];
-      if (ch.name[0] != '\0' && ch.hash == channel_hash) return ch.secret;
-    }
-    return nullptr;
-  }
+  // Advances the advert limiter's uptime clock. Called from the main loop so that it sees every
+  // 49.7 day wrap of millis() even when no packet arrives for a long time.
+  void tick(uint32_t now_ms) { advert.tick(now_ms); }
 
   // True when this flood packet may be repeated. Direct packets and a filter that is off always pass.
   bool allowForward(const mesh::Packet* packet, uint32_t now_ms, uint32_t now_secs) {
@@ -271,10 +272,15 @@ public:
         FilterStat::recordMalformed(c.cnt, MALFORMED_SHORT);
         return drop(packet);
       }
+      // A blocked channel is recognised by its key, not by the 1-byte hash alone: another channel
+      // with the same hash is not dropped. Only a packet that decrypts (MAC verified) with the blocked
+      // channel's own secret is.
       uint8_t channel_hash = packet->payload[0];
       for (int i = 0; i < FILTER_CHANNEL_COUNT; i++) {
         const FilterChannel& ch = p.blocked_ch[i];
-        if (ch.name[0] != '\0' && ch.hash == channel_hash) {
+        if (ch.name[0] == '\0' || ch.hash != channel_hash) continue;
+        uint8_t data[MAX_PACKET_PAYLOAD + 1];
+        if (decrypt(packet, ch.secret, data) > 0) {
           FilterStat::recordChannel(c.cnt, i);
           return drop(packet);
         }
@@ -285,7 +291,7 @@ public:
     if (p.ing_limit != 0) {
       uint8_t ikey[INGRESS_KEY_MAX], ilen;
       IngressLimiter::keyOf(packet->path, packet->getPathHashSize(), packet->getPathHashCount(), ikey, &ilen);
-      if (!ingress.allow(ikey, ilen, now_ms, nextRandom())) {
+      if (!ingress.allow(ikey, ilen, now_ms, nextRandom(), false)) {
         FilterStat::bump(c.cnt.ingress);
         if (have_src) FilterStat::recordSrc(c.cnt, src);
         return drop(packet);
@@ -295,33 +301,61 @@ public:
     if (type == PAYLOAD_TYPE_GRP_TXT && !contentAllows(packet, now_ms, now_secs)) return drop(packet);
 
     // accepted: now the limiters stamp
+    if (p.ing_limit != 0) {
+      uint8_t ikey[INGRESS_KEY_MAX], ilen;
+      IngressLimiter::keyOf(packet->path, packet->getPathHashSize(), packet->getPathHashCount(), ikey, &ilen);
+      ingress.allow(ikey, ilen, now_ms, 0, true);
+    }
     if (commit_newkey) newkey.allow(k4, type == PAYLOAD_TYPE_ADVERT ? NewKeyTracker::ADVERT : NewKeyTracker::ANON, false, now_secs, true);
     if (commit_advert) advert.allow(packet->payload, now_ms, true);
     return true;
   }
 
 private:
-  // The checks that need the plaintext: malformed scan (Public only), age and the sender / text
-  // rules (Public plus the watch list). Decrypts once.
-  bool contentAllows(const mesh::Packet* packet, uint32_t now_ms, uint32_t now_secs) {
-    uint8_t channel_hash = packet->payload[0];
-    bool want_malformed = c.malformed && channel_hash == FILTER_PUBLIC_HASH;
-    bool want_rules = c.hasContentRules();
-    const uint8_t* secret16 = (want_rules || c.age_mins > 0) ? watchedSecret(channel_hash) : nullptr;
-    if (!want_malformed && secret16 == nullptr) return true;
-
+  // Decrypts the group text of `packet` with a 16-byte channel secret. <= 0: the MAC did not verify
+  // (another channel with the same 1-byte hash).
+  int decrypt(const mesh::Packet* packet, const uint8_t* secret16, uint8_t* data) const {
     uint8_t secret[PUB_KEY_SIZE];
     memset(secret, 0, sizeof(secret));
-    memcpy(secret, secret16 != nullptr ? secret16 : FILTER_PUBLIC_SECRET, 16);
+    memcpy(secret, secret16, 16);
+    int len = (_decrypt != nullptr ? _decrypt : mesh::Utils::MACThenDecrypt)(secret, data, &packet->payload[PATH_HASH_SIZE],
+                                                                           packet->payload_len - PATH_HASH_SIZE);
+    return len > 255 ? 255 : len;
+  }
+
+  // The checks that need the plaintext: malformed scan (Public only), age and the sender / text
+  // rules (Public plus the watch list). Every channel whose 1-byte hash matches is a candidate and
+  // is tried until one decrypts; the plaintext is then reused for all the checks.
+  bool contentAllows(const mesh::Packet* packet, uint32_t now_ms, uint32_t now_secs) {
+    uint8_t channel_hash = packet->payload[0];
+    bool is_public_hash = channel_hash == FILTER_PUBLIC_HASH;
+    bool want_malformed = c.malformed && is_public_hash;
+    bool want_rules = c.hasContentRules();
+    bool want_plain = want_rules || c.age_mins > 0;
+
+    const uint8_t* cand[1 + FILTER_WATCH_COUNT];
+    int nc = 0;
+    if (is_public_hash) cand[nc++] = FILTER_PUBLIC_SECRET;
+    if (want_plain) {
+      for (int i = 0; i < FILTER_WATCH_COUNT; i++) {
+        const FilterChannel& ch = p.watch_ch[i];
+        if (ch.name[0] != '\0' && ch.hash == channel_hash && memcmp(ch.secret, FILTER_PUBLIC_SECRET, 16) != 0) cand[nc++] = ch.secret;
+      }
+    }
+    if (nc == 0 || (!want_malformed && !want_plain)) return true;
 
     uint8_t data[MAX_PACKET_PAYLOAD + 1];
-    int len = mesh::Utils::MACThenDecrypt(secret, data, &packet->payload[PATH_HASH_SIZE],
-                                          packet->payload_len - PATH_HASH_SIZE);
-    if (len > 255) len = 255;
+    int len = 0;
+    const uint8_t* used = nullptr;
+    for (int i = 0; i < nc && len <= 0; i++) {
+      len = decrypt(packet, cand[i], data);
+      if (len > 0) used = cand[i];
+    }
+    if (len <= 0) return true;   // no channel we know: nothing to judge
 
-    // len <= 0: the MAC did not verify (another channel with the same 1-byte hash), so there is no
-    // plaintext to judge
-    if (want_malformed && len > 0) {
+    const bool is_public = used == FILTER_PUBLIC_SECRET;
+
+    if (want_malformed && is_public) {
       uint8_t reason;
       if (!MessageContent::validate(data, (uint8_t)len, now_secs, &reason)) {
         FilterStat::recordMalformed(c.cnt, reason);
@@ -329,8 +363,7 @@ private:
       }
     }
 
-    // len < 4 covers a failed MAC (a hash collision with a channel we do not hold)
-    if (secret16 != nullptr && c.age_mins > 0 && len >= 4) {
+    if (c.age_mins > 0 && len >= 4) {
       uint32_t ts;
       memcpy(&ts, &data[0], 4);
       if (MessageAge::outsideLimit(ts, now_secs, c.age_mins)) {
@@ -339,7 +372,7 @@ private:
       }
     }
 
-    if (secret16 != nullptr && want_rules && len > 0) {
+    if (want_rules) {
       FilterRules::GroupText gt;
       if (FilterRules::parseGroupText(data, len, &gt)) {
         uint8_t roll = nextRandom() % 100;
@@ -467,20 +500,25 @@ public:
   }
 
 private:
-  static void channelList(char* out, size_t cap, const FilterChannel* list, int count, const Counters* cnt, bool with_public) {
+  // `filter channel|watch list [page]` (cnt == nullptr, four a page: a 23 character name with its hash
+  // is 28 bytes) and `filter stats channel` (with drops, in one piece).
+  static void channelList(char* out, size_t cap, const FilterChannel* list, int count, const Counters* cnt, bool with_public, int page = 0) {
+    if (cnt == nullptr) {
+      // entry 0 is "Public" when listed, the others are list[i - 1]
+      const int off = with_public ? 1 : 0;
+      FilterStat::formatPaged(out, cap, count + off, 4, page,
+                              [&](int i) { return i < off || list[i - off].name[0] != '\0'; },
+                              [&](FilterStat::Buf& b, int i, bool first) {
+                                if (i < off) b.add(first ? "Public (11)" : ",Public (11)");
+                                else b.add(first ? "%s (%02x)" : ",%s (%02x)", list[i - off].name, (unsigned)list[i - off].hash);
+                              });
+      return;
+    }
     FilterStat::Buf b(out, cap);
     int listed = 0;
-    if (with_public) {
-      b.add("Public (11)");
-      listed++;
-    }
     for (int i = 0; i < count; i++) {
       if (list[i].name[0] == '\0') continue;
-      if (cnt != nullptr) {
-        b.add(listed > 0 ? ",%s (%02x): %lu" : "%s (%02x): %lu", list[i].name, (unsigned)list[i].hash, (unsigned long)cnt->channel_slot[i]);
-      } else {
-        b.add(listed > 0 ? ",%s (%02x)" : "%s (%02x)", list[i].name, (unsigned)list[i].hash);
-      }
+      b.add(listed > 0 ? ",%s (%02x): %lu" : "%s (%02x): %lu", list[i].name, (unsigned)list[i].hash, (unsigned long)cnt->channel_slot[i]);
       listed++;
     }
     if (listed == 0) {
@@ -493,19 +531,20 @@ private:
   int channelCmd(FilterChannel* list, int count, const char* what, const char* const* parts, int n, char* reply,
                  size_t cap, bool blocked) {
     if (n >= 3 && strcmp(parts[2], "list") == 0) {
-      channelList(reply, cap, list, count, nullptr, !blocked);
+      channelList(reply, cap, list, count, nullptr, !blocked, n >= 4 ? atoi(parts[3]) : 0);
       return 0;
     }
     if (n >= 4 && strcmp(parts[2], "add") == 0) {
       FilterChannel ch;
+      bool valid = FilterChan::derive(parts[3], &ch);   // "public" in any case is "Public"
       int free_slot = -1;
       bool dup = false;
-      for (int i = 0; i < count; i++) {
+      for (int i = 0; i < count && valid; i++) {
         if (list[i].name[0] == '\0') { if (free_slot < 0) free_slot = i; }
-        else if (strcmp(list[i].name, parts[3]) == 0) dup = true;
+        else if (strcmp(list[i].name, ch.name) == 0) dup = true;
       }
-      if (!blocked && strcmp(parts[3], "Public") == 0) dup = true;   // always watched
-      if (dup || free_slot < 0 || !FilterChan::derive(parts[3], &ch)) {
+      if (!blocked && valid && strcmp(ch.name, "Public") == 0) dup = true;   // always watched
+      if (!valid || dup || free_slot < 0) {
         snprintf(reply, cap, "Failed");
         return 0;
       }
@@ -514,8 +553,10 @@ private:
       return SAVE_PREFS;
     }
     if (n >= 4 && strcmp(parts[2], "remove") == 0) {
-      for (int i = 0; i < count; i++) {
-        if (list[i].name[0] != '\0' && strcmp(list[i].name, parts[3]) == 0) {
+      FilterChannel want;
+      if (!FilterChan::derive(parts[3], &want)) want.name[0] = '\0';
+      for (int i = 0; i < count && want.name[0] != '\0'; i++) {
+        if (list[i].name[0] != '\0' && strcmp(list[i].name, want.name) == 0) {
           list[i].name[0] = '\0';
           snprintf(reply, cap, "> Filter: %s %s removed", what, parts[3]);
           return SAVE_PREFS;
@@ -524,7 +565,7 @@ private:
       snprintf(reply, cap, "Failed");
       return 0;
     }
-    snprintf(reply, cap, "> filter %s [ list | add | remove ] <#name%s>", what, blocked ? " | Public" : "");
+    snprintf(reply, cap, "> filter %s [ list [page] | add | remove ] <#name%s>", what, blocked ? " | Public" : "");
     return 0;
   }
 

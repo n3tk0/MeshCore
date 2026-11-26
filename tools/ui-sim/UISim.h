@@ -134,18 +134,10 @@ public:
   // block list: the real filter class, kept in RAM only
   CompanionFilter cfilter;
   CompanionFilter& filter() { return cfilter; }
-  CBlockResult blockContact(const ContactInfo& c) {
-    CBlockResult res = cfilter.blockKey(c.id.pub_key);
-    if (res == CBlockResult::FULL) return res;
-    for (int i = 0; i < num_contacts; i++) {
-      if (memcmp(contacts[MAX_ANON_CONTACTS + i].id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0) {
-        for (int k = i; k < num_contacts - 1; k++) contacts[MAX_ANON_CONTACTS + k] = contacts[MAX_ANON_CONTACTS + k + 1];
-        num_contacts--;
-        break;
-      }
-    }
-    return res;
+  CBlockResult blockContact(const ContactInfo& c) {   // as the firmware: the contact stays, hidden
+    return cfilter.blockKey(c.id.pub_key);
   }
+  bool isContactBlocked(const ContactInfo& c) const { return cfilter.isBlockedQuiet(c.id.pub_key); }
   bool unblockSlot(int slot) { return cfilter.c.removeBlockSlot(slot); }
   bool muteSender(const char* name) { if (!cfilter.c.addSenderName(name)) return false; cfilter.enabled = true; return true; }
   bool removeSenderSlot(int slot) {

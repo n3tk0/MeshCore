@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "Limiter.h"
 #include "MessageAge.h"
 
 // "First seen" memory for public keys, and a small quota for keys that are still new.
@@ -31,6 +32,10 @@
 #define NEWKEY_MAX_HOURS  720          // 30 days
 #define NEWKEY_MAX_MINS   1440
 #define NEWKEY_ANON_SECS  60           // anonymous requests of a new key: one per this many seconds
+#ifndef NEWKEY_CLASS_LIMIT
+  #define NEWKEY_CLASS_LIMIT 30       // new-key packets forwarded per minute, all new keys together
+#endif
+#define NEWKEY_EVICT_SECS 60           // a full table makes room for a new key at most this often
 #define NEWKEY_SAVE_MS    3600000UL    // at most one flash write an hour
 #define NEWKEY_FILE_MAGIC 0x314B4E46   // "FNK1"
 
@@ -51,6 +56,8 @@ private:
   uint16_t _hours, _mins;    // hours 0 = off
   bool _dirty;
   uint32_t _last_save_ms;
+  uint32_t _last_evict = 0;  // RTC seconds of the last admission that evicted a row (RAM only)
+  Limiter _class;            // the quota of the whole class of new keys
 
   int find(const uint8_t* key) const {
     for (int i = 0; i < _n; i++) if (memcmp(_e[i].key, key, NEWKEY_KEY_LEN) == 0) return i;
@@ -58,11 +65,15 @@ private:
   }
 
 public:
-  NewKeyTracker() : _n(0), _hours(0), _mins(60), _dirty(false), _last_save_ms(0) { memset(_e, 0, sizeof(_e)); }
+  NewKeyTracker() : _n(0), _hours(0), _mins(60), _dirty(false), _last_save_ms(0) {
+    memset(_e, 0, sizeof(_e));
+    _class.init(NEWKEY_CLASS_LIMIT, 60);
+  }
 
   void configure(uint16_t hours, uint16_t mins) {
     _hours = hours > NEWKEY_MAX_HOURS ? NEWKEY_MAX_HOURS : hours;
     _mins = mins == 0 ? 60 : (mins > NEWKEY_MAX_MINS ? NEWKEY_MAX_MINS : mins);
+    _class.init(NEWKEY_CLASS_LIMIT, 60);
   }
   uint16_t hours() const { return _hours; }
   uint16_t mins() const { return _mins; }
@@ -73,6 +84,7 @@ public:
   void clear() {
     _n = 0;
     memset(_e, 0, sizeof(_e));
+    _last_evict = 0;
     _dirty = true;
   }
 
@@ -94,14 +106,36 @@ public:
 
   // The quota check. `key` is the first 4 bytes of the sender's public key, `known` says the
   // node itself knows the key. Returns true when the packet may be forwarded. `stamp` false only
-  // looks (the first sighting is still recorded): the caller stamps with a second call once the
-  // packet is really accepted.
+  // looks and changes nothing (not even the first-seen table): the caller commits with a second call
+  // once the packet is really accepted.
+  //
+  // Three limits apply to a new key: its own quota (one advert per `mins`, one anonymous request per
+  // minute), a quota for the whole class of new keys (NEWKEY_CLASS_LIMIT per minute, so a flood of
+  // one-time keys, each new and so each within its own quota, still cannot pass), and, once the table
+  // is full, one admission by eviction per NEWKEY_EVICT_SECS (so two keys cannot push each other out
+  // of the table and both pass every time).
   bool allow(const uint8_t* key, Kind kind, bool known, uint32_t now_secs, bool stamp = true) {
     if (_hours == 0 || key == nullptr || known) return true;
     if (!MessageAge::clockSet(now_secs)) return true;   // no usable time: nothing to compare
 
     uint32_t hour = now_secs / 3600UL;
     int i = find(key);
+    uint32_t first_hour = hour;   // a clock that went back counts from now
+    uint32_t last = 0;
+    if (i >= 0) {
+      if (_e[i].first_hour < hour) first_hour = _e[i].first_hour;
+      last = kind == ADVERT ? _e[i].last_advert : _e[i].last_anon;
+    } else if (_n >= NEWKEY_CAP && _last_evict != 0 && now_secs >= _last_evict && now_secs - _last_evict < NEWKEY_EVICT_SECS) {
+      return false;   // the table is full and made room for another new key a moment ago
+    }
+    if (hour - first_hour >= _hours) return true;   // an old key
+
+    // a new key: a small quota of its own, and its share of the class quota
+    uint32_t gap = kind == ADVERT ? (uint32_t)_mins * 60UL : (uint32_t)NEWKEY_ANON_SECS;
+    if (last != 0 && now_secs >= last && now_secs - last < gap) return false;
+    if (!_class.allow(now_secs, 0, false)) return false;
+    if (!stamp) return true;
+
     if (i < 0) {
       // new row; when the table is full the YOUNGEST sighting makes room, so the keys known the
       // longest (the trusted ones) survive a flood of random keys
@@ -110,24 +144,18 @@ public:
       } else {
         i = 0;
         for (int k = 1; k < NEWKEY_CAP; k++) if (_e[k].first_hour > _e[i].first_hour) i = k;
+        _last_evict = now_secs;
       }
       memset(&_e[i], 0, sizeof(Entry));
       memcpy(_e[i].key, key, NEWKEY_KEY_LEN);
       _e[i].first_hour = hour;
       _dirty = true;
-    } else if (_e[i].first_hour > hour) {   // the clock went back: count from now
-      _e[i].first_hour = hour;
+    } else if (_e[i].first_hour != first_hour) {
+      _e[i].first_hour = first_hour;
       _dirty = true;
     }
-
-    Entry& e = _e[i];
-    if (hour - e.first_hour >= _hours) return true;   // an old key
-
-    // a new key: a small quota
-    uint32_t& last = kind == ADVERT ? e.last_advert : e.last_anon;
-    uint32_t gap = kind == ADVERT ? (uint32_t)_mins * 60UL : (uint32_t)NEWKEY_ANON_SECS;
-    if (last != 0 && now_secs >= last && now_secs - last < gap) return false;
-    if (stamp) last = now_secs;
+    (kind == ADVERT ? _e[i].last_advert : _e[i].last_anon) = now_secs;
+    _class.allow(now_secs, 0, true);
     return true;
   }
 

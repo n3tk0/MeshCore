@@ -682,6 +682,10 @@
     <string name="filter_stats">Statistics</string>
     <string name="filter_stats_load">Load statistics</string>
     <string name="filter_stats_air">Airtime saved: %1$s</string>
+    <string name="backup_filter_incomplete">The backup is saved, but a filter list in it is incomplete (the repeater\'s reply was cut or did not arrive). Try again closer to it.</string>
+    <string name="backup_filter_incomplete_short">Its filter is incomplete.</string>
+    <string name="filter_stats_air_none">No airtime saved yet.</string>
+    <string name="filter_stats_air_dry">Airtime it would have saved: %1$s</string>
     <string name="set_filter">Filter: %1$s</string>
     <string name="cli_title_companion">CLI · %1$s</string>
     <string name="cli_quick_commands">Quick commands</string>

@@ -635,6 +635,9 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t 
   if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
     MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
     auto client = acl.getClientByIdx(i);
+#ifdef WITH_PACKET_FILTER
+    if (filter.isBlocked(client->id.pub_key)) return false;   // a blocked key: its path is not stored
+#endif
     client->out_path_len = mesh::Packet::copyPath(client->out_path, path, path_len); // store a copy of path, for sendDirect()
     client->last_activity = getRTCClock()->getCurrentTime();
   } else {
@@ -1038,6 +1041,7 @@ void MyMesh::loop() {
   mesh::Mesh::loop();
 
 #ifdef WITH_PACKET_FILTER
+  filter.tick(millis());   // the advert limiter's uptime clock must see every millis() wrap
   FilterStore::loop(_fs, filter, millis(), true);   // the first-seen table, at most hourly
 #endif
 

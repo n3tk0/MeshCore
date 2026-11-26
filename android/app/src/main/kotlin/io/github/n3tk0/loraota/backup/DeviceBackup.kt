@@ -185,24 +185,52 @@ object RepeaterBackup {
                 val v = reply.removePrefix("> ")
                 out.add(setting(k, if (k == OTA) v.substringBefore(',').trim() else v))
             }
-            if (withFilter && missed == 0) out.addAll(readFilter(c, r, keys.size, total, progress))
+            // the filter is read whenever the console answered at all (a single lost reply above does not skip it)
+            if (withFilter) out.addAll(readFilter(c, r, keys.size, total, progress))
         } finally {
             withContext(NonCancellable) { runCatching { c.captureCli(0) } }   // also after Stop
         }
         return out
     }
 
-    /** The filter as backup items; nothing when the firmware has none (or stops answering: the settings are already read). */
+    /** One console command, asked up to [tries] times (a LoRa reply can be lost); null when none came. */
+    private suspend fun askRetry(c: CompanionRadio, r: Contact, command: String, tries: Int = 3): String? {
+        repeat(tries) { ask(c, r, command)?.let { return it } }
+        return null
+    }
+
+    /**
+     * The filter as backup items; nothing when the firmware has none (or stops answering: the settings are already read).
+     * A list that is cut (a page that never came, a reply cut by the repeater's buffer) is kept as far as it was read and
+     * marked [BackupItem.incomplete]; a query that got no answer at all adds the [RepeaterFilter.INCOMPLETE_ID] item, so a
+     * partial backup is never taken for a whole one.
+     */
     private suspend fun readFilter(c: CompanionRadio, r: Contact, offset: Int, total: Int, progress: (Int, Int) -> Unit): List<BackupItem> {
         var cfg = FilterConfig()
+        val unanswered = ArrayList<String>()
+        val incompleteLists = HashSet<FilterList>()
         for ((i, q) in RepeaterFilter.LOAD_QUERIES.withIndex()) {
             progress(offset + i + 1, total)
-            if (q == FilterList.BLOCK.listCommand) {
+            val list = RepeaterFilter.listOfQuery(q)
+            if (list != null) {
+                var silent = false
                 // a backup keeps the WHOLE keys (the short list shows only the first 8 bytes of a long one)
-                RepeaterFilter.readBlock(full = true) { ask(c, r, it) }?.let { cfg = RepeaterFilter.withBlock(cfg, it) }
+                val read = RepeaterFilter.readList(list, full = true) { cmd -> askRetry(c, r, cmd).also { if (it == null) silent = true } }
+                if (read != null) {
+                    cfg = RepeaterFilter.withList(cfg, list, read)
+                    if (read.second) incompleteLists.add(list)
+                } else if (silent) {
+                    unanswered.add(q)
+                    incompleteLists.add(list)
+                }
                 continue
             }
-            val reply = ask(c, r, q) ?: if (i == 0) return emptyList() else continue
+            val reply = askRetry(c, r, q)
+            if (reply == null) {
+                if (i == 0) return emptyList()   // no answer to `filter` at all: nothing to say about a filter
+                unanswered.add(q)
+                continue
+            }
             if (i == 0 && (RepeaterFilter.isUnsupported(reply) || RepeaterFilter.parseStatus(reply) == null)) return emptyList()
             cfg = RepeaterFilter.apply(cfg, q, reply)
         }
@@ -210,8 +238,12 @@ object RepeaterBackup {
         for ((name, v) in RepeaterFilter.backupScalars(cfg)) out.add(setting(RepeaterFilter.backupId(name), v))
         for (l in FilterList.entries) {
             val entries = cfg.lists[l].orEmpty()
-            if (entries.isNotEmpty()) out.add(setting(RepeaterFilter.backupId("list.${l.cmd}"), entries.joinToString(",") { it.display }))
+            val inc = l in incompleteLists
+            if (entries.isNotEmpty() || inc) {
+                out.add(setting(RepeaterFilter.backupId("list.${l.cmd}"), entries.joinToString(",") { it.display }).copy(incomplete = inc))
+            }
         }
+        if (unanswered.isNotEmpty()) out.add(setting(RepeaterFilter.INCOMPLETE_ID, unanswered.joinToString(",")).copy(incomplete = true))
         return out
     }
 
@@ -220,13 +252,8 @@ object RepeaterBackup {
         val name = item.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)
         val cmds: List<String> = if (name.startsWith("list.")) {
             val list = FilterList.entries.firstOrNull { it.cmd == name.removePrefix("list.") } ?: return "?"
-            val cur: List<FilterEntry> = if (list == FilterList.BLOCK) {
-                // whole keys, to tell which saved entries the repeater already has
-                RepeaterFilter.readBlock(full = true) { ask(c, r, it) }?.first ?: return ""
-            } else {
-                val now = ask(c, r, list.listCommand) ?: return ""
-                RepeaterFilter.parseList(list, now)?.first ?: return RepeaterFilter.errorText(now)
-            }
+            // every page, whole keys for the block list: to tell which saved entries the repeater already has
+            val cur: List<FilterEntry> = RepeaterFilter.readList(list, full = true) { ask(c, r, it) }?.first ?: return ""
             RepeaterFilter.restoreAdds(list, item.value, cur)
         } else {
             listOf(RepeaterFilter.restoreScalar(name, item.value) ?: return "?")
@@ -254,6 +281,7 @@ object RepeaterBackup {
                 items.filter { it.id == PASSWORD }
             for ((i, item) in ordered.withIndex()) {
                 progress(i + 1, items.size)
+                if (item.id == RepeaterFilter.INCOMPLETE_ID) continue   // a note about the backup, nothing to write
                 if (RepeaterFilter.isBackupId(item.id)) {
                     val err = applyFilter(c, r, item)
                     if (err == null) done++ else failed.add(item to err)

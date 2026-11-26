@@ -682,6 +682,10 @@
     <string name="filter_stats">Статистика</string>
     <string name="filter_stats_load">Зареди статистиката</string>
     <string name="filter_stats_air">Спестено ефирно време: %1$s</string>
+    <string name="backup_filter_incomplete">Backup-ът е запазен, но списък на филтъра е непълен (отговорът на рипитъра е бил отрязан или не е дошъл). Опитай отново по-близо до него.</string>
+    <string name="backup_filter_incomplete_short">Филтърът в него е непълен.</string>
+    <string name="filter_stats_air_none">Още няма спестено ефирно време.</string>
+    <string name="filter_stats_air_dry">Би спестил ефирно време: %1$s</string>
     <string name="set_filter">Филтър: %1$s</string>
     <string name="cli_title_companion">CLI · %1$s</string>
     <string name="cli_quick_commands">Бързи команди</string>

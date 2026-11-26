@@ -64,24 +64,31 @@ object RepeaterFilter {
             if (it.startsWith("Filter:", ignoreCase = true)) it.substring(7).trim() else it
         }
 
-    /** The repeater has no `filter` command (stock firmware): its error for an unknown command. */
+    /** The repeater has no `filter` command (stock firmware): its error for an unknown command. Never a list entry. */
     fun isUnsupported(reply: String?): Boolean {
         val s = (reply ?: "").trim().removePrefix(">").trim().lowercase()
         if (s.isEmpty()) return false
-        return s.startsWith("unknown") || s.startsWith("??") || s.startsWith("unsupported") ||
-            s.startsWith("error: unsupported") || s.startsWith("err - unknown") || s.contains("unknown command") ||
+        return s.startsWith("unknown command") || UNKNOWN_Q.containsMatchIn(s) || s == "unsupported" ||
+            s.startsWith("error: unsupported") || s.startsWith("err - unknown") ||
             s.startsWith("invalid command") || s.startsWith("unrecognized command")
     }
 
-    /** A reply that is an error or a failure (a change did not take). A blank reply counts as one. */
+    private val UNKNOWN_Q = Regex("""^\?\?(:|$)""")
+
+    /**
+     * The firmware's own error replies: "> Filter: error ...", "> Filter: syntax error ...", "> Filter: command error", the
+     * bare "Failed", its usage line ("> filter path [ list ..."), or an unknown-command reply. Only these: the text of a
+     * list entry ("Error*", "Fail", "Unknown") must never pass for an error. A blank reply counts as one.
+     */
     fun isError(reply: String?): Boolean {
         val s = (reply ?: "").trim().lowercase()
         if (s.isEmpty()) return true
-        val c = s.removePrefix(">").trim().removePrefix("filter:").trim()
-        return ERROR_START.containsMatchIn(c) || c.contains("command error") || isUnsupported(reply)
+        val c = s.removePrefix(">").trim()
+        return c.startsWith("filter: error") || c.startsWith("filter: syntax error") || c.startsWith("filter: command error") ||
+            c == "failed" || USAGE.containsMatchIn(c) || isUnsupported(reply)
     }
 
-    private val ERROR_START = Regex("""^(error|err|fail|failed)\b""")
+    private val USAGE = Regex("""^filter( \w+)* \[ """)
 
     fun isOk(reply: String?) = !isError(reply)
 
@@ -179,8 +186,8 @@ object RepeaterFilter {
     /** The tail of a paged block list: " [6/10 p0]" (end, total, page); the older wording had a comma. */
     private val PAGE_TAIL = Regex("""\s*\[(\d+)/(\d+)(?:\s+p|,\s*page\s*)(\d+)\]\s*$""")
 
-    /** (entries shown up to and including this page, total) from a paged block list reply; null when it has no tail. */
-    fun blockPageInfo(reply: String?): Pair<Int, Int>? {
+    /** (entries shown up to and including this page, total) from a paged list reply; null when it has no tail. */
+    fun pageInfo(reply: String?): Pair<Int, Int>? {
         var s = clean(reply)
         if (s.endsWith(MAX_ENTRIES_NOTE)) s = s.removeSuffix(MAX_ENTRIES_NOTE).trimEnd(',', ' ')
         val m = PAGE_TAIL.find(s) ?: return null
@@ -189,52 +196,75 @@ object RepeaterFilter {
         return end to total
     }
 
+    fun blockPageInfo(reply: String?) = pageInfo(reply)
+
     /** A list reply: comma-separated, `None` (or blank) for empty. Returns null for an error reply. */
     fun parseList(list: FilterList, reply: String?): Pair<List<FilterEntry>, Boolean>? {
         if (isError(reply)) return null
         var s = clean(reply)
         val truncated = s.endsWith(MAX_ENTRIES_NOTE)
         if (truncated) s = s.removeSuffix(MAX_ENTRIES_NOTE).trimEnd(',', ' ')
-        if (list == FilterList.BLOCK) s = s.replace(PAGE_TAIL, "")
+        s = s.replace(PAGE_TAIL, "")
         if (s.isEmpty() || s.equals("none", ignoreCase = true)) return emptyList<FilterEntry>() to false
         val out = s.split(',').map { it.trim() }.filter { it.isNotEmpty() }.map { entry(list, it) }
         return out to truncated
     }
 
-    /** `filter block list [page] [full]`: page 0 of the short form is the plain command (older firmware has no pages). */
-    fun cmdBlockPage(page: Int, full: Boolean) =
-        if (page == 0 && !full) FilterList.BLOCK.listCommand else FilterList.BLOCK.listCommand + " $page" + if (full) " full" else ""
+    /**
+     * `filter <list> list [page] [full]`: page 0 of the short form is the plain command (older firmware has no pages).
+     * Every list that can outgrow the 158-byte reply is paged the same way; `full` only means something for the block list.
+     */
+    fun cmdListPage(list: FilterList, page: Int, full: Boolean = false) =
+        if (page == 0 && !full) list.listCommand else list.listCommand + " $page" + if (full && list == FilterList.BLOCK) " full" else ""
+
+    fun cmdBlockPage(page: Int, full: Boolean) = cmdListPage(FilterList.BLOCK, page, full)
+
+    /** The list a read command (`filter sender list`) belongs to, or null. */
+    fun listOfQuery(query: String): FilterList? = FilterList.entries.firstOrNull { it.listCommand == query.trim() }
 
     /**
-     * The whole block list, page by page ([ask] sends one command and gives its reply). [full]: whole keys (for a backup),
-     * else the first 8 bytes of each with a `+` for longer ones. The Boolean is true when the list is not complete (a page
-     * did not come, or the reply was cut). Null when the first page did not come or was an error.
+     * A whole list, page by page ([ask] sends one command and gives its reply). [full]: whole keys (block list only, for a
+     * backup), else the first 8 bytes of each with a `+` for longer ones. The Boolean is true when the list is not complete
+     * (a page did not come, was cut by the reply buffer, or the pages do not add up). Null when the first page did not come
+     * or was an error. Entries are never merged: two long keys that share their first 8 bytes are two entries.
      */
-    suspend fun readBlock(full: Boolean, maxPages: Int = 40, ask: suspend (String) -> String?): Pair<List<FilterEntry>, Boolean>? {
-        val firstReply = ask(cmdBlockPage(0, full)) ?: return null
-        val first = parseList(FilterList.BLOCK, firstReply) ?: return null
+    suspend fun readList(
+        list: FilterList, full: Boolean = false, maxPages: Int = 40, ask: suspend (String) -> String?,
+    ): Pair<List<FilterEntry>, Boolean>? {
+        val firstReply = ask(cmdListPage(list, 0, full)) ?: return null
+        val first = parseList(list, firstReply) ?: return null
         val all = ArrayList(first.first)
         var incomplete = first.second
-        var info = blockPageInfo(firstReply)
+        var info = pageInfo(firstReply)
         var page = 0
         while (info != null && info.first < info.second && page < maxPages) {
             page++
-            val reply = ask(cmdBlockPage(page, full))
-            val parsed = reply?.let { parseList(FilterList.BLOCK, it) }
-            if (parsed == null || parsed.first.isEmpty()) { incomplete = true; break }
-            for (e in parsed.first) if (all.none { it.key.equals(e.key, ignoreCase = true) }) all.add(e)
+            val reply = ask(cmdListPage(list, page, full))
+            val parsed = reply?.let { parseList(list, it) }
+            val next = pageInfo(reply)
+            // no reply, an error, "no page N", or a page that does not move on (a firmware that ignores the page number)
+            if (parsed == null || parsed.first.isEmpty() || clean(reply).startsWith("no page") || next == null || next.first <= info.first) {
+                incomplete = true
+                break
+            }
+            all.addAll(parsed.first)
             if (parsed.second) incomplete = true
-            info = blockPageInfo(reply)
+            info = next
         }
         if (info != null && info.first < info.second) incomplete = true
+        if (info != null && all.size != info.second) incomplete = true   // what was collected must add up to the total
         return all to incomplete
     }
 
-    /** [cfg] with the block list of a [readBlock] result. */
-    fun withBlock(cfg: FilterConfig, read: Pair<List<FilterEntry>, Boolean>): FilterConfig = cfg.copy(
-        lists = cfg.lists + (FilterList.BLOCK to read.first),
-        truncated = if (read.second) cfg.truncated + FilterList.BLOCK else cfg.truncated - FilterList.BLOCK,
+    suspend fun readBlock(full: Boolean, maxPages: Int = 40, ask: suspend (String) -> String?) = readList(FilterList.BLOCK, full, maxPages, ask)
+
+    /** [cfg] with the list of a [readList] result. */
+    fun withList(cfg: FilterConfig, list: FilterList, read: Pair<List<FilterEntry>, Boolean>): FilterConfig = cfg.copy(
+        lists = cfg.lists + (list to read.first),
+        truncated = if (read.second) cfg.truncated + list else cfg.truncated - list,
     )
+
+    fun withBlock(cfg: FilterConfig, read: Pair<List<FilterEntry>, Boolean>) = withList(cfg, FilterList.BLOCK, read)
 
     private val RULE_MODE = Regex("""^(.+?)\s+(block|throttle|dose)\b(.*)$""", RegexOption.IGNORE_CASE)
     private val CHANNEL_HASH = Regex("""\s*\([0-9a-fA-F]{2}\)\s*$""")
@@ -277,6 +307,18 @@ object RepeaterFilter {
         }
     }
 
+    /** `filter stats air`: [ms] the airtime the drops saved (null: nothing yet), [dry] it is what a dry run WOULD have saved. */
+    data class AirSaved(val ms: Long?, val dry: Boolean)
+
+    /** "saved airtime 1234 ms (1s)", "no airtime saved yet", and the dry-run wordings; null when it is none of them. */
+    fun parseAir(reply: String?): AirSaved? {
+        val s = clean(reply)
+        val dry = s.contains("dry-run", ignoreCase = true)
+        Regex("""airtime\s+(\d+)\s*ms""", RegexOption.IGNORE_CASE).find(s)?.let { return AirSaved(it.groupValues[1].toLongOrNull(), dry) }
+        if (s.contains("no airtime", ignoreCase = true)) return AirSaved(null, dry)
+        return null
+    }
+
     // ---- commands ----
 
     fun cmdOnOff(base: String, on: Boolean) = "$base ${if (on) "on" else "off"}"
@@ -296,6 +338,9 @@ object RepeaterFilter {
     fun cmdNewKey(k: FilterNewKey?) =
         if (k == null || k.off) "filter newkey off" else "filter newkey ${k.hours} ${k.mins}"
 
+    /** What the firmware takes: `Public` is exactly that, whatever the case typed; the rest as typed. */
+    fun normalizeChannel(v: String): String = v.trim().let { if (it.equals("Public", ignoreCase = true)) "Public" else it }
+
     fun cmdAdd(list: FilterList, value: String, secs: Int? = null, prob: Int? = null): String {
         val extra = buildString {
             if (list == FilterList.SENDER || list == FilterList.TEXT) {
@@ -303,10 +348,12 @@ object RepeaterFilter {
                 if (prob != null) append(' ').append(prob)
             }
         }
-        return "filter ${list.cmd} add $value$extra"
+        val v = if (list == FilterList.CHANNEL || list == FilterList.WATCH) normalizeChannel(value) else value
+        return "filter ${list.cmd} add $v$extra"
     }
 
-    fun cmdRemove(list: FilterList, key: String) = "filter ${list.cmd} remove $key"
+    fun cmdRemove(list: FilterList, key: String) =
+        "filter ${list.cmd} remove ${if (list == FilterList.CHANNEL || list == FilterList.WATCH) normalizeChannel(key) else key}"
 
     // ---- validation of what the user types (null = fine) ----
 
@@ -420,6 +467,9 @@ object RepeaterFilter {
     const val BACKUP_PREFIX = "filter."
 
     fun backupId(name: String) = BACKUP_PREFIX + name
+
+    /** A note in a backup: these filter queries got no answer (value = the list of them), so the filter in it is partial. */
+    const val INCOMPLETE_ID = BACKUP_PREFIX + "incomplete"
 
     fun isBackupId(id: String) = id.startsWith(BACKUP_PREFIX)
 

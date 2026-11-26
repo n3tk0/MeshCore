@@ -38,13 +38,13 @@ a subset (see the end of this page). Every command prints a short reply (under 1
 | `filter dryrun [on\|off]` | count only |
 | `filter hash <1-3>` | minimal path hash size (1 = off); smaller is dropped |
 | `filter advert <hours>` | one flood advert per origin and window, 0-720 hours (0 = off); `filter advert clear` empties the cache |
-| `filter path list\|add\|remove <hex>` | drop flood packets whose path holds this repeater prefix (2-8 hex digits, 8 entries) |
-| `filter channel list\|add\|remove <#name>` | drop group texts of a channel (16 entries) |
-| `filter watch list\|add\|remove <#name>` | channels (besides Public) that are decrypted for the checks below (4 entries) |
+| `filter path list [page]\|add\|remove <hex>` | drop flood packets whose path holds this repeater prefix (2-8 hex digits, 8 entries) |
+| `filter channel list [page]\|add\|remove <#name\|Public>` | drop group texts of a channel (16 entries); a group text is dropped only when it decrypts with that channel's own key, not by the 1-byte channel hash alone (`Public` in any case) |
+| `filter watch list [page]\|add\|remove <#name>` | channels (besides Public) that are decrypted for the checks below (4 entries) |
 | `filter malformed [on\|off]` | drop group texts with a bad timestamp, empty text or invalid UTF-8 (Public only) |
 | `filter age <minutes\|off>` | drop group texts older or newer than this (1-10080) |
-| `filter sender list\|add\|remove <name> [secs] [prob]` | rules on the sender name; `secs` 0 = block, else one per `secs`; `prob` 1-100; a name ending in `*` is a prefix (8 entries, 15 characters) |
-| `filter text list\|add\|remove <text> [secs] [prob]` | the same on the message text; a leading `^` anchors it at the start (8 entries, 23 characters) |
+| `filter sender list [page]\|add\|remove <name> [secs] [prob]` | rules on the sender name; `secs` 0 = block, else one per `secs`; `prob` 1-100; a name ending in `*` is a prefix (8 entries, 15 characters) |
+| `filter text list [page]\|add\|remove <text> [secs] [prob]` | the same on the message text; a leading `^` anchors it at the start (8 entries, 23 characters) |
 | `filter block list [page] [full]\|add\|remove\|clear <hex>` | the block list |
 | `filter ingress <n> [secs] [soft]` / `off` | flood limit per entry repeater |
 | `filter newkey <hours> [mins]` / `off` / `clear` | quota for new keys |
@@ -53,6 +53,16 @@ a subset (see the end of this page). Every command prints a short reply (under 1
 Sender and text rules, `malformed` and `age` need the plaintext of a group text, so the node
 decrypts the packet once. This works for **Public** and for channels added with `filter watch`.
 A private channel that is not watched cannot be judged by content.
+
+### Paged lists
+
+A reply is at most 158 characters. The lists that can outgrow it (`filter block|channel|watch|sender|text|path list`)
+are paged like the block list: `list [page]` (page 0 when left out) shows as many entries as surely fit (block 6,
+channel and watch 4, sender and text 3, path 8) and, when there are more entries than a page holds, ends in
+` [<shown>/<total> p<page>]` (`<shown>` counts up to and including this page; no comma inside, a comma separates the
+entries). A page past the end says `> Filter: no page N (T entries)`. A reply that still would not fit ends in `..`.
+The Android app walks every page for the card and for a repeater backup; a page that does not come, or comes cut, makes
+the saved list **incomplete** and the app says so instead of saving it as whole.
 
 ### Block list
 
@@ -72,7 +82,10 @@ longer, and ` [<shown>/<total> p<page>]` at the end. `filter block list <page> f
 page (the app uses it for a backup). `filter block remove <hex>` takes the whole entry or, when it is the only one
 starting with it, the printed prefix (8 or more digits). `filter stats block` shows the hits per entry.
 In a dry run `filter stats air` says "would save": nothing was really dropped.
-The companion's "Block" in the UI refuses with "List is full" when the list is full: the contact stays.
+The companion's "Block" in the UI refuses with "List is full" when the list is full.
+
+A blocked key already in a repeater's or room server's ACL keeps its entry but gets nothing from it: no request or
+command (so a blocked old admin cannot run `filter off`), no post, no path update, no answer.
 
 ### Ingress limit
 
@@ -91,6 +104,17 @@ in an advert or an anonymous request, 256 keys (64 on STM32), in the file `/filt
 for the first time less than `hours` ago is "new". A new key's flood adverts are repeated at most
 once per `mins` minutes (default 60), its anonymous requests at most once a minute. Keys already in
 the node's ACL, contacts or mailbox are never new. Nothing is recorded while the clock is not set.
+
+Three limits apply to a new key: its own quota (above); a quota for the whole class of new keys (30 packets a minute
+in all, `NEWKEY_CLASS_LIMIT`), so a flood of one-time keys, each new and so each inside its own quota, still cannot
+pass; and, once the table is full, one new key admitted by eviction a minute, so two keys cannot push each other out of the
+table and both pass every time. A check that only looks (a packet another check drops afterwards) changes nothing:
+the table, the quotas and the ingress limit are only charged for a packet that is really repeated.
+
+### Clock
+
+The advert window counts seconds of an uptime counter built from `millis()`. The repeater and room server main loop
+feed it every pass (`PacketFilter::tick()`), so it sees every 49.7 day wrap of `millis()` even when no packet arrives.
 
 ## Flash use
 
@@ -126,10 +150,17 @@ The companion judges what it receives. Verdicts:
 
 Block list on the companion:
 
-- adverts of a blocked key do not reach the app, do not add or update contacts and are not shown in
-  Tools > Nearby;
-- DMs from it are dropped and still ACKed silently;
-- nothing from it is forwarded when repeat is on.
+- adverts and anonymous requests of a blocked key do not reach the app, do not add or update contacts and are not
+  shown in Tools > Nearby (neither in the app's discovery answers nor in the UI's list); nothing from it is forwarded
+  when repeat is on, and neither is anything routed through a blocked repeater path;
+- "Block" in the UI **keeps the contact stored but hides it**: it is not sent to the phone app (contact list, new
+  contacts, by-key and export), not in the UI's contacts, recipients and trace lists. Its DMs are still decrypted and
+  acknowledged as normal, then dropped (not shown, not queued to the app); it gets no telemetry or other request answer.
+  An advert of the key does not update the hidden contact. Removing the key from the list shows the contact again.
+  The hiding follows the filter: with the filter off (or in a dry run) nothing is blocked, so the contact is visible;
+- a muted sender, text rule, malformed / age check or a hidden channel also applies to a zero-hop **direct** group
+  text (the mesh only offers flood packets to the filter, so these are judged where the text is delivered); group data
+  of a hidden channel is not handed to the app.
 
 Command subset (through the normal CLI command path): `filter`, `on`, `off`, `reset`, `dryrun`,
 `malformed`, `age`, `path`, `sender`, `text`, `block`, `stats <malformed|age|path|sender|text|block>`.

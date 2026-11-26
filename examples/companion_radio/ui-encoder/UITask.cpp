@@ -903,6 +903,7 @@ struct ComposeTarget {
 
 static bool targetForContact(const ContactInfo& c, ComposeTarget& t) {
   memset(&t, 0, sizeof(t));
+  if (the_mesh.isContactBlocked(c)) return false;   // blocked: stored but hidden, nobody to write to
   memcpy(t.pub_key, c.id.pub_key, PUB_KEY_SIZE);
   StrHelper::strncpy(t.name, c.name, sizeof(t.name));
   return true;
@@ -2160,6 +2161,13 @@ static void doMuteSender(UITask* task) {
 }
 
 static void doMuteChannel(UITask* task) {
+  // the slot may have been reassigned from the phone since the message arrived: it must still carry the
+  // channel the message came from (confirm_name)
+  ChannelDetails ch;
+  if (!the_mesh.getChannel(confirm_slot, ch) || !ch.name[0] || strncmp(ch.name, confirm_name, sizeof(confirm_name) - 1) != 0) {
+    task->showAlert(T(S_NO_TARGET), 1500);
+    return;
+  }
   if (the_mesh.hideChannel(confirm_slot)) {
     task->haptic(UI_HAPTIC_ACK_MS);
     showFilterDone(task, S_MUTED);
@@ -2254,7 +2262,12 @@ bool MessageActionsScreen::onEnter(int i) {
       break;
     }
     case A_MUTE_CH: {
-      confirm_slot = m->channel_idx;
+      {   // the same slot-or-name resolution as findTarget(): never hide whichever channel sits in the slot now
+        ComposeTarget ct;
+        if (!findTarget(m, ct) || !ct.is_channel) { _task->showAlert(T(S_NO_TARGET), 1500); break; }
+        confirm_slot = ct.channel_idx;
+        StrHelper::strncpy(confirm_name, ct.name, sizeof(confirm_name));
+      }
       char q[64];
       snprintf(q, sizeof(q), T(S_MUTE_CHANNEL_Q_FMT), m->from);
       askConfirm(_task, q, doMuteChannel);
@@ -2321,6 +2334,7 @@ static ContactInfoScreen* contact_info;
 static void traceContact(UITask* task, const ContactInfo& c);
 
 #ifdef UI_FILTER
+static void refreshContactsScreen();
 static void doBlockContact(UITask* task) {
   ContactInfo* c = the_mesh.lookupContactByPubKey(confirm_key, PUB_KEY_SIZE);
   if (c == NULL) { task->showAlert(T(S_NO_TARGET), 1200); return; }
@@ -2329,6 +2343,7 @@ static void doBlockContact(UITask* task) {
     case CBlockResult::ALREADY:
       task->haptic(UI_HAPTIC_ACK_MS);
       showFilterDone(task, S_BLOCKED_DONE);
+      refreshContactsScreen();   // the contact is hidden now: no empty row left in the list
       break;
     case CBlockResult::SAVE_FAILED:
       task->showAlert(T(S_SAVE_FAIL), 1500);
@@ -2509,6 +2524,13 @@ protected:
 public:
   ContactsScreen(UITask* task) : ListScreen(task), _contacts(NULL) { }
 
+  // the table changed under an open list (a contact was blocked): rebuild it and stay near the same row
+  void refresh() {
+    int s = _sel;
+    open();
+    select(s);
+  }
+
   bool handleInput(char c) override {
     if (_bar == BAR_ACTIVE) {
       if (c == KEY_NEXT) { _bar_sel = (_bar_sel + 1) % _num_groups; return true; }
@@ -2540,7 +2562,8 @@ public:
     ContactInfo c;
     int total = the_mesh.getNumContacts() + MAX_ANON_CONTACTS;   // indices include the anonymous slots
     for (int i = MAX_ANON_CONTACTS; i < total && _num_contacts < MAX_CONTACTS; i++) {
-      if (the_mesh.getContactByIdx(i, c) && (c.type == ADV_TYPE_CHAT || c.type == ADV_TYPE_ROOM)) {
+      if (the_mesh.getContactByIdx(i, c) && (c.type == ADV_TYPE_CHAT || c.type == ADV_TYPE_ROOM) &&
+          !the_mesh.isContactBlocked(c)) {
         Entry& e = _contacts[_num_contacts++];
         memcpy(e.pub_prefix, c.id.pub_key, sizeof(e.pub_prefix));
         e.lastmod = c.lastmod;
@@ -2569,6 +2592,7 @@ public:
 };
 
 static ContactsScreen* contacts_screen;
+static void refreshContactsScreen() { if (contacts_screen) contacts_screen->refresh(); }
 
 // Channels: press = the channel's conversation, hold = write / mute / delete. The last row adds a
 // hashtag channel (its key comes from its name, like in the app).
@@ -3168,7 +3192,8 @@ class BlockedScreen : public ListScreen {
       if (f.hidden[i].key == 0) continue;
       Row& r = _rows[_n++];
       r.kind = K_CHANNEL; r.slot = (uint8_t)i;
-      snprintf(r.text, sizeof(r.text), "#%s", f.hidden[i].name);
+      // channel names already start with '#' (addHashtagChannel)
+      snprintf(r.text, sizeof(r.text), f.hidden[i].name[0] == '#' ? "%s" : "#%s", f.hidden[i].name);
     }
   }
   static void doRemove(UITask* task) {

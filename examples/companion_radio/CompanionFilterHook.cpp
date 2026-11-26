@@ -105,18 +105,48 @@ bool MyMesh::cfilterHidden(const mesh::Packet* packet) {
   return true;
 }
 
-// The UI's "Block" on a contact: its key goes on the list, and it leaves the contacts. A full list
-// changes nothing: the contact stays and the filter is not switched on.
+// A group text that reached the channel receive path without passing cfilterFlood(): a zero-hop DIRECT one (the
+// mesh only offers flood packets to the filter). Judged here on the text that was decrypted, so a muted
+// sender / text, a hidden channel and the malformed / age checks apply to it too. True = not shown.
+bool MyMesh::cfilterChannelMsg(const mesh::GroupChannel& channel, const mesh::Packet* pkt, uint32_t timestamp,
+                               const char* text) {
+  if (!_cfilter.isEnabled() || pkt->isRouteFlood()) return false;   // flood: judged before the mesh handled it
+  uint8_t data[MAX_PACKET_PAYLOAD + 1];
+  int tlen = (int)strlen(text);
+  if (tlen > (int)sizeof(data) - 6) tlen = (int)sizeof(data) - 6;
+  memcpy(data, &timestamp, 4);
+  data[4] = 0;   // plain text
+  memcpy(&data[5], text, tlen);
+  uint32_t key;
+  memcpy(&key, channel.secret, sizeof(key));
+  return _cfilter.checkGroupText(data, 5 + tlen, getRTCClock()->getCurrentTime(), millis(), (uint8_t)random(100), key) !=
+         CFilterVerdict::PASS;
+}
+
+// Group data of a hidden channel is not handed to the app either.
+bool MyMesh::cfilterChannelData(const mesh::GroupChannel& channel) {
+  uint32_t key;
+  memcpy(&key, channel.secret, sizeof(key));
+  return _cfilter.checkGroupData(key) != CFilterVerdict::PASS;
+}
+
+// Contacts the phone app (and the UI) may see: the blocked ones are stored but hidden.
+uint32_t MyMesh::visibleContactCount() {
+  uint32_t n = 0;
+  ContactsIterator it = startContactsIterator();
+  ContactInfo c;
+  while (it.hasNext(this, c)) if (!isContactBlocked(c)) n++;
+  return n;
+}
+
+// The UI's "Block" on a contact: its key goes on the list. The contact stays stored, only hidden (from the phone app and
+// the UI), so that its direct messages are still decrypted and acknowledged (it learns nothing), then dropped.
+// Unblocking shows it again. A full list changes nothing: the filter is not switched on.
 CBlockResult MyMesh::blockContact(const ContactInfo& contact) {
   uint8_t key[PUB_KEY_SIZE];
   memcpy(key, contact.id.pub_key, PUB_KEY_SIZE);
   CBlockResult res = _cfilter.blockKey(key);
   if (res == CBlockResult::FULL) return res;
-  ContactInfo* c = lookupContactByPubKey(key, PUB_KEY_SIZE);
-  if (c && removeContact(*c)) {
-    _store->deleteBlobByKey(key, PUB_KEY_SIZE);
-    dirty_contacts_expiry = futureMillis(5000);   // as LAZY_CONTACTS_WRITE_DELAY in MyMesh.cpp
-  }
   return saveFilter() ? res : CBlockResult::SAVE_FAILED;
 }
 

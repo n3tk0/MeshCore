@@ -754,6 +754,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
                                   const char *text) {
 #ifdef WITH_PACKET_FILTER
   if (cfilterHidden(pkt)) return;   // hidden by the filter: still repeated, not shown
+  if (cfilterChannelMsg(channel, pkt, timestamp, text)) return;   // a zero-hop direct one: judged here
 #endif
   int i = 0;
   if (app_target_ver >= 3) {
@@ -804,6 +805,9 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
     return;
   }
 
+#ifdef WITH_PACKET_FILTER
+  if (cfilterChannelData(channel)) return;   // a hidden channel: nothing for the app
+#endif
   int i = 0;
   out_frame[i++] = RESP_CODE_CHANNEL_DATA_RECV;
   out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
@@ -836,6 +840,9 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
 
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(contact.id.pub_key)) return 0;   // a blocked contact: no telemetry, no answer
+#endif
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
     uint8_t permissions = 0;
     uint8_t cp = contact.flags >> 1; // LSB used as 'favourite' bit (so only use upper bits)
@@ -1009,6 +1016,11 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
+#ifdef WITH_PACKET_FILTER
+  // a discovery answer of a blocked node: neither the app nor the UI hears of it
+  if (packet->payload_len >= 14 && (packet->payload[0] & 0xF0) == CTL_TYPE_NODE_DISCOVER_RESP &&
+      _cfilter.isPrefixBlocked(&packet->payload[6], 8)) return;
+#endif
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -1559,7 +1571,7 @@ void MyMesh::handleCmdFrame(size_t len) {
 
       uint8_t reply[5];
       reply[0] = RESP_CODE_CONTACTS_START;
-      uint32_t count = getNumContacts(); // total, NOT filtered count
+      uint32_t count = visibleContactCount(); // total (blocked contacts are hidden), NOT filtered count
       memcpy(&reply[1], &count, 4);
       _serial->writeFrame(reply, 5);
 
@@ -1672,7 +1684,7 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SHARE_CONTACT && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
-    if (recipient) {
+    if (recipient && !isContactBlocked(*recipient)) {
       if (shareContactZeroHop(*recipient)) {
         writeOKFrame();
       } else {
@@ -1684,7 +1696,7 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_GET_CONTACT_BY_KEY && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *contact = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
-    if (contact) {
+    if (contact && !isContactBlocked(*contact)) {
       writeContactRespFrame(RESP_CODE_CONTACT, *contact);
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // not found
@@ -1712,7 +1724,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       uint8_t *pub_key = &cmd_frame[1];
       ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
       uint8_t out_len;
-      if (recipient && (out_len = exportContact(*recipient, &out_frame[1])) > 0) {
+      if (recipient && !isContactBlocked(*recipient) && (out_len = exportContact(*recipient, &out_frame[1])) > 0) {
         out_frame[0] = RESP_CODE_EXPORT_CONTACT;
         _serial->writeFrame(out_frame, out_len + 1);
       } else {
@@ -2745,7 +2757,7 @@ void MyMesh::checkSerialInterface() {
   ) {
     ContactInfo contact;
     if (_iter.hasNext(this, contact)) {
-      if (contact.lastmod > _iter_filter_since) { // apply the 'since' filter
+      if (contact.lastmod > _iter_filter_since && !isContactBlocked(contact)) { // apply the 'since' filter; blocked contacts are hidden
         writeContactRespFrame(RESP_CODE_CONTACT, contact);
         if (contact.lastmod > _most_recent_lastmod) {
           _most_recent_lastmod = contact.lastmod; // save for the RESP_CODE_END_OF_CONTACTS frame

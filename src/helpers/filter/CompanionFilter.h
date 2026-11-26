@@ -100,6 +100,12 @@ public:
     return !dryrun;
   }
 
+  // As isBlocked(), for what is shown (a blocked contact is hidden): not counted.
+  bool isBlockedQuiet(const uint8_t* pub_key) const {
+    if (!enabled || dryrun || pub_key == nullptr || !c.hasBlock()) return false;
+    return c.blockSlot(pub_key) >= 0;
+  }
+
   // A key known only by its first `len` (>= 4) bytes (a discovery answer): blocked when those bytes
   // agree with a list entry. Not counted.
   bool isPrefixBlocked(const uint8_t* prefix, size_t len) const {
@@ -157,21 +163,26 @@ public:
 
   // ---- verdicts ------------------------------------------------------------------------------
 
-  // Flood ADVERT of a blocked key: DROP. Flood ADVERT / GRP_TXT / GRP_DATA whose path holds a blocked
-  // repeater prefix: DROP. Traffic addressed to this node is never judged here.
+  // Flood ADVERT or ANON_REQ of a blocked key: DROP. Flood ADVERT / ANON_REQ / GRP_TXT / GRP_DATA whose path
+  // holds a blocked repeater prefix: DROP. Traffic addressed to this node is never judged here.
   CFilterVerdict checkFlood(const mesh::Packet* packet) {
     if (!enabled || packet == nullptr || !packet->isRouteFlood()) return CFilterVerdict::PASS;
 
     uint8_t type = packet->getPayloadType();
-    if (type == PAYLOAD_TYPE_ADVERT && packet->payload_len >= PUB_KEY_SIZE && c.hasBlock()) {
-      int slot = c.blockSlot(packet->payload);
+    if (c.hasBlock()) {
+      // the sender's key: an advert carries it first, an anonymous request after the destination hash
+      const uint8_t* key = nullptr;
+      if (type == PAYLOAD_TYPE_ADVERT && packet->payload_len >= PUB_KEY_SIZE) key = packet->payload;
+      else if (type == PAYLOAD_TYPE_ANON_REQ && packet->payload_len >= 1 + PUB_KEY_SIZE) key = &packet->payload[1];
+      int slot = key != nullptr ? c.blockSlot(key) : -1;
       if (slot >= 0) {
         FilterStat::recordBlock(c.cnt, slot);
         return verdict(CFilterVerdict::DROP);
       }
     }
 
-    if (type != PAYLOAD_TYPE_ADVERT && type != PAYLOAD_TYPE_GRP_TXT && type != PAYLOAD_TYPE_GRP_DATA) {
+    if (type != PAYLOAD_TYPE_ADVERT && type != PAYLOAD_TYPE_GRP_TXT && type != PAYLOAD_TYPE_GRP_DATA &&
+        type != PAYLOAD_TYPE_ANON_REQ) {
       return CFilterVerdict::PASS;
     }
     int slot = FilterPath::findMatch(packet->path, packet->getPathHashSize(), packet->getPathHashCount(),
@@ -228,6 +239,13 @@ public:
       return verdict(CFilterVerdict::HIDE);
     }
     return CFilterVerdict::PASS;
+  }
+
+  // A group data packet (not text) of a hidden channel: HIDE, so it is not handed to the app.
+  CFilterVerdict checkGroupData(uint32_t channel_key) {
+    if (!enabled || !isChannelHidden(channel_key)) return CFilterVerdict::PASS;
+    FilterStat::bump(c.cnt.channel);
+    return verdict(CFilterVerdict::HIDE);
   }
 
   // True when this packet hash was judged recently; otherwise records it. The caller lets such a copy

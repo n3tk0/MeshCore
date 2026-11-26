@@ -380,6 +380,16 @@ private fun FilterListSection(vm: AppViewModel, cfg: FilterConfig, l: FilterList
     }
 }
 
+/** "3723000 ms (1h 2m)": the number from the repeater, with a unit-only reading beside it. */
+private fun airText(ms: Long): String {
+    val secs = ms / 1000
+    val h = secs / 3600
+    val m = secs / 60 % 60
+    val s = secs % 60
+    val rough = if (h > 0) "${h}h ${m}m" else if (m > 0) "${m}m ${s}s" else "${s}s"
+    return "$ms ms ($rough)"
+}
+
 /** The totals of the status line and the airtime the drops saved: both read on demand. */
 @Composable
 private fun FilterStats(vm: AppViewModel) {
@@ -400,8 +410,16 @@ private fun FilterStats(vm: AppViewModel) {
             vm.filterStatsStatus?.let {
                 Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
-            vm.filterStatsAir?.let {
-                Text(stringResource(R.string.filter_stats_air, it), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            vm.filterStatsAir?.let { raw ->
+                // the firmware's sentence is English: its number is shown in the app's language; a reply that is not
+                // understood is shown as the repeater wrote it, without a translated prefix
+                val air = RepeaterFilter.parseAir(raw)
+                val text = when {
+                    air == null -> raw
+                    air.ms == null -> stringResource(R.string.filter_stats_air_none)
+                    else -> stringResource(if (air.dry) R.string.filter_stats_air_dry else R.string.filter_stats_air, airText(air.ms))
+                }
+                Text(text, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
         }
     }

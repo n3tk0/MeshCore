@@ -345,8 +345,48 @@ namespace FilterStat {
     b.markTruncated("..");
   }
 
-  // `filter path list` (counts == nullptr) and `filter stats path` (with drops).
-  inline void formatPathList(char* out, size_t cap, const PathPrefix* list, const Counters* counts) {
+  // A list walked a page at a time. `used(i)` says whether entry i exists, `render(b, i, first)` prints it.
+  // A list longer than a page ends in " [<shown>/<total> p<page>]" (no comma: a comma separates the
+  // entries), so a reader can tell a page from the whole list and walk on. A reply that still does not
+  // fit ends in "..".
+  template <typename Used, typename Render>
+  inline void formatPaged(char* out, size_t cap, int count, int per_page, int page, Used used, Render render) {
+    Buf b(out, cap);
+    int total = 0;
+    for (int i = 0; i < count; i++) if (used(i)) total++;
+    if (total == 0) {
+      b.add("None");
+      return;
+    }
+    if (page < 0) page = 0;
+    int seen = 0, listed = 0;
+    for (int i = 0; i < count; i++) {
+      if (!used(i)) continue;
+      if (seen < page * per_page) { seen++; continue; }
+      if (listed >= per_page) break;
+      seen++;
+      render(b, i, listed == 0);
+      listed++;
+    }
+    if (listed == 0) {
+      b.add("> Filter: no page %d (%d entries)", page, total);
+      return;
+    }
+    if (total > per_page) b.add(" [%d/%d p%d]", seen, total, page);
+    b.markTruncated("..");
+  }
+
+  // `filter path list [page]` (counts == nullptr) and `filter stats path` (with drops).
+  inline void formatPathList(char* out, size_t cap, const PathPrefix* list, const Counters* counts, int page = 0) {
+    if (counts == nullptr) {
+      formatPaged(out, cap, FILTER_PATH_COUNT, FILTER_PATH_COUNT, page, [&](int i) { return list[i].len != 0; },
+                  [&](Buf& b, int i, bool first) {
+                    char hex[2 * FILTER_PATH_MAX_LEN + 1];
+                    FilterPath::format(hex, sizeof(hex), list[i]);
+                    b.add(first ? "%s" : ",%s", hex);
+                  });
+      return;
+    }
     Buf b(out, cap);
     char hex[2 * FILTER_PATH_MAX_LEN + 1];
     int listed = 0;
@@ -354,11 +394,7 @@ namespace FilterStat {
     for (int i = 0; i < FILTER_PATH_COUNT; i++) {
       if (list[i].len == 0) continue;
       FilterPath::format(hex, sizeof(hex), list[i]);
-      if (counts != nullptr) {
-        b.add(listed > 0 ? ",%s: %lu" : "%s: %lu", hex, (unsigned long)counts->path_slot[i]);
-      } else {
-        b.add(listed > 0 ? ",%s" : "%s", hex);
-      }
+      b.add(listed > 0 ? ",%s: %lu" : "%s: %lu", hex, (unsigned long)counts->path_slot[i]);
       listed++;
     }
 
@@ -398,7 +434,17 @@ namespace FilterStat {
   // `filter stats sender|text` (drops per rule, with throttle passes when any).
   template <typename Rule>
   inline void formatRuleList(char* out, size_t cap, const Rule* rules, int count,
-                             const uint32_t* drops, const uint32_t* passes) {
+                             const uint32_t* drops, const uint32_t* passes, int page = 0) {
+    if (drops == nullptr) {
+      // three a page: a 23 character pattern with its mode is about 44 bytes
+      formatPaged(out, cap, count, 3, page, [&](int i) { return FilterRules::patternOf(rules[i])[0] != '\0'; },
+                  [&](Buf& b, int i, bool first) {
+                    if (!first) b.add(",");
+                    b.add(rules[i].secs > 0 ? "%s throttle %us" : "%s block", FilterRules::patternOf(rules[i]), (unsigned)rules[i].secs);
+                    if (rules[i].prob < 100) b.add(" %u%%", (unsigned)rules[i].prob);
+                  });
+      return;
+    }
     Buf b(out, cap);
     int listed = 0;
 

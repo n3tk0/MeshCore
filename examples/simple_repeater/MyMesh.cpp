@@ -933,6 +933,11 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
     return;
   }
   ClientInfo* client = acl.getClientByIdx(i);
+#ifdef WITH_PACKET_FILTER
+  // A blocked key keeps its ACL entry but gets nothing from it: no request, no CLI command (so a blocked
+  // old admin cannot run `filter off`), no answer.
+  if (filter.isBlocked(client->id.pub_key)) return;
+#endif
 
   if (type == PAYLOAD_TYPE_REQ) { // request (from a Known admin client!)
     uint32_t timestamp;
@@ -1076,6 +1081,9 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t 
   if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
     MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
     auto client = acl.getClientByIdx(i);
+#ifdef WITH_PACKET_FILTER
+    if (filter.isBlocked(client->id.pub_key)) return false;   // a blocked key: its path is not stored
+#endif
 
     // store a copy of path, for sendDirect()
     client->out_path_len = mesh::Packet::copyPath(client->out_path, path, path_len);
@@ -1754,6 +1762,7 @@ void MyMesh::loop() {
   mesh::Mesh::loop();
 
 #ifdef WITH_PACKET_FILTER
+  filter.tick(millis());   // the advert limiter's uptime clock must see every millis() wrap
   FilterStore::loop(_fs, filter, millis(), psave.stage() == PSAVE_NORMAL);   // the first-seen table, at most hourly
 #endif
 #if ENV_INCLUDE_BQ25798

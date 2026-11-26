@@ -350,7 +350,7 @@ static void scenario(uint8_t lang) {
   the_mesh.addContact(bg ? "Добри" : "Dobri", ADV_TYPE_CHAT, 0x70, now0 - 120, 1);
   the_mesh.addContact("Repeater Lozen", ADV_TYPE_REPEATER, 0x80, now0 - 60, 1);
   the_mesh.addChannel(0, "Public");
-  the_mesh.addChannel(1, "bg-mesh");
+  the_mesh.addChannel(1, "#bg-mesh");
 
   ui->begin(&display, &sensors, &prefs);
   run(200);
@@ -399,7 +399,7 @@ static void scenario(uint8_t lang) {
   run(500);
   shot("standby_new", bg ? "Ново съобщение: инверсна лента за 3 s" : "New message: inverted for 3 s");
   run(3000);
-  receive(*ui, true, 1, NULL, "bg-mesh", bg ? "Добри: Някой чува ли ме от Лозен?" : "Dobri: Can anyone hear me from Lozen?");
+  receive(*ui, true, 1, NULL, "#bg-mesh", bg ? "Добри: Някой чува ли ме от Лозен?" : "Dobri: Can anyone hear me from Lozen?");
   receive(*ui, false, 0, maria, NULL, bg ? "Ок, до после" : "OK, see you later");
   run(3200);
   shot("standby_unread", bg ? "Standby: 3 непрочетени" : "Standby: 3 unread");

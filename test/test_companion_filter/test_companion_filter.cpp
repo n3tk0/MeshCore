@@ -347,3 +347,51 @@ TEST_F(CompanionFilterTest, MutedSenderNameIsExactEvenWithAStar) {
   // a 15 char name ending in '*' has no room for the escape
   EXPECT_FALSE(f.c.addSenderName("abcdefghijklmn*"));
 }
+
+// ---- review fixes ---------------------------------------------------------------------------------
+
+TEST_F(CompanionFilterTest, BlockedAnonRequestIsDroppedAndNotForwarded) {
+  CompanionFilter f;
+  f.blockKey(KEY_A);
+  mesh::Packet p;
+  p.header = ROUTE_TYPE_FLOOD | (PAYLOAD_TYPE_ANON_REQ << PH_TYPE_SHIFT);
+  p.setPathHashSizeAndCount(1, 0);
+  p.payload[0] = 0x42;
+  memcpy(&p.payload[1], KEY_A, 32);
+  p.payload_len = 80;
+  EXPECT_EQ(CFilterVerdict::DROP, f.checkFlood(&p));
+  memcpy(&p.payload[1], KEY_B, 32);
+  EXPECT_EQ(CFilterVerdict::PASS, f.checkFlood(&p));
+  // a blocked repeater in the path
+  cli(f, "filter path add 77");
+  p.path[0] = 0x77;
+  p.setPathHashSizeAndCount(1, 1);
+  EXPECT_EQ(CFilterVerdict::DROP, f.checkFlood(&p));
+}
+
+TEST_F(CompanionFilterTest, HiddenContactQueryDoesNotCountAndFollowsTheFilterState) {
+  CompanionFilter f;
+  EXPECT_FALSE(f.isBlockedQuiet(KEY_A));
+  f.blockKey(KEY_A);
+  EXPECT_TRUE(f.isBlockedQuiet(KEY_A));
+  EXPECT_FALSE(f.isBlockedQuiet(KEY_B));
+  EXPECT_EQ(0u, f.c.cnt.block_local) << "a UI list does not count as a refusal";
+  EXPECT_TRUE(f.isBlocked(KEY_A));
+  EXPECT_EQ(1u, f.c.cnt.block_local);
+  f.dryrun = true;
+  EXPECT_FALSE(f.isBlockedQuiet(KEY_A));
+  f.dryrun = false;
+  f.c.removeBlockSlot(f.c.blockSlot(KEY_A));
+  EXPECT_FALSE(f.isBlockedQuiet(KEY_A)) << "unblocking shows the contact again";
+}
+
+TEST_F(CompanionFilterTest, GroupDataOfAHiddenChannelIsHidden) {
+  CompanionFilter f;
+  EXPECT_EQ(CFilterVerdict::PASS, f.checkGroupData(0x1234));
+  f.hideChannel(0x1234, "#bg");
+  EXPECT_EQ(CFilterVerdict::HIDE, f.checkGroupData(0x1234));
+  EXPECT_EQ(CFilterVerdict::PASS, f.checkGroupData(0x4321));
+  EXPECT_EQ(1u, f.c.cnt.channel);
+  f.dryrun = true;
+  EXPECT_EQ(CFilterVerdict::PASS, f.checkGroupData(0x1234));
+}

@@ -2146,7 +2146,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun backupNow() = work { makeBackup(backupKind, false) ; message = str(R.string.msg_backup_done) }
+    fun backupNow() = work {
+        val saved = makeBackup(backupKind, false)
+        message = str(R.string.msg_backup_done)
+        // a filter list the repeater's replies did not give whole: saved as far as it was read, and said so
+        if (saved.hasIncomplete) {
+            message = str(R.string.backup_filter_incomplete)
+            messageIsError = true
+        }
+    }
 
     private suspend fun makeBackup(kind: DeviceKind, auto: Boolean): Backup {
         val b = when (kind) {
@@ -2225,7 +2233,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // the identity only with its private key (a file imported without its password has none)
-        val rows = BackupDiff.diff(b.items, now).filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+        val rows = BackupDiff.diff(b.items, now)
+            .filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+            .filter { it.item.id != RepeaterFilter.INCOMPLETE_ID }   // a note about the backup, not a setting
         restoreChecked.clear()
         // the identity only when the user ticks it: it changes who the device is for the network
         for (r in rows) restoreChecked[r.item.ref] = r.item.group != BackupItem.GROUP_KEY
@@ -2980,12 +2990,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         try {
             for ((i, q) in queries.withIndex()) {
                 working = "${str(R.string.filter_working_read)} (${i + 1}/${queries.size})"
-                if (q == FilterList.BLOCK.listCommand) {
-                    // all pages (the reply of one holds six entries)
-                    val read = RepeaterFilter.readBlock(full = false) { filterAsk(r, it) }
+                val list = RepeaterFilter.listOfQuery(q)
+                if (list != null) {
+                    // all pages (a reply holds only as many entries as fit the repeater's buffer)
+                    val read = RepeaterFilter.readList(list, full = false) { filterAsk(r, it) }
                     if (read == null) { if (++missed >= 3) throw Exception(str(R.string.health_no_answer)); continue }
                     missed = 0
-                    cfg = RepeaterFilter.withBlock(cfg, read)
+                    cfg = RepeaterFilter.withList(cfg, list, read)
                     continue
                 }
                 val reply = filterAsk(r, q)
@@ -3030,8 +3041,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             var cfg = toolsState.filter
             for (q in refresh) {
                 working = q
-                if (q == FilterList.BLOCK.listCommand) {
-                    RepeaterFilter.readBlock(full = false) { filterAsk(r, it) }?.let { cfg = RepeaterFilter.withBlock(cfg, it) }
+                val list = RepeaterFilter.listOfQuery(q)
+                if (list != null) {
+                    RepeaterFilter.readList(list, full = false) { filterAsk(r, it) }?.let { cfg = RepeaterFilter.withList(cfg, list, it) }
                     continue
                 }
                 val back = filterAsk(r, q) ?: continue

@@ -179,6 +179,9 @@ private fun BackupRow(vm: AppViewModel, b: Backup, other: Boolean, onOpen: () ->
                     stringResource(if (b.auto) R.string.backup_auto else R.string.backup_manual), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(summary(b), style = MaterialTheme.typography.bodySmall)
+                if (b.hasIncomplete) {
+                    Text(stringResource(R.string.backup_filter_incomplete_short), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
@@ -254,6 +257,9 @@ private fun DiffLine(vm: AppViewModel, b: Backup, r: DiffRow) {
         Checkbox(checked = on, onCheckedChange = { vm.restoreChecked[ref] = it }, enabled = !vm.busy)
         Column(Modifier.weight(1f).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(itemLabel(r.item), style = MaterialTheme.typography.bodyLarge)
+            if (r.item.incomplete) {
+                Text(stringResource(R.string.backup_filter_incomplete_short), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
             if (r.item.group != BackupItem.GROUP_CONTACT) {
                 // the backup's value, and what the device has now
                 Text(itemValue(r.item, r.item.value), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)

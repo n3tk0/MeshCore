@@ -282,4 +282,66 @@ class RepeaterFilterTest {
         assertEquals("filter block list", RepeaterFilter.cmdBlockPage(0, false))
         assertEquals("filter block list 3", RepeaterFilter.cmdBlockPage(3, false))
     }
+
+    // ---- review fixes ----
+
+    @Test fun listEntriesWithErrorWordsAreNotErrorReplies() {
+        val r = list(FilterList.SENDER, "Error block,Fail throttle 60s,Failed block,Unknown block,Err* block 50%,??? block")
+        assertEquals(6, r!!.first.size)
+        assertFalse(r.second)
+        assertEquals(listOf("Error", "Fail", "Failed", "Unknown", "Err*", "???"), r.first.map { it.key })
+        assertEquals(2, list(FilterList.TEXT, "error block,Failed block")!!.first.size)
+        assertTrue(RepeaterFilter.isOk("Error block,Fail throttle 60s"))
+        // what the firmware really says when it refuses
+        for (e in listOf("Failed", "> Filter: error <n> range is 1-10000, or off", "> Filter: syntax error 'filter dryrun <on | off>'",
+            "> Filter: command error", "> filter path [ list [page] | add | remove ] <hex prefix, 2-8 digits>", "Unknown command", "")) {
+            assertFalse(RepeaterFilter.isOk(e), e)
+        }
+        assertNull(list(FilterList.SENDER, "Failed"))
+    }
+
+    @Test fun readListWalksEveryListThatCanOverflow() = runBlocking {
+        val pages = mapOf(
+            "filter sender list" to "A block,B throttle 60s,C block 50% [3/5 p0]",
+            "filter sender list 1" to "D block,E block [5/5 p1]",
+        )
+        val asked = ArrayList<String>()
+        val r = RepeaterFilter.readList(FilterList.SENDER) { asked.add(it); pages[it] }!!
+        assertEquals(listOf("filter sender list", "filter sender list 1"), asked)
+        assertEquals(listOf("A", "B", "C", "D", "E"), r.first.map { it.key })
+        assertFalse(r.second)
+        assertEquals("filter channel list 2", RepeaterFilter.cmdListPage(FilterList.CHANNEL, 2))
+        assertEquals("filter text list", RepeaterFilter.cmdListPage(FilterList.TEXT, 0))
+        // a page that never comes, one that does not move on, and one cut by the reply buffer: incomplete, not saved as whole
+        assertTrue(RepeaterFilter.readList(FilterList.SENDER) { if (it.endsWith("list")) pages[it] else null }!!.second)
+        assertTrue(RepeaterFilter.readList(FilterList.SENDER) { pages["filter sender list"] }!!.second)
+        assertTrue(RepeaterFilter.readList(FilterList.CHANNEL) { "#a (11),#b (22),#c.." }!!.second)
+        assertFalse(RepeaterFilter.readList(FilterList.CHANNEL) { "#a (11),#b (22)" }!!.second)
+    }
+
+    @Test fun twoLongKeysWithTheSameFirstEightBytesAreTwoEntries() = runBlocking {
+        val pages = mapOf(
+            "filter block list" to "A0A1A2A3A4A5A6A7+,B0B1B2B3B4B5B6B7+ [2/3 p0]",
+            "filter block list 1" to "A0A1A2A3A4A5A6A7+ [3/3 p1]",   // another key with the same prefix
+        )
+        val r = RepeaterFilter.readBlock(full = false) { pages[it] }!!
+        assertEquals(3, r.first.size)
+        assertFalse(r.second)
+    }
+
+    @Test fun publicIsSentWithTheFirmwaresSpelling() {
+        assertEquals("filter channel add Public", RepeaterFilter.cmdAdd(FilterList.CHANNEL, "public"))
+        assertEquals("filter channel add Public", RepeaterFilter.cmdAdd(FilterList.CHANNEL, " PUBLIC "))
+        assertEquals("filter channel remove Public", RepeaterFilter.cmdRemove(FilterList.CHANNEL, "pUBLIC"))
+        assertEquals("filter channel add #bot", RepeaterFilter.cmdAdd(FilterList.CHANNEL, "#bot"))
+        assertNull(RepeaterFilter.validateChannel("public", allowPublic = true))
+    }
+
+    @Test fun airtimeSentenceIsParsedNotWrapped() {
+        assertEquals(RepeaterFilter.AirSaved(3723000L, false), RepeaterFilter.parseAir("> Filter: saved airtime 3723000 ms (1h 2m)"))
+        assertEquals(RepeaterFilter.AirSaved(1500L, true), RepeaterFilter.parseAir("> Filter: dry-run, would save airtime 1500 ms (1s)"))
+        assertEquals(RepeaterFilter.AirSaved(null, false), RepeaterFilter.parseAir("> Filter: no airtime saved yet"))
+        assertEquals(RepeaterFilter.AirSaved(null, true), RepeaterFilter.parseAir("> Filter: dry-run, no airtime would be saved yet"))
+        assertNull(RepeaterFilter.parseAir("something else"))
+    }
 }

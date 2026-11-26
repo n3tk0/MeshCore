@@ -86,10 +86,18 @@ public:
   }
 
   // True when the packet may be forwarded. now_ms: millis(); rnd: 0..255 for the soft band.
-  bool allow(const uint8_t* key, uint8_t key_len, uint32_t now_ms, uint8_t rnd) {
+  // `stamp` false only looks (no entry is created or counted; a refusal still counts as a drop):
+  // the caller counts with a second call once the packet is really accepted.
+  bool allow(const uint8_t* key, uint8_t key_len, uint32_t now_ms, uint8_t rnd, bool stamp = true) {
     if (_limit == 0 || key_len == 0) return true;
 
     int i = find(key, key_len);
+    if (!stamp) {
+      if (i < 0) return true;   // a first packet always fits
+      bool ok = _t[i].limiter.allow(now_ms / 1000UL, rnd, false);
+      if (!ok && _t[i].drops < 0xFFFF) _t[i].drops++;
+      return ok;
+    }
     if (i < 0) {
       // free slot, else the least recently used one
       int victim = 0;

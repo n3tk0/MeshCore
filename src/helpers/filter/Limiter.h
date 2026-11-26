@@ -29,18 +29,20 @@ public:
     _count = 0;
   }
 
-  bool allow(uint32_t now, uint8_t rnd) {
+  // `stamp` false only looks: the verdict is the same but nothing is counted (the caller counts
+  // with a second call once the packet is really accepted).
+  bool allow(uint32_t now, uint8_t rnd, bool stamp = true) {
     if (!_limit) return true;
 
     uint16_t count;
     // unsigned subtraction: still right when the counter wraps (millis) or jumps (RTC set)
     if ((uint32_t)(now - _start) < _secs && _count != 0) {
-      count = _count < 0xFFFF ? ++_count : _count;   // saturates
+      count = _count < 0xFFFF ? (uint16_t)(_count + 1) : _count;   // saturates
     } else {
-      _start = now;
-      _count = 1;
       count = 1;
+      if (stamp) _start = now;
     }
+    if (stamp) _count = count;
 
     // No soft band configured -> classic hard cutoff.
     if (_soft == 0 || _soft >= _limit) {

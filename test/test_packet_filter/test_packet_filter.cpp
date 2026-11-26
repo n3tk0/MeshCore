@@ -79,6 +79,41 @@ std::string cli(PacketFilter& f, const char* cmd, int* saves = nullptr, uint32_t
   return reply;
 }
 
+// The native crypto is a mock that cannot tell keys apart, so the filter gets a keyed fake: the "MAC"
+// is the 16 secret bytes (not CIPHER_MAC_SIZE), and a decrypt with another secret fails like a real MAC check does.
+int fakeDecrypt(const uint8_t* secret, uint8_t* dest, const uint8_t* src, int src_len) {
+  if (src_len < 16 || memcmp(src, secret, 16) != 0) return 0;
+  memcpy(dest, src + 16, src_len - 16);
+  return src_len - 16;
+}
+
+// A group text of `ch` as fakeDecrypt() reads it: timestamp, flags, "Sender: text".
+mesh::Packet grpText(const FilterChannel& ch, const char* text, uint32_t ts = NOW_SECS) {
+  uint8_t plain[120];
+  memcpy(plain, &ts, 4);
+  plain[4] = 0;
+  strcpy((char*)plain + 5, text);
+  int plen = 5 + (int)strlen(text);
+  mesh::Packet p = makePacket(ROUTE_TYPE_FLOOD, PAYLOAD_TYPE_GRP_TXT);
+  p.payload[0] = ch.hash;
+  memcpy(&p.payload[1], ch.secret, 16);
+  memcpy(&p.payload[1 + 16], plain, plen);
+  p.payload_len = (uint16_t)(1 + 16 + plen);
+  return p;
+}
+
+// A channel name (not `avoid`) whose 1-byte hash equals that of `like`.
+FilterChannel collidingChannel(const FilterChannel& like) {
+  FilterChannel ch;
+  for (int i = 0; i < 100000; i++) {
+    char name[20];
+    snprintf(name, sizeof(name), "#c%d", i);
+    if (FilterChan::derive(name, &ch) && ch.hash == like.hash && strcmp(ch.name, like.name) != 0) return ch;
+  }
+  ADD_FAILURE() << "no colliding channel found";
+  return ch;
+}
+
 bool allow(PacketFilter& f, const mesh::Packet& p, uint32_t now_ms = 1000, uint32_t now_secs = NOW_SECS) {
   return f.allowForward(&p, now_ms, now_secs);
 }
@@ -355,23 +390,115 @@ TEST_F(PacketFilterTest, AdvertWindowDropsTheRepeat) {
   EXPECT_EQ(1u, f.c.cnt.advert);
 }
 
-TEST_F(PacketFilterTest, BlockedChannelByNameOnly) {
+TEST_F(PacketFilterTest, BlockedChannelByKeyNotByHashAlone) {
   PacketFilter f;
+  f.setDecryptFn(fakeDecrypt);
   f.p.enabled = true;
   EXPECT_NE(std::string::npos, cli(f, "filter channel add #bot").find("added"));
-  mesh::Packet p = makePacket(ROUTE_TYPE_FLOOD, PAYLOAD_TYPE_GRP_TXT);
-  p.payload_len = 40;
   FilterChannel ch;
   ASSERT_TRUE(FilterChan::derive("#bot", &ch));
-  p.payload[0] = ch.hash;
-  EXPECT_FALSE(allow(f, p));
+  EXPECT_FALSE(allow(f, grpText(ch, "Ann: hello")));
   EXPECT_EQ(1u, f.c.cnt.channel);
-  p.payload[0] = ch.hash ^ 0xFF;
-  EXPECT_TRUE(allow(f, p));
-  mesh::Packet tiny = p;
+
+  // another channel with the same 1-byte hash is not dropped
+  FilterChannel other = collidingChannel(ch);
+  EXPECT_TRUE(allow(f, grpText(other, "Ann: hello")));
+  EXPECT_EQ(1u, f.c.cnt.channel);
+  // neither is a payload of the same hash that decrypts with nothing we hold
+  mesh::Packet junk = makePacket(ROUTE_TYPE_FLOOD, PAYLOAD_TYPE_GRP_TXT);
+  junk.payload[0] = ch.hash;
+  junk.payload_len = 40;
+  EXPECT_TRUE(allow(f, junk));
+  junk.payload[0] = ch.hash ^ 0xFF;
+  EXPECT_TRUE(allow(f, junk));
+  mesh::Packet tiny = junk;
   tiny.payload_len = PATH_HASH_SIZE + CIPHER_MAC_SIZE;   // cannot hold a MAC and a message
   EXPECT_FALSE(allow(f, tiny));
   EXPECT_EQ("#bot (" + std::string(1, "0123456789abcdef"[ch.hash >> 4]) + "0123456789abcdef"[ch.hash & 15] + ")", cli(f, "filter channel list"));
+}
+
+TEST_F(PacketFilterTest, BlockedPublicChannelNeedsThePublicKey) {
+  PacketFilter f;
+  f.setDecryptFn(fakeDecrypt);
+  f.p.enabled = true;
+  cli(f, "filter channel add public");   // any case
+  EXPECT_EQ("Public (11)", cli(f, "filter channel list"));
+  FilterChannel pub;
+  ASSERT_TRUE(FilterChan::derive("Public", &pub));
+  EXPECT_FALSE(allow(f, grpText(pub, "Ann: hi")));
+  FilterChannel other;
+  ASSERT_TRUE(FilterChan::derive("#other", &other));
+  other.hash = FILTER_PUBLIC_HASH;   // a channel that shares Public's 1-byte hash
+  EXPECT_TRUE(allow(f, grpText(other, "Ann: hi")));
+  EXPECT_NE(std::string::npos, cli(f, "filter channel remove PUBLIC").find("removed"));
+  EXPECT_TRUE(allow(f, grpText(pub, "Ann: hi")));
+}
+
+TEST_F(PacketFilterTest, WatchListTriesEveryChannelWithTheSameHash) {
+  PacketFilter f;
+  f.setDecryptFn(fakeDecrypt);
+  f.p.enabled = true;
+  FilterChannel a, b;
+  ASSERT_TRUE(FilterChan::derive("#aaa", &a));
+  b = collidingChannel(a);
+  cli(f, "filter watch add #aaa");
+  cli(f, (std::string("filter watch add ") + b.name).c_str());
+  cli(f, "filter sender add Bob");
+  EXPECT_FALSE(allow(f, grpText(a, "Bob: hi")));
+  EXPECT_FALSE(allow(f, grpText(b, "Bob: hi"))) << "the second watched channel with that hash is tried too";
+  EXPECT_TRUE(allow(f, grpText(b, "Eve: hi")));
+  EXPECT_EQ(2u, f.c.cnt.sender);
+}
+
+TEST_F(PacketFilterTest, PublicIsAcceptedInAnyCase) {
+  FilterChannel ch;
+  ASSERT_TRUE(FilterChan::derive("public", &ch));
+  EXPECT_STREQ("Public", ch.name);
+  EXPECT_EQ(FILTER_PUBLIC_HASH, ch.hash);
+  EXPECT_EQ(0, memcmp(ch.secret, FILTER_PUBLIC_SECRET, 16));
+  PacketFilter f;
+  EXPECT_EQ("Failed", cli(f, "filter watch add pUBLIC")) << "Public is always watched";
+}
+
+TEST_F(PacketFilterTest, ListsPageWithoutOverflowing) {
+  PacketFilter f;
+  for (int i = 0; i < 8; i++) {
+    char cmd[80];
+    snprintf(cmd, sizeof(cmd), "filter text add ^abcdefghijklmnopqrstu%d 65535 50", i);
+    cli(f, cmd);
+    snprintf(cmd, sizeof(cmd), "filter sender add abcdefghijklmn%d 65535 50", i);
+    cli(f, cmd);
+  }
+  for (int i = 0; i < 16; i++) {
+    char cmd[80];
+    snprintf(cmd, sizeof(cmd), "filter channel add #abcdefghijklmnopqrs%d", i % 10 + 10 * (i / 10));
+    cli(f, cmd);
+  }
+  for (const char* what : { "text", "sender", "channel" }) {
+    int shown = 0, total = 0;
+    for (int page = 0; page < 10; page++) {
+      std::string cmd = std::string("filter ") + what + " list " + std::to_string(page);
+      std::string r = cli(f, cmd.c_str());
+      EXPECT_EQ(std::string::npos, r.find("..")) << what << " " << r;
+      size_t br = r.rfind(" [");
+      ASSERT_NE(std::string::npos, br) << what << " " << r;
+      int end = 0, tot = 0, pg = 0;
+      ASSERT_EQ(3, sscanf(r.c_str() + br, " [%d/%d p%d]", &end, &tot, &pg)) << r;
+      EXPECT_EQ(page, pg);
+      EXPECT_EQ(std::string::npos, r.substr(br).find(','));
+      total = tot;
+      shown = end;
+      if (end >= tot) break;
+    }
+    EXPECT_EQ(total, shown) << what;
+  }
+  EXPECT_NE(std::string::npos, cli(f, "filter text list 9").find("no page"));
+  // a short list has no suffix
+  PacketFilter g;
+  cli(g, "filter sender add Bob");
+  EXPECT_EQ("Bob block", cli(g, "filter sender list"));
+  cli(g, "filter path add 7a");
+  EXPECT_EQ("7A", cli(g, "filter path list 0"));
 }
 
 // ---- ingress ------------------------------------------------------------------------------------
@@ -881,4 +1008,86 @@ TEST(IngressLimiter, KeysAndTop) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+// ---- review fixes -------------------------------------------------------------------------------
+
+TEST_F(PacketFilterTest, IngressQuotaIsNotUsedUpByAPacketAContentRuleDrops) {
+  PacketFilter f;
+  f.setDecryptFn(fakeDecrypt);
+  f.p.enabled = true;
+  cli(f, "filter ingress 2 60");
+  cli(f, "filter sender add Bob");
+  FilterChannel pub;
+  ASSERT_TRUE(FilterChan::derive("Public", &pub));
+  mesh::Packet bad = grpText(pub, "Bob: spam");
+  bad.path[0] = 0x55;
+  bad.setPathHashSizeAndCount(1, 1);
+  mesh::Packet good = grpText(pub, "Ann: hi");
+  good.path[0] = 0x55;
+  good.setPathHashSizeAndCount(1, 1);
+  for (int i = 0; i < 10; i++) EXPECT_FALSE(allow(f, bad));
+  EXPECT_TRUE(allow(f, good));
+  EXPECT_TRUE(allow(f, good));
+  EXPECT_FALSE(allow(f, good)) << "the third accepted packet is over the limit of two";
+  EXPECT_EQ(1u, f.c.cnt.ingress);
+}
+
+TEST_F(PacketFilterTest, AdvertClockSeesAWrapThroughTickAlone) {
+  PacketFilter f;
+  f.p.enabled = true;
+  cli(f, "filter advert 1");   // one advert per origin and hour
+  EXPECT_TRUE(allow(f, advertFrom(KEY_A), 1000));
+  EXPECT_FALSE(allow(f, advertFrom(KEY_A), 2000));
+  // no packet for longer than the millis wrap, but the main loop ticks
+  for (uint64_t t = 1000; t < 2ULL * 4294967296ULL; t += 1000000000ULL) f.tick((uint32_t)t);
+  EXPECT_TRUE(allow(f, advertFrom(KEY_A), 2000)) << "the window has long elapsed";
+}
+
+TEST_F(PacketFilterTest, NewKeyClassIsLimitedAsAWhole) {
+  NewKeyTracker t;
+  t.configure(24, 60);
+  int passed = 0;
+  for (int i = 0; i < 200; i++) {
+    uint8_t key[4] = { (uint8_t)i, (uint8_t)(i >> 8), 0x31, 0x32 };   // 200 one-time keys, each new
+    if (t.allow(key, NewKeyTracker::ADVERT, false, NOW_SECS + i / 20)) passed++;   // ~20 a second
+  }
+  EXPECT_LE(passed, NEWKEY_CLASS_LIMIT);
+  EXPECT_GT(passed, 0);
+  // the next minute has a fresh quota
+  uint8_t k[4] = { 0xFE, 0xFE, 1, 1 };
+  EXPECT_TRUE(t.allow(k, NewKeyTracker::ADVERT, false, NOW_SECS + 120));
+}
+
+TEST_F(PacketFilterTest, NewKeyLookDoesNotChangeTheTable) {
+  NewKeyTracker t;
+  t.configure(24, 60);
+  uint8_t k[4] = { 1, 2, 3, 4 };
+  EXPECT_TRUE(t.allow(k, NewKeyTracker::ADVERT, false, NOW_SECS, false));
+  EXPECT_EQ(0, t.count());
+  EXPECT_FALSE(t.dirty());
+  EXPECT_TRUE(t.allow(k, NewKeyTracker::ADVERT, false, NOW_SECS, true));
+  EXPECT_EQ(1, t.count());
+  EXPECT_TRUE(t.dirty());
+  t.markSaved(1000);
+  EXPECT_FALSE(t.allow(k, NewKeyTracker::ADVERT, false, NOW_SECS + 5, false)) << "inside its quota";
+  EXPECT_FALSE(t.dirty());
+}
+
+TEST_F(PacketFilterTest, NewKeysCannotEvictEachOtherInAFullTable) {
+  NewKeyTracker t;
+  t.configure(24, 60);
+  uint8_t key[4];
+  for (int i = 0; i < NEWKEY_CAP; i++) {
+    key[0] = i & 255; key[1] = i >> 8; key[2] = 9; key[3] = 9;
+    t.allow(key, NewKeyTracker::ADVERT, false, NOW_SECS + (uint32_t)i * 3600);
+  }
+  uint8_t a[4] = { 0xA1, 0xA1, 0, 0 }, b[4] = { 0xB2, 0xB2, 0, 0 };
+  uint32_t now = NOW_SECS + 400000;
+  int passed = 0;
+  for (int i = 0; i < 20; i++) {   // alternating, 2 seconds apart: 40 seconds
+    if (t.allow(a, NewKeyTracker::ADVERT, false, now + i * 2)) passed++;
+    if (t.allow(b, NewKeyTracker::ADVERT, false, now + i * 2 + 1)) passed++;
+  }
+  EXPECT_EQ(1, passed) << "one admission, then a minute of nothing";
 }

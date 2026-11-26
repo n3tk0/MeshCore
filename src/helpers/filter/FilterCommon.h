@@ -229,7 +229,7 @@ struct FilterCommon {
     if (strcmp(sub, "path") == 0) {
       char hex[2 * FILTER_PATH_MAX_LEN + 1];
       if (n >= 3 && strcmp(parts[2], "list") == 0) {
-        FilterStat::formatPathList(reply, cap, path_block, nullptr);
+        FilterStat::formatPathList(reply, cap, path_block, nullptr, n >= 4 ? atoi(parts[3]) : 0);
         return 0;
       }
       bool is_add = n >= 4 && strcmp(parts[2], "add") == 0;
@@ -243,15 +243,16 @@ struct FilterCommon {
         snprintf(reply, cap, hex[0] == '\0' ? "> Filter: error path prefix is 2-8 hex digits" : "Failed");
         return 0;
       }
-      snprintf(reply, cap, "> filter path [ list | add | remove ] <hex prefix, 2-8 digits>");
+      snprintf(reply, cap, "> filter path [ list [page] | add | remove ] <hex prefix, 2-8 digits>");
       return 0;
     }
 
     if (strcmp(sub, "sender") == 0 || strcmp(sub, "text") == 0) {
       bool is_sender = strcmp(sub, "sender") == 0;
       if (n >= 3 && strcmp(parts[2], "list") == 0) {
-        if (is_sender) FilterStat::formatRuleList(reply, cap, sender_rules, FILTER_RULE_COUNT, nullptr, nullptr);
-        else FilterStat::formatRuleList(reply, cap, text_rules, FILTER_RULE_COUNT, nullptr, nullptr);
+        int page = n >= 4 ? atoi(parts[3]) : 0;
+        if (is_sender) FilterStat::formatRuleList(reply, cap, sender_rules, FILTER_RULE_COUNT, nullptr, nullptr, page);
+        else FilterStat::formatRuleList(reply, cap, text_rules, FILTER_RULE_COUNT, nullptr, nullptr, page);
         return 0;
       }
       if (n >= 4 && strcmp(parts[2], "add") == 0) {
@@ -282,7 +283,7 @@ struct FilterCommon {
         snprintf(reply, cap, "Failed");
         return 0;
       }
-      snprintf(reply, cap, "> filter sender|text [ list | add <pattern> [secs] [prob] | remove <pattern> ]");
+      snprintf(reply, cap, "> filter sender|text [ list [page] | add <pattern> [secs] [prob] | remove <pattern> ]");
       return 0;
     }
 
