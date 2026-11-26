@@ -1042,6 +1042,27 @@
         <item quantity="one">няма директна връзка (%d скок)</item>
         <item quantity="other">няма директна връзка (%d скока)</item>
     </plurals>
+    <string name="link_you">Ти</string>
+    <string name="link_repeater">Рипитър</string>
+    <plurals name="link_hops_short">
+        <item quantity="one">%d скок</item>
+        <item quantity="other">%d скока</item>
+    </plurals>
+    <plurals name="link_weakest">
+        <item quantity="one">най-слабо · %d скок</item>
+        <item quantity="other">най-слабо · %d скока</item>
+    </plurals>
+    <string name="link_tap_measure">Докосни, за да измериш пак</string>
+    <string name="link_asym_phone">Телефонът чува рипитъра по-слабо: шум около теб или нисък tx на рипитъра</string>
+    <string name="link_asym_repeater">Рипитърът те чува по-слабо: слаб tx или антена на companion-а</string>
+    <string name="link_check_direct">Провери директно</string>
+    <plurals name="link_direct_ok">
+        <item quantity="one">директно, въпреки маршрута през %d скок</item>
+        <item quantity="other">директно, въпреки маршрута през %d скока</item>
+    </plurals>
+    <string name="link_direct_ok_flood">директно, без познат маршрут</string>
+    <string name="link_direct_none">няма директна връзка</string>
+    <string name="paused_badge">Спрян ъпдейт</string>
     <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
     <string name="link_bars_desc">%1$d от %2$d черти</string>
     <string name="link_strip_desc">Връзка: към рипитъра %1$s, към теб %2$s</string>

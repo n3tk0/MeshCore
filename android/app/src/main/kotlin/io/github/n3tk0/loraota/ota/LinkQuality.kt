@@ -81,8 +81,64 @@ object LinkTrace {
         return d.hashes.contentEquals(expectedHashes)
     }
 
-    /** A trace only for a repeater with no hop: with hops (or no known route) it would be the first hop's, not the repeater's. */
+    /** A trace with this route: with hops, only along the learned path (see [plan]); without a known route there is none. */
     fun canTrace(routeHops: Int?): Boolean = routeHops == 0
+
+    /** The most hash bytes a trace path holds (MAX_PATH_SIZE in the firmware). */
+    const val MAX_PATH_BYTES = 64
+
+    /**
+     * What goes on the air: [path] (the hashes), its [hashSize], and the number of hops [hops] to the repeater (0: direct).
+     * The path is `out_path + repeater + reversed out_path`, so the packet comes back to us along the same nodes.
+     */
+    class Plan(val path: ByteArray, val hashSize: Int, val hops: Int) {
+        /** The nodes the packet passes to the repeater, nearest to us first (without the repeater). */
+        fun hopHashes(): List<ByteArray> = List(hops) { path.copyOfRange(it * hashSize, (it + 1) * hashSize) }
+        fun target(): ByteArray = path.copyOfRange(hops * hashSize, (hops + 1) * hashSize)
+    }
+
+    /**
+     * The trace to measure [target] (its public key): direct with [directHashSize] bytes per hash when [hops] is 0; along
+     * [outPath] (the companion's learned route: [hops] hashes of [outHashSize] bytes) otherwise. Null when there is no route
+     * known (flood), no out path, an unusable hash size or a path over [MAX_PATH_BYTES]: then only a direct check goes.
+     */
+    fun plan(target: ByteArray, hops: Int?, outPath: ByteArray?, outHashSize: Int, directHashSize: Int): Plan? {
+        if (hops == null || hops < 0) return null
+        if (hops == 0) return if (directHashSize in listOf(1, 2, 4) && target.size >= directHashSize)
+            Plan(target.copyOf(directHashSize), directHashSize, 0) else null
+        if (outHashSize !in listOf(1, 2, 4) || target.size < outHashSize) return null
+        if (outPath == null || outPath.size < hops * outHashSize) return null
+        if ((2 * hops + 1) * outHashSize > MAX_PATH_BYTES) return null
+        val hopsBytes = outPath.copyOf(hops * outHashSize)
+        val back = ByteArray(hopsBytes.size)
+        for (i in 0 until hops) System.arraycopy(hopsBytes, (hops - 1 - i) * outHashSize, back, i * outHashSize, outHashSize)
+        return Plan(hopsBytes + target.copyOf(outHashSize) + back, outHashSize, hops)
+    }
+
+    /** What the companion's contact hash size bits (top 2 bits of the path length byte) mean: 1..4 bytes. */
+    fun outHashSize(outPathLen: Int): Int = ((outPathLen and 0xff) shr 6) + 1
+
+    /** One link of the route: the SNR the far end heard going out, and the SNR the near end heard coming back. */
+    class Hop(val out: Double, val inn: Double)
+
+    /** A multi-hop trace split by direction: [hops] ordered from us to the repeater; link i is between node i-1 (us) and node i. */
+    class Route(val hops: List<Hop>) {
+        val weakestOut: Double get() = hops.minOf { it.out }
+        val weakestIn: Double get() = hops.minOf { it.inn }
+    }
+
+    /**
+     * Splits a reply for [plan] into per-link readings: node j (0..k, the repeater last) heard the packet going out at
+     * snrs[j]; on the way back, node k+1+m heard it at snrs[k+1+m], and we heard the first node at [Data.finalSnr].
+     * Null when the hashes are not the path's or the SNR count is not 2k+1 (a reply that is not ours).
+     */
+    fun route(d: Data, plan: Plan): Route? {
+        val k = plan.hops
+        if (!d.hashes.contentEquals(plan.path) || d.snrs.size != 2 * k + 1) return null
+        // back[m]: m = 0 is what the node before the repeater heard of it, back[k] is what we heard of the first node
+        val back = d.snrs.subList(k + 1, 2 * k + 1) + d.finalSnr
+        return Route(List(k + 1) { i -> Hop(d.snrs[i], back[k - i]) })
+    }
 
     /** A trace goes only when the hour's time on air has room for it (the same budget as the update's). */
     fun fitsBudget(budget: AirtimeBudget, secs: Double): Boolean = budget.waitMs(secs) == 0L
@@ -90,6 +146,9 @@ object LinkTrace {
 
 /** How a bar count is coloured: red, orange, or the side's own colour; grey when nothing is known. */
 enum class BarTier { NONE, RED, ORANGE, OWN }
+
+/** What the two directions say together. */
+enum class Asymmetry { NONE, PHONE_WEAK, REPEATER_WEAK }
 
 /** What a reading looks like to people: 5 bars from the SNR, and a colour tier from the bar count. */
 object LinkQuality {
@@ -104,6 +163,23 @@ object LinkQuality {
         snr >= -7.5 -> 2
         else -> 1
     }
+
+    /** The gap in dB from which the two directions are called different. */
+    const val ASYMMETRY_DB = 6.0
+
+    /** Strong out and weak in: the phone hears the repeater worse; weak out and strong in: the repeater hears us worse. */
+    fun asymmetry(out: Double?, inn: Double?): Asymmetry {
+        if (out == null || inn == null) return Asymmetry.NONE
+        val d = out - inn
+        return when {
+            d >= ASYMMETRY_DB -> Asymmetry.PHONE_WEAK
+            d <= -ASYMMETRY_DB -> Asymmetry.REPEATER_WEAK
+            else -> Asymmetry.NONE
+        }
+    }
+
+    /** "+6.5" / "-3.0": a short SNR for the small indicator. */
+    fun shortSnr(snr: Double): String = String.format(java.util.Locale.ROOT, "%+.1f", snr)
 
     /** 1 bar is red, 2 and 3 are orange, 4 and 5 keep the side's own colour; 0 is none (grey). */
     fun tier(bars: Int): BarTier = when {
@@ -125,7 +201,7 @@ class LinkFollow(private val limit: Int = 40) {
     val samples: List<LinkSample> get() = list
 
     companion object {
-        const val INTERVAL_MS = 10_000L
+        const val INTERVAL_MS = 5_000L
         const val DURATION_MS = 120_000L
         val TICKS = (DURATION_MS / INTERVAL_MS).toInt()
 

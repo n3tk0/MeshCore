@@ -21,6 +21,15 @@ class Contact(val frame: ByteArray) {
     val isRepeater: Boolean get() = type == 2
     /** Hops on the route the companion knows; null: no route yet (messages flood). */
     val hops: Int? get() = if (outPathLen == 0xFF) null else outPathLen and 63
+    /** Bytes per hop hash of the route (the path length byte's top 2 bits: 1..4). */
+    val outHashSize: Int get() = LinkTrace.outHashSize(outPathLen)
+    /** The route's hop hashes (the companion's out_path, as learned), or null: no route, or the frame has no path. */
+    val outPath: ByteArray?
+        get() {
+            val h = hops ?: return null
+            val n = h * outHashSize
+            return if (h == 0 || 36 + n > frame.size) null else frame.copyOfRange(36, 36 + n)
+        }
 }
 
 class CompanionError(msg: String) : Exception(msg)
@@ -275,10 +284,12 @@ class CompanionRadio(private val link: CompanionLink) {
      * sends it direct, and its push comes when the packet has been through the path and was heard again. A push with other
      * hashes (another node with the same short hash) is not waited for. Null when no trace came back in time.
      */
-    suspend fun trace(publicKey: ByteArray, hashSize: Int): LinkTrace.Data? {
+    suspend fun trace(publicKey: ByteArray, hashSize: Int): LinkTrace.Data? = tracePath(publicKey.copyOf(hashSize), hashSize)
+
+    /** The same along [path] (hashes of [hashSize] bytes each; a multi-hop one comes back through the same nodes). */
+    suspend fun tracePath(path: ByteArray, hashSize: Int): LinkTrace.Data? {
         val tag = java.util.concurrent.ThreadLocalRandom.current().nextInt().let { if (it == 0) 1 else it }
         val flags = LinkTrace.flagsForHashSize(hashSize)
-        val path = publicKey.copyOf(hashSize)
         val sent = LinkTrace.parseSent(
             command(LinkTrace.command(tag, 0, flags, path), 5000, RESP_SENT),
         ) ?: throw CompanionError("short reply")

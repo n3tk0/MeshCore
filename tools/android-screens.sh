@@ -38,6 +38,7 @@ copy() {
 }
 copy repeaterOverview repeater_overview
 copy repeaterOverviewDark repeater_overview_dark
+copy repeaterOverviewMultihop repeater_overview_multihop
 copy repeaterSettings repeater_settings_lora_calc
 copy repeaterCli repeater_cli
 copy offlineFirmware offline_firmware

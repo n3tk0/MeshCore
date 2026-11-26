@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -152,25 +153,31 @@ fun AppScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        when (vm.step) {
-                            Step.COMPANION -> stringResource(R.string.app_name)
-                            Step.REPEATER -> vm.companionName
-                            Step.UPDATE -> vm.repeater?.name ?: ""
-                            Step.FLASH -> stringResource(
-                                R.string.flash_title,
-                                vm.flashDeviceName
-                            )
-                            Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
-                            Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
-                            Step.QUEUE -> stringResource(R.string.q_title)
-                            Step.SETTINGS -> stringResource(R.string.settings_title)
-                            Step.CLI -> stringResource(R.string.cli_title_companion, vm.companionName)
-                            Step.SWEEP -> stringResource(R.string.sweep_title)
-                            Step.OFFLINE -> stringResource(R.string.offline_title)
-                        },
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                    val titleText = when (vm.step) {
+                        Step.COMPANION -> stringResource(R.string.app_name)
+                        Step.REPEATER -> vm.companionName
+                        Step.UPDATE -> vm.repeater?.name ?: ""
+                        Step.FLASH -> stringResource(R.string.flash_title, vm.flashDeviceName)
+                        Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
+                        Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
+                        Step.QUEUE -> stringResource(R.string.q_title)
+                        Step.SETTINGS -> stringResource(R.string.settings_title)
+                        Step.CLI -> stringResource(R.string.cli_title_companion, vm.companionName)
+                        Step.SWEEP -> stringResource(R.string.sweep_title)
+                        Step.OFFLINE -> stringResource(R.string.offline_title)
+                    }
+                    if (showRepeaterNav && vm.repeaterTab != RepeaterTab.OVERVIEW) {
+                        // the link next to the name instead of a row of its own; the name gives way first, then the numbers
+                        BoxWithConstraints {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(titleText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                Spacer(Modifier.width(8.dp))
+                                LinkTitleIndicator(vm, showNumbers = this@BoxWithConstraints.maxWidth >= 220.dp)
+                            }
+                        }
+                    } else {
+                        Text(titleText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 },
                 navigationIcon = {
                     if (vm.step != Step.COMPANION) IconButton(onClick = { back() }) {
@@ -670,6 +677,7 @@ private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit, onEdi
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     RouteBadge(c.hops)
+                    if (vm.isUpdatePaused(c)) PausedBadge()
                     if (healthRec != null && parsedHealth != null) {
                         val problems = HealthCheck.problems(HealthCheck.warnings(parsedHealth, null))
                         val dotColor = when {
@@ -727,6 +735,19 @@ private fun formatRelativeAge(ageMs: Long): String {
         mins < 60 -> stringResource(R.string.ago_mins, mins)
         hours < 24 -> stringResource(R.string.ago_hours, hours)
         else -> stringResource(R.string.ago_days, days)
+    }
+}
+
+/** An update this repeater keeps (cut short earlier): from the app's own record, no radio traffic. */
+@Composable
+private fun PausedBadge() {
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = MaterialTheme.shapes.small) {
+        Text(
+            stringResource(R.string.paused_badge),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        )
     }
 }
 
@@ -848,7 +869,6 @@ private fun RepeaterHome(vm: AppViewModel) {
     if (vm.needsRelogin) {
         ReloginBanner(vm)
     }
-    if (vm.repeaterTab != RepeaterTab.OVERVIEW) LinkStrip(vm)   // the link both ways, compact; the full card is on the overview
     when (vm.repeaterTab) {
         RepeaterTab.OVERVIEW -> {
             StatusCard(vm)

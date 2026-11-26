@@ -171,7 +171,92 @@ class LinkQualityTest {
     }
 
     @Test
-    fun twoMinutesAtTenSecondsIsTwelveTraces() {
-        assertEquals(12, LinkFollow.TICKS)
+    fun twoMinutesAtFiveSecondsIsTwentyFourTraces() {
+        assertEquals(5_000L, LinkFollow.INTERVAL_MS)
+        assertEquals(24, LinkFollow.TICKS)
+    }
+
+    @Test
+    fun asymmetryNeedsSixDb() {
+        assertEquals(Asymmetry.NONE, LinkQuality.asymmetry(5.0, null))
+        assertEquals(Asymmetry.NONE, LinkQuality.asymmetry(5.0, 0.25))
+        assertEquals(Asymmetry.PHONE_WEAK, LinkQuality.asymmetry(6.0, 0.0))
+        assertEquals(Asymmetry.REPEATER_WEAK, LinkQuality.asymmetry(-2.0, 4.0))
+        assertEquals(Asymmetry.NONE, LinkQuality.asymmetry(-2.0, 3.75))
+        assertEquals("+6.5", LinkQuality.shortSnr(6.5))
+        assertEquals("-3.0", LinkQuality.shortSnr(-3.0))
+    }
+
+    private val rep = ByteArray(32) { (0x70 + it).toByte() }
+
+    @Test
+    fun planDirectIsTheRepeaterHash() {
+        val p = assertNotNull(LinkTrace.plan(rep, 0, null, 1, 2))
+        assertEquals(0, p.hops)
+        assertContentEquals(byteArrayOf(0x70, 0x71), p.path)
+        assertNull(LinkTrace.plan(rep, null, null, 1, 1))   // flood: no trace
+    }
+
+    @Test
+    fun planGoesOutAndBackAlongTheOutPath() {
+        val p = assertNotNull(LinkTrace.plan(rep, 2, byteArrayOf(0x11, 0x22), 1, 1))
+        assertContentEquals(byteArrayOf(0x11, 0x22, 0x70, 0x22, 0x11), p.path)
+        assertEquals(2, p.hops)
+        assertContentEquals(byteArrayOf(0x70), p.target())
+        assertEquals(2, p.hopHashes().size)
+        // two-byte hashes keep their bytes together when reversed
+        val q = assertNotNull(LinkTrace.plan(rep, 2, byteArrayOf(1, 2, 3, 4), 2, 1))
+        assertContentEquals(byteArrayOf(1, 2, 3, 4, 0x70, 0x71, 3, 4, 1, 2), q.path)
+        assertEquals(2, q.hashSize)
+    }
+
+    @Test
+    fun planFallsBackWhenThereIsNoUsablePath() {
+        assertNull(LinkTrace.plan(rep, 2, null, 1, 1))                       // route known, path not in the frame
+        assertNull(LinkTrace.plan(rep, 3, byteArrayOf(1, 2), 1, 1))          // path shorter than the hops say
+        assertNull(LinkTrace.plan(rep, 2, byteArrayOf(1, 2, 3, 4, 5, 6), 3, 1))   // 3-byte hashes: no trace flag for them
+        // 64 bytes of hashes at most: 2k+1 hashes
+        assertNotNull(LinkTrace.plan(rep, 31, ByteArray(31), 1, 1))
+        assertEquals(63, LinkTrace.plan(rep, 31, ByteArray(31), 1, 1)!!.path.size)
+        assertNull(LinkTrace.plan(rep, 32, ByteArray(32), 1, 1))             // 65 bytes
+        assertNull(LinkTrace.plan(rep, 16, ByteArray(32), 2, 1))             // 33 hashes of 2 bytes
+        assertEquals(1, LinkTrace.outHashSize(0x02))
+        assertEquals(2, LinkTrace.outHashSize(0x42))
+        assertEquals(3, LinkTrace.outHashSize(0x82))
+    }
+
+    @Test
+    fun routeSplitsTheSnrsByDirectionAndLink() {
+        val p = assertNotNull(LinkTrace.plan(rep, 2, byteArrayOf(0x11, 0x22), 1, 1))
+        // R1 heard us 8, R2 heard R1 4, repeater heard R2 -2 | R2 heard repeater 6, R1 heard R2 -8 | we heard R1 10 (x4)
+        val f = push(7, 0, p.path, intArrayOf(32, 16, -8, 24, -32), 40)
+        val d = assertNotNull(LinkTrace.parseData(f))
+        val r = assertNotNull(LinkTrace.route(d, p))
+        assertEquals(3, r.hops.size)
+        assertEquals(listOf(8.0, 4.0, -2.0), r.hops.map { it.out })
+        // link 0 (us, R1): we heard R1 at 10; link 1 (R1, R2): R1 heard R2 at -8; link 2 (R2, repeater): R2 heard it at 6
+        assertEquals(listOf(10.0, -8.0, 6.0), r.hops.map { it.inn })
+        assertEquals(-2.0, r.weakestOut)
+        assertEquals(-8.0, r.weakestIn)
+    }
+
+    @Test
+    fun routeRejectsAnotherPathOrSnrCount() {
+        val p = assertNotNull(LinkTrace.plan(rep, 1, byteArrayOf(0x11), 1, 1))
+        val ok = assertNotNull(LinkTrace.parseData(push(1, 0, p.path, intArrayOf(1, 2, 3), 4)))
+        assertNotNull(LinkTrace.route(ok, p))
+        // a node with the same first hash further on is not the repeater we traced
+        val other = assertNotNull(LinkTrace.parseData(push(1, 0, byteArrayOf(0x11, 0x71, 0x11), intArrayOf(1, 2, 3), 4)))
+        assertNull(LinkTrace.route(other, p))
+        // a direct reply for a multi-hop plan
+        val direct = assertNotNull(LinkTrace.parseData(push(1, 0, byteArrayOf(0x70), intArrayOf(1), 4)))
+        assertNull(LinkTrace.route(direct, p))
+        // and a direct plan reads one link both ways
+        val dp = assertNotNull(LinkTrace.plan(rep, 0, null, 1, 1))
+        val r = assertNotNull(LinkTrace.route(direct, dp))
+        assertEquals(0.25, r.hops.single().out)
+        assertEquals(1.0, r.hops.single().inn)
+        assertTrue(LinkTrace.isAnswer(push(1, 0, p.path, intArrayOf(1, 2, 3), 4), 1, p.path))
+        assertFalse(LinkTrace.isAnswer(push(2, 0, p.path, intArrayOf(1, 2, 3), 4), 1, p.path))
     }
 }

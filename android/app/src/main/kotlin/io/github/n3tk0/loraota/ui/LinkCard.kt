@@ -3,7 +3,10 @@ package io.github.n3tk0.loraota.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +25,9 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -39,6 +45,7 @@ import io.github.n3tk0.loraota.ota.LinkFollow
 import io.github.n3tk0.loraota.ota.LinkQuality
 import io.github.n3tk0.loraota.ota.LinkSample
 import io.github.n3tk0.loraota.ota.BarTier
+import io.github.n3tk0.loraota.ota.Asymmetry
 
 private val OUT_COLOR = Color(0xFF2E9E44)
 private val IN_COLOR = Color(0xFF8E5CC9)
@@ -68,35 +75,53 @@ internal fun SignalBars(snr: Double?, own: Color, modifier: Modifier = Modifier,
     }
 }
 
+/** What the bars show: the trace, else (direct, nothing traced yet) what the status says of the last hop. */
+private fun shownOut(vm: AppViewModel): Double? =
+    vm.linkOut ?: if (vm.routeHops == 0) vm.status?.lastSnr?.takeIf { vm.linkTime == 0L } else null
+
 /**
- * The compact strip above the tabs other than the overview: left "→" and the outgoing bars, right the incoming
- * bars and "←". No numbers; grey empty bars when the repeater is not direct or nothing is measured.
+ * The link in the top bar of the tabs other than the overview, next to the repeater's name: "→", the outgoing bars and
+ * SNR on the left, the incoming bars, SNR and "←" on the right (with hops: the weakest of the route and its length). The
+ * numbers go first when there is little room ([showNumbers] false). A tap measures again; a small spinner shows it.
  */
 @Composable
-internal fun LinkStrip(vm: AppViewModel) {
-    val direct = vm.routeHops == 0
-    val out = if (direct) vm.linkOut ?: vm.status?.lastSnr?.takeIf { vm.linkTime == 0L } else null
-    val inn = if (direct) vm.linkIn else null
-    val measuring = direct && vm.linkState == LinkState.MEASURING
+internal fun LinkTitleIndicator(vm: AppViewModel, showNumbers: Boolean, modifier: Modifier = Modifier) {
+    val out = shownOut(vm)
+    val inn = vm.linkIn
+    val measuring = vm.linkState == LinkState.MEASURING
+    val hops = vm.routeHops?.takeIf { it > 0 && vm.linkRoute != null }
+    val enabled = vm.routeHops != null && !vm.busy && !vm.following && !vm.reconnecting
     val desc = stringResource(
         R.string.link_strip_desc,
         stringResource(R.string.link_bars_desc, LinkQuality.bars(out), LinkQuality.MAX_BARS),
         stringResource(R.string.link_bars_desc, LinkQuality.bars(inn), LinkQuality.MAX_BARS),
-    )
+    ) + (if (hops != null) ", " + pluralStringResource(R.plurals.link_hops_short, hops, hops) else "") +
+        ". " + stringResource(R.string.link_tap_measure)
     Row(
-        Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = desc },
+        modifier.clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, role = Role.Button) { vm.measureLinkNow() }
+            .semantics(mergeDescendants = true) { contentDescription = desc }
+            .padding(horizontal = 4.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
+        val numStyle = MaterialTheme.typography.labelSmall
         Text("→", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = OUT_COLOR)
-        Spacer(Modifier.width(6.dp))
-        SignalBars(out, OUT_COLOR, barWidth = 4.dp, unit = 2.5.dp)
-        Spacer(Modifier.weight(1f))
-        if (measuring) {
-            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.weight(1f))
+        SignalBars(out, OUT_COLOR, barWidth = 3.dp, unit = 2.5.dp)
+        if (showNumbers && out != null) {
+            Text(LinkQuality.shortSnr(out), style = numStyle, maxLines = 1, color = barColor(LinkQuality.bars(out), OUT_COLOR))
         }
-        SignalBars(inn, IN_COLOR, barWidth = 4.dp, unit = 2.5.dp)
-        Spacer(Modifier.width(6.dp))
+        Box(Modifier.width(if (measuring) 14.dp else 4.dp), contentAlignment = Alignment.Center) {
+            if (measuring) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+        }
+        if (showNumbers && hops != null) {
+            Text(pluralStringResource(R.plurals.link_hops_short, hops, hops), style = numStyle, maxLines = 1,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        SignalBars(inn, IN_COLOR, barWidth = 3.dp, unit = 2.5.dp)
+        if (showNumbers && inn != null) {
+            Text(LinkQuality.shortSnr(inn), style = numStyle, maxLines = 1, color = barColor(LinkQuality.bars(inn), IN_COLOR))
+        }
         Text("←", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = IN_COLOR)
     }
 }
@@ -125,34 +150,64 @@ private fun LinkSide(label: String, labelColor: Color, snr: Double?, rssi: Int?,
     }
 }
 
+/** One link of a traced route: "from → to" with what the far end heard going out and what came back. */
+@Composable
+private fun HopRow(from: String, to: String, out: Double, inn: Double) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("$from → $to", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f))
+        Text("→ ${LinkQuality.shortSnr(out)}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+            color = barColor(LinkQuality.bars(out), OUT_COLOR))
+        Text("← ${LinkQuality.shortSnr(inn)}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+            color = barColor(LinkQuality.bars(inn), IN_COLOR))
+    }
+}
+
+@Composable
+private fun asymmetryText(out: Double?, inn: Double?): String? = when (LinkQuality.asymmetry(out, inn)) {
+    Asymmetry.NONE -> null
+    Asymmetry.PHONE_WEAK -> stringResource(R.string.link_asym_phone)
+    Asymmetry.REPEATER_WEAK -> stringResource(R.string.link_asym_repeater)
+}
+
 /**
  * The link both ways, on the overview of a repeater: left what the repeater hears of us, right what we hear of it
- * (a trace, see [io.github.n3tk0.loraota.ota.LinkTrace]). With hops on the route there is no trace, only what the
- * status says of the last hop.
+ * (a trace, see [io.github.n3tk0.loraota.ota.LinkTrace]). With hops the trace goes along the learned route and back: the
+ * bars show the weakest link each way and the links are listed; 'Check direct' tries a one-hop trace to the repeater.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LinkCard(vm: AppViewModel) {
     val hops = vm.routeHops
     val direct = hops == 0
     val s = vm.status
-    val outColor = OUT_COLOR
-    val inColor = IN_COLOR
+    val routeView = vm.linkRoute
     // the status answers the request we sent: its SNR is the same direction as the trace's first byte
-    val out = if (direct) vm.linkOut ?: s?.lastSnr?.takeIf { vm.linkTime == 0L } else s?.lastSnr
-    val inn = if (direct) vm.linkIn else null
+    val out = vm.linkOut ?: if (direct) s?.lastSnr?.takeIf { vm.linkTime == 0L } else s?.lastSnr
+    val inn = vm.linkIn
+    val noTrace = hops == null || vm.linkState == LinkState.NOT_DIRECT
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                LinkSide(
-                    stringResource(R.string.link_out), outColor, out, s?.lastRssi,
-                    if (direct) null else stringResource(R.string.link_last_hop), Modifier.weight(1f),
-                )
+                val lastHop = if (direct) null else if (routeView != null && vm.linkOut != null) {
+                    pluralStringResource(R.plurals.link_weakest, hops!!, hops)
+                } else stringResource(R.string.link_last_hop)
+                LinkSide(stringResource(R.string.link_out), OUT_COLOR, out, if (routeView == null) s?.lastRssi else null, lastHop, Modifier.weight(1f))
                 VerticalDivider(Modifier.height(52.dp).padding(horizontal = 8.dp))
-                LinkSide(stringResource(R.string.link_in), inColor, inn, null, null, Modifier.weight(1f))
+                LinkSide(stringResource(R.string.link_in), IN_COLOR, inn, null, null, Modifier.weight(1f))
+            }
+            if (direct) asymmetryText(vm.linkOut, vm.linkIn)?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = Color(0xFFF57C00))
+            }
+            if (routeView != null) {
+                val names = listOf(stringResource(R.string.link_you)) + routeView.names
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    for ((i, h) in routeView.route.hops.withIndex()) HopRow(names[i], names[i + 1], h.out, h.inn)
+                }
             }
             val state = when {
-                !direct && hops == null -> stringResource(R.string.link_not_direct_unknown)
-                !direct -> pluralStringResource(R.plurals.link_not_direct, hops!!, hops)
+                hops == null -> stringResource(R.string.link_not_direct_unknown)
+                vm.linkState == LinkState.NOT_DIRECT -> pluralStringResource(R.plurals.link_not_direct, hops, hops)
                 vm.linkState == LinkState.MEASURING -> stringResource(R.string.link_state_measuring)
                 vm.linkState == LinkState.NO_REPLY -> stringResource(R.string.link_state_no_reply)
                 vm.linkState == LinkState.FAILED -> stringResource(R.string.link_state_failed)
@@ -162,21 +217,53 @@ internal fun LinkCard(vm: AppViewModel) {
                 )
                 else -> stringResource(R.string.link_state_none)
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f))
-                if (direct) {
-                    TextButton(onClick = { vm.measureLinkNow() }, enabled = !vm.busy && !vm.following && !vm.reconnecting) {
-                        Text(stringResource(R.string.link_measure))
+            val canAct = !vm.busy && !vm.following && !vm.reconnecting
+            val measureButtons: @Composable () -> Unit = {
+                TextButton(onClick = { vm.measureLinkNow() }, enabled = canAct) {
+                    Text(stringResource(R.string.link_measure))
+                }
+                TextButton(onClick = { vm.toggleFollow() }, enabled = vm.following || (!vm.busy && !vm.reconnecting)) {
+                    Text(if (vm.following) stringResource(R.string.link_follow_stop, vm.followLeft * (LinkFollow.INTERVAL_MS / 1000).toInt())
+                        else stringResource(R.string.link_follow))
+                }
+            }
+            if (direct) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f))
+                    measureButtons()
+                }
+            } else {
+                Text(state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center) {
+                    if (!noTrace) measureButtons()
+                    TextButton(onClick = { vm.checkDirectNow() }, enabled = canAct) {
+                        Text(stringResource(R.string.link_check_direct))
                     }
-                    TextButton(onClick = { vm.toggleFollow() }, enabled = vm.following || (!vm.busy && !vm.reconnecting)) {
-                        Text(if (vm.following) stringResource(R.string.link_follow_stop, vm.followLeft * (LinkFollow.INTERVAL_MS / 1000).toInt())
-                            else stringResource(R.string.link_follow))
+                }
+                val ds = vm.directState
+                val line = when (ds) {
+                    LinkState.MEASURING -> stringResource(R.string.link_state_measuring)
+                    LinkState.OK -> if (hops != null) {
+                        pluralStringResource(R.plurals.link_direct_ok, hops, hops)
+                    } else stringResource(R.string.link_direct_ok_flood)
+                    LinkState.NO_REPLY -> stringResource(R.string.link_direct_none)
+                    LinkState.NO_BUDGET -> stringResource(R.string.link_state_budget)
+                    LinkState.FAILED -> stringResource(R.string.link_state_failed)
+                    else -> null
+                }
+                if (line != null) {
+                    Text(line, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    if (ds == LinkState.OK) {
+                        HopRow(stringResource(R.string.link_you), stringResource(R.string.link_repeater), vm.directOut ?: 0.0, vm.directIn ?: 0.0)
+                        asymmetryText(vm.directOut, vm.directIn)?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = Color(0xFFF57C00))
+                        }
                     }
                 }
             }
-            if (direct && vm.linkSamples.size >= 2) {
-                LinkGraph(vm.linkSamples, outColor, inColor)
+            if (vm.linkSamples.size >= 2) {
+                LinkGraph(vm.linkSamples, OUT_COLOR, IN_COLOR)
             }
         }
     }

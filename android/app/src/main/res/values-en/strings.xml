@@ -1042,6 +1042,27 @@
         <item quantity="one">no direct link (%d hop)</item>
         <item quantity="other">no direct link (%d hops)</item>
     </plurals>
+    <string name="link_you">You</string>
+    <string name="link_repeater">Repeater</string>
+    <plurals name="link_hops_short">
+        <item quantity="one">%d hop</item>
+        <item quantity="other">%d hops</item>
+    </plurals>
+    <plurals name="link_weakest">
+        <item quantity="one">weakest · %d hop</item>
+        <item quantity="other">weakest · %d hops</item>
+    </plurals>
+    <string name="link_tap_measure">Tap to measure again</string>
+    <string name="link_asym_phone">The phone hears the repeater weaker: noise around you or a low repeater tx</string>
+    <string name="link_asym_repeater">The repeater hears you weaker: weak tx or antenna on the companion</string>
+    <string name="link_check_direct">Check direct</string>
+    <plurals name="link_direct_ok">
+        <item quantity="one">direct, despite the route through %d hop</item>
+        <item quantity="other">direct, despite the route through %d hops</item>
+    </plurals>
+    <string name="link_direct_ok_flood">direct, no route known</string>
+    <string name="link_direct_none">no direct link</string>
+    <string name="paused_badge">Update paused</string>
     <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
     <string name="link_bars_desc">%1$d of %2$d bars</string>
     <string name="link_strip_desc">Link: to repeater %1$s, to you %2$s</string>

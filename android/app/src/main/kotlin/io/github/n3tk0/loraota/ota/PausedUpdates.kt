@@ -14,6 +14,8 @@ class PausedUpdates(private val prefs: SharedPreferences) {
 
     private fun all(): Set<String> = prefs.getStringSet(KEY, emptySet()).orEmpty().toSet()
 
+    fun keys(): Set<String> = all()
+
     fun has(key: String): Boolean = key.isNotEmpty() && key in all()
 
     fun mark(key: String) {

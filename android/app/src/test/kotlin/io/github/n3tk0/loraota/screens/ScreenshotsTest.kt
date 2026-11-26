@@ -24,6 +24,8 @@ import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.OtaProtocol
 import io.github.n3tk0.loraota.ota.LinkSample
+import io.github.n3tk0.loraota.ota.LinkTrace
+import io.github.n3tk0.loraota.ui.LinkRouteView
 import io.github.n3tk0.loraota.ota.RepeaterStatus
 import io.github.n3tk0.loraota.ota.RepeaterTelemetry
 import io.github.n3tk0.loraota.tools.ConfigProfile
@@ -226,6 +228,20 @@ class ScreenshotsTest {
 
     @Test fun repeaterOverview() = overview(dark = false)
     @Test fun repeaterOverviewDark() = overview(dark = true)
+
+    /** A repeater two hops away: the trace goes along the learned route and back, a direct check found no direct link. */
+    @Test fun repeaterOverviewMultihop() {
+        phone(2600)
+        val vm = newVm()
+        loggedIn(vm, r3)
+        vm.linkSamples = emptyList()
+        val route = LinkTrace.Route(listOf(LinkTrace.Hop(8.0, 6.5), LinkTrace.Hop(4.5, -2.0), LinkTrace.Hop(-3.0, 1.5)))
+        vm.linkRoute = LinkRouteView(listOf(r4.name, r2.name, r3.name), route)
+        vm.linkOut = route.weakestOut
+        vm.linkIn = route.weakestIn
+        vm.directState = LinkState.NO_REPLY
+        app(vm)
+    }
 
     @Test fun repeaterSettings() {
         phone(2700)

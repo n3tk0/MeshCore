@@ -112,6 +112,9 @@ enum class RepeaterTab { OVERVIEW, HEALTH, FIRMWARE, TOOLS }
 /** What the link card says: the last trace's outcome. */
 enum class LinkState { NONE, MEASURING, OK, NO_REPLY, NOT_DIRECT, NO_BUDGET, FAILED }
 
+/** A traced route for the card: [names] are the nodes after us (the repeater last), [route] its links in the same order. */
+class LinkRouteView(val names: List<String>, val route: LinkTrace.Route)
+
 /** One line in the interactive CLI console transcript (durationMs set on replies to show link RTT). */
 enum class CliLineKind { COMMAND, REPLY, INFO, ERROR }
 data class CliLine(val timeMs: Long, val text: String, val kind: CliLineKind, val durationMs: Long? = null)
@@ -198,6 +201,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var linkOut by mutableStateOf<Double?>(null)    // what the repeater hears of us
     var linkIn by mutableStateOf<Double?>(null)     // what we hear of the repeater
     var linkState by mutableStateOf(LinkState.NONE)
+    /** With hops on the route: each link of the traced route, both ways ([linkOut] / [linkIn] are the weakest of them). */
+    var linkRoute by mutableStateOf<LinkRouteView?>(null)
+    /** A one-hop check straight to the repeater, whatever the route is (null readings: nothing came back). */
+    var directState by mutableStateOf(LinkState.NONE)
+    var directOut by mutableStateOf<Double?>(null)
+    var directIn by mutableStateOf<Double?>(null)
     var linkTime by mutableStateOf(0L)
     var linkSamples by mutableStateOf<List<LinkSample>>(emptyList())
     var following by mutableStateOf(false)
@@ -807,6 +816,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         repeaters.clear()
         // the ones next to us first: only those can be updated
         repeaters.addAll(list)
+        pausedKeys = pausedUpdates.keys()
         val latest = withContext(Dispatchers.IO) { healthStore.allLatest() }
         fleetState.fleetHealth.clear()
         fleetState.fleetHealth.putAll(latest)
@@ -899,6 +909,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         resetLink()
         backupFirmware = null
         pausedUpdate = pausedUpdates.has(hex((learned ?: contact).publicKey))
+        // a paused update waits on the Firmware tab: open it straight away
+        val tab = if (initialTab == RepeaterTab.OVERVIEW && pausedUpdate) RepeaterTab.FIRMWARE else initialTab
         patchJob?.cancel()
         calculatingPatch = false
         oldImage = null
@@ -912,7 +924,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         total = 0
         phase = null
         log.clear()
-        repeaterTab = initialTab
+        repeaterTab = tab
         repeaterHealthLoadedFor = null
         toolsState.clearForNewRepeater()
         settingsCachedMin = null
@@ -971,7 +983,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         } else {
             // not read back: the pre-login route (reset for the login) says nothing about now
-            inspect(learned ?: contact, learned?.hops, withOta = initialTab == RepeaterTab.FIRMWARE)
+            inspect(learned ?: contact, learned?.hops, withOta = tab == RepeaterTab.FIRMWARE)
         }
     }
 
@@ -1067,52 +1079,86 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         linkIn = null
         linkState = LinkState.NONE
         linkTime = 0
+        linkRoute = null
+        directState = LinkState.NONE
+        directOut = null
+        directIn = null
         linkFollow.clear()
         linkSamples = emptyList()
     }
 
+    /** The trace for [r] along the route the login learned: direct, along its out path, or null (flood, a path too long). */
+    private fun planFor(r: Contact): LinkTrace.Plan? {
+        val hops = routeHops
+        return LinkTrace.plan(
+            r.publicKey, hops, r.outPath.takeIf { r.hops == hops }, r.outHashSize, companion.traceHashSize(),
+        )
+    }
+
+    private class TraceResult(val state: LinkState, val route: LinkTrace.Route?)
+
     /**
-     * One trace to a repeater with no hop: the SNR it heard us with and the SNR we heard it with (see [LinkTrace]).
-     * With hops (or no route learned) the trace would measure the first hop, not the repeater: none is sent. It counts
-     * toward the hour's time on air like the update's packets, and is not sent when that has no room for it.
+     * One trace along [plan]. It counts toward the hour's time on air like the update's packets (our packet, scaled with
+     * the path's length), and is not sent when that has no room for it. A reply counts only when its tag and its path
+     * hashes are the ones sent.
+     */
+    private suspend fun traceOnce(plan: LinkTrace.Plan): TraceResult {
+        val secs = (companion.mainRadio() ?: SideRadio.DEFAULT).airtime(LinkTrace.packetBytes(plan.path.size))
+        budget.duty = duty()
+        if (!LinkTrace.fitsBudget(budget, secs)) return TraceResult(LinkState.NO_BUDGET, null)
+        val data = try {
+            companion.tracePath(plan.path, plan.hashSize)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return TraceResult(LinkState.FAILED, null)   // nothing was sent: no airtime to count
+        }
+        budget.add(secs)
+        val route = data?.let { LinkTrace.route(it, plan) }
+        return TraceResult(if (route != null) LinkState.OK else LinkState.NO_REPLY, route)
+    }
+
+    /** A hop's name when its hash fits one contact, else the hash in hex. */
+    private fun hopName(hash: ByteArray): String {
+        val h = hex(hash)
+        val names = allContactsByKey.filter { it.key.startsWith(h) }.values.toList()
+        return if (names.size == 1) names[0] else h.uppercase()
+    }
+
+    private fun sameRepeater(r: Contact) = repeater?.publicKey?.contentEquals(r.publicKey) == true
+
+    /**
+     * One trace to the repeater: direct, or along the learned route and back (see [LinkTrace.plan]); the SNR it heard
+     * us with and the SNR we heard it with, per hop. With a route that has no usable path (flood, too long) none is sent.
      */
     private suspend fun measureLink(r: Contact) {
-        if (!LinkTrace.canTrace(routeHops)) {
+        val plan = planFor(r)
+        if (plan == null) {
             linkOut = null
             linkIn = null
+            linkRoute = null
             linkState = LinkState.NOT_DIRECT
-            return
-        }
-        val hashSize = companion.traceHashSize()
-        val secs = (companion.mainRadio() ?: SideRadio.DEFAULT).airtime(LinkTrace.packetBytes(hashSize))
-        budget.duty = duty()
-        if (!LinkTrace.fitsBudget(budget, secs)) {
-            linkState = LinkState.NO_BUDGET
             return
         }
         val before = linkState
         linkState = LinkState.MEASURING
         try {
-            val data = try {
-                companion.trace(r.publicKey, hashSize)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                linkState = LinkState.FAILED   // nothing was sent: no airtime to count
-                return
-            }
-            budget.add(secs)
-            val reading = data?.let { LinkTrace.reading(it, r.publicKey.copyOf(hashSize)) }
+            val res = traceOnce(plan)
+            if (!sameRepeater(r)) return   // another repeater (or none) by now: nothing of this is its
+            val route = res.route
             val now = System.currentTimeMillis()
             // a lost trace keeps the last good measurement on screen (with the note that this one got no reply)
-            if (reading != null) {
-                linkOut = reading.outSnr
-                linkIn = reading.inSnr
+            if (route != null) {
+                linkOut = route.weakestOut
+                linkIn = route.weakestIn
                 linkTime = now
+                linkRoute = if (plan.hops > 0) LinkRouteView(plan.hopHashes().map { hopName(it) } + r.name.ifEmpty { hex(plan.target()).uppercase() }, route) else null
             }
-            linkState = if (reading != null) LinkState.OK else LinkState.NO_REPLY
-            linkFollow.add(LinkSample(now, reading?.outSnr, reading?.inSnr))
-            linkSamples = linkFollow.samples.toList()
+            linkState = res.state
+            if (res.state == LinkState.OK || res.state == LinkState.NO_REPLY) {
+                linkFollow.add(LinkSample(now, route?.weakestOut, route?.weakestIn))
+                linkSamples = linkFollow.samples.toList()
+            }
         } finally {
             if (linkState == LinkState.MEASURING) linkState = before   // stopped
         }
@@ -1125,14 +1171,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         measureLink(r)
     }
 
+    /** 'Check direct': a one-hop trace [repeater hash] whatever the route says, to see if it hears us straight. */
+    fun checkDirectNow() = work {
+        val r = repeater ?: return@work
+        working = str(R.string.working_link)
+        val plan = LinkTrace.plan(r.publicKey, 0, null, 1, companion.traceHashSize()) ?: return@work
+        val before = directState
+        directState = LinkState.MEASURING
+        try {
+            val res = traceOnce(plan)
+            if (!sameRepeater(r)) return@work
+            directState = res.state
+            directOut = res.route?.weakestOut
+            directIn = res.route?.weakestIn
+        } finally {
+            if (directState == LinkState.MEASURING) directState = before   // stopped
+        }
+    }
+
     fun toggleFollow() {
         if (following) stopFollow() else startFollow()
     }
 
-    /** One trace every 10 s for 2 minutes; a tick while other work runs is skipped, and the budget ends it. */
+    /** One trace every 5 s for 2 minutes; a tick while other work runs is skipped, and the budget ends it. */
     private fun startFollow() {
         val r = repeater ?: return
-        if (busy || reconnecting || following || !LinkTrace.canTrace(routeHops)) return
+        if (busy || reconnecting || following || planFor(r) == null) return
         following = true
         followLeft = LinkFollow.TICKS
         followJob = viewModelScope.launch {
@@ -1172,16 +1236,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val pausedUpdates by lazy { PausedUpdates(ctx.getSharedPreferences("paused_updates", Context.MODE_PRIVATE)) }
 
+    /** Repeaters with a paused update (for the list's badge: read once with the contacts, kept in step by mark / clear). */
+    var pausedKeys by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    fun isUpdatePaused(c: Contact): Boolean = hex(c.publicKey) in pausedKeys
+
     /** The repeater may keep an update the app cut short (a Stop that dropped it is not one). */
     private fun markPaused(r: Contact?) {
         val c = r ?: return
         pausedUpdates.mark(hex(c.publicKey))
+        pausedKeys = pausedKeys + hex(c.publicKey)
         if (repeater?.publicKey?.contentEquals(c.publicKey) == true) pausedUpdate = true
     }
 
     private fun clearPaused(r: Contact?) {
         val c = r ?: return
         pausedUpdates.clear(hex(c.publicKey))
+        pausedKeys = pausedKeys - hex(c.publicKey)
         if (repeater?.publicKey?.contentEquals(c.publicKey) == true) pausedUpdate = false
     }
 
@@ -2465,19 +2537,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Writes settings to a repeater's console. The repeater may store a rounded or normalized value, so the cache of it
-     * is dropped after any write (and read again when next needed).
+     * Writes settings to a repeater's console. The repeater may store a rounded or normalized value, so what it keeps is
+     * read back with `get <key>` for just the written keys (at most [READ_BACK_MAX]) and put into the cache; when that
+     * fails, or the write is bigger (a restore, a profile batch) or not a plain setting, the cache of the repeater is
+     * dropped (and read again when next needed).
      */
     private suspend fun applyToRepeater(r: Contact, items: List<BackupItem>, progress: (Int, Int) -> Unit): RestoreResult {
         val key = hex(r.publicKey)
-        var finished = false
-        settingsCache.invalidate(key)
+        var kept = false
         try {
             val res = RepeaterBackup.apply(companion, r, items, progress)
-            finished = true
+            val plain = items.isNotEmpty() && items.size <= READ_BACK_MAX && items.all {
+                it.group == GROUP_SETTING && it.id != RepeaterBackup.PASSWORD && it.id != RepeaterBackup.OTA &&
+                    !RepeaterFilter.isBackupId(it.id) && it.id != RepeaterFilter.INCOMPLETE_ID
+            }
+            if (plain && settingsCache.has(key)) {
+                val values = RepeaterBackup.readBack(companion, r, items.map { it.id }.distinct())
+                if (values != null) {
+                    settingsCache.update(key, values)
+                    kept = true
+                }
+            }
             return res
         } finally {
-            settingsCache.invalidate(key)
+            if (!kept) settingsCache.invalidate(key)   // also on Stop or an error: not sure what the repeater has now
         }
     }
 
@@ -4254,6 +4337,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     companion object {
+        /** A save that wrote at most this many settings reads them back (`get`) instead of dropping the repeater's cache. */
+        const val READ_BACK_MAX = 5
+
         // 250 kHz fits the 869.4-869.65 MHz sub-band (10 % duty) only centred on 869.525
         val SIDE_PRESETS = listOf(
             SidePreset("7", "250", "869.525", R.string.preset_fast),
