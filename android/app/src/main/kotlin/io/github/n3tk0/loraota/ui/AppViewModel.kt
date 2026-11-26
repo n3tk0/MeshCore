@@ -2439,6 +2439,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val saved = withContext(Dispatchers.IO) { backupStore.save(b) }
         if (step == Step.BACKUP) loadBackups()
+        // the Overview's "running" fallback follows the newest backup until the OTA check says it live
+        if (kind == DeviceKind.REPEATER && b.firmware.isNotBlank() && repeater?.let { hex(it.publicKey) } == b.deviceKey)
+            backupFirmware = b.firmware to b.time
         return saved
     }
 
