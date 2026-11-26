@@ -113,7 +113,7 @@
 #define BQ_REG_CTRL0           0x0F
 #define BQ_REG_CTRL1           0x10
 #define BQ_REG_CTRL2           0x11
-#define BQ_REG_ITERM           0x12   // bits 4:0, 40 mA steps
+#define BQ_REG_ITERM           0x09   // REG09 Termination Control: ITERM bits 4:0, 40 mA steps (bit 5 REG_RST)
 #define BQ_REG_CTRL5           0x14
 #define BQ_REG_MPPT            0x15
 #define BQ_REG_NTC1            0x18

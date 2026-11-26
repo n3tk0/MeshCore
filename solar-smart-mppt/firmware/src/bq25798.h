@@ -11,7 +11,7 @@
 #define BQ_REG_ICHG      0x03   // 16 bit, 10 mA
 #define BQ_REG_VINDPM    0x05   // 100 mV
 #define BQ_REG_IINDPM    0x06   // 16 bit, 10 mA
-#define BQ_REG_ITERM     0x12   // ITERM 4:0, 40 mA steps
+#define BQ_REG_ITERM     0x09   // REG09: ITERM 4:0, 40 mA steps (bit 5 REG_RST)
 #define BQ_REG_CTRL0     0x0F   // EN_CHG bit 5, EN_HIZ bit 2, EN_TERM bit 1
 #define BQ_REG_CTRL1     0x10   // WD_RST bit 3, WATCHDOG 2:0
 #define BQ_REG_CTRL2     0x11   // AUTO_INDET_EN bit 6, SDRV_CTRL 2:1, SDRV_DLY bit 0

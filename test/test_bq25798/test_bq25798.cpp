@@ -38,7 +38,6 @@ public:
     r[0x0F] = 0xA2;
     r[0x10] = 0x85;            // watchdog 40 s
     r[0x11] = 0x40;            // AUTO_INDET_EN
-    r[0x12] = 0x05;            // ITERM 200 mA
     r[0x14] = 0x16;
     r[0x15] = 0xAA;
     r[0x17] = 0x7A;
@@ -139,10 +138,11 @@ TEST(BQ25798, TerminationFollowsTheChargeCurrent) {
   bq.begin(0);
   BQ25798Settings s = settings();
   bq.apply(s);
-  EXPECT_EQ(f.r[0x12] & 0x1F, 3);       // 1 A -> 120 mA (not the chip's 200 mA)
+  EXPECT_EQ(f.r[0x09] & 0x1F, 3);       // 1 A -> 120 mA (not the chip's 200 mA)
+  EXPECT_EQ(f.r[0x12], 0);              // CHARGER_CONTROL_3 untouched
   s.ichg_ma = 250;
   bq.apply(s);
-  EXPECT_EQ(f.r[0x12] & 0x1F, 1);       // 250 mA -> 40 mA, the lowest
+  EXPECT_EQ(f.r[0x09] & 0x1F, 1);       // 250 mA -> 40 mA, the lowest
 }
 
 TEST(BQ25798, LiFePO4NeverChargesTowards42V) {
