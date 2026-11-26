@@ -22,10 +22,4 @@ class StatusFormatTest {
     @Test fun chemistryChangesPercent() {
         assertEquals(50, StatusFormat.percent(3.175, BatteryChem.LIFEPO4))
     }
-
-    @Test fun routeBadge() {
-        assertEquals("Direct · -64 dBm", StatusFormat.routeBadge("Direct", -64))
-        assertEquals("2 hops · -90 dBm", StatusFormat.routeBadge("2 hops", -90))
-        assertEquals("Direct", StatusFormat.routeBadge("Direct", null))
-    }
 }

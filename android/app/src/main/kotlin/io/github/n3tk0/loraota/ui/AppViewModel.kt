@@ -25,7 +25,11 @@ import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.OtaService
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.ota.AirtimeBudget
+import io.github.n3tk0.loraota.ota.LinkFollow
+import io.github.n3tk0.loraota.ota.LinkSample
+import io.github.n3tk0.loraota.ota.LinkTrace
 import io.github.n3tk0.loraota.ota.OtaFailed
+import io.github.n3tk0.loraota.ota.PausedUpdates
 import io.github.n3tk0.loraota.ota.Phase
 import io.github.n3tk0.loraota.ota.estimateMinutes
 import io.github.n3tk0.loraota.backup.Backup
@@ -39,6 +43,7 @@ import io.github.n3tk0.loraota.backup.NoAnswer
 import io.github.n3tk0.loraota.backup.PasswordBox
 import io.github.n3tk0.loraota.backup.BackupItem.Companion.GROUP_SETTING
 import io.github.n3tk0.loraota.backup.RepeaterBackup
+import io.github.n3tk0.loraota.backup.SettingsCache
 import io.github.n3tk0.loraota.backup.RestoreResult
 import io.github.n3tk0.loraota.backup.WrongPassword
 import io.github.n3tk0.loraota.ble.CompanionRadio
@@ -100,6 +105,9 @@ enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE, SET
 
 /** Bottom navigation tabs inside a logged-in repeater (Step.UPDATE). */
 enum class RepeaterTab { OVERVIEW, HEALTH, FIRMWARE, TOOLS }
+
+/** What the link card says: the last trace's outcome. */
+enum class LinkState { NONE, MEASURING, OK, NO_REPLY, NOT_DIRECT, NO_BUDGET, FAILED }
 
 /** One line in the interactive CLI console transcript (durationMs set on replies to show link RTT). */
 enum class CliLineKind { COMMAND, REPLY, INFO, ERROR }
@@ -177,6 +185,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var routeHops by mutableStateOf<Int?>(null)   // hops on the route the login learned; null: none learned
     val direct get() = routeHops == 0   // only then the update can go
     var otaChecked by mutableStateOf(false)   // the OTA check got to its end (an answer or none)
+    var otaTried by mutableStateOf(false)     // it was started once for this login (a failed one is not repeated by itself)
+    /** The firmware label of this repeater's last backup: the Overview shows it until the OTA check says it live. */
+    var backupFirmware by mutableStateOf<Pair<String, Long>?>(null)
+    /** The app paused or stopped a LoRa update on this repeater and the repeater may still keep it. */
+    var pausedUpdate by mutableStateOf(false)
+
+    // the link to the repeater, measured with a trace (both directions, in dB SNR)
+    var linkOut by mutableStateOf<Double?>(null)    // what the repeater hears of us
+    var linkIn by mutableStateOf<Double?>(null)     // what we hear of the repeater
+    var linkState by mutableStateOf(LinkState.NONE)
+    var linkTime by mutableStateOf(0L)
+    var linkSamples by mutableStateOf<List<LinkSample>>(emptyList())
+    var following by mutableStateOf(false)
+    var followLeft by mutableStateOf(0)             // traces left of the two minutes
+    private val linkFollow = LinkFollow()
+    private var followJob: Job? = null
 
     // firmware
     var releases by mutableStateOf<List<FirmwareFile>>(emptyList())
@@ -264,6 +288,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // backups of the settings (the companion's or the repeater's), kept on the phone
     private val backupStore = BackupStore(app)
+    /** The last read of each repeater's settings: a restore and the settings editor use it for 30 minutes. */
+    private val settingsCache = SettingsCache()
+    /** Minutes since the settings a restore compares with were read; null: they were read just now. */
+    var restoreCachedMin by mutableStateOf<Int?>(null)
+    /** The same for the settings editor. */
+    var settingsCachedMin by mutableStateOf<Int?>(null)
     var backupKind by mutableStateOf(DeviceKind.COMPANION)   // whose backups the backup screen shows
     var backups by mutableStateOf<List<Backup>>(emptyList())
     var canReadRepeater by mutableStateOf<Boolean?>(null)   // false: a stock companion cannot read its console
@@ -376,6 +406,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var handlingDisconnect = false
 
     private fun clearDeviceSession() {
+        stopFollow()
+        resetLink()
         companionDevice = null
         companionName = ""
         companionModel = ""
@@ -387,6 +419,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         status = null
         sensorBattery = null
         otaChecked = false
+        otaTried = false
+        backupFirmware = null
+        pausedUpdate = false
         oldImage = null
         newImage = null
         patch = null
@@ -454,6 +489,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 handlingDisconnect = true
+                stopFollow()
                 try {
                     val wasUpdating = phase != null
                     val wasFlashingRepeater = flashPercent >= 0
@@ -463,7 +499,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (wasFlashingRepeater) job?.join() else job?.cancelAndJoin()
                     // Re-check after suspension in case user intentionally disconnected while we waited
                     if (!isActiveConnection() || disconnectingIntentionally) return@launch
-                    if (wasUpdating) resumable = true
+                    if (wasUpdating) {
+                        resumable = true
+                        markPaused(repeater)
+                    }
                     val flashMsg = if (wasFlashingRepeater) message.takeIf { it.isNotEmpty() } else null
                     val dev = companionDevice
                     val btOn = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter?.isEnabled == true
@@ -540,6 +579,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun work(block: suspend () -> Unit) {
         if (busy || reconnecting) return
+        stopFollow()   // a trace is not run beside other work
         busy = true
         message = ""
         messageIsError = false
@@ -567,6 +607,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
+        stopFollow()
         job?.cancel()
     }
 
@@ -848,6 +889,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         status = null
         sensorBattery = null
         otaChecked = false
+        otaTried = false
+        stopFollow()
+        resetLink()
+        backupFirmware = null
+        pausedUpdate = pausedUpdates.has(hex((learned ?: contact).publicKey))
         patchJob?.cancel()
         calculatingPatch = false
         oldImage = null
@@ -864,16 +910,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         repeaterTab = initialTab
         repeaterHealthLoadedFor = null
         toolsState.clearForNewRepeater()
+        settingsCachedMin = null
+        restoreCachedMin = null
         firmwareTab = 0
         flashTarget = FlashTarget.REPEATER
         flashImage = null
         flashDone = false
         loginSheet = null
         step = Step.UPDATE
+        loadBackupFirmware(repeater)
         if (initialTab == RepeaterTab.HEALTH) {
             resetHealthState(DeviceKind.REPEATER)
             val target = learned ?: contact
-            inspect(target, learned?.hops)
+            inspect(target, learned?.hops, withOta = false)
             val dev = deviceKey(DeviceKind.REPEATER)
             healthRecords = withContext(Dispatchers.IO) { healthStore.records(dev) }
             val latestRec = healthRecords.lastOrNull()
@@ -917,11 +966,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         } else {
             // not read back: the pre-login route (reset for the login) says nothing about now
-            inspect(learned ?: contact, learned?.hops)
+            inspect(learned ?: contact, learned?.hops, withOta = initialTab == RepeaterTab.FIRMWARE)
         }
     }
 
-    /** Again the status and the OTA check, e.g. when an answer got lost. */
+    /** Again the status, the link and the OTA check, e.g. when an answer got lost. */
     fun recheck() = work {
         val old = repeater ?: return@work
         patchJob?.cancel()
@@ -930,21 +979,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         patch = null
         val now = companion.contact(old.publicKey)
         if (now != null) repeater = now
-        inspect(now ?: old, now?.hops)
+        inspect(now ?: old, now?.hops, withOta = true)
     }
 
     /**
-     * The status (any repeater answers it), then whether the repeater has LoRa OTA: a stock MeshCore
-     * repeater does not answer the OTA request at all, so one short try, and 'Check again' on the screen.
+     * The status (any repeater answers it), the battery from a sensor and the link (one trace); with [withOta] also
+     * whether the repeater has LoRa OTA. A login does not: that check waits for the Firmware tab (see [checkOta]).
      */
-    private suspend fun inspect(r: Contact, hops: Int?) {
-        otaChecked = false
+    private suspend fun inspect(r: Contact, hops: Int?, withOta: Boolean) {
         routeHops = hops
+        if (withOta) otaChecked = false else if (otaChecked) {
+            // read again (after a restart, say): what it runs may be another firmware, the Firmware tab asks anew
+            otaChecked = false
+            otaTried = false
+            info = null
+        }
         working = str(R.string.working_status)
         status = readStatus(r)
         // the battery from a sensor: a stock repeater reports its board's own reading (0.45 V on a Xiao without
         // its battery pins) also when an INA219 measures the battery
         if (status != null) sensorBattery = readSensorBattery(r)
+        measureLink(r)
+        if (withOta) runOtaCheck(r)
+    }
+
+    /**
+     * A stock MeshCore repeater does not answer the OTA request at all, so one short try, and 'Check again' on the
+     * screen. Also keeps what the app knows of a paused update in step with what the repeater says.
+     */
+    private suspend fun runOtaCheck(r: Contact) {
+        otaTried = true
+        otaChecked = false
         working = str(R.string.working_ota)
         val i = try {
             session(r).info(OTA_CHECK_MS, 1)
@@ -955,7 +1020,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         info = i
         otaChecked = true
         resumable = i?.state == OtaProtocol.STATE_PAUSED
+        when (i?.state) {
+            OtaProtocol.STATE_PAUSED -> markPaused(r)
+            OtaProtocol.STATE_IDLE, OtaProtocol.STATE_FAILED -> clearPaused(r)
+        }
         if (i != null) loadReleases()   // a route with hops is shown on the screen (and keeps Update off)
+    }
+
+    /** What needs the OTA answer (a flash, an update, `set ota on`) asks for it first, if it has not been asked yet. */
+    private suspend fun ensureOtaChecked(r: Contact) {
+        if (!otaChecked) runOtaCheck(r)
+    }
+
+    /** The Firmware tab is open: the OTA check, once for this login (a failed one waits for 'Check again'). */
+    fun checkOtaOnce() {
+        if (otaChecked || otaTried || busy || reconnecting || step != Step.UPDATE) return
+        val r = repeater ?: return
+        work { runOtaCheck(r) }
     }
 
     private suspend fun readSensorBattery(r: Contact): io.github.n3tk0.loraota.ota.RepeaterTelemetry.Battery? = runCatching {
@@ -967,6 +1048,144 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun readStatus(r: Contact): RepeaterStatus? {
         val tag = companion.sendRequest(r, RepeaterStatus.request())
         return companion.awaitResponse(tag, 12_000)?.let { RepeaterStatus.parse(it) }
+    }
+
+    /** Status, battery and link again (the Overview's 'refresh'); the OTA check stays for the Firmware tab. */
+    fun refreshStatus() = work {
+        val old = repeater ?: return@work
+        val now = companion.contact(old.publicKey)
+        if (now != null) repeater = now
+        inspect(now ?: old, now?.hops, withOta = false)
+    }
+
+    // ---- the link to the repeater: a trace both ways ----
+
+    private fun resetLink() {
+        linkOut = null
+        linkIn = null
+        linkState = LinkState.NONE
+        linkTime = 0
+        linkFollow.clear()
+        linkSamples = emptyList()
+    }
+
+    /**
+     * One trace to a repeater with no hop: the SNR it heard us with and the SNR we heard it with (see [LinkTrace]).
+     * With hops (or no route learned) the trace would measure the first hop, not the repeater: none is sent. It counts
+     * toward the hour's time on air like the update's packets, and is not sent when that has no room for it.
+     */
+    private suspend fun measureLink(r: Contact) {
+        if (!LinkTrace.canTrace(routeHops)) {
+            linkOut = null
+            linkIn = null
+            linkState = LinkState.NOT_DIRECT
+            return
+        }
+        val hashSize = companion.pathHashMode() + 1
+        val secs = (companion.mainRadio() ?: SideRadio.DEFAULT).airtime(LinkTrace.packetBytes(hashSize))
+        budget.duty = duty()
+        if (!LinkTrace.fitsBudget(budget, secs)) {
+            linkState = LinkState.NO_BUDGET
+            return
+        }
+        budget.add(secs)
+        val before = linkState
+        linkState = LinkState.MEASURING
+        try {
+            val data = try {
+                companion.trace(r.publicKey.copyOf(hashSize), hashSize)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+                linkState = LinkState.FAILED
+                return
+            }
+            val reading = data?.let { LinkTrace.reading(it) }
+            val now = System.currentTimeMillis()
+            linkOut = reading?.outSnr
+            linkIn = reading?.inSnr
+            linkTime = now
+            linkState = if (reading != null) LinkState.OK else LinkState.NO_REPLY
+            linkFollow.add(LinkSample(now, reading?.outSnr, reading?.inSnr))
+            linkSamples = linkFollow.samples.toList()
+        } finally {
+            if (linkState == LinkState.MEASURING) linkState = before   // stopped
+        }
+    }
+
+    /** 'Measure again'. */
+    fun measureLinkNow() = work {
+        val r = repeater ?: return@work
+        working = str(R.string.working_link)
+        measureLink(r)
+    }
+
+    fun toggleFollow() {
+        if (following) stopFollow() else startFollow()
+    }
+
+    /** One trace every 10 s for 2 minutes; a tick while other work runs is skipped, and the budget ends it. */
+    private fun startFollow() {
+        val r = repeater ?: return
+        if (busy || reconnecting || following || !LinkTrace.canTrace(routeHops)) return
+        following = true
+        followLeft = LinkFollow.TICKS
+        followJob = viewModelScope.launch {
+            val me = coroutineContext[Job]
+            try {
+                for (i in 0 until LinkFollow.TICKS) {
+                    if (i > 0) delay(LinkFollow.INTERVAL_MS)
+                    followLeft = LinkFollow.TICKS - i
+                    if (busy || reconnecting) continue
+                    measureLink(r)
+                    if (linkState == LinkState.NO_BUDGET) break
+                }
+            } finally {
+                // a Stop and a new start can come before this runs: then it is not this one's to reset
+                if (followJob === me || followJob == null) {
+                    following = false
+                    followLeft = 0
+                    followJob = null
+                }
+            }
+        }
+    }
+
+    private fun stopFollow() {
+        followJob?.cancel()
+        followJob = null
+        following = false
+        followLeft = 0
+    }
+
+    // ---- what the app knows about the repeater without asking it ----
+
+    private val pausedUpdates by lazy { PausedUpdates(ctx.getSharedPreferences("paused_updates", Context.MODE_PRIVATE)) }
+
+    /** The repeater may keep an update the app cut short (a Stop that dropped it is not one). */
+    private fun markPaused(r: Contact?) {
+        val c = r ?: return
+        pausedUpdates.mark(hex(c.publicKey))
+        if (repeater?.publicKey?.contentEquals(c.publicKey) == true) pausedUpdate = true
+    }
+
+    private fun clearPaused(r: Contact?) {
+        val c = r ?: return
+        pausedUpdates.clear(hex(c.publicKey))
+        if (repeater?.publicKey?.contentEquals(c.publicKey) == true) pausedUpdate = false
+    }
+
+    /** The firmware of this repeater's newest backup (label, time), for the Overview until the OTA check says it live. */
+    private fun loadBackupFirmware(r: Contact?) {
+        val key = r?.let { hex(it.publicKey) } ?: return
+        viewModelScope.launch {
+            val b = withContext(Dispatchers.IO) {
+                runCatching { backupStore.all() }.getOrDefault(emptyList())
+                    .filter { it.kind == DeviceKind.REPEATER && it.deviceKey == key && it.firmware.isNotBlank() }
+                    .maxByOrNull { it.time }
+            }
+            if (repeater?.let { hex(it.publicKey) } == key) backupFirmware = b?.let { it.firmware to it.time }
+        }
     }
 
     // admin passwords, per repeater, encrypted at rest with Android Keystore (migrating legacy plaintext automatically)
@@ -1000,7 +1219,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** `set ota on` in the repeater's console, then INFO to see that it took. */
     fun enableOta() = work {
         val r = repeater ?: return@work
+        ensureOtaChecked(r)
         companion.sendRemoteCli(r, "set ota on")
+        settingsCache.invalidate(hex(r.publicKey))   // `ota` is among the cached settings: read it again
         var i: OtaProtocol.Info? = null
         for (attempt in 1..3) {
             delay(3000)
@@ -1044,12 +1265,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun backToRepeaters() {
         val oldRepeater = repeater
+        stopFollow()
+        resetLink()
         patchJob?.cancel()
         calculatingPatch = false
         repeater = null
         info = null
         status = null
         sensorBattery = null
+        otaChecked = false
+        otaTried = false
+        backupFirmware = null
+        pausedUpdate = false
         confirmUpdate = false
         step = Step.REPEATER
         if (searching) releasesJob?.cancel()   // the search of the old repeater's firmware is of no use now
@@ -1325,6 +1552,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun update() = work {
         val old = oldImage ?: return@work
         val new = newImage ?: return@work
+        repeater?.let { ensureOtaChecked(it) }
         val i = info
         if (i != null && !i.fits(new.data.size)) throw Exception(str(R.string.msg_too_big))
         patchJob?.join()
@@ -1345,19 +1573,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             done = false
             log.clear()
             OtaService.start(ctx, notifyTitle(), str(R.string.phase_start))
+            settingsCache.invalidate(hex(r.publicKey))   // the settings may change with the firmware
             val after = try {
                 session(r).run(old.data, new.data, p, inPlace())
             } catch (e: OtaFailed) {
                 resumable = e.resumable
+                if (e.resumable) markPaused(r) else clearPaused(r)
                 throw e
             } catch (e: kotlinx.coroutines.CancellationException) {
+                // a Stop drops the update on the repeater too (the session sends ABORT)
                 resumable = false
+                clearPaused(r)
                 throw e
             } finally {
                 phase = null
                 OtaService.stop(ctx)
             }
             resumable = false
+            clearPaused(r)
             done = true
             info = after
             // the repeater runs the image without the .uf2 padding: the next delta must start from that
@@ -1574,6 +1807,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val r = repeater ?: return@work
+        ensureOtaChecked(r)   // the chip (nRF52 / ESP32) is what the OTA answer says
         when (info?.platform) {
             OtaProtocol.PLATFORM_NRF52 -> if (!img.isZip) throw Exception(str(R.string.err_flash_need_zip))
             OtaProtocol.PLATFORM_ESP32 -> if (img.isZip) throw Exception(str(R.string.err_flash_need_bin))
@@ -1638,6 +1872,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 flashPercent = -1
             }
             flashDone = true
+            if (flashTarget == FlashTarget.REPEATER) repeater?.let { settingsCache.invalidate(hex(it.publicKey)) }
             message = str(if (flashTarget == FlashTarget.COMPANION && flashCompanionDevice != null) R.string.msg_flash_done_companion else R.string.msg_flash_done)
         }
     }
@@ -1811,6 +2046,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 return QueueResult.SKIPPED to if (x.res == R.string.err_no_answer) str(R.string.q_no_ota) else str(x.res, *x.args.toTypedArray())
             }
             info = i
+            when (i.state) {
+                OtaProtocol.STATE_PAUSED -> markPaused(r)
+                OtaProtocol.STATE_IDLE, OtaProtocol.STATE_FAILED -> clearPaused(r)
+            }
             if (!i.enabled) return QueueResult.SKIPPED to str(R.string.q_ota_off)
             val sha = hex(i.imageSha)
             // not in the loaded lists: the older releases too (the find is kept for the next repeater)
@@ -1833,14 +2072,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val p = withContext(Dispatchers.Default) { DeltaGenerator.create(old, new) }
             patch = p
             val noBackup = autoBackup(DeviceKind.REPEATER)
+            settingsCache.invalidate(hex(r.publicKey))
             val after = try {
                 session(r).run(old, new, p, false)
             } catch (x: OtaFailed) {
                 val why = str(x.res, *x.args.toTypedArray())
+                if (x.resumable) markPaused(r) else clearPaused(r)
                 return QueueResult.FAILED to if (x.resumable) str(R.string.q_failed_resumable, why) else why
+            } catch (x: kotlinx.coroutines.CancellationException) {
+                clearPaused(r)
+                throw x
             } finally {
                 phase = null
             }
+            clearPaused(r)
             val ident = after.ident.replace('|', ' ').ifEmpty { target.label }
             return QueueResult.DONE to (if (noBackup != null) "$ident · $noBackup" else ident)
         } catch (x: kotlinx.coroutines.CancellationException) {
@@ -2190,11 +2435,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Its console settings, and the admin password the app logged in with (the repeater does not give it). */
     private suspend fun readRepeater(r: Contact): List<BackupItem> {
+        val withOta = wantOta()
         val items = try {
-            RepeaterBackup.read(companion, r, info != null) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
+            RepeaterBackup.read(companion, r, withOta) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
         } catch (e: NoAnswer) {
             throw Exception(str(R.string.backup_no_answer))
         }
+        settingsCache.put(hex(r.publicKey), items, withOta)
+        return withPassword(r, items)
+    }
+
+    /**
+     * Writes settings to a repeater's console and keeps the cache in step: the keys that took are in it as written, and
+     * when any did not (or the write was cut short) the repeater's settings are not known any more.
+     */
+    private suspend fun applyToRepeater(r: Contact, items: List<BackupItem>, progress: (Int, Int) -> Unit): RestoreResult {
+        val key = hex(r.publicKey)
+        var finished = false
+        try {
+            val res = RepeaterBackup.apply(companion, r, items, progress)
+            finished = true
+            val failed = res.failed.map { it.first.id }.toSet()
+            if (failed.isEmpty()) settingsCache.update(key, items.associate { it.id to it.value })
+            else settingsCache.invalidate(key)
+            return res
+        } finally {
+            if (!finished) settingsCache.invalidate(key)   // Stop or a lost link half way
+        }
+    }
+
+    /** `ota status` is asked too unless the OTA check found a repeater without LoRa OTA (stock firmware). */
+    private fun wantOta() = info != null || !otaChecked
+
+    /** The admin password the app logged in with goes into a backup or a restore's list (the repeater does not give it). */
+    private fun withPassword(r: Contact, items: List<BackupItem>): List<BackupItem> {
         val pw = savedPassword(r) ?: return items
         return items + BackupItem(GROUP_SETTING, RepeaterBackup.PASSWORD, RepeaterBackup.PASSWORD, pw)
     }
@@ -2216,7 +2490,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 'Restore': reads the device now and shows what differs, all ticked. */
-    fun startRestore(b: Backup) = work {
+    fun startRestore(b: Backup, force: Boolean = false) = work {
+        restoreCachedMin = null
+        var cached: SettingsCache.Entry? = null
         val now = when (b.kind) {
             DeviceKind.COMPANION -> {
                 working = str(R.string.working_backup_companion)
@@ -2225,11 +2501,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             DeviceKind.REPEATER -> {
                 val r = repeater ?: return@work
                 if (!RepeaterBackup.supported(companion)) throw Exception(str(R.string.backup_no_capture))
-                readRepeater(r)
+                // what a read of the last half hour saw (an edit of the app is in it too): no 25 requests over LoRa
+                cached = if (force) null else settingsCache.fresh(hex(r.publicKey))
+                val c = cached
+                if (c != null) {
+                    restoreCachedMin = settingsCache.ageMinutes(c)
+                    withPassword(r, c.items)
+                } else readRepeater(r)
             }
         }
         // the identity only with its private key (a file imported without its password has none)
-        val rows = BackupDiff.diff(b.items, now).filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+        val rows = BackupDiff.diff(b.items, now)
+            .filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
+            // a read that did not ask `ota status` says nothing about it
+            .filter { cached?.withOta != false || it.item.id != RepeaterBackup.OTA }
         restoreChecked.clear()
         // the identity only when the user ticks it: it changes who the device is for the network
         for (r in rows) restoreChecked[r.item.ref] = r.item.group != BackupItem.GROUP_KEY
@@ -2239,6 +2524,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeRestore() {
+        restoreCachedMin = null
         restoreFrom = null
         restoreRows = emptyList()
     }
@@ -2261,7 +2547,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             DeviceKind.REPEATER -> {
                 val r = repeater ?: return@work
-                val res = RepeaterBackup.apply(companion, r, items) { i, n -> working = str(R.string.working_restore_repeater, i, n) }
+                val res = applyToRepeater(r, items) { i, n -> working = str(R.string.working_restore_repeater, i, n) }
                 // the next login is with the restored admin password
                 items.firstOrNull { it.id == RepeaterBackup.PASSWORD && res.failed.none { f -> f.first.id == it.id } }
                     ?.let { savePassword(r, it.value) }
@@ -2270,6 +2556,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         restoreFrom = null
         restoreRows = emptyList()
+        restoreCachedMin = null
         loadBackups()   // a restored identity makes other backups this device's
         val restart = b.kind == DeviceKind.REPEATER && items.any { it.id in RepeaterBackup.NEEDS_RESTART } &&
             res.failed.none { it.first.id in RepeaterBackup.NEEDS_RESTART }
@@ -2687,6 +2974,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removeCliSnippet(cmd: String) = toolsState.removeSnippet(cmd)
 
+    /**
+     * A console command that may change what the cached settings say: `set` (what the repeater stores can differ
+     * from what was typed), a radio test, a reboot or an erase. The cache is dropped before it goes, whatever the reply
+     * (`password` is no setting of the cache: the admin password is never in it).
+     */
+    private fun noteCliCommand(r: Contact, cmd: String) {
+        val head = cmd.trim().substringBefore(' ').lowercase()
+        if (head in setOf("set", "tempradio", "reboot", "clkreboot", "erase", "start")) settingsCache.invalidate(hex(r.publicKey))
+    }
+
     fun sendCliCommand(rawCommand: String, isCompanion: Boolean) = work {
         val cmd = rawCommand.trim()
         if (cmd.isEmpty()) return@work
@@ -2723,6 +3020,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (canReadRepeater == null) {
             canReadRepeater = probeCanReadRepeater()
         }
+        noteCliCommand(r, cmd)
         if (CliHelper.expectsNoReply(cmd)) {
             companion.sendRemoteCli(r, cmd)
             if (cmd.equals("reboot", ignoreCase = true) || cmd.equals("clkreboot", ignoreCase = true)) {
@@ -2766,7 +3064,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val learned = signIn(r, pw)
         if (learned != null) repeater = learned
         toolsState.needsRelogin = false
-        inspect(learned ?: r, learned?.hops)
+        inspect(learned ?: r, learned?.hops, withOta = repeaterTab == RepeaterTab.FIRMWARE)
         message = str(R.string.relogin_done)
     }
 
@@ -2829,6 +3127,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun rebootRepeater() = work {
         val r = repeater ?: return@work
         working = str(R.string.qa_reboot)
+        settingsCache.invalidate(hex(r.publicKey))
         companion.sendRemoteCli(r, "reboot")
         toolsState.needsRelogin = true
         message = str(R.string.qa_reboot_sent)
@@ -2959,12 +3258,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteConfigProfile(name: String) = toolsState.deleteProfile(name)
 
-    fun loadRepeaterSettings() = work {
+    /** The editor from the last read of the half hour, with no request over the air; false when there is none. */
+    fun loadCachedSettings(): Boolean {
+        val r = repeater ?: return false
+        if (busy || toolsState.settingsLoaded || canReadRepeater == false) return false
+        val c = settingsCache.fresh(hex(r.publicKey)) ?: return false
+        showSettings(c.items, settingsCache.ageMinutes(c))
+        return true
+    }
+
+    private fun showSettings(items: List<BackupItem>, cachedMin: Int?) {
+        toolsState.settings.clear()
+        toolsState.settingsDraft.clear()
+        for (item in items) {
+            toolsState.settings[item.id] = item.value
+            toolsState.settingsDraft[item.id] = item.value
+        }
+        toolsState.settingsLoaded = true
+        settingsCachedMin = cachedMin
+    }
+
+    /** [force]: read the repeater again even when the last read is not 30 minutes old. */
+    fun loadRepeaterSettings(force: Boolean = false) = work {
         val r = repeater ?: return@work
         if (canReadRepeater == null) {
             canReadRepeater = probeCanReadRepeater()
         }
         if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        val c = if (force) null else settingsCache.fresh(hex(r.publicKey))
+        if (c != null) {
+            showSettings(c.items, settingsCache.ageMinutes(c))
+            message = str(R.string.rset_loaded, c.items.size)
+            return@work
+        }
         working = str(R.string.working_read_settings)
         val items = try {
             RepeaterBackup.read(companion, r, withOta = false) { i, total ->
@@ -2974,6 +3300,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             toolsState.settingsProgress = null
         }
+        settingsCache.put(hex(r.publicKey), items, false)
         toolsState.settings.clear()
         toolsState.settingsDraft.clear()
         for (item in items) {
@@ -2981,6 +3308,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             toolsState.settingsDraft[item.id] = item.value
         }
         toolsState.settingsLoaded = true
+        settingsCachedMin = null
         message = str(R.string.rset_loaded, items.size)
     }
 
@@ -3005,7 +3333,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val items = normalized.map { (k, v) -> BackupItem(GROUP_SETTING, k, k, v) }
         val result = try {
-            RepeaterBackup.apply(companion, r, items) { i, total ->
+            applyToRepeater(r, items) { i, total ->
                 toolsState.settingsProgress = i to total
                 working = "${str(R.string.working_save_settings)} ($i/$total)"
             }
@@ -3037,6 +3365,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             canReadRepeater = probeCanReadRepeater()
         }
         working = command
+        settingsCache.invalidate(hex(r.publicKey))   // the radio is another one for a while
         if (canReadRepeater != true) {
             companion.sendRemoteCli(r, command)
             message = str(R.string.tempradio_sent)
@@ -3359,6 +3688,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val prevRepeater = repeater
         val prevInfo = info
         val prevHops = routeHops
+        val prevOtaChecked = otaChecked
         OtaService.start(ctx, str(R.string.pbatch_notif, b0.profileName), str(R.string.phase_start))
         try {
             while (true) {
@@ -3375,10 +3705,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             profileBatchCurrent = null
             repeater = prevRepeater
             info = prevInfo
+            otaChecked = prevOtaChecked
             routeHops = prevHops
             OtaService.stop(ctx)
             if (prevRepeater != null && b0.entries.any { it.key == hex(prevRepeater.publicKey) && it.result == io.github.n3tk0.loraota.tools.BatchResult.APPLIED }) {
                 toolsState.settingsLoaded = false   // what the editor shows is no longer what the repeater has
+                settingsCachedMin = null
             }
         }
         message = str(R.string.pbatch_report, b0.count(io.github.n3tk0.loraota.tools.BatchResult.APPLIED),
@@ -3402,6 +3734,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pw = savedPassword(c) ?: return finish(io.github.n3tk0.loraota.tools.BatchResult.SKIPPED, str(R.string.q_no_password))
         repeater = c
         info = null
+        otaChecked = true   // the batch does not ask for LoRa OTA: its backup then asks no `ota status` either
         val learned = try {
             signIn(c, pw)
         } catch (x: CancellationException) {
@@ -3436,7 +3769,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 else finish(io.github.n3tk0.loraota.tools.BatchResult.UNCHANGED, skippedNote)
             }
             val items = plan.changes.map { (k, v) -> BackupItem(GROUP_SETTING, k, k, v) }
-            val res = RepeaterBackup.apply(companion, r, items) { i, n -> working = "${e.name}: ${str(R.string.working_save_settings)} ($i/$n)" }
+            val res = applyToRepeater(r, items) { i, n -> working = "${e.name}: ${str(R.string.working_save_settings)} ($i/$n)" }
             if (res.failed.isNotEmpty()) {
                 val first = res.failed.first()
                 finish(io.github.n3tk0.loraota.tools.BatchResult.FAILED,

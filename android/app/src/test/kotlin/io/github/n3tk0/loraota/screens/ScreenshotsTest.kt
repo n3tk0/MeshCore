@@ -23,6 +23,7 @@ import io.github.n3tk0.loraota.ota.FirmwareFile
 import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.OtaProtocol
+import io.github.n3tk0.loraota.ota.LinkSample
 import io.github.n3tk0.loraota.ota.RepeaterStatus
 import io.github.n3tk0.loraota.ota.RepeaterTelemetry
 import io.github.n3tk0.loraota.tools.ConfigProfile
@@ -38,6 +39,7 @@ import io.github.n3tk0.loraota.ui.CachedFirmwareItem
 import io.github.n3tk0.loraota.ui.CliLine
 import io.github.n3tk0.loraota.ui.CliLineKind
 import io.github.n3tk0.loraota.ui.ProfileBatchContent
+import io.github.n3tk0.loraota.ui.LinkState
 import io.github.n3tk0.loraota.ui.RepeaterTab
 import io.github.n3tk0.loraota.ui.Step
 import io.github.n3tk0.loraota.ui.SweepEntry
@@ -183,6 +185,15 @@ class ScreenshotsTest {
             imageSize = 412_160, imageSha = ByteArray(32), maxNew = 450_000, maxInPlace = 800_000,
             ident = "$fwBoard|$fwNew|2026-10-20",
         )
+        vm.otaChecked = true
+        // the link, as a trace and a minute of following measured it (fixed numbers: the picture stays the same)
+        val outs = listOf(6.5, 7.0, 7.5, 6.0, 7.25, 8.0, 7.0, 6.75)
+        val ins = listOf(3.0, 2.5, 4.0, 1.5, -0.5, 2.0, 2.75, 3.25)
+        vm.linkSamples = outs.indices.map { LinkSample(1_782_000_000_000L + it * 10_000L, outs[it], ins[it]) }
+        vm.linkOut = outs.last()
+        vm.linkIn = ins.last()
+        vm.linkTime = 1_782_000_070_000L
+        vm.linkState = LinkState.OK
     }
 
     // ---- the screens ----
@@ -191,6 +202,11 @@ class ScreenshotsTest {
         phone(3100)
         val vm = newVm()
         loggedIn(vm)
+        // right after the login: the firmware is the last backup's until the Firmware tab asks the repeater
+        vm.info = null
+        vm.otaChecked = false
+        vm.backupFirmware = "$fwBoard $fwNew 2026-10-20" to hoursAgo(30)
+        vm.pausedUpdate = true
         vm.sensorBattery = RepeaterTelemetry.Battery(volts = 4.02, amps = -0.142, signed = true)   // solar charging
         for ((i, rtt) in listOf(412L, 388L, 455L, 401L, 379L).withIndex()) {
             vm.toolsState.pingSamples.add(PingSample(i + 1, true, rtt, ""))

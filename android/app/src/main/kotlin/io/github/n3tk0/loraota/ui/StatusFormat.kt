@@ -13,8 +13,4 @@ object StatusFormat {
     /** Battery percent, or null when the voltage is outside the range (no bar, no percent). */
     fun percent(volts: Double, chem: BatteryChem): Int? =
         if (inRange(volts, chem)) Math.round(fraction(volts, chem) * 100) else null
-
-    /** The route badge: "<route> · -64 dBm". */
-    fun routeBadge(routeLabel: String, rssi: Int?): String =
-        if (rssi == null) routeLabel else "$routeLabel · $rssi dBm"
 }

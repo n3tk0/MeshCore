@@ -947,4 +947,32 @@
     <string name="map_no_nodes">No repeaters with GPS coordinates (lat/lon = 0 are skipped).</string>
     <string name="map_save_confirm">%1$d tiles (zoom %2$d–%3$d) will be downloaded from OpenStreetMap for the visible area. Continue?</string>
     <string name="map_save_too_many">The area is too large: %1$d tiles (maximum %2$d). Zoom in and try again.</string>
+
+    <!-- link quality (trace) -->
+    <string name="working_link">Measuring the link…</string>
+    <string name="link_out">→ to repeater</string>
+    <string name="link_in">← to you</string>
+    <string name="link_snr">%1$.1f dB</string>
+    <string name="link_unknown">—</string>
+    <string name="link_rssi">RSSI %1$d dBm</string>
+    <string name="link_last_hop">last hop</string>
+    <string name="link_measure">Measure again</string>
+    <string name="link_follow">Follow</string>
+    <string name="link_follow_stop">Stop (%1$d s)</string>
+    <string name="link_state_none">not measured yet</string>
+    <string name="link_state_measuring">measuring…</string>
+    <string name="link_state_ok">measured at %1$s</string>
+    <string name="link_state_no_reply">no answer to the trace</string>
+    <string name="link_state_failed">the trace did not go out</string>
+    <string name="link_state_budget">the air time limit is used up</string>
+    <string name="link_not_direct_unknown">no direct link (route not known)</string>
+    <plurals name="link_not_direct">
+        <item quantity="one">no direct link (%d hop)</item>
+        <item quantity="other">no direct link (%d hops)</item>
+    </plurals>
+    <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
+    <string name="running_from_backup">from the last backup</string>
+    <string name="paused_update_note">An update is paused → Firmware</string>
+    <string name="cached_settings">Settings from %1$d min ago</string>
+    <string name="cached_settings_reread">Read again</string>
 </resources>

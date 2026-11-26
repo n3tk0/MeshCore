@@ -947,4 +947,32 @@
     <string name="map_no_nodes">Няма ретранслатори с GPS координати (lat/lon = 0 се пропускат).</string>
     <string name="map_save_confirm">Ще се изтеглят %1$d плочки (мащаб %2$d–%3$d) от OpenStreetMap за текущия видим район. Продължавате ли?</string>
     <string name="map_save_too_many">Районът е твърде голям: %1$d плочки (максимум %2$d). Приближете картата и опитайте пак.</string>
+
+    <!-- link quality (trace) -->
+    <string name="working_link">Измервам връзката…</string>
+    <string name="link_out">→ рипитъра</string>
+    <string name="link_in">← към теб</string>
+    <string name="link_snr">%1$.1f dB</string>
+    <string name="link_unknown">—</string>
+    <string name="link_rssi">RSSI %1$d dBm</string>
+    <string name="link_last_hop">последен hop</string>
+    <string name="link_measure">Измери пак</string>
+    <string name="link_follow">Следи</string>
+    <string name="link_follow_stop">Спри (%1$d s)</string>
+    <string name="link_state_none">още не е измерено</string>
+    <string name="link_state_measuring">мерим…</string>
+    <string name="link_state_ok">измерено в %1$s</string>
+    <string name="link_state_no_reply">няма отговор на trace-а</string>
+    <string name="link_state_failed">trace-ът не тръгна</string>
+    <string name="link_state_budget">лимитът за ефир е изчерпан</string>
+    <string name="link_not_direct_unknown">няма директна връзка (маршрутът не е известен)</string>
+    <plurals name="link_not_direct">
+        <item quantity="one">няма директна връзка (%d скок)</item>
+        <item quantity="other">няма директна връзка (%d скока)</item>
+    </plurals>
+    <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
+    <string name="running_from_backup">по последен backup</string>
+    <string name="paused_update_note">Има спрян ъпдейт → Firmware</string>
+    <string name="cached_settings">Настройки от преди %1$d мин</string>
+    <string name="cached_settings_reread">Прочети наново</string>
 </resources>

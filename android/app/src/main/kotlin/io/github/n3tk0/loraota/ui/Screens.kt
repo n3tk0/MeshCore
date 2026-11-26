@@ -848,10 +848,12 @@ private fun RepeaterHome(vm: AppViewModel) {
     if (vm.needsRelogin) {
         ReloginBanner(vm)
     }
+    LinkCard(vm)   // the link both ways stays above every tab
     when (vm.repeaterTab) {
         RepeaterTab.OVERVIEW -> {
             StatusCard(vm)
-            vm.info?.let { RunningCard(it) }
+            if (vm.pausedUpdate) PausedUpdateNote(vm)
+            RunningNow(vm)
             QuickActionsCard(vm)
             NeighborsCard(vm)
         }
@@ -859,6 +861,8 @@ private fun RepeaterHome(vm: AppViewModel) {
             HealthScreen(vm)
         }
         RepeaterTab.FIRMWARE -> {
+            // the OTA check waits for this tab: once for a login (and 'Check again' when it did not get an answer)
+            LaunchedEffect(vm.otaChecked, vm.otaTried, vm.busy, vm.step) { vm.checkOtaOnce() }
             vm.info?.let { RunningCard(it) }
             TabRow(selectedTabIndex = vm.firmwareTab) {
                 Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
@@ -872,14 +876,41 @@ private fun RepeaterHome(vm: AppViewModel) {
     }
 }
 
+/** What runs now: the live answer once the Firmware tab asked for it, until then the firmware of the last backup. */
 @Composable
-private fun RunningCard(info: OtaProtocol.Info) {
+private fun RunningNow(vm: AppViewModel) {
+    val info = vm.info
+    val backup = vm.backupFirmware
+    when {
+        info != null -> RunningCard(info)
+        !vm.otaChecked && backup != null -> RunningCard(null, backup.first, stringResource(R.string.running_from_backup))
+    }
+}
+
+/** A LoRa update the app paused or stopped here: the repeater may still keep it; the Firmware tab goes on with it. */
+@Composable
+private fun PausedUpdateNote(vm: AppViewModel) {
+    Card(
+        Modifier.fillMaxWidth().clickable(enabled = !vm.busy) { vm.selectRepeaterTab(RepeaterTab.FIRMWARE) },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Warning, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.paused_update_note), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer)
+        }
+    }
+}
+
+@Composable
+private fun RunningCard(info: OtaProtocol.Info?, fallbackIdent: String = "", note: String? = null) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+                if (info != null) Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
                     Text(
                         when (info.platform) {
                             OtaProtocol.PLATFORM_NRF52 -> "nRF52"
@@ -892,7 +923,8 @@ private fun RunningCard(info: OtaProtocol.Info) {
                     )
                 }
             }
-            Text(info.ident.replace('|', '\n'), style = MaterialTheme.typography.bodyMedium)
+            Text((info?.ident ?: fallbackIdent).replace('|', '\n'), style = MaterialTheme.typography.bodyMedium)
+            if (note != null) Text(note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -924,7 +956,7 @@ private fun LoraTab(vm: AppViewModel) {
 
     if (info == null) {
         // a stock repeater (or the answer got lost): login and status only
-        if (vm.busy && !vm.otaChecked) return
+        if ((vm.busy && !vm.otaChecked) || (!vm.otaChecked && !vm.otaTried)) return   // the check is on its way
         ReadyRow(false, stringResource(R.string.ready_supported), stringResource(R.string.recheck), !vm.busy) { vm.recheck() }
         if (vm.otaChecked) {
             Hint(stringResource(R.string.no_ota_short), stringResource(R.string.no_ota))
@@ -1712,7 +1744,7 @@ private fun StatusCard(vm: AppViewModel) {
                     shape = MaterialTheme.shapes.small,
                 ) {
                     Text(
-                        StatusFormat.routeBadge(routeLabel, s.lastRssi),
+                        routeLabel,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (hops == 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,

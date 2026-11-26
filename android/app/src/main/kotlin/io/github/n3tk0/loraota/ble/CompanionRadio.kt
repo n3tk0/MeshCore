@@ -1,5 +1,7 @@
 package io.github.n3tk0.loraota.ble
 
+import io.github.n3tk0.loraota.ota.LinkTrace
+import io.github.n3tk0.loraota.ota.SideRadio
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -79,6 +81,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val PUSH_LOGIN_SUCCESS = 0x85
         const val PUSH_LOGIN_FAIL = 0x86
         const val PUSH_BINARY_RESPONSE = 0x8C
+        const val PUSH_TRACE_DATA = LinkTrace.PUSH_TRACE_DATA
         const val PUSH_CLI_REPLY_CAPTURED = 0xC0   // [code][sender prefix 6][timestamp 4][text]
         const val RESP_TELEMETRY_HISTORY = 0xC1    // [code] + a history piece (see HistorySeries)
     }
@@ -118,7 +121,7 @@ class CompanionRadio(private val link: CompanionLink) {
                 val f = link.frames.receive()
                 if (match(f)) return@withTimeoutOrNull f
                 val c = code(f)
-                if (c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL) {
+                if (kept(c)) {
                     pending.addLast(f)
                     while (pending.size > 32) pending.removeFirst()
                 }
@@ -127,6 +130,10 @@ class CompanionRadio(private val link: CompanionLink) {
             ByteArray(0)
         }
     }
+
+    /** Pushes that may come while waiting for something else: kept for whoever waits for them. */
+    private fun kept(c: Int) = c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS ||
+        c == PUSH_LOGIN_FAIL || c == PUSH_TRACE_DATA
 
     private fun code(f: ByteArray) = if (f.isEmpty()) -1 else f[0].toInt() and 0xff
 
@@ -182,7 +189,7 @@ class CompanionRadio(private val link: CompanionLink) {
                 while (true) {
                     val f = link.frames.tryReceive().getOrNull() ?: break
                     val c = code(f)
-                    if (c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL) {
+                    if (kept(c)) {
                         pending.addLast(f)
                         while (pending.size > 32) pending.removeFirst()
                     }
@@ -249,6 +256,34 @@ class CompanionRadio(private val link: CompanionLink) {
         return f.copyOfRange(6, f.size)
     }
 
+    /** The radio settings the companion runs on now (from its self info: frequency, bandwidth, SF, CR); null when it did not say. */
+    fun mainRadio(): SideRadio? {
+        val s = selfInfo
+        if (s.size < 58) return null
+        val b = ByteBuffer.wrap(s).order(ByteOrder.LITTLE_ENDIAN)
+        return SideRadio(b.getInt(48), b.getInt(52), s[56].toInt() and 0xff, s[57].toInt() and 0xff)
+    }
+
+    /** The companion's path hash mode (0: one byte per hop), from the device query; 0 when it did not say. */
+    fun pathHashMode(): Int = if (deviceInfoRaw.size > 81) (deviceInfoRaw[81].toInt() and 0xff).coerceIn(0, 2) else 0
+
+    /**
+     * A trace along [path] (hashes of [hashSize] bytes each, hashSize - 1 goes in the flags): the companion sends it
+     * direct, and its push comes when the packet has been through the path and was heard again.
+     * Null when no trace came back in time.
+     */
+    suspend fun trace(path: ByteArray, hashSize: Int = 1): LinkTrace.Data? {
+        val tag = java.util.concurrent.ThreadLocalRandom.current().nextInt().let { if (it == 0) 1 else it }
+        val flags = (hashSize - 1).coerceIn(0, 3)
+        val sent = LinkTrace.parseSent(
+            command(LinkTrace.command(tag, 0, flags, path), 5000, RESP_SENT),
+        ) ?: throw CompanionError("short reply")
+        val f = lock.withLock {
+            await(LinkTrace.waitMs(sent.estTimeoutMs)) { LinkTrace.tagOf(it) == tag }
+        } ?: return null
+        return LinkTrace.parseData(f)
+    }
+
     /**
      * A command for the repeater's console (as an admin). Its reply goes to the companion's message
      * queue like any console reply, so the caller checks the result another way.
@@ -300,7 +335,7 @@ class CompanionRadio(private val link: CompanionLink) {
         while (true) {
             val f = link.frames.tryReceive().getOrNull() ?: break
             val c = code(f)
-            if (c == PUSH_BINARY_RESPONSE || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL || (c == PUSH_CLI_REPLY_CAPTURED && !his(f))) {
+            if (kept(c) && !(c == PUSH_CLI_REPLY_CAPTURED && his(f))) {
                 pending.addLast(f)
                 while (pending.size > 32) pending.removeFirst()   // as in await()
             }
