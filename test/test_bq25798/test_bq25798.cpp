@@ -140,9 +140,14 @@ TEST(BQ25798, TerminationFollowsTheChargeCurrent) {
   bq.apply(s);
   EXPECT_EQ(f.r[0x09] & 0x1F, 3);       // 1 A -> 120 mA (not the chip's 200 mA)
   EXPECT_EQ(f.r[0x12], 0);              // CHARGER_CONTROL_3 untouched
+  EXPECT_EQ(f.r[0x17] & 0x06, 0x02);    // 1 A: the chip's 20 % in TS_COOL
+  f.r[0x0F] &= ~0x02;                   // EN_TERM cleared by someone
   s.ichg_ma = 250;
   bq.apply(s);
   EXPECT_EQ(f.r[0x09] & 0x1F, 1);       // 250 mA -> 40 mA, the lowest
+  EXPECT_EQ(f.r[0x17] & 0x06, 0x06);    // 250 mA: unchanged in TS_COOL (20 % = 50 mA would be near ITERM)
+  EXPECT_EQ(f.r[0x17] & ~0x06, 0x7A & ~0x06);
+  EXPECT_EQ(f.r[0x0F] & 0x02, 0x02);    // EN_TERM back
 }
 
 TEST(BQ25798, LiFePO4NeverChargesTowards42V) {

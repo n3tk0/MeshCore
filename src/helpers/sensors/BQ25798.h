@@ -113,7 +113,9 @@
 #define BQ_REG_CTRL0           0x0F
 #define BQ_REG_CTRL1           0x10
 #define BQ_REG_CTRL2           0x11
-#define BQ_REG_ITERM           0x09   // REG09 Termination Control: ITERM bits 4:0, 40 mA steps (bit 5 REG_RST)
+#define BQ_REG_ITERM           0x09   // REG09 Termination Control: ITERM bits 4:0, 40 mA steps (bit 6 REG_RST, bit 5 STOP_WD_CHG)
+#define BQ_REG_NTC0            0x17   // JEITA_ISETC bits 2:1 (01 = 20 % of ICHG in TS_COOL, 11 = unchanged)
+#define BQ_ISETC_FULL_MAX_MA    500   // up to this ICHG the cool range keeps the full current
 #define BQ_REG_CTRL5           0x14
 #define BQ_REG_MPPT            0x15
 #define BQ_REG_NTC1            0x18
