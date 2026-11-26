@@ -393,7 +393,7 @@ private fun formatSecsAgo(secs: Long): String = when {
     else -> stringResource(R.string.ago_days, (secs / 86400L).toInt())
 }
 
-/** Tools tab inside a logged-in repeater: CLI Console | Visual Settings | Backup/Restore. */
+/** Tools tab inside a logged-in repeater: CLI Console | Settings (the settings, the filter, and the backup at the bottom). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RepeaterToolsTab(vm: AppViewModel) {
@@ -401,7 +401,6 @@ fun RepeaterToolsTab(vm: AppViewModel) {
     val sections = listOf(
         R.string.tools_cli,
         R.string.tools_settings,
-        R.string.tools_backup_short,
     )
 
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -419,24 +418,27 @@ fun RepeaterToolsTab(vm: AppViewModel) {
 
     when (toolSection) {
         0 -> CliConsole(vm, isCompanion = false)
-        1 -> RepeaterSettingsEditor(vm)
-        2 -> {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(stringResource(R.string.tools_backup_title), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        stringResource(R.string.tools_backup_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(
-                        onClick = { vm.openBackup(DeviceKind.REPEATER) },
-                        enabled = !vm.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.backup_open))
-                    }
-                }
+        else -> RepeaterSettingsEditor(vm)
+    }
+}
+
+/** Backup and restore of the repeater's settings: the last card of the Settings page. */
+@Composable
+private fun RepeaterBackupCard(vm: AppViewModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.tools_backup_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.tools_backup_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = { vm.openBackup(DeviceKind.REPEATER) },
+                enabled = !vm.busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.backup_open))
             }
         }
     }
@@ -593,6 +595,7 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
     if (vm.canReadRepeater == false) {
         InfoCard(stringResource(R.string.health_no_capture))
         TempRadioCard(vm)
+        RepeaterBackupCard(vm)
         return
     }
 
@@ -915,7 +918,9 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
         }
     }
 
+    RepeaterFilterCard(vm)
     TempRadioCard(vm)
+    RepeaterBackupCard(vm)
 }
 
 @Composable

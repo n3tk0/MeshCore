@@ -9,13 +9,19 @@ package io.github.n3tk0.loraota.backup
  * Kept in memory only (the guest password is among the settings, and nothing secret goes to disk in the clear).
  */
 class SettingsCache(private val clock: () -> Long = System::currentTimeMillis) {
-    /** [time]: when the repeater was read; [withOta]: `ota status` was asked too (our firmware only). */
-    class Entry(val time: Long, val withOta: Boolean, val items: List<BackupItem>) {
+    /**
+     * [time]: when the repeater was read; [withOta]: `ota status` was asked too (our firmware only); [withFilter]: the
+     * packet filter (`filter.*` items) was read too.
+     */
+    class Entry(val time: Long, val withOta: Boolean, val withFilter: Boolean, val items: List<BackupItem>) {
         val values: Map<String, String> get() = items.associate { it.id to it.value }
     }
 
     companion object {
         /** As long as an automatic backup counts as made 'just now'. */
+        /** Repeaters kept (the oldest read goes first). */
+        const val MAX_ENTRIES = 16
+
         const val FRESH_MS = 30 * 60_000L
 
         fun ageMinutes(now: Long, time: Long): Int = ((now - time).coerceAtLeast(0) / 60_000L).toInt()
@@ -28,9 +34,11 @@ class SettingsCache(private val clock: () -> Long = System::currentTimeMillis) {
 
     /** A successful read of [key]'s settings (a repeater's public key, hex). */
     @Synchronized
-    fun put(key: String, items: List<BackupItem>, withOta: Boolean) {
+    fun put(key: String, items: List<BackupItem>, withOta: Boolean, withFilter: Boolean = false) {
         if (key.isEmpty()) return
-        map[key] = Entry(clock(), withOta, keep(items))
+        map.remove(key)
+        map[key] = Entry(clock(), withOta, withFilter, keep(items))
+        while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
     }
 
     /** What was read less than [FRESH_MS] ago (see [Entry.withOta]: a read without `ota status` has no `ota`). */
@@ -54,7 +62,7 @@ class SettingsCache(private val clock: () -> Long = System::currentTimeMillis) {
             if (k == RepeaterBackup.PASSWORD) continue
             values[k] = BackupItem(BackupItem.GROUP_SETTING, k, k, v)
         }
-        map[key] = Entry(e.time, e.withOta, values.values.toList())
+        map[key] = Entry(e.time, e.withOta, e.withFilter, values.values.toList())
     }
 
     /** Not sure what the repeater has now (a failed or partial write, a reboot, a new firmware): read again next time. */

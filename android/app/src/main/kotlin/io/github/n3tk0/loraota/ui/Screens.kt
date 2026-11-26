@@ -884,7 +884,7 @@ private fun RunningNow(vm: AppViewModel) {
     val backup = vm.backupFirmware
     when {
         info != null -> RunningCard(info)
-        !vm.otaChecked && backup != null -> RunningCard(null, backup.first, stringResource(R.string.running_from_backup))
+        backup != null -> RunningCard(null, backup.first, stringResource(R.string.running_from_backup))
     }
 }
 

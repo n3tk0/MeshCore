@@ -670,8 +670,39 @@ bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
       return false;
     }
   }
+#ifdef WITH_PACKET_FILTER
+  // the last check: it only judges what the checks above would have repeated
+  return filter.allowForward(packet, millis(), getRTCClock()->getCurrentTime());
+#else
   return true;
+#endif
 }
+
+#ifdef WITH_PACKET_FILTER
+// a key the node itself knows is never a "new key": its ACL, and the owners of its mailbox
+bool MyMesh::filterKnowsKey(void* ctx, const uint8_t* key4) {
+  MyMesh* m = (MyMesh*)ctx;
+  if (m->acl.getClient(key4, 4) != NULL) return true;
+#ifdef WITH_MAILBOX
+  if (m->mailbox.findOwner(key4, 4) >= 0) return true;
+#endif
+  return false;
+}
+
+uint32_t MyMesh::filterAirtime(void* ctx, int raw_len) {
+  return ((MyMesh*)ctx)->_radio->getEstAirtimeFor(raw_len);
+}
+
+// `filter ...`: the command works the same locally and over the mesh as an admin. Settings are
+// written only when they changed.
+void MyMesh::handleFilterCommand(char* command, char* reply) {
+  int saves = filter.handleCommand(command, reply, millis(), getRTCClock()->getCurrentTime());
+  if (saves) FilterStore::afterCommand(_fs, filter, saves, millis());
+#ifdef WITH_MAILBOX
+  syncMailboxBlock();
+#endif
+}
+#endif
 
 const char *MyMesh::getLogDateTime() {
   static char tmp[32];
@@ -790,6 +821,9 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
                             uint8_t *data, size_t len) {
   if (packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) { // received an initial request by a possible admin
                                                            // client (unknown at this stage)
+#ifdef WITH_PACKET_FILTER
+    if (filter.isBlocked(sender.pub_key)) return;   // a blocked key: no login, no answer
+#endif
     uint32_t timestamp;
     memcpy(&timestamp, data, 4);
 
@@ -867,6 +901,9 @@ static bool isShare(const mesh::Packet *packet) {
 
 void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32_t timestamp,
                           const uint8_t *app_data, size_t app_data_len) {
+#ifdef WITH_PACKET_FILTER
+  if (filter.isBlocked(id.pub_key)) return;   // a blocked key: not a neighbour, not a mailbox owner
+#endif
   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
 
   // if this a zero hop advert (and not via 'Share'), add it to neighbours
@@ -901,6 +938,11 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
     return;
   }
   ClientInfo* client = acl.getClientByIdx(i);
+#ifdef WITH_PACKET_FILTER
+  // A blocked key keeps its ACL entry but gets nothing from it: no request, no CLI command (so a blocked
+  // old admin cannot run `filter off`), no answer.
+  if (filter.isBlocked(client->id.pub_key)) return;
+#endif
 
   if (type == PAYLOAD_TYPE_REQ) { // request (from a Known admin client!)
     uint32_t timestamp;
@@ -1044,6 +1086,9 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t 
   if (i >= 0 && i < acl.getNumClients()) { // get from our known_clients table (sender SHOULD already be known in this context)
     MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
     auto client = acl.getClientByIdx(i);
+#ifdef WITH_PACKET_FILTER
+    if (filter.isBlocked(client->id.pub_key)) return false;   // a blocked key: its path is not stored
+#endif
 
     // store a copy of path, for sendDirect()
     client->out_path_len = mesh::Packet::copyPath(client->out_path, path, path_len);
@@ -1237,6 +1282,10 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   history_rx = history_tx = history_air = 0;
 #endif
   the_instance = this;
+#ifdef WITH_PACKET_FILTER
+  filter.setKnownFn(&MyMesh::filterKnowsKey, this);
+  filter.setAirFn(&MyMesh::filterAirtime, this);
+#endif
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -1245,6 +1294,9 @@ void MyMesh::begin(FILESYSTEM *fs) {
   // load persisted prefs
   _cli.loadPrefs(_fs);
   acl.load(_fs, self_id);
+#ifdef WITH_PACKET_FILTER
+  FilterStore::begin(_fs, filter, millis(), getRTCClock()->getCurrentTime());
+#endif
 #if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
   if (qspi.begin()) ota_target.setQspi(&qspi);
 #endif
@@ -1648,6 +1700,10 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     smpptCommand(Wire, &command[5], reply, 155);
 #endif
 #endif
+#ifdef WITH_PACKET_FILTER
+  } else if (memcmp(command, "filter", 6) == 0 && (command[6] == 0 || command[6] == ' ')) {
+    handleFilterCommand(command, reply);
+#endif
 #ifdef WITH_MAILBOX
   } else if (memcmp(command, "mailbox", 7) == 0 && (command[7] == 0 || command[7] == ' ')) {
     handleMailboxCommand(&command[7], reply);
@@ -1710,6 +1766,10 @@ void MyMesh::loop() {
 
   mesh::Mesh::loop();
 
+#ifdef WITH_PACKET_FILTER
+  filter.tick(millis());   // the advert limiter's uptime clock must see every millis() wrap
+  FilterStore::loop(_fs, filter, millis(), psave.stage() == PSAVE_NORMAL);   // the first-seen table, at most hourly
+#endif
 #if ENV_INCLUDE_BQ25798
   saveChargerCalIfDue();
 #endif
@@ -1952,8 +2012,20 @@ void MyMesh::saveMailbox() {
   }
 }
 
+// owners on the packet filter's block list: nothing is kept for them and nothing is handed over
+void MyMesh::syncMailboxBlock() {
+#ifdef WITH_PACKET_FILTER
+  for (int i = 0; i < mailbox.config().num_owners; i++) {
+    bool blocked = filter.isBlocked(mailbox.config().owners[i], false);
+    mailbox.setBlocked(i, blocked);
+    if (blocked && mailbox_deliver_owner == i) { mailbox_deliver_owner = -1; mailbox_wait_until = 0; }
+  }
+#endif
+}
+
 void MyMesh::onMailboxPacket(mesh::Packet* pkt) {
   if (!mailbox.isEnabled() || pkt->payload_len < 2) return;
+  syncMailboxBlock();
   uint32_t now = getRTCClock()->getCurrentTime();
   uint8_t type = pkt->getPayloadType();
 
@@ -2022,6 +2094,7 @@ void MyMesh::startMailboxDelivery(int owner, bool proven) {
     return;
   }
   if (owner < 0 || mailbox_deliver_owner >= 0 || mailbox.countFor(owner) == 0) return;
+  if (mailbox.isBlocked(owner)) return;
   if (psave.stage() >= PSAVE_CRITICAL) return;
   if (!proven && mailbox_try_after[owner] && !millisHasNowPassed(mailbox_try_after[owner])) return;
   if (!proven) mailbox_try_after[owner] = futureMillis(MAILBOX_RETRY_UNPROVEN);
@@ -2105,6 +2178,11 @@ void MyMesh::handleMailboxCommand(char* args, char* reply) {
     if (strlen(hex) != PUB_KEY_SIZE * 2 || !mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
       strcpy(reply, "Err - need the full 64-hex public key");
       save = false;
+#ifdef WITH_PACKET_FILTER
+    } else if (filter.isBlocked(key, false)) {
+      strcpy(reply, "Err - that key is blocked (filter block)");
+      save = false;
+#endif
     } else if (!mailbox.addOwner(key)) {
       sprintf(reply, "Err - max %d owners", MAILBOX_MAX_OWNERS);
       save = false;

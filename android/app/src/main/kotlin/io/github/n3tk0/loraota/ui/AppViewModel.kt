@@ -89,7 +89,10 @@ import io.github.n3tk0.loraota.ota.SelfTest
 import io.github.n3tk0.loraota.security.PasswordStore
 import io.github.n3tk0.loraota.tools.CliHelper
 import io.github.n3tk0.loraota.tools.DiagnosticReport
+import io.github.n3tk0.loraota.tools.FilterConfig
+import io.github.n3tk0.loraota.tools.FilterList
 import io.github.n3tk0.loraota.tools.NeighborEntry
+import io.github.n3tk0.loraota.tools.RepeaterFilter
 import io.github.n3tk0.loraota.tools.NeighborsParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1022,10 +1025,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         info = i
         otaChecked = true
         resumable = i?.state == OtaProtocol.STATE_PAUSED
-        when (i?.state) {
-            OtaProtocol.STATE_PAUSED -> markPaused(r)
-            OtaProtocol.STATE_IDLE, OtaProtocol.STATE_FAILED -> clearPaused(r)
-        }
+        if (i != null) { if (i.state == OtaProtocol.STATE_PAUSED) markPaused(r) else clearPaused(r) }
         if (i != null) loadReleases()   // a route with hops is shown on the screen (and keeps Update off)
     }
 
@@ -1090,7 +1090,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             linkState = LinkState.NO_BUDGET
             return
         }
-        budget.add(secs)
         val before = linkState
         linkState = LinkState.MEASURING
         try {
@@ -1099,14 +1098,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                linkState = LinkState.FAILED
+                linkState = LinkState.FAILED   // nothing was sent: no airtime to count
                 return
             }
+            budget.add(secs)
             val reading = data?.let { LinkTrace.reading(it, r.publicKey.copyOf(hashSize)) }
             val now = System.currentTimeMillis()
-            linkOut = reading?.outSnr
-            linkIn = reading?.inSnr
-            linkTime = now
+            // a lost trace keeps the last good measurement on screen (with the note that this one got no reply)
+            if (reading != null) {
+                linkOut = reading.outSnr
+                linkIn = reading.inSnr
+                linkTime = now
+            }
             linkState = if (reading != null) LinkState.OK else LinkState.NO_REPLY
             linkFollow.add(LinkSample(now, reading?.outSnr, reading?.inSnr))
             linkSamples = linkFollow.samples.toList()
@@ -1273,7 +1276,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun backToRepeaters() {
         val oldRepeater = repeater
         stopFollow()
-        settingsCache.clear()
         resetLink()
         patchJob?.cancel()
         calculatingPatch = false
@@ -2055,10 +2057,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 return QueueResult.SKIPPED to if (x.res == R.string.err_no_answer) str(R.string.q_no_ota) else str(x.res, *x.args.toTypedArray())
             }
             info = i
-            when (i.state) {
-                OtaProtocol.STATE_PAUSED -> markPaused(r)
-                OtaProtocol.STATE_IDLE, OtaProtocol.STATE_FAILED -> clearPaused(r)
-            }
+            if (i.state == OtaProtocol.STATE_PAUSED) markPaused(r) else clearPaused(r)
             if (!i.enabled) return QueueResult.SKIPPED to str(R.string.q_ota_off)
             val sha = hex(i.imageSha)
             // not in the loaded lists: the older releases too (the find is kept for the next repeater)
@@ -2404,7 +2403,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun backupNow() = work { makeBackup(backupKind, false) ; message = str(R.string.msg_backup_done) }
+    fun backupNow() = work {
+        val saved = makeBackup(backupKind, false)
+        message = str(R.string.msg_backup_done)
+        // a filter list the repeater's replies did not give whole: saved as far as it was read, and said so
+        if (saved.hasIncomplete) {
+            message = str(R.string.backup_filter_incomplete)
+            messageIsError = true
+        }
+    }
 
     private suspend fun makeBackup(kind: DeviceKind, auto: Boolean): Backup {
         val b = when (kind) {
@@ -2449,11 +2456,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun readRepeater(r: Contact): List<BackupItem> {
         val withOta = wantOta()
         val items = try {
-            RepeaterBackup.read(companion, r, withOta) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
+            RepeaterBackup.read(companion, r, withOta, withFilter = true) { i, n -> working = str(R.string.working_backup_repeater, i, n) }
         } catch (e: NoAnswer) {
             throw Exception(str(R.string.backup_no_answer))
         }
-        settingsCache.put(hex(r.publicKey), items, withOta)
+        settingsCache.put(hex(r.publicKey), items, withOta, withFilter = true)
         return withPassword(r, items)
     }
 
@@ -2512,7 +2519,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val r = repeater ?: return@work
                 if (!RepeaterBackup.supported(companion)) throw Exception(str(R.string.backup_no_capture))
                 // what a read of the last half hour saw (an edit of the app is in it too): no 25 requests over LoRa
+                val wantFilter = b.items.any { RepeaterFilter.isBackupId(it.id) }
                 cached = if (force) null else settingsCache.fresh(hex(r.publicKey))
+                    ?.takeIf { (it.withOta || !wantOta()) && (!wantFilter || it.withFilter) }
                 val c = cached
                 if (c != null) {
                     restoreCachedMin = settingsCache.ageMinutes(c)
@@ -2525,6 +2534,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .filter { it.item.group != BackupItem.GROUP_KEY || b.privateKey != null }
             // a read that did not ask `ota status` says nothing about it
             .filter { cached?.withOta != false || it.item.id != RepeaterBackup.OTA }
+            .filter { it.item.id != RepeaterFilter.INCOMPLETE_ID }   // a note about the backup, not a setting
         restoreChecked.clear()
         // the identity only when the user ticks it: it changes who the device is for the network
         for (r in rows) restoreChecked[r.item.ref] = r.item.group != BackupItem.GROUP_KEY
@@ -3267,6 +3277,114 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteConfigProfile(name: String) = toolsState.deleteProfile(name)
 
+    // ---- the repeater's packet filter (Filter card in Settings) ----
+
+    /** The filter shown in the card; read with [loadFilter], changed with [filterCommand]. */
+    val filterConfig get() = toolsState.filter
+    val filterLoaded get() = toolsState.filterLoaded
+    val filterUnsupported get() = toolsState.filterUnsupported
+    val filterStatsStatus get() = toolsState.filterStatsStatus
+    val filterStatsAir get() = toolsState.filterStatsAir
+
+    /** One CLI command to the repeater and its reply (null: none came); the capture is switched off again by the caller. */
+    private suspend fun filterAsk(r: Contact, cmd: String): String? = RepeaterBackup.ask(companion, r, cmd)
+
+    private suspend fun filterCaptureOff() = withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
+
+    /** Reads the filter: `filter` first (no filter in the firmware: stop), then each setting and list. */
+    fun loadFilter() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) canReadRepeater = probeCanReadRepeater()
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        val queries = RepeaterFilter.LOAD_QUERIES
+        var cfg = FilterConfig()
+        var missed = 0
+        try {
+            for ((i, q) in queries.withIndex()) {
+                working = "${str(R.string.filter_working_read)} (${i + 1}/${queries.size})"
+                val list = RepeaterFilter.listOfQuery(q)
+                if (list != null) {
+                    // all pages (a reply holds only as many entries as fit the repeater's buffer)
+                    val read = RepeaterFilter.readList(list, full = false) { filterAsk(r, it) }
+                    if (read == null) { if (++missed >= 3) throw Exception(str(R.string.health_no_answer)); continue }
+                    missed = 0
+                    cfg = RepeaterFilter.withList(cfg, list, read)
+                    continue
+                }
+                val reply = filterAsk(r, q)
+                if (reply == null) {
+                    if (i == 0 || ++missed >= 3) throw Exception(str(R.string.health_no_answer))
+                    continue
+                }
+                missed = 0
+                if (i == 0 && RepeaterFilter.isUnsupported(reply)) {
+                    toolsState.clearFilter()
+                    toolsState.filterUnsupported = true
+                    toolsState.filterLoaded = true
+                    return@work
+                }
+                cfg = RepeaterFilter.apply(cfg, q, reply)
+            }
+        } finally {
+            filterCaptureOff()
+        }
+        toolsState.filter = cfg
+        toolsState.filterUnsupported = false
+        toolsState.filterLoaded = true
+        message = str(R.string.filter_loaded)
+    }
+
+    /**
+     * Sends one changing command (`filter hash 2`, `filter block add ...`); when it took (`> Filter: OK`), reads
+     * back [refresh] (the commands that show the changed setting) so the card shows what the repeater has now.
+     */
+    fun filterCommand(cmd: String, refresh: List<String>) = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        working = cmd
+        settingsCache.invalidate(hex(r.publicKey))   // filter.* are among the cached settings
+        try {
+            val reply = filterAsk(r, cmd) ?: throw Exception(str(R.string.health_no_answer))
+            if (!RepeaterFilter.isOk(reply)) {
+                if (RepeaterFilter.isUnsupported(reply)) toolsState.filterUnsupported = true
+                message = str(R.string.filter_failed, RepeaterFilter.errorText(reply))
+                messageIsError = true
+                return@work
+            }
+            var cfg = toolsState.filter
+            for (q in refresh) {
+                working = q
+                val list = RepeaterFilter.listOfQuery(q)
+                if (list != null) {
+                    RepeaterFilter.readList(list, full = false) { filterAsk(r, it) }?.let { cfg = RepeaterFilter.withList(cfg, list, it) }
+                    continue
+                }
+                val back = filterAsk(r, q) ?: continue
+                cfg = RepeaterFilter.apply(cfg, q, back)
+            }
+            toolsState.filter = cfg
+            message = str(R.string.filter_saved)
+        } finally {
+            filterCaptureOff()
+        }
+    }
+
+    /** The statistics: the status line with its drop totals and the airtime the drops saved. */
+    fun loadFilterStats() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        try {
+            working = RepeaterFilter.STATUS
+            val status = filterAsk(r, RepeaterFilter.STATUS) ?: throw Exception(str(R.string.health_no_answer))
+            working = RepeaterFilter.STATS_AIR
+            val air = filterAsk(r, RepeaterFilter.STATS_AIR)
+            toolsState.filterStatsStatus = RepeaterFilter.clean(status).ifEmpty { status.trim() }
+            toolsState.filterStatsAir = air?.let { RepeaterFilter.clean(it).ifEmpty { it.trim() } }
+        } finally {
+            filterCaptureOff()
+        }
+    }
+
     /** The editor from the last read of the half hour, with no request over the air; false when there is none. */
     fun loadCachedSettings(): Boolean {
         val r = repeater ?: return false
@@ -3280,6 +3398,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         toolsState.settings.clear()
         toolsState.settingsDraft.clear()
         for (item in items) {
+            if (RepeaterFilter.isBackupId(item.id)) continue   // the Filter card has its own state
             toolsState.settings[item.id] = item.value
             toolsState.settingsDraft[item.id] = item.value
         }
@@ -3309,15 +3428,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             toolsState.settingsProgress = null
         }
-        settingsCache.put(hex(r.publicKey), items, false)
-        toolsState.settings.clear()
-        toolsState.settingsDraft.clear()
-        for (item in items) {
-            toolsState.settings[item.id] = item.value
-            toolsState.settingsDraft[item.id] = item.value
-        }
-        toolsState.settingsLoaded = true
-        settingsCachedMin = null
+        settingsCache.put(hex(r.publicKey), items, withOta = false, withFilter = false)
+        showSettings(items, null)
         message = str(R.string.rset_loaded, items.size)
     }
 

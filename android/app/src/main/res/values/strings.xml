@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MeshCore Сервиз</string>
-    <string name="tools_backup_short">Backup</string>
     <string name="companion_hint">Свържи своя companion, за да управляваш, проверяваш и обновяваш рипитърите. Без връзка виж „Моите рипитъри“ и Офлайн.</string>
     <string name="scan">Търси companion</string>
     <string name="scanning">Търся…</string>
@@ -615,6 +614,79 @@
     <string name="tools_settings">Настройки</string>
     <string name="tools_backup_title">Backup и възстановяване</string>
     <string name="tools_backup_desc">Запази текущите настройки на рипитъра на телефона или възстанови от по-стар backup.</string>
+    <!-- repeater filter (Settings) -->
+    <string name="filter_title">Филтър</string>
+    <string name="filter_subtitle">Какво да не препраща рипитърът. По подразбиране е изключен.</string>
+    <string name="filter_hint_load">Натисни „Зареди“, за да прочетеш филтъра от рипитъра (няколко съобщения по LoRa).</string>
+    <string name="filter_working_read">Чета филтъра…</string>
+    <string name="filter_loaded">Филтърът е зареден.</string>
+    <string name="filter_saved">Филтърът е обновен.</string>
+    <string name="filter_failed">Филтърът отказа: %1$s</string>
+    <string name="filter_unsupported">Фърмуерът на този рипитър няма филтър.</string>
+    <string name="filter_enabled">Филтърът е включен</string>
+    <string name="filter_dryrun">Само брои (dry-run)</string>
+    <string name="filter_dryrun_hint">Брои какво би изхвърлил, но препраща всичко.</string>
+    <string name="filter_malformed">Изхвърляй повредени групови съобщения</string>
+    <string name="filter_hash">Мин. размер на хеша в пътя (1-3)</string>
+    <string name="filter_hash_warn">При 2 или 3 се изхвърлят пакетите с 1-байтов път, а това е почти целият flood трафик. Ползвай само при атака.</string>
+    <string name="filter_advert">Обява от ключ веднъж на N часа (0-720, 0 = изкл.)</string>
+    <string name="filter_age">Макс. възраст на съобщение, минути (1-10080)</string>
+    <string name="filter_age_warn">Нужен е верен часовник на рипитъра. Без часовник (преди 2026 г.) е неактивно, а грешен часовник или телефон с грешен час режат добри съобщения.</string>
+    <string name="filter_age_inactive">Часовникът на рипитъра не е настроен: възрастта е неактивна.</string>
+    <string name="filter_ingress">Лимит по входен ретранслатор</string>
+    <string name="filter_ingress_n">Пакета</string>
+    <string name="filter_ingress_secs">За сек.</string>
+    <string name="filter_ingress_soft">Меко (по избор)</string>
+    <string name="filter_newkey">Малка квота за нови ключове</string>
+    <string name="filter_newkey_hours">Нов е до (часа)</string>
+    <string name="filter_newkey_mins">Обява на (мин.)</string>
+    <string name="filter_set">Задай</string>
+    <string name="filter_turn_off">Изключи</string>
+    <string name="filter_now">Сега: %1$s</string>
+    <string name="filter_value_off">изкл.</string>
+    <string name="filter_value_hours">%1$d ч</string>
+    <string name="filter_value_mins">%1$d мин</string>
+    <string name="filter_value_ingress">%1$d пакета за %2$d сек</string>
+    <string name="filter_value_soft">, меко от %1$d</string>
+    <string name="filter_value_newkey">%1$d ч, обява на %2$d мин</string>
+    <string name="filter_err_range">Извън допустимите стойности.</string>
+    <string name="filter_err_hex">Само шестнадесетични знаци (0-9, a-f).</string>
+    <string name="filter_err_block_len">8 до 64 знака.</string>
+    <string name="filter_err_path_len">2 до 8 знака.</string>
+    <string name="filter_err_odd">Четен брой знаци.</string>
+    <string name="filter_err_hash">Започва с #.</string>
+    <string name="filter_err_space">Без интервали и запетаи.</string>
+    <string name="filter_err_name_long">Твърде дълго.</string>
+    <string name="filter_err_sender">До 15 знака.</string>
+    <string name="filter_err_text">До 23 знака.</string>
+    <string name="filter_err_secs">Секунди: 0-65535.</string>
+    <string name="filter_err_prob">Вероятност: 1-100.</string>
+    <string name="filter_list_block">Блокирани ключове</string>
+    <string name="filter_list_path">Блокирани пътища</string>
+    <string name="filter_list_channel">Блокирани канали</string>
+    <string name="filter_list_watch">Наблюдавани канали</string>
+    <string name="filter_list_sender">Правила за подател</string>
+    <string name="filter_list_text">Правила за текст</string>
+    <string name="filter_hint_block">Публичен ключ (8-64 hex знака)</string>
+    <string name="filter_hint_path">Път (2-8 hex знака)</string>
+    <string name="filter_hint_channel">#име или Public</string>
+    <string name="filter_hint_watch">#име</string>
+    <string name="filter_hint_sender">Име (до 15 знака, * накрая = начало)</string>
+    <string name="filter_hint_text">Текст (до 23 знака, ^ отпред = начало)</string>
+    <string name="filter_hint_secs">Сек. (по избор)</string>
+    <string name="filter_hint_prob">Вероятност (по избор)</string>
+    <string name="filter_list_empty">Празен</string>
+    <string name="filter_list_add">Добави</string>
+    <string name="filter_list_remove">Премахни</string>
+    <string name="filter_list_truncated">Списъкът е отрязан: отговорът е по-дълъг от буфера на рипитъра.</string>
+    <string name="filter_stats">Статистика</string>
+    <string name="filter_stats_load">Зареди статистиката</string>
+    <string name="filter_stats_air">Спестено ефирно време: %1$s</string>
+    <string name="backup_filter_incomplete">Backup-ът е запазен, но списък на филтъра е непълен (отговорът на рипитъра е бил отрязан или не е дошъл). Опитай отново по-близо до него.</string>
+    <string name="backup_filter_incomplete_short">Филтърът в него е непълен.</string>
+    <string name="filter_stats_air_none">Още няма спестено ефирно време.</string>
+    <string name="filter_stats_air_dry">Би спестил ефирно време: %1$s</string>
+    <string name="set_filter">Филтър: %1$s</string>
     <string name="cli_title_companion">CLI · %1$s</string>
     <string name="cli_quick_commands">Бързи команди</string>
     <string name="cli_input_hint">Команда (напр. ver, get name, set tx 20)</string>

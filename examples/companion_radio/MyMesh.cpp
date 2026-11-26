@@ -437,6 +437,10 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
 
 void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                           const uint8_t* app_data, size_t app_data_len) {
+#ifdef WITH_PACKET_FILTER
+  // a blocked key: no contact added or updated, nothing for the app (a zero-hop advert did not pass the flood filter)
+  if (_cfilter.isBlocked(id.pub_key)) return;
+#endif
 #ifdef CLOCK_FROM_ADVERT
   // No clock yet (no RTC, no phone since boot): take the time from signed adverts. One node with a
   // wrong clock must not set ours, so two adverts from different nodes have to agree within
@@ -622,7 +626,11 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
   // REVISIT: try to determine which Region (from transport_codes[1]) that Sender is indicating for replies/responses
   //    if unknown, fallback to finding Region from transport_codes[0], the 'scope' used by Sender
+#ifdef WITH_PACKET_FILTER
+  return cfilterFlood(packet);
+#else
   return false;
+#endif
 }
 
 bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
@@ -678,6 +686,10 @@ bool MyMesh::isRepeatedMsg(const ContactInfo &from, uint32_t sender_timestamp) {
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
+#ifdef WITH_PACKET_FILTER
+  // a blocked contact: dropped here, the sender still gets its ACK (sent by the caller) so it learns nothing
+  if (_cfilter.isBlocked(from.id.pub_key)) return;
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   // shown once; the sender still gets its ACK (sent by the caller)
   if (isRepeatedMsg(from, sender_timestamp)) return;
@@ -692,6 +704,9 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp, const char *text) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(from.id.pub_key)) return;
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   // an app reading a server's settings (a backup) asked for its console replies directly, so the
   // user's unread messages stay in the queue untouched
@@ -711,6 +726,9 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
 
 void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text, char* reply) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(from.id.pub_key)) return;   // no command, no reply
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   if (from.isRemoteCLIAllowed()) {
     if (!handleCommand(text, sender_timestamp, reply)) {
@@ -723,6 +741,9 @@ void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(from.id.pub_key)) return;
+#endif
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -731,6 +752,10 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
+#ifdef WITH_PACKET_FILTER
+  if (cfilterHidden(pkt)) return;   // hidden by the filter: still repeated, not shown
+  if (cfilterChannelMsg(channel, pkt, timestamp, text)) return;   // a zero-hop direct one: judged here
+#endif
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
@@ -780,6 +805,9 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
     return;
   }
 
+#ifdef WITH_PACKET_FILTER
+  if (cfilterChannelData(channel)) return;   // a hidden channel: nothing for the app
+#endif
   int i = 0;
   out_frame[i++] = RESP_CODE_CHANNEL_DATA_RECV;
   out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
@@ -812,6 +840,9 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
 
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
+#ifdef WITH_PACKET_FILTER
+  if (_cfilter.isBlocked(contact.id.pub_key)) return 0;   // a blocked contact: no telemetry, no answer
+#endif
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
     uint8_t permissions = 0;
     uint8_t cp = contact.flags >> 1; // LSB used as 'favourite' bit (so only use upper bits)
@@ -985,6 +1016,11 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
+#ifdef WITH_PACKET_FILTER
+  // a discovery answer of a blocked node: neither the app nor the UI hears of it
+  if (packet->payload_len >= 14 && (packet->payload[0] & 0xF0) == CTL_TYPE_NODE_DISCOVER_RESP &&
+      _cfilter.isPrefixBlocked(&packet->payload[6], 8)) return;
+#endif
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -1241,6 +1277,9 @@ void MyMesh::begin() {
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure public channel
   _store->loadChannels(this);
   loadOfflineQueue();   // messages the app had not fetched before the last power off or reset
+#ifdef WITH_PACKET_FILTER
+  loadCFilter();
+#endif
 #ifdef TELEMETRY_HISTORY
   loadHistory();
   _history_next = futureMillis(TH_DAY_MINS * 60000UL);
@@ -1532,7 +1571,7 @@ void MyMesh::handleCmdFrame(size_t len) {
 
       uint8_t reply[5];
       reply[0] = RESP_CODE_CONTACTS_START;
-      uint32_t count = getNumContacts(); // total, NOT filtered count
+      uint32_t count = visibleContactCount(); // total (blocked contacts are hidden), NOT filtered count
       memcpy(&reply[1], &count, 4);
       _serial->writeFrame(reply, 5);
 
@@ -1645,7 +1684,7 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SHARE_CONTACT && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
-    if (recipient) {
+    if (recipient && !isContactBlocked(*recipient)) {
       if (shareContactZeroHop(*recipient)) {
         writeOKFrame();
       } else {
@@ -1657,7 +1696,7 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_GET_CONTACT_BY_KEY && len >= 1 + PUB_KEY_SIZE) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *contact = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
-    if (contact) {
+    if (contact && !isContactBlocked(*contact)) {
       writeContactRespFrame(RESP_CODE_CONTACT, *contact);
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // not found
@@ -1685,7 +1724,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       uint8_t *pub_key = &cmd_frame[1];
       ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
       uint8_t out_len;
-      if (recipient && (out_len = exportContact(*recipient, &out_frame[1])) > 0) {
+      if (recipient && !isContactBlocked(*recipient) && (out_len = exportContact(*recipient, &out_frame[1])) > 0) {
         out_frame[0] = RESP_CODE_EXPORT_CONTACT;
         _serial->writeFrame(out_frame, out_len + 1);
       } else {
@@ -2371,6 +2410,13 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     command += 3;
   }
 
+#ifdef WITH_PACKET_FILTER
+  if (CompanionFilter::isCommand(command)) {
+    if (_cfilter.handleCommand(command, reply, getRTCClock()->getCurrentTime())) saveFilter();
+    return true;
+  }
+#endif
+
   if (_prefs.getRadioPrefs()->handleCommand(command, sender_timestamp, reply)) {  // is radio CLI command?
     if (_prefs.getRadioPrefs()->isDirty()) { savePrefs(); }
     return true;
@@ -2711,7 +2757,7 @@ void MyMesh::checkSerialInterface() {
   ) {
     ContactInfo contact;
     if (_iter.hasNext(this, contact)) {
-      if (contact.lastmod > _iter_filter_since) { // apply the 'since' filter
+      if (contact.lastmod > _iter_filter_since && !isContactBlocked(contact)) { // apply the 'since' filter; blocked contacts are hidden
         writeContactRespFrame(RESP_CODE_CONTACT, contact);
         if (contact.lastmod > _most_recent_lastmod) {
           _most_recent_lastmod = contact.lastmod; // save for the RESP_CODE_END_OF_CONTACTS frame

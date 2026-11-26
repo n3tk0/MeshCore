@@ -94,4 +94,21 @@ class SettingsCacheTest {
         cache.put("", base, withOta = false)
         assertNull(cache.fresh(""))
     }
+
+    @Test
+    fun remembersWhetherTheFilterWasRead() {
+        cache.put("aa", base, withOta = false, withFilter = true)
+        cache.put("bb", base, withOta = false, withFilter = false)
+        assertTrue(assertNotNull(cache.fresh("aa")).withFilter)
+        assertFalse(assertNotNull(cache.fresh("bb")).withFilter)
+        cache.update("aa", mapOf("tx" to "10"))
+        assertTrue(assertNotNull(cache.fresh("aa")).withFilter)
+    }
+
+    @Test
+    fun keepsSixteenRepeaters() {
+        for (i in 1..17) cache.put("k$i", base, withOta = false)
+        assertFalse(cache.has("k1"))
+        for (i in 2..17) assertTrue(cache.has("k$i"))
+    }
 }

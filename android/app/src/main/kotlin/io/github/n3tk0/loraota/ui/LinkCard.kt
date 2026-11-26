@@ -75,7 +75,7 @@ internal fun SignalBars(snr: Double?, own: Color, modifier: Modifier = Modifier,
 @Composable
 internal fun LinkStrip(vm: AppViewModel) {
     val direct = vm.routeHops == 0
-    val out = if (direct) vm.linkOut ?: vm.status?.lastSnr else null
+    val out = if (direct) vm.linkOut ?: vm.status?.lastSnr?.takeIf { vm.linkTime == 0L } else null
     val inn = if (direct) vm.linkIn else null
     val measuring = direct && vm.linkState == LinkState.MEASURING
     val desc = stringResource(
@@ -138,7 +138,7 @@ internal fun LinkCard(vm: AppViewModel) {
     val outColor = OUT_COLOR
     val inColor = IN_COLOR
     // the status answers the request we sent: its SNR is the same direction as the trace's first byte
-    val out = if (direct) vm.linkOut ?: s?.lastSnr else s?.lastSnr
+    val out = if (direct) vm.linkOut ?: s?.lastSnr?.takeIf { vm.linkTime == 0L } else s?.lastSnr
     val inn = if (direct) vm.linkIn else null
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
