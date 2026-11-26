@@ -631,7 +631,8 @@ public:
     if (r == NULL || !(r->flags & OTA_STAGE_BACKUP) || r->rb_started == OTA_STAGE_SET || r->failed == OTA_STAGE_SET) {
       return false;
     }
-    if (r->size != imageSize() || internalCrc32(appStart(), r->size) != r->crc) return false;   // flashed some other way since
+    // the staged .bin may carry up to 255 B of .uf2 padding past what the image runs; the CRC covers all of it
+    if (r->size < imageSize() || r->size - imageSize() >= 256 || internalCrc32(appStart(), r->size) != r->crc) return false;   // flashed some other way since
     if (r->rb_request != OTA_STAGE_SET && !markWord(&r->rb_request)) return false;
     resetNow();
     return true;
