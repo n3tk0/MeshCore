@@ -45,8 +45,10 @@ object PickedImage {
             return entries[named.replace('\\', '/').substringAfterLast('/')]
                 ?: throw IllegalArgumentException("the .zip lacks the application image $named")
         }
-        return entries.entries.firstOrNull { it.key.endsWith(".bin", ignoreCase = true) && !it.key.endsWith("-merged.bin", ignoreCase = true) }?.value
-            ?: throw IllegalArgumentException("no application .bin in the .zip")
+        val bins = entries.entries.filter { it.key.endsWith(".bin", ignoreCase = true) && !it.key.endsWith("-merged.bin", ignoreCase = true) }
+        // without a manifest there is nothing to say which one is the app: not a guess
+        if (bins.size > 1) throw IllegalArgumentException("the .zip has no manifest.json and ${bins.size} .bin files (${bins.joinToString { it.key }}): cannot tell which is the application")
+        return bins.firstOrNull()?.value ?: throw IllegalArgumentException("no application .bin in the .zip")
     }
 
     /**

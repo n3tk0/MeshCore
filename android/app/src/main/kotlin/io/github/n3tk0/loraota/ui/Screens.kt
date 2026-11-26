@@ -159,7 +159,7 @@ fun AppScreen(
                             Step.UPDATE -> vm.repeater?.name ?: ""
                             Step.FLASH -> stringResource(
                                 R.string.flash_title,
-                                vm.companionName.ifEmpty { vm.flashImage?.env?.replace('_', ' ') ?: "" }
+                                vm.flashDeviceName
                             )
                             Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
                             Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
@@ -1169,14 +1169,14 @@ private fun FlashContent(vm: AppViewModel) {
         if (uri != null) vm.pickFlashFile(uri)
     }
     val toCompanion = vm.flashTarget == FlashTarget.COMPANION
-    if (toCompanion && vm.hasCompanionConnection) CompanionCard(vm, withFlashButton = false)
+    if (toCompanion && vm.hasCompanionConnection && !vm.isStandaloneFlash) CompanionCard(vm, withFlashButton = false)
     Hint(
         stringResource(if (toCompanion) R.string.flash_hint_companion_short else R.string.flash_hint_repeater_short),
         stringResource(if (toCompanion) R.string.flash_hint_companion else R.string.flash_hint_repeater),
     )
     if (vm.flashDone) {
         Button(onClick = { vm.closeFlash() }) {
-            Text(stringResource(if (toCompanion && vm.hasCompanionConnection) R.string.reconnect else R.string.back))
+            Text(stringResource(if (toCompanion && vm.hasCompanionConnection && !vm.isStandaloneFlash) R.string.reconnect else R.string.back))
         }
         return
     }
@@ -1245,7 +1245,7 @@ private fun FlashContent(vm: AppViewModel) {
         }
     }
     vm.flashImage?.let { img ->
-        if (img.env == null || !vm.hasCompanionConnection) {
+        if (img.env == null || !vm.hasCompanionConnection || vm.isStandaloneFlash) {
             Text(
                 stringResource(R.string.chosen, img.label),
                 style = MaterialTheme.typography.bodyMedium,
@@ -1589,7 +1589,7 @@ private fun BoardPicker(choices: List<String>, current: String, onDismiss: () ->
 /** While an update or a flash writes: only its progress (a stray tap cannot start anything else). */
 @Composable
 internal fun RunningView(vm: AppViewModel) {
-    val name = if (vm.step == Step.FLASH) vm.companionName else vm.repeater?.name ?: ""
+    val name = if (vm.step == Step.FLASH) vm.flashDeviceName else vm.repeater?.name ?: ""
     val flashing = vm.flashPercent >= 0
     Text(stringResource(if (flashing) R.string.running_flash else R.string.running_update, name),
         style = MaterialTheme.typography.headlineSmall)

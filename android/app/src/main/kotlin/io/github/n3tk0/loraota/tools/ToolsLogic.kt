@@ -104,6 +104,9 @@ object CliHelper {
         if (c.startsWith("set radio ") || c.startsWith("set freq ") || c.startsWith("set tx ")) return true
         if (c == "tempradio" || (c.startsWith("tempradio ") && c != "tempradio off")) return true
         if (c == "start ota") return true
+        // can leave the repeater without power: `ship` cuts the battery off, `shipfet <x>` says whether Q2 is there
+        // a wrong `cutoff` / `chem` can stop the charging
+        if (c == "charger ship" || c.startsWith("charger shipfet ") || c.startsWith("charger cutoff ") || c.startsWith("charger chem ")) return true
         return false
     }
 
@@ -128,7 +131,8 @@ object CliHelper {
         if (!isCompanion) {
             if (lower.startsWith("get ")) {
                 val prefix = lower.removePrefix("get ")
-                return (RepeaterBackup.KEYS + RepeaterBackup.OTA)
+                // `get ota` is not a command (LoRa OTA is read with `ota status`); `set ota on|off` is
+                return RepeaterBackup.KEYS
                     .filter { it.startsWith(prefix) && "get $it" != lower }
                     .take(limit)
                     .map { "get $it" }
