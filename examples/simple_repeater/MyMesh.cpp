@@ -3,6 +3,11 @@
 #include <helpers/SmartMppt.h>
 #include <algorithm>
 
+// the `charger` / `mppt` commands of the CN3791 board (handleCn3791Charger) are built with the BQ25798 ones only
+#if defined(SOLAR_MPPT_PWM_PIN) && !(ENV_INCLUDE_BQ25798 && SOLAR_BOARD_AUTO)
+#error "SOLAR_MPPT_PWM_PIN (CN3791 board) needs -D ENV_INCLUDE_BQ25798=1 and -D SOLAR_BOARD_AUTO=1: the charger commands are built only then"
+#endif
+
 #define RADIO_SWITCH_WAIT_MAX    10000   // a radio settings switch waits this long at most for sending to finish
 
 #ifdef WITH_LORA_OTA
