@@ -1206,8 +1206,8 @@ void EnvironmentSensorManager::bqLoop() {
   uint32_t adcs = bq_charger.adcCount();
   bq_charger.loop(millis());
   noteRead(query_bq25798, errors);   // 3 polls in a row with I2C errors: off, tried again later
-  if (bq_charger.takeFull()) bq_gauge.markFull();
-  if (bq_charger.adcCount() == adcs) return;
+  bq_gauge.setChargerFull(true);   // full = the chip's "done" (ITERM), not 4.15 V with less than C/20 going in
+  if (bq_charger.adcCount() == adcs) return;   // the "done" flag is sticky: taken after the reading below
   // an INA219 in the battery line measures the current better than the charger's ADC (which then
   // learns from it, see IbatCal.h); without one the corrected ADC counts. `charger ina sun`: the INA219
   // is on the solar input, it is the reference of the IBUS ADC instead (the battery current is the BQ's)
@@ -1233,6 +1233,8 @@ void EnvironmentSensorManager::bqLoop() {
   #endif
   const BQ25798Reading& r = bq_charger.reading();
   bq_gauge.update(millis(), r.vbat_mv, -bq_charger.batteryCurrentMa(), gaugeDay());   // the gauge counts + = out of the battery
+  // after update(): a reading after a long gap would drop the full mark again, and the last 10 s are counted first
+  if (bq_charger.takeFull()) bq_gauge.markFull();
 }
 
 BQ25798* EnvironmentSensorManager::getCharger() {

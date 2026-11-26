@@ -55,6 +55,7 @@ class BatteryGauge {
   uint16_t _last_mv;
   float    _last_ma;
   bool     _capacity_changed;
+  bool     _charger_full;  // only markFull() says full (a charger that terminates by itself)
 
 public:
   BatteryGauge() { reset(); }
@@ -66,7 +67,11 @@ public:
     _day = 0; _avg_ma = 0; _have_avg = false;
     _last_ms = 0; _have_last = false; _full_for_ms = 0; _last_mv = 0; _last_ma = 0;
     _capacity_changed = false;
+    _charger_full = false;
   }
+
+  // the charger reports the end of a charge (markFull): the voltage + trickle guess is not used
+  void setChargerFull(bool on) { _charger_full = on; }
 
   // a capacity set by hand, or one kept from an earlier learning (learnt = true)
   void setCapacity(uint16_t mah, bool learnt = false) {
@@ -115,7 +120,7 @@ public:
 
         // full: top voltage and only a trickle going in, for a while
         float trickle = _capacity > 0 && _capacity / 20 > GAUGE_FULL_TRICKLE_MA ? _capacity / 20 : GAUGE_FULL_TRICKLE_MA;
-        if (mv >= gaugeFullMv() && discharge_ma <= 0 && -discharge_ma < trickle) {
+        if (!_charger_full && mv >= gaugeFullMv() && discharge_ma <= 0 && -discharge_ma < trickle) {
           _full_for_ms += dt;
           if (_full_for_ms >= GAUGE_FULL_SECS * 1000UL) {
             if (_capacity > 0) _charge = _capacity;

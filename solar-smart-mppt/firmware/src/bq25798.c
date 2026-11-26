@@ -117,6 +117,11 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_VSYSMIN, 0x3F, (uint8_t)((bq_vsysmin_mv(chem) - 2500) / 250));
   set16(img, BQ_REG_VREG, 0x07FF, (uint16_t)(s->vchg_mv / 10));
   set16(img, BQ_REG_ICHG, 0x01FF, (uint16_t)(s->ichg_ma / 10));
+  // termination at ICHG/10 (40 mA steps, at least 40 mA) instead of the chip's 200 mA
+  uint8_t iterm = (uint8_t)((s->ichg_ma / 10 + 20) / 40);
+  set_bits(img, BQ_REG_ITERM, 0x5F, iterm ? iterm : 1);   // REG_RST (bit 6) never, also not from an expert write
+  // TS_COOL: a small ICHG keeps its current (20 % of it would be near ITERM), a big one the chip's 20 %
+  set_bits(img, BQ_REG_NTC0, 0x06, s->ichg_ma <= BQ_ISETC_FULL_MAX_MA ? 0x06 : 0x02);
   set16(img, BQ_REG_IINDPM, 0x01FF, (uint16_t)(s->iin_ma / 10));
   bool mppt_mode = s->vindpm_mv == 0;
   // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a
@@ -166,7 +171,7 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_ADC_DIS0, 0x04, bq_vbus_present(b) && !b->hiz_seen ? 0 : 0x04);
   // EN_CHG ours; EN_ICO off (MPPT runs instead); EN_HIZ always 0: a read that caught HIZ set (input
   // fault, VOC check) must never be written back and leave the charger in HIZ
-  set_bits(img, BQ_REG_CTRL0, 0x34, charge_enable ? 0x20 : 0x00);
+  set_bits(img, BQ_REG_CTRL0, 0x36, (charge_enable ? 0x20 : 0x00) | 0x02);   // EN_TERM always
   if (hold_hiz) img[BQ_REG_CTRL0] |= 0x04;
 
   bool ok = true;

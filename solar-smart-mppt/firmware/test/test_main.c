@@ -349,13 +349,17 @@ static void test_bq(void) {
   bq_init(&b, &CBUS);
   settings_t s;
   settings_defaults(&s, CHEM_LIION);
-  s.expert_n = 2;
+  s.expert_n = 3;
   s.expert[0] = 0x1500 | 0xFF;      // tries to change VOC_PCT + EN_MPPT too: ours must win
   s.expert[1] = 0x0F00 | 0x22;      // EN_CHG + EN_TERM
+  s.expert[2] = 0x0900 | 0x45;      // REG_RST + ITERM 200 mA: neither may stay
   CHECK(bq_refresh(&b));
   CHECK(bq_apply(&b, &s, CHEM_LIION, false));
   CHECK(bq_u16(&b, BQ_REG_VREG) == 420 && chip[BQ_REG_VREG] == 0x01 && chip[BQ_REG_VREG + 1] == 0xA4);
   CHECK((chip[BQ_REG_ICHG] << 8 | chip[BQ_REG_ICHG + 1]) == 100);
+  CHECK((chip[BQ_REG_ITERM] & 0x1F) == 3);                        // 1 A -> ITERM 120 mA, not the chip's 200 mA
+  CHECK((chip[BQ_REG_ITERM] & 0x40) == 0);                        // never REG_RST
+  CHECK((chip[BQ_REG_NTC0] & 0x06) == 0x02);                      // 1 A: the chip's 20 % in TS_COOL
   CHECK((chip[BQ_REG_IINDPM] << 8 | chip[BQ_REG_IINDPM + 1]) == 300);
   CHECK(chip[BQ_REG_MPPT] == (uint8_t)((4 << 5) | 0x1E));       // expert timing bits, our VOC_PCT; no EN_MPPT without PG
   CHECK((chip[BQ_REG_NTC1] & 1) == 1);                            // no NTC: TS ignored

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define FW_VERSION_MAJOR 0
-#define FW_VERSION_MINOR 3
+#define FW_VERSION_MINOR 4
 
 // Battery chemistry. JP4: open = Li-ion, 1-2 = LiFePO4, 2-3 = LTO 2S.
 enum { CHEM_LIION = 0, CHEM_LFP = 1, CHEM_LTO2S = 2, CHEM_COUNT = 3, CHEM_BY_JUMPER = 0xFF };

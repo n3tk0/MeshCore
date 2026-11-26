@@ -132,6 +132,24 @@ TEST(BQ25798, LiIonDefaults) {
   EXPECT_TRUE(f.ce_on);
 }
 
+TEST(BQ25798, TerminationFollowsTheChargeCurrent) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  bq.begin(0);
+  BQ25798Settings s = settings();
+  bq.apply(s);
+  EXPECT_EQ(f.r[0x09] & 0x1F, 3);       // 1 A -> 120 mA (not the chip's 200 mA)
+  EXPECT_EQ(f.r[0x12], 0);              // CHARGER_CONTROL_3 untouched
+  EXPECT_EQ(f.r[0x17] & 0x06, 0x02);    // 1 A: the chip's 20 % in TS_COOL
+  f.r[0x0F] &= ~0x02;                   // EN_TERM cleared by someone
+  s.ichg_ma = 250;
+  bq.apply(s);
+  EXPECT_EQ(f.r[0x09] & 0x1F, 1);       // 250 mA -> 40 mA, the lowest
+  EXPECT_EQ(f.r[0x17] & 0x06, 0x06);    // 250 mA: unchanged in TS_COOL (20 % = 50 mA would be near ITERM)
+  EXPECT_EQ(f.r[0x17] & ~0x06, 0x7A & ~0x06);
+  EXPECT_EQ(f.r[0x0F] & 0x02, 0x02);    // EN_TERM back
+}
+
 TEST(BQ25798, LiFePO4NeverChargesTowards42V) {
   FakeBQ f;
   BQ25798 bq(f);
@@ -1171,6 +1189,17 @@ TEST(BatteryGaugeChemistry, MarkFullSetsTheCharge) {
   BatteryGauge g;
   g.setCapacity(2000);
   g.update(0, 3700, 100, 1);
+  g.markFull();
+  EXPECT_EQ(g.percent(), 100);
+}
+
+TEST(BatteryGaugeChemistry, ChargerFullIgnoresTheVoltageGuess) {
+  BatteryGauge g;
+  g.setCapacity(6800);
+  g.setChargerFull(true);
+  g.update(0, 3700, 0, 1);
+  for (uint32_t t = 10000; t <= 600000; t += 10000) g.update(t, 4160, -250, 1);   // 4.16 V, 250 mA < C/20 going in
+  EXPECT_LT(g.percent(), 100);
   g.markFull();
   EXPECT_EQ(g.percent(), 100);
 }
