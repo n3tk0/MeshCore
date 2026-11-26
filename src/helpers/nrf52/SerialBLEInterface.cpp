@@ -447,10 +447,23 @@ void SerialBLEInterface::checkStaleConnection(unsigned long now) {
     taskENTER_CRITICAL();
     if (_conn_handle == handle) {   // not replaced by a new connection meanwhile
       _secure_kick = true;
-      // wait up to 10 s for the disconnect event, or give up at once when nothing was sent
-      _conn_started = ok ? now : now - BLE_HEALTH_CHECK_INTERVAL;
+      // wait up to 10 s for the disconnect event; when the request was refused it is repeated below
+      _conn_started = now;
+      _kick_failed = !ok;
+      _kick_retry_at = now;
     }
     taskEXIT_CRITICAL();
+  } else if (_secure_kick && _kick_failed && age < BLE_HEALTH_CHECK_INTERVAL) {
+    // the SoftDevice refused the request: ask again every second, for up to 10 s from the first try
+    if (now - _kick_retry_at >= 1000) {
+      bool ok = sd_ble_gap_disconnect(handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION) == NRF_SUCCESS;
+      taskENTER_CRITICAL();
+      if (_conn_handle == handle) {
+        _kick_retry_at = now;
+        if (ok) _kick_failed = false;   // sent: now only the event is awaited (until the 10 s are over)
+      }
+      taskEXIT_CRITICAL();
+    }
   } else if (_secure_kick && age >= BLE_HEALTH_CHECK_INTERVAL) {
     // the disconnect did not complete (no event in 10 s): give up on this handle
     BLE_DEBUG_PRINTLN("SerialBLEInterface: handle=0x%04X disconnect did not complete, clearing", handle);
