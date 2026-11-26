@@ -10,7 +10,7 @@ scan, the age limit and the statistics. The block list, the ingress limit and th
 are new in this fork. The shared code is header-only, in `src/helpers/filter/`.
 
 Build switch: `-D NO_PACKET_FILTER` removes the filter from a build (repeater, room server and
-companion).
+companion). It is set for all STM32 boards (`[stm32_base]`): with 256 KB of flash the filter does not fit.
 
 ## Where it works
 
