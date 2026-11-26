@@ -116,7 +116,7 @@ internal fun LinkCard(vm: AppViewModel) {
                 vm.linkState == LinkState.FAILED -> stringResource(R.string.link_state_failed)
                 vm.linkState == LinkState.NO_BUDGET -> stringResource(R.string.link_state_budget)
                 vm.linkState == LinkState.OK && vm.linkTime > 0 -> stringResource(
-                    R.string.link_state_ok, java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(vm.linkTime),
+                    R.string.link_state_ok, java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT).format(vm.linkTime),
                 )
                 else -> stringResource(R.string.link_state_none)
             }

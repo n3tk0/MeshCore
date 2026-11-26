@@ -215,4 +215,12 @@ class ToolsLogicTest {
             tmp.deleteRecursively()
         }
     }
+
+    @Test
+    fun onlyKnownReadsKeepTheSettingsCache() {
+        for (c in listOf("get radio", "ver", "board", "clock", "neighbors", "selftest", "stats-radio", "ota status", "ab|get name"))
+            assertTrue(CliHelper.keepsSettings(c), c)
+        for (c in listOf("set tx 10", "clock sync", "reboot", "tempradio 869 250 11 5 5", "ota start", "power", "unknown"))
+            assertFalse(CliHelper.keepsSettings(c), c)
+    }
 }

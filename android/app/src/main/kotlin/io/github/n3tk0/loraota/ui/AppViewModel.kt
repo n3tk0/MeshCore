@@ -407,6 +407,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun clearDeviceSession() {
         stopFollow()
+        settingsCache.clear()
         resetLink()
         companionDevice = null
         companionName = ""
@@ -481,6 +482,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         link.onDisconnect = {
             viewModelScope.launch {
+                stopFollow()
                 fun isActiveConnection() = step != Step.COMPANION &&
                     !(step == Step.OFFLINE && offlineReturn == Step.COMPANION) &&
                     !(step == Step.SETTINGS && settingsReturn == Step.COMPANION)
@@ -1081,7 +1083,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             linkState = LinkState.NOT_DIRECT
             return
         }
-        val hashSize = companion.pathHashMode() + 1
+        val hashSize = companion.traceHashSize()
         val secs = (companion.mainRadio() ?: SideRadio.DEFAULT).airtime(LinkTrace.packetBytes(hashSize))
         budget.duty = duty()
         if (!LinkTrace.fitsBudget(budget, secs)) {
@@ -1093,14 +1095,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         linkState = LinkState.MEASURING
         try {
             val data = try {
-                companion.trace(r.publicKey.copyOf(hashSize), hashSize)
+                companion.trace(r.publicKey, hashSize)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+            } catch (e: Exception) {
                 linkState = LinkState.FAILED
                 return
             }
-            val reading = data?.let { LinkTrace.reading(it) }
+            val reading = data?.let { LinkTrace.reading(it, r.publicKey.copyOf(hashSize)) }
             val now = System.currentTimeMillis()
             linkOut = reading?.outSnr
             linkIn = reading?.inSnr
@@ -1138,8 +1140,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     followLeft = LinkFollow.TICKS - i
                     if (busy || reconnecting) continue
                     measureLink(r)
+                    if (linkState == LinkState.FAILED) break
                     if (linkState == LinkState.NO_BUDGET) break
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                linkState = LinkState.FAILED
             } finally {
                 // a Stop and a new start can come before this runs: then it is not this one's to reset
                 if (followJob === me || followJob == null) {
@@ -1266,6 +1273,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun backToRepeaters() {
         val oldRepeater = repeater
         stopFollow()
+        settingsCache.clear()
         resetLink()
         patchJob?.cancel()
         calculatingPatch = false
@@ -1862,6 +1870,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun flashStart() {
         val p = flashPlan ?: return
         flashPlan = null
+        repeater?.let { settingsCache.invalidate(hex(it.publicKey)) }   // the settings may change with the firmware
         work {
             flashPercent = 0
             try {
@@ -2446,21 +2455,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Writes settings to a repeater's console and keeps the cache in step: the keys that took are in it as written, and
-     * when any did not (or the write was cut short) the repeater's settings are not known any more.
+     * Writes settings to a repeater's console. The repeater may store a rounded or normalized value, so the cache of it
+     * is dropped after any write (and read again when next needed).
      */
     private suspend fun applyToRepeater(r: Contact, items: List<BackupItem>, progress: (Int, Int) -> Unit): RestoreResult {
         val key = hex(r.publicKey)
         var finished = false
+        settingsCache.invalidate(key)
         try {
             val res = RepeaterBackup.apply(companion, r, items, progress)
             finished = true
-            val failed = res.failed.map { it.first.id }.toSet()
-            if (failed.isEmpty()) settingsCache.update(key, items.associate { it.id to it.value })
-            else settingsCache.invalidate(key)
             return res
         } finally {
-            if (!finished) settingsCache.invalidate(key)   // Stop or a lost link half way
+            settingsCache.invalidate(key)
         }
     }
 
@@ -2975,13 +2982,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun removeCliSnippet(cmd: String) = toolsState.removeSnippet(cmd)
 
     /**
-     * A console command that may change what the cached settings say: `set` (what the repeater stores can differ
-     * from what was typed), a radio test, a reboot or an erase. The cache is dropped before it goes, whatever the reply
+     * A console command that may change what the cached settings say: anything but a known read-only one (what the
+     * repeater stores can differ from what was typed). The cache is dropped before it goes, whatever the reply
      * (`password` is no setting of the cache: the admin password is never in it).
      */
     private fun noteCliCommand(r: Contact, cmd: String) {
-        val head = cmd.trim().substringBefore(' ').lowercase()
-        if (head in setOf("set", "tempradio", "reboot", "clkreboot", "erase", "start")) settingsCache.invalidate(hex(r.publicKey))
+        if (!CliHelper.keepsSettings(cmd)) settingsCache.invalidate(hex(r.publicKey))
     }
 
     fun sendCliCommand(rawCommand: String, isCompanion: Boolean) = work {

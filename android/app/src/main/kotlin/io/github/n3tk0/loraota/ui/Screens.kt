@@ -862,7 +862,7 @@ private fun RepeaterHome(vm: AppViewModel) {
         }
         RepeaterTab.FIRMWARE -> {
             // the OTA check waits for this tab: once for a login (and 'Check again' when it did not get an answer)
-            LaunchedEffect(vm.otaChecked, vm.otaTried, vm.busy, vm.step) { vm.checkOtaOnce() }
+            LaunchedEffect(vm.otaChecked, vm.otaTried, vm.busy, vm.step, vm.reconnecting) { vm.checkOtaOnce() }
             vm.info?.let { RunningCard(it) }
             TabRow(selectedTabIndex = vm.firmwareTab) {
                 Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
@@ -956,7 +956,7 @@ private fun LoraTab(vm: AppViewModel) {
 
     if (info == null) {
         // a stock repeater (or the answer got lost): login and status only
-        if ((vm.busy && !vm.otaChecked) || (!vm.otaChecked && !vm.otaTried)) return   // the check is on its way
+        if (vm.busy && !vm.otaChecked) return   // the check is on its way
         ReadyRow(false, stringResource(R.string.ready_supported), stringResource(R.string.recheck), !vm.busy) { vm.recheck() }
         if (vm.otaChecked) {
             Hint(stringResource(R.string.no_ota_short), stringResource(R.string.no_ota))

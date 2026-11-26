@@ -65,7 +65,7 @@ class LinkQualityTest {
         assertEquals(0x55AA, LinkTrace.tagOf(f))
         assertEquals(listOf(7.25), d.snrs)
         assertEquals(-3.5, d.finalSnr)
-        val r = assertNotNull(LinkTrace.reading(d))
+        val r = assertNotNull(LinkTrace.reading(d, byteArrayOf(0x7A)))
         assertEquals(7.25, r.outSnr)
         assertEquals(-3.5, r.inSnr)
     }
@@ -83,7 +83,32 @@ class LinkQualityTest {
     fun aLongerPathIsNotADirectReading() {
         val d = assertNotNull(LinkTrace.parseData(push(9, 0, byteArrayOf(1, 2), intArrayOf(8, 4), 20)))
         assertEquals(2, d.snrs.size)
-        assertNull(LinkTrace.reading(d))
+        assertNull(LinkTrace.reading(d, byteArrayOf(1, 2)))
+    }
+
+    @Test
+    fun hashSizeAndFlagsFollowTheFirmwareShift() {
+        assertEquals(1, LinkTrace.hashSizeForMode(0))
+        assertEquals(2, LinkTrace.hashSizeForMode(1))
+        assertEquals(4, LinkTrace.hashSizeForMode(2))
+        assertEquals(0, LinkTrace.flagsForHashSize(1))
+        assertEquals(1, LinkTrace.flagsForHashSize(2))
+        assertEquals(2, LinkTrace.flagsForHashSize(4))
+        // four-byte hashes: one hop is 4 path bytes and flags 2 (path len shr 2)
+        val h = byteArrayOf(1, 2, 3, 4)
+        val d = assertNotNull(LinkTrace.parseData(push(9, 2, h, intArrayOf(8), 20)))
+        assertEquals(1, d.snrs.size)
+        assertNotNull(LinkTrace.reading(d, h))
+    }
+
+    @Test
+    fun aPushThroughAnotherNodeIsNotOurs() {
+        val ours = byteArrayOf(0x7A)
+        val f = push(5, 0, byteArrayOf(0x7B), intArrayOf(29), -14)
+        assertFalse(LinkTrace.isAnswer(f, 5, ours))
+        assertTrue(LinkTrace.isAnswer(push(5, 0, ours, intArrayOf(29), -14), 5, ours))
+        assertFalse(LinkTrace.isAnswer(push(6, 0, ours, intArrayOf(29), -14), 5, ours))
+        assertNull(LinkTrace.reading(assertNotNull(LinkTrace.parseData(f)), ours))
     }
 
     @Test

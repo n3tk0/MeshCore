@@ -23,7 +23,7 @@ object LinkTrace {
 
     fun le(v: Int): ByteArray = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
 
-    /** [cmd][tag 4][auth 4][flags][path]; flags' low 2 bits are the hash size minus one. */
+    /** [cmd][tag 4][auth 4][flags][path]; flags' low 2 bits are log2 of the hash size. */
     fun command(tag: Int, auth: Int, flags: Int, path: ByteArray): ByteArray =
         byteArrayOf(CMD_SEND_TRACE_PATH.toByte()) + le(tag) + le(auth) + byteArrayOf(flags.toByte()) + path
 
@@ -63,8 +63,25 @@ object LinkTrace {
     class Reading(val outSnr: Double?, val inSnr: Double?)
 
     /** A direct repeater's trace (one hop): the repeater's hop SNR is outgoing, the last byte is incoming. */
-    fun reading(d: Data): Reading? =
-        if (d.snrs.size == 1) Reading(d.snrs[0], d.finalSnr) else null
+    fun reading(d: Data, expectedHashes: ByteArray): Reading? =
+        if (d.snrs.size == 1 && d.hashes.contentEquals(expectedHashes)) Reading(d.snrs[0], d.finalSnr) else null
+
+    /** The trace hash size for the companion's path hash mode (0, 1, 2): the firmware's entry is 1 shl flags bytes, so 1, 2 or 4. */
+    fun hashSizeForMode(mode: Int): Int = when (mode) {
+        0 -> 1
+        1 -> 2
+        else -> 4
+    }
+
+    /** The flags' low 2 bits for a hash size of 1, 2 or 4 bytes: log2 of it (the firmware reads them as a shift). */
+    fun flagsForHashSize(hashSize: Int): Int = Integer.numberOfTrailingZeros(hashSize).coerceIn(0, 2)
+
+    /** True when [f] is the push for [tag] that went through [expectedHashes] (another node with the same short hash is not ours). */
+    fun isAnswer(f: ByteArray, tag: Int, expectedHashes: ByteArray): Boolean {
+        if (tagOf(f) != tag) return false
+        val d = parseData(f) ?: return false
+        return d.hashes.contentEquals(expectedHashes)
+    }
 
     /** A trace only for a repeater with no hop: with hops (or no known route) it would be the first hop's, not the repeater's. */
     fun canTrace(routeHops: Int?): Boolean = routeHops == 0

@@ -267,19 +267,23 @@ class CompanionRadio(private val link: CompanionLink) {
     /** The companion's path hash mode (0: one byte per hop), from the device query; 0 when it did not say. */
     fun pathHashMode(): Int = if (deviceInfoRaw.size > 81) (deviceInfoRaw[81].toInt() and 0xff).coerceIn(0, 2) else 0
 
+    /** The hash size (1, 2 or 4 bytes) a trace uses with this companion. */
+    fun traceHashSize(): Int = LinkTrace.hashSizeForMode(pathHashMode())
+
     /**
-     * A trace along [path] (hashes of [hashSize] bytes each, hashSize - 1 goes in the flags): the companion sends it
-     * direct, and its push comes when the packet has been through the path and was heard again.
-     * Null when no trace came back in time.
+     * A trace along the first [hashSize] (1, 2 or 4) bytes of [publicKey] (log2 of it goes in the flags): the companion
+     * sends it direct, and its push comes when the packet has been through the path and was heard again. A push with other
+     * hashes (another node with the same short hash) is not waited for. Null when no trace came back in time.
      */
-    suspend fun trace(path: ByteArray, hashSize: Int = 1): LinkTrace.Data? {
+    suspend fun trace(publicKey: ByteArray, hashSize: Int): LinkTrace.Data? {
         val tag = java.util.concurrent.ThreadLocalRandom.current().nextInt().let { if (it == 0) 1 else it }
-        val flags = (hashSize - 1).coerceIn(0, 3)
+        val flags = LinkTrace.flagsForHashSize(hashSize)
+        val path = publicKey.copyOf(hashSize)
         val sent = LinkTrace.parseSent(
             command(LinkTrace.command(tag, 0, flags, path), 5000, RESP_SENT),
         ) ?: throw CompanionError("short reply")
         val f = lock.withLock {
-            await(LinkTrace.waitMs(sent.estTimeoutMs)) { LinkTrace.tagOf(it) == tag }
+            await(LinkTrace.waitMs(sent.estTimeoutMs)) { LinkTrace.isAnswer(it, tag, path) }
         } ?: return null
         return LinkTrace.parseData(f)
     }
