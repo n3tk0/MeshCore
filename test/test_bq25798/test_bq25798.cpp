@@ -455,6 +455,42 @@ TEST(BQ25798, ColdCellChargesAtALowCurrentDownToMinus10) {
   EXPECT_EQ(((f.r[0x03] << 8) | f.r[0x04]) & 0x1FF, 25);
 }
 
+TEST(BQ25798, ColdIsHeldWithoutAReadingAndProbedAfter30Min) {
+  FakeBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  BQ25798Settings s = settings();
+  s.ntc = 1;
+  s.ichg_ma = 250;
+  bq.apply(s);
+  f.sun(true);
+  f.adcValues(3980, 0, 5800, 50);
+  f.put16(0x3F, tsFor(30));             // 3 °C: cold, TS_IGNORE on
+  runFor(bq, t, 30000);
+  ASSERT_TRUE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 1);
+
+  f.put16(0x3F, 0);                     // TS_IGNORE hides the NTC: no reading
+  runFor(bq, t, 600000);                // 10 min
+  EXPECT_TRUE(bq.cold());               // held, not cleared (no on/off swing)
+  EXPECT_EQ(f.r[0x18] & 1, 1);
+
+  runFor(bq, t, 1200000);               // past 30 min of holding: the probe has TS_IGNORE off
+  bool probed = false;
+  for (int i = 0; i < 6 && !probed; i++) { runFor(bq, t, 10000); probed = !(f.r[0x18] & 1) && bq.cold(); }
+  EXPECT_TRUE(probed);
+  f.put16(0x3F, tsFor(30));             // the probe reads cold: back to TS_IGNORE
+  runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 1);
+
+  f.put16(0x3F, 0);                     // an NTC that is really gone: after the hold and one probe, cold is off
+  runFor(bq, t, 2400000);
+  EXPECT_FALSE(bq.cold());
+  EXPECT_EQ(f.r[0x18] & 1, 0);
+}
+
 TEST(BQ25798, ColdOffOrNoNtcLeavesTheChipAlone) {
   FakeBQ f;
   BQ25798 bq(f);
@@ -475,8 +511,10 @@ TEST(BQ25798, ColdOffOrNoNtcLeavesTheChipAlone) {
   runFor(bq, t, 30000);
   EXPECT_TRUE(bq.cold());
   EXPECT_EQ(((f.r[0x03] << 8) | f.r[0x04]) & 0x1FF, 15);
-  f.put16(0x3F, 870);                   // NTC open: no reading, the chip's TS
+  f.put16(0x3F, 870);                   // NTC open: no reading; cold is held, then one probe finds nothing
   runFor(bq, t, 30000);
+  EXPECT_TRUE(bq.cold());
+  runFor(bq, t, 2400000);
   EXPECT_FALSE(bq.cold());
   EXPECT_EQ(f.r[0x18] & 1, 0);
   BQ25798Settings bad = s;
@@ -834,6 +872,26 @@ TEST(BQ25798, WeakPanelAtDawnGetsVindpmFromVocBeforeHizIsCleared) {
   bq.formatStatus(buf, sizeof(buf));
   EXPECT_NE(strstr(buf, "mppt on"), nullptr) << buf;
   EXPECT_EQ(strstr(buf, ", vin"), nullptr) << buf;   // the input limit is shown only while MPPT is off
+}
+
+TEST(BQ25798, FixedVindpmIsWrittenBeforeHizIsCleared) {
+  DawnBQ f;
+  BQ25798 bq(f);
+  uint32_t t = 0;
+  bq.begin(t);
+  f.dawn();
+  BQ25798Settings s = settings();
+  s.vindpm_mv = 4500;                                // fixed input limit
+  bq.apply(s);
+  f.wlog.clear();
+  f.r[0x05] = 36;                                    // the chip's own VINDPM again
+  f.r[0x0F] |= 0x04; f.r[0x1B] &= ~0x08;             // EN_HIZ set by the chip
+  bq.loop(t += 10000);
+  int v = f.firstWrite(0x05);
+  ASSERT_GE(v, 0);
+  for (size_t i = 0; i < f.wlog.size(); i++) {      // no EN_HIZ clear before the VINDPM write
+    if (f.wlog[i].first == 0x0F && !(f.wlog[i].second & 0x04)) { EXPECT_GT((int)i, v); break; }
+  }
 }
 
 TEST(BQ25798, LatchedEnMpptWithHizStillGetsVindpmFromVoc) {

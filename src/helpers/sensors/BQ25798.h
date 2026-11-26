@@ -169,6 +169,8 @@
 #define BQ_COLD_OFF            0xFF
 #define BQ_COLD_ON_DC          50     // 0.1 °C: our reading under +5.0 °C (or the chip says TS_COLD under +7 °C)
 #define BQ_COLD_OFF_DC         70     // ... back to the chip's own TS (JEITA) from +7.0 °C
+#define BQ_COLD_HOLD_MS        1800000UL // no reading while TS_IGNORE is on (the chip may switch the TS bias off): the cold state is kept this long
+#define BQ_COLD_PROBE_MS       35000UL   // ... then TS_IGNORE is off for this long (3 polls) and the next reading decides
 #define BQ_COLD_STOP_DC        (-100) // under -10.0 °C: no charging at all
 #define BQ_COLD_RESUME_DC      (-80)  // ... until -8.0 °C
 #define BQ_ADC_DIS1_VAL        0xF0   // D+, D-, VAC2, VAC1 off
@@ -250,6 +252,8 @@ class BQ25798 {
   // hybrid (BQ_WEAK_*): fixed VINDPM 4.4 V while the sun is weak, MPPT when it is strong
   bool     _hybrid, _weak, _weak_timing;
   bool     _cold, _cold_stop;  // cold cell: TS_IGNORE + low ICHG / EN_CHG off (see BQ_COLD_*)
+  uint32_t _cold_hold_at, _cold_probe_until;
+  bool     _cold_holding, _cold_probe;   // cold kept without a reading / the probe with TS_IGNORE off
   void     coldTick();
   uint32_t _weak_t, _weak_hold_until;
   uint16_t _weak_poorsrc;      // _poorsrc_count at the last weakTick()

@@ -34,6 +34,8 @@ BQ25798::BQ25798(BQ25798Bus& bus) : _bus(bus), _learnBus(true) {
   _weak = true;
   _weak_timing = false;
   _cold = _cold_stop = false;
+  _cold_holding = _cold_probe = false;
+  _cold_hold_at = _cold_probe_until = 0;
   _weak_t = _weak_hold_until = 0;
   _weak_poorsrc = _weak_falls = 0;
   _sc_state = _sc_idx = _sc_tries = 0;
@@ -308,6 +310,15 @@ void BQ25798::enforce() {
     _hiz_hold = 0;
   }
 
+  // fixed / weak: MPPT base and VINDPM first, so VINDPM is ours before the CTRL0 write below drops EN_HIZ
+  uint8_t m = c[BQ_REG_MPPT];
+  if (!mppt_mode) {
+    uint8_t base = mpptBase(_s.voc_pct);
+    if (m != base && write8(BQ_REG_MPPT, base)) m = base;
+    uint8_t want = (uint8_t)((_s.vindpm_mv ? _s.vindpm_mv : BQ_WEAK_VINDPM) / 100);   // fixed, or hybrid weak
+    if (vbusPresent() && c[BQ_REG_VINDPM] != want) write8(BQ_REG_VINDPM, want);   // set again at each plug-in
+  }
+
   // EN_CHG on, EN_ICO and EN_HIZ off (only one of ICO / VINDPM detection / MPPT may run)
   uint8_t c0 = (c[BQ_REG_CTRL0] & ~0x34) | (coldStop() ? 0 : 0x20) | (hold_hiz ? 0x04 : 0);   // EN_CHG off only for a frozen cell
   if (c0 != c[BQ_REG_CTRL0]) write8(BQ_REG_CTRL0, c0);
@@ -317,7 +328,6 @@ void BQ25798::enforce() {
   uint8_t c5 = (c[BQ_REG_CTRL5] & ~0xA0) | (_s.shipfet ? 0x80 : 0) | 0x20;
   if (c5 != c[BQ_REG_CTRL5]) write8(BQ_REG_CTRL5, c5);
 
-  uint8_t m = c[BQ_REG_MPPT];
   if (mppt_mode) {
     // the chip clears EN_MPPT when the panel goes (every evening) and refuses it while VBAT < VSYSMIN
     bool can = vbusPresent() && powerGood() && !(_status[BQ_REG_STAT3 - BQ_REG_STAT0] & 0x10);
@@ -327,15 +337,10 @@ void BQ25798::enforce() {
       if (write8(BQ_REG_MPPT, v)) m = v;
       if (can) read(BQ_REG_MPPT, &m, 1);   // what the chip took (not taken: tried again in 10 s)
     }
-  } else {
-    uint8_t base = mpptBase(_s.voc_pct);
-    if (m != base && write8(BQ_REG_MPPT, base)) m = base;
-    uint8_t want = (uint8_t)((_s.vindpm_mv ? _s.vindpm_mv : BQ_WEAK_VINDPM) / 100);   // fixed, or hybrid weak
-    if (vbusPresent() && c[BQ_REG_VINDPM] != want) write8(BQ_REG_VINDPM, want);   // set again at each plug-in
   }
   _mppt_reg = m;
 
-  uint8_t n1 = (c[BQ_REG_NTC1] & ~0x01) | (!_s.ntc || cold() ? 1 : 0);   // a cold cell: past the chip's T1 (our limits instead)
+  uint8_t n1 = (c[BQ_REG_NTC1] & ~0x01) | (!_s.ntc || (cold() && !_cold_probe) ? 1 : 0);   // a cold cell: past the chip's T1 (our limits instead)
   if (n1 != c[BQ_REG_NTC1]) write8(BQ_REG_NTC1, n1);
 
   if (!chargeHeld() && vreg == want_vreg && !_ce_on) setCE(true);
@@ -347,10 +352,27 @@ void BQ25798::enforce() {
 // or with `charger cold off`: then TS is the chip's again (it stops under its T1 by itself).
 void BQ25798::coldTick() {
   int t = _r.tcell_dc;
-  if (!_s.ntc || coldMa() == 0 || t == BQ_TCELL_NONE) {
-    _cold = _cold_stop = false;
+  if (!_s.ntc || coldMa() == 0) {
+    _cold = _cold_stop = _cold_holding = _cold_probe = false;
     return;
   }
+  if (t == BQ_TCELL_NONE) {
+    if (!_cold) { _cold_stop = false; return; }
+    // TS_IGNORE can hide the NTC from the ADC: a cold cell with no reading stays cold, else the chip's TS
+    // would come back at once and TS_IGNORE would go on and off. After BQ_COLD_HOLD_MS one probe with
+    // TS_IGNORE off (see enforce()) decides: a reading is judged as usual, none = the NTC is gone.
+    if (_cold_probe) {
+      if ((int32_t)(_now - _cold_probe_until) >= 0) _cold = _cold_stop = _cold_holding = _cold_probe = false;
+    } else if (!_cold_holding) {
+      _cold_holding = true;
+      _cold_hold_at = _now;
+    } else if ((uint32_t)(_now - _cold_hold_at) >= BQ_COLD_HOLD_MS) {
+      _cold_probe = true;
+      _cold_probe_until = _now + BQ_COLD_PROBE_MS;
+    }
+    return;
+  }
+  _cold_holding = _cold_probe = false;   // a reading: judged below
   bool chip_cold = _status[0x1F - BQ_REG_STAT0] & 0x08;   // TS_COLD_STAT
   if (!_cold) _cold = t < BQ_COLD_ON_DC || (chip_cold && t < BQ_COLD_OFF_DC);
   else if (t >= BQ_COLD_OFF_DC) _cold = false;
