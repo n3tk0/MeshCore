@@ -2798,6 +2798,10 @@ bool MyMesh::saveUIData(const char* filename, const uint8_t* head, int head_len,
 }
 
 int MyMesh::loadUIData(const char* filename, uint8_t* dest, int max_len, int offset) {
+  FILESYSTEM* fs = _store->getDataFS();
+  char tmp[40];
+  snprintf(tmp, sizeof(tmp), "%s.tmp", filename);
+  if (!fs->exists(filename) && fs->exists(tmp)) fs->rename(tmp, filename);   // a reset between remove and rename
   File f = _store->openRead(_store->getDataFS(), filename);
   if (!f) return -1;
   int n = (offset == 0 || f.seek(offset)) ? f.read(dest, max_len) : 0;
@@ -2956,6 +2960,8 @@ bool MyMesh::saveOfflineQueue() {
 
 void MyMesh::loadOfflineQueue() {
   FILESYSTEM* fs = _store->getDataFS();
+  const char* tmp = OFFLINE_QUEUE_FILE ".tmp";
+  if (!fs->exists(OFFLINE_QUEUE_FILE) && fs->exists(tmp)) fs->rename(tmp, OFFLINE_QUEUE_FILE);   // a reset between remove and rename
   File f = _store->openRead(fs, OFFLINE_QUEUE_FILE);
   if (!f) return;
   uint32_t magic = 0;
