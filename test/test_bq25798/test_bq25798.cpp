@@ -1188,6 +1188,17 @@ TEST(BatteryGaugeChemistry, MarkFullSetsTheCharge) {
   EXPECT_EQ(g.percent(), 100);
 }
 
+TEST(BatteryGaugeChemistry, ChargerFullIgnoresTheVoltageGuess) {
+  BatteryGauge g;
+  g.setCapacity(6800);
+  g.setChargerFull(true);
+  g.update(0, 3700, 0, 1);
+  for (uint32_t t = 10000; t <= 600000; t += 10000) g.update(t, 4160, -250, 1);   // 4.16 V, 250 mA < C/20 going in
+  EXPECT_LT(g.percent(), 100);
+  g.markFull();
+  EXPECT_EQ(g.percent(), 100);
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

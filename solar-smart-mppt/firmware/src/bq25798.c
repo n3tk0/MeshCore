@@ -117,6 +117,9 @@ bool bq_apply(bq_t *b, const settings_t *s, uint8_t chem, bool charge_enable) {
   set_bits(img, BQ_REG_VSYSMIN, 0x3F, (uint8_t)((bq_vsysmin_mv(chem) - 2500) / 250));
   set16(img, BQ_REG_VREG, 0x07FF, (uint16_t)(s->vchg_mv / 10));
   set16(img, BQ_REG_ICHG, 0x01FF, (uint16_t)(s->ichg_ma / 10));
+  // termination at ICHG/10 (40 mA steps, at least 40 mA) instead of the chip's 200 mA
+  uint8_t iterm = (uint8_t)((s->ichg_ma / 10 + 20) / 40);
+  set_bits(img, BQ_REG_ITERM, 0x1F, iterm ? iterm : 1);
   set16(img, BQ_REG_IINDPM, 0x01FF, (uint16_t)(s->iin_ma / 10));
   bool mppt_mode = s->vindpm_mv == 0;
   // EN_MPPT alone does not mean MPPT runs: the chip clears it only when VBUS goes under VBUS_PRESENT, so a

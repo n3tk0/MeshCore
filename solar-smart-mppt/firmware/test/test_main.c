@@ -356,6 +356,7 @@ static void test_bq(void) {
   CHECK(bq_apply(&b, &s, CHEM_LIION, false));
   CHECK(bq_u16(&b, BQ_REG_VREG) == 420 && chip[BQ_REG_VREG] == 0x01 && chip[BQ_REG_VREG + 1] == 0xA4);
   CHECK((chip[BQ_REG_ICHG] << 8 | chip[BQ_REG_ICHG + 1]) == 100);
+  CHECK((chip[BQ_REG_ITERM] & 0x1F) == 3);                        // 1 A -> ITERM 120 mA, not the chip's 200 mA
   CHECK((chip[BQ_REG_IINDPM] << 8 | chip[BQ_REG_IINDPM + 1]) == 300);
   CHECK(chip[BQ_REG_MPPT] == (uint8_t)((4 << 5) | 0x1E));       // expert timing bits, our VOC_PCT; no EN_MPPT without PG
   CHECK((chip[BQ_REG_NTC1] & 1) == 1);                            // no NTC: TS ignored

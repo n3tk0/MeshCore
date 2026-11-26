@@ -1206,6 +1206,7 @@ void EnvironmentSensorManager::bqLoop() {
   uint32_t adcs = bq_charger.adcCount();
   bq_charger.loop(millis());
   noteRead(query_bq25798, errors);   // 3 polls in a row with I2C errors: off, tried again later
+  bq_gauge.setChargerFull(true);   // full = the chip's "done" (ITERM), not 4.15 V with less than C/20 going in
   if (bq_charger.takeFull()) bq_gauge.markFull();
   if (bq_charger.adcCount() == adcs) return;
   // an INA219 in the battery line measures the current better than the charger's ADC (which then
