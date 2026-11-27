@@ -54,10 +54,6 @@ static uint8_t i2c_boot_timeouts = 0;    // addresses whose probe timed out, not
 static uint8_t i2c_first_timeout = 0;
 
 void i2cListDevice(uint8_t addr, const char* name, I2CDeviceState state) {
-#ifdef NO_I2C_LIST   // small-flash builds (STM32): the `i2c` CLI list is left out
-  (void)addr; (void)name; (void)state;
-  return;
-#endif
   if (name == NULL && state == I2C_DEV_OFF_BOOT_TIMEOUT) {
     // counted, not listed: a flaky bus could time out at many addresses and fill the list
     if (i2c_boot_timeouts++ == 0) i2c_first_timeout = addr;
@@ -93,10 +89,6 @@ void i2cSetBusStuck(TwoWire& wire) {
 }
 
 void i2cFormatList(char* reply, size_t size) {
-#ifdef NO_I2C_LIST
-  snprintf(reply, size, "i2c list not in this build");
-  return;
-#endif
   size_t n = 0;
   reply[0] = 0;
   // Wire frees a stuck bus again every 10 s when it is used: it may have come back
