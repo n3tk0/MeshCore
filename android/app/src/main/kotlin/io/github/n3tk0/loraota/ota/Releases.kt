@@ -17,7 +17,11 @@ data class FirmwareFile(val release: String, val env: String, val version: Strin
                         val size: Int, val sha256: String, val url: String,
                         val dfu: String = "", val dfuSize: Int = 0, val dfuSha256: String = "", val dfuUrl: String = "",
                         /** When the release was published (GitHub, ISO 8601) or the app's build was made; empty if unknown. */
-                        val published: String = "") {
+                        val published: String = "",
+                        /** The board's name, one-line description (English / Bulgarian) from the manifest (tools/board-info.sh); empty in older ones. */
+                        val title: String = "", val description: String = "", val descriptionBg: String = "") {
+    /** The description in [lang] ("bg" or "en"); the Bulgarian one falls back to the English one when a manifest has none. */
+    fun descriptionFor(lang: String): String = if (lang == "bg") descriptionBg.ifEmpty { description } else description
     /** [published] as epoch milliseconds, 0 when unknown. */
     val publishedMillis get() = runCatching { java.time.Instant.parse(published).toEpochMilli() }.getOrDefault(0L)
     val hasLoraOta get() = file.isNotEmpty()
@@ -317,7 +321,7 @@ object Releases {
                 out.add(FirmwareFile(rel.str("tag_name"), e.getString("env"), e.str("version"),
                     file, e.optInt("size"), e.str("sha256").lowercase(), url,
                     if (dfuUrl.isEmpty()) "" else dfu, e.optInt("dfu_size"), e.str("dfu_sha256").lowercase(), dfuUrl,
-                    published))
+                    published, e.str("title"), e.str("description"), e.str("description_bg")))
             }
         }
         return out
@@ -554,7 +558,7 @@ object Releases {
         FirmwareFile(it.getString("release"), it.getString("env"), it.str("version"), it.str("file"),
             it.optInt("size"), it.str("sha256"), it.str("url"),
             it.str("dfu"), it.optInt("dfu_size"), it.str("dfu_sha256"), it.str("dfu_url"),
-            it.str("published"))
+            it.str("published"), it.str("title"), it.str("description"), it.str("description_bg"))
     }
 
     /** The .bin, from the phone when it was downloaded before; checked against its checksum either way. */
@@ -604,7 +608,8 @@ object Releases {
         for (f in files) put(JSONObject().put("release", f.release).put("env", f.env).put("version", f.version)
             .put("file", f.file).put("size", f.size).put("sha256", f.sha256).put("url", f.url)
             .put("dfu", f.dfu).put("dfu_size", f.dfuSize).put("dfu_sha256", f.dfuSha256).put("dfu_url", f.dfuUrl)
-            .put("published", f.published))
+            .put("published", f.published).put("title", f.title).put("description", f.description)
+            .put("description_bg", f.descriptionBg))
     }
 }
 

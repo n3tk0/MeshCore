@@ -1,19 +1,249 @@
 name: Build Repeater Firmwares
 
-# Builds every board of this kind. For one board (and a lighter image) use "Build Firmware for Boards".
+# Builds every repeater board (full builds as each board's platformio.ini has them, with the mailbox and LoRa OTA,
+# no debug), one job per board. For one board (and a lighter image) use "Build Firmware for Boards".
+# - manual run, "release" off: the files are attached to the run (Actions > run > Artifacts)
+# - manual run, "release" on, "version" v1.18.0-n1: also publishes the GitHub release repeaters-v1.18.0-n1
+# - tag "repeater-v1.2.3-n1" or "repeaters-v1.2.3-n1" pushed: the same release, with that tag and the version v1.2.3-n1
+# The release is a normal one but not marked "Latest". It holds the files of the boards that built, SHA256SUMS,
+# ota-manifest.json (read by the LoRa OTA app: with title and description of every board) and a text made from
+# docs/release-notes/repeater.md (with README.md's repeater part between its release-notes markers) + a table of the boards (tools/repeater-release-notes.sh); boards that failed
+# are listed in it. A board's title and note are in docs/release-notes/boards.tsv, the rest of its description
+# comes from its platformio.ini (tools/board-info.sh).
 
 permissions:
   contents: write
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'Публикувай GitHub release с всички платки, които се компилират (пълни builds, не lite)'
+        type: boolean
+        default: false
+      version:
+        description: 'Версия, напр. v1.18.0-n1 (release таг: repeaters-<версия>; задължителна при release, иначе - име в файловете)'
+        type: string
+        default: ''
   push:
     tags:
       - 'repeater-*'
+      - 'repeaters-*'
 
 jobs:
-  build-repeater-firmwares:
-    uses: ./.github/workflows/firmware-builder.yml
-    with:
-      firmware_type: 'repeater'
-      release_title_prefix: 'Repeater Firmware'
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+      release: ${{ steps.plan.outputs.release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Release Plan
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          IN_RELEASE: ${{ inputs.release }}
+          IN_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            # a pushed tag repeater-v1.2.3-n1 / repeaters-v1.2.3-n1: published as it is, the version is the rest
+            RELEASE=true
+            TAG=$REF_NAME
+            VERSION=${REF_NAME#repeaters-}
+            VERSION=${VERSION#repeater-}
+          else
+            RELEASE=$IN_RELEASE
+            TAG=""
+            VERSION=${IN_VERSION:-$GIT_TAG_VERSION}
+            if [ "$RELEASE" = "true" ] && [ -z "$IN_VERSION" ]; then
+              echo "::error::'version' is required with 'release' (e.g. v1.18.0-n1)"
+              exit 1
+            fi
+            if [ -n "$IN_VERSION" ] && ! [[ "$IN_VERSION" =~ ^v[0-9A-Za-z.-]+$ ]]; then
+              echo "::error::version '$IN_VERSION' must look like v1.18.0-n1 (letters, digits, '.' and '-' after the v)"
+              exit 1
+            fi
+            if [ "$RELEASE" = "true" ]; then
+              TAG="repeaters-$IN_VERSION"
+              if ! EXISTING=$(git ls-remote --tags origin "refs/tags/$TAG"); then
+                echo "::error::could not look up the tag $TAG"
+                exit 1
+              fi
+              if [ -n "$EXISTING" ]; then
+                echo "::error::the tag $TAG already exists: pick another version"
+                exit 1
+              fi
+            fi
+          fi
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release=$RELEASE tag=$TAG version=$VERSION"
+
+      - name: Boards to Build
+        id: list
+        run: |
+          # the release text takes what the fork adds from README.md: check its markers before ~100 builds
+          for m in start end; do
+            grep -q "^<!-- release-notes:repeater:$m" README.md || \
+              { echo "::error::README.md has no <!-- release-notes:repeater:$m --> marker (tools/repeater-release-notes.sh)"; exit 1; }
+          done
+          LIST=$(bash build.sh get-repeater-firmwares-to-build)
+          if [ -z "$LIST" ]; then echo "::error::no repeater boards found"; exit 1; fi
+          # a repeater env with no title row still builds (its env name is its title)
+          for e in $LIST; do
+            cut -f1 docs/release-notes/boards.tsv | grep -qxF -- "$e" || \
+              echo "::warning::$e has no row in docs/release-notes/boards.tsv (title and note of the release page and the app)"
+          done
+          JSON=$(echo "$LIST" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "targets=$JSON" >> "$GITHUB_OUTPUT"
+          echo "Boards: $JSON"
+
+  build:
+    needs: targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.targets.outputs.targets) }}
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      # a board that does not compile does not stop the others, and the release job still runs
+      - name: Build ${{ matrix.target }}
+        id: build
+        continue-on-error: true
+        env:
+          FIRMWARE_VERSION: ${{ needs.targets.outputs.version }}
+        run: |
+          set -o pipefail
+          # no debug logs: the list of build.sh DISABLE_DEBUG=1 less -UCFG_DEBUG, which the nRF52 core needs
+          # defined (same as tools/lite-flags.sh without WITH_DEBUG); e.g. T-Deck sets CORE_DEBUG_LEVEL=1
+          export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:-} -UMESH_DEBUG -UMESH_PACKET_LOGGING -UBLE_DEBUG_LOGGING -UWIFI_DEBUG_LOGGING -UBRIDGE_DEBUG -UGPS_NMEA_DEBUG -UCORE_DEBUG_LEVEL -UESPNOW_DEBUG_LOGGING -UDEBUG_RP2040_WIRE -UDEBUG_RP2040_SPI -UDEBUG_RP2040_CORE -UDEBUG_RP2040_PORT -URADIOLIB_DEBUG_SPI -URADIOLIB_DEBUG_BASIC -URADIOLIB_DEBUG_PROTOCOL"
+          /usr/bin/env bash build.sh build-firmware ${{ matrix.target }} 2>&1 | tee /tmp/pio-size.txt
+
+      - name: App Image and OTA Manifest
+        if: steps.build.outcome == 'success'
+        env:
+          VERSION: ${{ needs.targets.outputs.version }}
+        run: |
+          # before the size check: its `pio project metadata` (no build.sh version flags) wipes .pio/build/<env>
+          test -f .pio/build/${{ matrix.target }}/firmware.elf
+          tools/ota-manifest-entry.sh ${{ matrix.target }} "$VERSION" .pio/build/${{ matrix.target }}/firmware.elf
+
+      # too big for the staged OTA copy is no reason to drop the board: it is said in its description
+      - name: Size Check
+        if: steps.build.outcome == 'success'
+        run: |
+          set +e
+          tools/check-size.sh --log /tmp/pio-size.txt ${{ matrix.target }} > /tmp/size-check.txt 2>&1
+          RC=$?
+          sed 's/^::error::/::warning::/' /tmp/size-check.txt
+          if [ "$RC" -ne 0 ] && grep -q 'staged OTA copy' /tmp/size-check.txt; then
+            echo "BOARD_OVERSIZE=--oversize" >> "$GITHUB_ENV"
+          fi
+          exit 0
+
+      - name: Board Description
+        if: steps.build.outcome == 'success'
+        run: |
+          tools/board-info.sh ${{ matrix.target }} $BOARD_OVERSIZE > out/${{ matrix.target }}.board.json
+          jq -e .title out/${{ matrix.target }}.board.json >/dev/null
+          cat out/${{ matrix.target }}.board.json
+          # the manifest entry (nRF52 / ESP32 only) gets the title and descriptions too
+          shopt -s nullglob
+          for f in out/*.ota.json; do
+            jq -s '.[0] + (.[1] | {title, description, description_bg})' "$f" out/${{ matrix.target }}.board.json > "$f.tmp"
+            mv "$f.tmp" "$f"
+          done
+
+      # only a board whose every step went through: a half-made board (no manifest entry or description) is
+      # left out and listed as not built
+      - name: Upload Workflow Artifacts
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: out
+          if-no-files-found: ignore
+
+      - name: Build Result
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::error::${{ matrix.target }} did not build (the release lists it as not built)"
+          exit 1
+
+  release:
+    needs: [targets, build]
+    runs-on: ubuntu-latest
+    # also when some boards failed (their jobs are red); not when the run was cancelled or planning failed
+    if: ${{ !cancelled() && needs.targets.result == 'success' && needs.targets.outputs.release == 'true' }}
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+          path: out
+
+      - name: OTA Manifest
+        run: |
+          if ! ls out/* >/dev/null 2>&1; then
+            echo "::error::no board built: nothing to release"
+            exit 1
+          fi
+          # only nRF52 / ESP32 boards have manifest entries; RP2040 / STM32 files are released without them
+          if ls out/*.ota.json >/dev/null 2>&1; then
+            jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
+            rm out/*.ota.json
+            jq -c '.files | length' out/ota-manifest.json
+          else
+            echo "::warning::no nRF52 / ESP32 board built: no ota-manifest.json in this release"
+          fi
+
+      - name: Release Text
+        env:
+          TARGETS: ${{ needs.targets.outputs.targets }}
+          TAG: ${{ needs.targets.outputs.tag }}
+        run: |
+          echo "$TARGETS" | jq -r '.[]' > /tmp/targets.txt
+          mkdir -p release-text
+          tools/repeater-release-notes.sh out /tmp/targets.txt docs/release-notes/repeater.md "$TAG" > release-text/body.md
+          # their content is in the manifest and the text now, they are not release files
+          rm -f out/*.board.json
+          wc -c release-text/body.md
+          grep -A100 '^## Not built' release-text/body.md || echo "all boards built"
+
+      - name: SHA256SUMS
+        run: |
+          # standard `sha256sum` format of every file published here (check with: sha256sum -c SHA256SUMS)
+          cd out
+          FILES=$(ls -1 | grep -vx SHA256SUMS | sort || true)
+          if [ -z "$FILES" ]; then echo "::error::no files to checksum in out/"; exit 1; fi
+          sha256sum $FILES > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.targets.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: "Repeaters ${{ needs.targets.outputs.version }}"
+          body_path: release-text/body.md
+          prerelease: false
+          make_latest: 'false'
+          files: out/*

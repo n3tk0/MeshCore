@@ -56,7 +56,9 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.github.n3tk0.loraota.Lang
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.Backup
 import io.github.n3tk0.loraota.backup.DeviceKind
@@ -823,7 +825,10 @@ private fun OfflineFirmwareTab(
                     f.env.replace('_', ' ').contains(q, ignoreCase = true) ||
                     f.env.contains(q, ignoreCase = true) ||
                     f.version.contains(q, ignoreCase = true) ||
-                    f.release.contains(q, ignoreCase = true))
+                    f.release.contains(q, ignoreCase = true) ||
+                    f.title.contains(q, ignoreCase = true) ||
+                    f.description.contains(q, ignoreCase = true) ||
+                    f.descriptionBg.contains(q, ignoreCase = true))
         }
         for (item in filtered) {
             CachedFirmwareCard(
@@ -862,8 +867,12 @@ private fun CachedFirmwareCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(f.env.replace('_', ' '), style = MaterialTheme.typography.titleMedium)
+                Text(f.title.ifEmpty { f.env.replace('_', ' ') }, style = MaterialTheme.typography.titleMedium)
+                f.descriptionFor(Lang.current(LocalContext.current)).takeIf { it.isNotEmpty() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 val meta = buildList {
+                    if (f.title.isNotEmpty()) add(f.env)
                     val row = f.rowLabel()
                     if (row.isNotEmpty()) add(row)
                     if (totalBytes > 0L) add(formatSize(totalBytes))

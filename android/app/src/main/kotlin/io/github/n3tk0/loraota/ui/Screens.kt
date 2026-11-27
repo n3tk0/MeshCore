@@ -1099,7 +1099,7 @@ private fun LoraTab(vm: AppViewModel) {
                 if (sel != null && sel !in top) top + sel else top
             }
             for (f in visible) {
-                FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' '), f == best) { vm.pickRelease(f) }
+                FirmwareRow(f, vm.newImage?.sha == f.sha256, !vm.busy, f.env.replace('_', ' '), f == best, showBoard = false) { vm.pickRelease(f) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (ordered.size > 4) {
@@ -1263,7 +1263,7 @@ private fun FlashContent(vm: AppViewModel) {
             }
             val words = filterQuery.lowercase().split(Regex("[\\s_]+")).filter { it.isNotEmpty() }
             val shown = if (words.isEmpty()) candidates else candidates.filter { f ->
-                val text = "${f.env} ${f.version} ${f.release} ${f.dfu}".lowercase()
+                val text = "${f.env} ${f.version} ${f.release} ${f.dfu} ${f.title} ${f.description} ${f.descriptionBg}".lowercase()
                 words.all { it in text }
             }
             val visible = if (words.isNotEmpty() || showAllFlash || shown.size <= 5) {
@@ -1344,14 +1344,19 @@ internal fun ReleasesErrorCard(vm: AppViewModel, upstream: Boolean = false) {
 
 @Composable
 private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, detail: String, recommended: Boolean = false,
-                        onPick: () -> Unit) {
+                        /** false where every row is the same board (LoRa OTA update): version and date stay the main line */
+                        showBoard: Boolean = true, onPick: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
         .fillMaxWidth()
         .clickable(enabled = enabled, onClick = onPick)) {
         RadioButton(selected = selected, onClick = onPick, enabled = enabled)
+        // the board's name (when the manifest has it) is the main line, the release moves to the detail line
+        val lang = Lang.current(LocalContext.current)
+        val description = if (showBoard) f.descriptionFor(lang) else ""
+        val title = if (showBoard) f.title else ""
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(f.rowLabel(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+                Text(title.ifEmpty { f.rowLabel() }, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
                 if (recommended) {
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
@@ -1366,7 +1371,11 @@ private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, de
                     }
                 }
             }
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (title.isEmpty()) detail else "${f.rowLabel()} · $detail",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (description.isNotEmpty()) {
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
