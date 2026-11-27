@@ -3743,16 +3743,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val totalSec = (NodeDiscover.LISTEN_MS / 1000L).toInt().coerceAtLeast(1)
         nearbySecondsLeft = totalSec
         working = str(R.string.nearby_searching, totalSec)
-        val ticker = viewModelScope.launch {
-            for (s in totalSec downTo 1) {
-                nearbySecondsLeft = s
-                working = str(R.string.nearby_searching, s)
-                delay(1000L)
-            }
-            nearbySecondsLeft = 0
-        }
+        // the countdown starts once the companion has accepted the request (that can take a few seconds)
+        var ticker: kotlinx.coroutines.Job? = null
         try {
-            companion.discoverRepeaters(listenMs = NodeDiscover.LISTEN_MS) { reply ->
+            companion.discoverRepeaters(
+                listenMs = NodeDiscover.LISTEN_MS,
+                onListening = {
+                    ticker = viewModelScope.launch {
+                        for (s in totalSec downTo 1) {
+                            nearbySecondsLeft = s
+                            working = str(R.string.nearby_searching, s)
+                            delay(1000L)
+                        }
+                        nearbySecondsLeft = 0
+                    }
+                },
+            ) { reply ->
                 val contact = repeaters.firstOrNull { reply.matchesKey(it.publicKey) }
                 val name = contact?.name?.takeIf { it.isNotBlank() } ?: resolveKnownName(reply)
                 val item = NodeDiscover.DiscoveredRepeater(
@@ -3771,13 +3777,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+            // shown once, in the screen's own card (not again in the bottom status)
             nearbyError = str(R.string.nearby_err_companion, e.message ?: "")
-            throw e
         } catch (e: Exception) {
             nearbyError = e.message ?: e.toString()
-            throw e
         } finally {
-            ticker.cancel()
+            ticker?.cancel()
             nearbyListening = false
             nearbySecondsLeft = 0
             nearbySearched = true

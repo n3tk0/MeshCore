@@ -304,10 +304,12 @@ class CompanionRadio(private val link: CompanionLink) {
     /**
      * Broadcasts a zero-hop `DISCOVER_REQ` for repeaters (`CMD_SEND_CONTROL_DATA`, v8+) and calls
      * [onReply] for each matching repeater reply received over the next [listenMs] milliseconds.
+     * [onListening] runs once the companion has accepted the request, when the listening window starts.
      */
     suspend fun discoverRepeaters(
         listenMs: Long = NodeDiscover.LISTEN_MS,
         prefixOnly: Boolean = false,
+        onListening: () -> Unit = {},
         onReply: (NodeDiscover.Reply) -> Unit,
     ) {
         val tag = java.util.concurrent.ThreadLocalRandom.current().nextInt().let { if (it == 0) 1 else it }
@@ -333,6 +335,7 @@ class CompanionRadio(private val link: CompanionLink) {
                     onReply(r)
                 }
             }
+            onListening()
             val deadlineNs = System.nanoTime() + listenMs * 1_000_000L
             while (true) {
                 val remMs = (deadlineNs - System.nanoTime()) / 1_000_000L
