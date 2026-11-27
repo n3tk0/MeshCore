@@ -184,7 +184,7 @@ All solar boards (commands and capabilities per board and version): [docs/solar-
 | staged install, normal build (image up to 396 KB) | ProMicro / Faketec, T1000-E, ThinkNode M3, Heltec T114 without display, RAK WisMesh Tag, Minewsemi ME25LS01 |
 | staged install only with a light build (`build-boards.yml`, about 310-336 KB) | RAK4631, RAK3401, Heltec T114 with display, Heltec T096, Heltec T1 |
 
-Bigger images still update over LoRa, the old way. T114 and T1000-E have QSPI flash, but its pins are not known yet; RAK boards have at most 1 MB of QSPI flash, too small for the layout.
+Every repeater board and which bootloader it should use (and why the others keep the stock one): [bootloader/README.md](./bootloader/README.md#every-repeater-board). Bigger images still update over LoRa, the old way. T114 and T1000-E have QSPI flash, but its pins are not known yet; RAK boards have at most 1 MB of QSPI flash, too small for the layout.
 
 **Install** (once per node): get `update-<board>_bootloader-…-mcota1_nosd.uf2` from a `bootloader-v*` release or the Build Bootloader workflow's artifacts, double-tap RST and copy it to the drive. `INFO_UF2.TXT` on the drive names your board; on a Xiao pick the Sense file only if it says `SeeedXiaoSense`. The firmware finds the new bootloader by itself; nothing else needs changing.
 
