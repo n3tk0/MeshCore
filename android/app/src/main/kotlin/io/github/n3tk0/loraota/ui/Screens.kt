@@ -1349,9 +1349,12 @@ private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, de
         .fillMaxWidth()
         .clickable(enabled = enabled, onClick = onPick)) {
         RadioButton(selected = selected, onClick = onPick, enabled = enabled)
+        // the board's name (when the manifest has it) is the main line, the release moves to the detail line
+        val lang = Lang.current(LocalContext.current)
+        val description = f.descriptionFor(lang)
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(f.rowLabel(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+                Text(f.title.ifEmpty { f.rowLabel() }, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
                 if (recommended) {
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
@@ -1366,7 +1369,11 @@ private fun FirmwareRow(f: FirmwareFile, selected: Boolean, enabled: Boolean, de
                     }
                 }
             }
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (f.title.isEmpty()) detail else "${f.rowLabel()} · $detail",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (description.isNotEmpty()) {
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
