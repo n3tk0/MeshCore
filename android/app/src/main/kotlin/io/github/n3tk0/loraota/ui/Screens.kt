@@ -1263,7 +1263,7 @@ private fun FlashContent(vm: AppViewModel) {
             }
             val words = filterQuery.lowercase().split(Regex("[\\s_]+")).filter { it.isNotEmpty() }
             val shown = if (words.isEmpty()) candidates else candidates.filter { f ->
-                val text = "${f.env} ${f.version} ${f.release} ${f.dfu}".lowercase()
+                val text = "${f.env} ${f.version} ${f.release} ${f.dfu} ${f.title} ${f.description} ${f.descriptionBg}".lowercase()
                 words.all { it in text }
             }
             val visible = if (words.isNotEmpty() || showAllFlash || shown.size <= 5) {

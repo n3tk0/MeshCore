@@ -4,7 +4,7 @@ name: Build Repeater Firmwares
 # no debug), one job per board. For one board (and a lighter image) use "Build Firmware for Boards".
 # - manual run, "release" off: the files are attached to the run (Actions > run > Artifacts)
 # - manual run, "release" on, "version" v1.18.0-n1: also publishes the GitHub release repeaters-v1.18.0-n1
-# - tag "repeater-v1.2.3-n1" pushed: the same release, with that tag and the version v1.2.3-n1
+# - tag "repeater-v1.2.3-n1" or "repeaters-v1.2.3-n1" pushed: the same release, with that tag and the version v1.2.3-n1
 # The release is a normal one but not marked "Latest". It holds the files of the boards that built, SHA256SUMS,
 # ota-manifest.json (read by the LoRa OTA app: with title and description of every board) and a text made from
 # docs/release-notes/repeater.md (with README.md's repeater part between its release-notes markers) + a table of the boards (tools/repeater-release-notes.sh); boards that failed
@@ -28,6 +28,7 @@ on:
   push:
     tags:
       - 'repeater-*'
+      - 'repeaters-*'
 
 jobs:
   targets:
@@ -53,10 +54,11 @@ jobs:
           IN_VERSION: ${{ inputs.version }}
         run: |
           if [ "$EVENT" = "push" ]; then
-            # a pushed tag repeater-v1.2.3-n1: published as it is, the version is the tag without "repeater-"
+            # a pushed tag repeater-v1.2.3-n1 / repeaters-v1.2.3-n1: published as it is, the version is the rest
             RELEASE=true
             TAG=$REF_NAME
-            VERSION=${REF_NAME#repeater-}
+            VERSION=${REF_NAME#repeaters-}
+            VERSION=${VERSION#repeater-}
           else
             RELEASE=$IN_RELEASE
             TAG=""
@@ -127,6 +129,9 @@ jobs:
           FIRMWARE_VERSION: ${{ needs.targets.outputs.version }}
         run: |
           set -o pipefail
+          # no debug logs: the list of build.sh DISABLE_DEBUG=1 less -UCFG_DEBUG, which the nRF52 core needs
+          # defined (same as tools/lite-flags.sh without WITH_DEBUG); e.g. T-Deck sets CORE_DEBUG_LEVEL=1
+          export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS:-} -UMESH_DEBUG -UMESH_PACKET_LOGGING -UBLE_DEBUG_LOGGING -UWIFI_DEBUG_LOGGING -UBRIDGE_DEBUG -UGPS_NMEA_DEBUG -UCORE_DEBUG_LEVEL -UESPNOW_DEBUG_LOGGING -UDEBUG_RP2040_WIRE -UDEBUG_RP2040_SPI -UDEBUG_RP2040_CORE -UDEBUG_RP2040_PORT -URADIOLIB_DEBUG_SPI -URADIOLIB_DEBUG_BASIC -URADIOLIB_DEBUG_PROTOCOL"
           /usr/bin/env bash build.sh build-firmware ${{ matrix.target }} 2>&1 | tee /tmp/pio-size.txt
 
       - name: App Image and OTA Manifest
@@ -164,8 +169,10 @@ jobs:
             mv "$f.tmp" "$f"
           done
 
+      # only a board whose every step went through: a half-made board (no manifest entry or description) is
+      # left out and listed as not built
       - name: Upload Workflow Artifacts
-        if: ${{ !cancelled() }}
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}

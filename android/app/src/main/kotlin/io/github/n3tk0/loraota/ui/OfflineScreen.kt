@@ -825,7 +825,10 @@ private fun OfflineFirmwareTab(
                     f.env.replace('_', ' ').contains(q, ignoreCase = true) ||
                     f.env.contains(q, ignoreCase = true) ||
                     f.version.contains(q, ignoreCase = true) ||
-                    f.release.contains(q, ignoreCase = true))
+                    f.release.contains(q, ignoreCase = true) ||
+                    f.title.contains(q, ignoreCase = true) ||
+                    f.description.contains(q, ignoreCase = true) ||
+                    f.descriptionBg.contains(q, ignoreCase = true))
         }
         for (item in filtered) {
             CachedFirmwareCard(

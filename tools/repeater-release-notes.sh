@@ -77,6 +77,7 @@ body() {
   echo "|---|---|---|---|---|"
   jq -rs 'sort_by([.platform, (.title | ascii_downcase)]) | .[]
           | "| \(.title | gsub("\\|"; "/")) | `\(.env)` | \(.platform) | \(.radio | gsub("\\|"; "/")) | \(.description | gsub("\\|"; "/")) |"' "$infos"
+  if [ "${NO_BG_TABLE:-0}" != "1" ]; then
   echo
   echo "<details><summary>Описание на български</summary>"
   echo
@@ -86,6 +87,7 @@ body() {
           | "| \(.title | gsub("\\|"; "/")) (`\(.env)`) | \(.description_bg | gsub("\\|"; "/")) |"' "$infos"
   echo
   echo "</details>"
+  fi
   if [ ${#failed[@]} -gt 0 ]; then
     echo
     echo "## Not built / Не са компилирани"
@@ -98,7 +100,16 @@ body() {
 
 text=$(body)
 if [ ${#text} -gt "$LIMIT" ]; then
-  # the table is the only part that can be long: keep the head, say so
-  text="${text:0:$LIMIT}"$'\n\n'"... (cut: the release text is too long, see ota-manifest.json for every board) / (съкратено, вижте ota-manifest.json)"
+  # too long: first leave out the Bulgarian table (the app shows those descriptions from ota-manifest.json)
+  text=$(NO_BG_TABLE=1 body)
+fi
+if [ ${#text} -gt "$LIMIT" ]; then
+  # still too long: cut the board table, but keep the list of the boards that did not build
+  tail_part=""
+  if [ ${#failed[@]} -gt 0 ]; then tail_part=$'\n## Not built / Не са компилирани\n\n'$(for env in "${failed[@]}"; do echo "- $(title_of "$env") (\`$env\`)"; done); fi
+  note=$'\n\n... (cut: the release text is too long, see ota-manifest.json for every board) / (съкратено, вижте ota-manifest.json)\n'
+  keep=$((LIMIT - ${#tail_part} - ${#note}))
+  text="${text:0:$keep}"
+  text="${text%$'\n'*}$note$tail_part"
 fi
 printf '%s\n' "$text"

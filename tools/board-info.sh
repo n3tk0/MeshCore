@@ -24,7 +24,7 @@ else
   CONFIG=$(cd "$ROOT" && pio project config --json-output 2>/dev/null) || CONFIG=""
 fi
 
-printf '%s' "$CONFIG" | BI_ENV=$ENV BI_TSV=$TSV BI_OVERSIZE=$OVERSIZE python3 -I -c '
+printf '%s' "$CONFIG" | BI_ENV=$ENV BI_ROOT=$ROOT BI_TSV=$TSV BI_OVERSIZE=$OVERSIZE python3 -I -c '
 import json, os, re, sys
 
 env = os.environ["BI_ENV"]
@@ -58,10 +58,6 @@ except Exception:
 def finish(platform, radio, features, en, bg):
     if note_en: en.append(note_en)
     if note_bg: bg.append(note_bg)
-    if oversize:
-        en.append("too big for the staged LoRa OTA copy: update over Bluetooth/USB (LoRa OTA still works the old way, a RAM copy with no power-cut protection)")
-        bg.append("твърде голям за staged LoRa OTA копие: обновявай през Bluetooth/USB (LoRa OTA работи по стария начин, копие през RAM без защита от прекъсване на тока)")
-        features.append("too big for staged OTA")
     print(json.dumps({"env": env, "title": title, "platform": platform, "radio": radio, "features": features,
                       "description": " · ".join(en), "description_bg": " · ".join(bg)},
                      ensure_ascii=False))
@@ -79,11 +75,21 @@ for m in re.finditer(r"(?<![A-Za-z0-9_])-([DU])\s*([A-Za-z0-9_]+)(?:=(\S*))?", f
 def on(k): return k in d and d[k] not in ("0", "")
 
 board = str(opts.get("board", "")).lower()
-envl = env.lower()
 if on("NRF52_PLATFORM"): platform, mcu = "nRF52", "nRF52840"
 elif on("ESP32_PLATFORM"):
     platform = "ESP32"
-    if re.search(r"esp32-?c3", board): mcu = "ESP32-C3"
+    # the board file says which chip (boards/<board>.json here, else the PlatformIO one); the name is the fallback
+    jmcu = ""
+    import glob
+    for bf in [os.environ["BI_ROOT"] + "/boards/" + board + ".json"] + glob.glob(os.path.expanduser("~/.platformio/platforms/*/boards/" + board + ".json")):
+        try:
+            with open(bf, encoding="utf-8") as f:
+                jmcu = str(json.load(f).get("build", {}).get("mcu", "")).lower()
+        except Exception:
+            continue
+        if jmcu: break
+    if jmcu in ("esp32c3", "esp32c6", "esp32s3", "esp32"): mcu = {"esp32c3": "ESP32-C3", "esp32c6": "ESP32-C6", "esp32s3": "ESP32-S3", "esp32": "ESP32"}[jmcu]
+    elif re.search(r"esp32-?c3", board): mcu = "ESP32-C3"
     elif re.search(r"esp32-?c6", board): mcu = "ESP32-C6"
     elif re.search(r"s3|heltec_v4|t-deck|station-g2|t_beam_1w|heltec_e290|heltec_e213|heltec_tracker_v2", board): mcu = "ESP32-S3"
     else: mcu = "ESP32"
@@ -141,8 +147,17 @@ if lora_ota:
     features.append("LoRa OTA")
     if platform == "nRF52":
         if on("QSPI_STORAGE"):
+            pass
+        elif oversize:
+            # tools/check-size.sh: bigger than the staged copy can take, whatever the board
+            features.append("too big for staged OTA")
+            en.append("LoRa OTA the old way (RAM copy, no power-cut protection): this full build is too big for the staged install, a Bluetooth/USB update is safer")
+            bg.append("LoRa OTA по стария начин (копие през RAM, без защита от спиране на тока): този пълен build е твърде голям за staged инсталация, по-сигурно е обновяване през Bluetooth/USB")
+        if on("QSPI_STORAGE"):
             features.append("rollback (QSPI)")
             en.append("dual-image LoRa OTA with rollback (QSPI)"); bg.append("LoRa OTA с два образа и rollback (QSPI)")
+        elif oversize:
+            pass
         elif env in STAGED:
             features.append("staged install")
             en.append("LoRa OTA, power-cut safe staged install with our bootloader (image up to 396 KB)")
