@@ -54,6 +54,9 @@ class RepeaterMailboxTest {
 
     @Test fun keyInput() {
         assertEquals(ivan, RepeaterMailbox.normalizeKey("  0x" + ivan.uppercase() + " "))
+        assertEquals(ivan, RepeaterMailbox.normalizeKey("0X" + ivan.uppercase()))
+        assertEquals(ivan, RepeaterMailbox.normalizeKey("0x" + ivan.chunked(2).joinToString(":")))
+        assertEquals(ivan, RepeaterMailbox.normalizeKey(ivan.chunked(2).joinToString(" ")))
         assertNull(RepeaterMailbox.normalizeKey("1122"))
         assertNull(RepeaterMailbox.normalizeKey("z".repeat(64)))
         assertEquals("mailbox add $ivan", RepeaterMailbox.cmdAdd(ivan.uppercase()))
@@ -76,5 +79,9 @@ class RepeaterMailboxTest {
         assertTrue(back.enabled); assertTrue(back.selfIncluded); assertEquals(123L, back.time)
         assertEquals("Иван", back.recipients[1].name); assertEquals(2, back.recipients[0].kept)
         assertNull(RepeaterMailbox.fromJson("{bad"))
+        // another companion connected now: not "you"; none connected: as read
+        assertFalse(back.includes("99887766" + "1".repeat(56)))
+        assertTrue(back.includes(self))
+        assertTrue(back.includes(""))
     }
 }

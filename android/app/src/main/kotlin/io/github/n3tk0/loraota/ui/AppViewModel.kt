@@ -3577,6 +3577,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The connected companion's own public key (hex), "" when it did not say. */
     val selfKeyHex get() = deviceKey(DeviceKind.COMPANION)
 
+    /** The companion's key for the ✉ marks: "" when none is connected (the start screen then shows what was read). */
+    val badgeSelfKey get() = if (hasCompanionConnection) selfKeyHex else ""
+
     /** The owners with the companion's contact names and "you". */
     val mailboxRecipients get() = io.github.n3tk0.loraota.tools.RepeaterMailbox.recipients(toolsState.mailboxOwners, allContactsByKey, selfKeyHex)
 
@@ -3597,6 +3600,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             toolsState.clearMailbox()
             toolsState.mailboxUnsupported = true
             toolsState.mailboxLoaded = true
+            // flashed without a mailbox: no ✉ from an older read
+            val key = hex(r.publicKey)
+            withContext(Dispatchers.IO) { mailboxCache.remove(key) }
+            mailboxSummaries = mailboxSummaries - key
             return false
         }
         val status = io.github.n3tk0.loraota.tools.RepeaterMailbox.parseStatus(reply)

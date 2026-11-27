@@ -132,7 +132,7 @@ private fun KnownRepeaterCard(vm: AppViewModel, row: KnownRepeaterRow, warnTint:
                     Text(stringResource(statusRes), style = MaterialTheme.typography.labelMedium)
                 }
                 if (battery != null) Text(battery, style = MaterialTheme.typography.labelMedium)
-                vm.mailboxSummaries[row.key]?.let { MailboxBadge(it) }
+                vm.mailboxSummaries[row.key]?.let { MailboxBadge(it, vm.badgeSelfKey) }
                 if (row.firmware.isNotEmpty()) {
                     Text(row.firmware.replace("|", " · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

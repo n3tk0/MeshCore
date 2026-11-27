@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -93,9 +94,17 @@ private fun MailboxBody(vm: AppViewModel, status: MailboxStatus) {
     var removeOf by remember { mutableStateOf<MailboxRecipient?>(null) }
     var picking by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var keyInput by rememberSaveable { mutableStateOf("") }
+    var clearFieldOnAdd by remember { mutableStateOf(false) }   // the key came from the field: emptied once it is sent
 
-    fun add(key: String) {
-        if (!status.enabled) confirmOnFor = key else vm.mailboxCommand(RepeaterMailbox.cmdAdd(key))
+    fun add(key: String, fromField: Boolean = false) {
+        if (!status.enabled) {
+            confirmOnFor = key
+            clearFieldOnAdd = fromField
+        } else {
+            vm.mailboxCommand(RepeaterMailbox.cmdAdd(key))
+            if (fromField) keyInput = ""
+        }
     }
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -157,24 +166,28 @@ private fun MailboxBody(vm: AppViewModel, status: MailboxStatus) {
             Text(stringResource(R.string.mailbox_add_contact))
         }
     }
-    var keyInput by rememberSaveable { mutableStateOf("") }
     val key = RepeaterMailbox.normalizeKey(keyInput)
     val keyErr = keyInput.isNotBlank() && key == null
+    val keyOwner = key != null && vm.isMailboxOwner(key)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         OutlinedTextField(
             value = keyInput,
-            onValueChange = { keyInput = it.replace('\n', ' ').take(80) },
+            onValueChange = { keyInput = it.replace('\n', ' ').take(120) },   // "aa:bb:..." with 0x is 97
             label = { Text(stringResource(R.string.mailbox_paste_key), maxLines = 1) },
             isError = keyErr,
-            supportingText = if (keyErr) ({ Text(stringResource(R.string.mailbox_key_err)) }) else null,
+            supportingText = when {
+                keyErr -> ({ Text(stringResource(R.string.mailbox_key_err)) })
+                keyOwner -> ({ Text(stringResource(R.string.mailbox_key_owner)) })
+                else -> null
+            },
             singleLine = true,
             enabled = !busy && !full,
             textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
             modifier = Modifier.weight(1f),
         )
         Button(
-            onClick = { key?.let { add(it); keyInput = "" } },
-            enabled = !busy && !full && key != null && !vm.isMailboxOwner(key),
+            onClick = { key?.let { add(it, fromField = true) } },
+            enabled = !busy && !full && key != null && !keyOwner,
             modifier = Modifier.padding(top = 6.dp),
         ) { Text(stringResource(R.string.mailbox_add)) }
     }
@@ -194,8 +207,12 @@ private fun MailboxBody(vm: AppViewModel, status: MailboxStatus) {
         valid = RepeaterMailbox::validAway,
         busy = busy,
     ) { vm.mailboxCommand(RepeaterMailbox.cmdAway(it)) }
-    TextButton(onClick = { confirmClear = true }, enabled = !busy && status.kept > 0) {
-        Text(stringResource(R.string.mailbox_clear), color = MaterialTheme.colorScheme.error)
+    TextButton(
+        onClick = { confirmClear = true },
+        enabled = !busy && status.kept > 0,
+        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+    ) {
+        Text(stringResource(R.string.mailbox_clear))
     }
 
     confirmOnFor?.let { k ->
@@ -206,12 +223,14 @@ private fun MailboxBody(vm: AppViewModel, status: MailboxStatus) {
             confirmButton = {
                 TextButton(onClick = {
                     confirmOnFor = null
+                    if (clearFieldOnAdd) keyInput = ""
                     vm.mailboxCommand(RepeaterMailbox.cmdAdd(k), RepeaterMailbox.cmdEnable(true))
                 }) { Text(stringResource(R.string.mailbox_add_and_on)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     confirmOnFor = null
+                    if (clearFieldOnAdd) keyInput = ""
                     vm.mailboxCommand(RepeaterMailbox.cmdAdd(k))
                 }) { Text(stringResource(R.string.mailbox_add_only)) }
             },
@@ -308,15 +327,16 @@ private fun NumSetting(label: String, now: String, initial: Int, valid: (String)
 
 /** "✉ 2 · you too" on a repeater row: its recipients at the last read (kept on the phone). */
 @Composable
-fun MailboxBadge(s: io.github.n3tk0.loraota.tools.MailboxSummary) {
+fun MailboxBadge(s: io.github.n3tk0.loraota.tools.MailboxSummary, selfKey: String) {
+    val self = s.includes(selfKey)
     val text = when {
         !s.enabled -> stringResource(R.string.mailbox_badge_off)
-        s.selfIncluded -> stringResource(R.string.mailbox_badge_self, s.recipients.size)
+        self -> stringResource(R.string.mailbox_badge_self, s.recipients.size)
         else -> stringResource(R.string.mailbox_badge, s.recipients.size)
     }
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
-        color = if (s.enabled && s.selfIncluded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (s.enabled && self) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }

@@ -35,7 +35,13 @@ data class MailboxSummary(
     val recipients: List<MailboxRecipient>,
     val time: Long,
 ) {
+    /** As read (the companion connected then); kept for the start screen, when no companion is connected. */
     val selfIncluded get() = recipients.any { it.isSelf }
+
+    /** [selfKey] the companion connected now ("" when none: then as read), so another companion is never shown as "you". */
+    fun includes(selfKey: String): Boolean =
+        if (selfKey.length < RepeaterMailbox.PREFIX_HEX) selfIncluded
+        else recipients.any { selfKey.lowercase().startsWith(it.prefix) }
 }
 
 /** The repeater's `mailbox ...` console commands (examples/simple_repeater/MyMesh.cpp handleMailboxCommand). */
@@ -115,7 +121,7 @@ object RepeaterMailbox {
 
     /** A whole public key (64 hex), spaces and a "0x" head allowed in what is pasted. */
     fun normalizeKey(input: String): String? {
-        val s = input.trim().removePrefix("0x").replace(" ", "").replace(":", "").lowercase()
+        val s = input.trim().lowercase().removePrefix("0x").replace(" ", "").replace(":", "").replace("-", "")
         return if (s.length == KEY_HEX && s.all { it in '0'..'9' || it in 'a'..'f' }) s else null
     }
 

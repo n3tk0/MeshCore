@@ -1147,4 +1147,5 @@
     <string name="mailbox_badge">✉ %1$d</string>
     <string name="mailbox_badge_self">✉ %1$d · и ти</string>
     <string name="mailbox_badge_off">✉ изкл.</string>
+    <string name="mailbox_key_owner">Този ключ вече получава поща тук.</string>
 </resources>
