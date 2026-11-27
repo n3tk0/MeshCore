@@ -440,6 +440,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         companionVersion = ""
         companionOta = false
         companionStockSide = false
+        radioRestored = false
         canReadRepeater = null
         repeater = null
         info = null
@@ -553,8 +554,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                         val started = try {
                                             companion.start()
                                             companionOta = try {
-                                                companion.cli("tempradio off")
-                                                true
+                                                tempRadioReply(companion.cli("tempradio off"))
                                             } catch (e: CancellationException) {
                                                 throw e
                                             } catch (_: Exception) {
@@ -590,7 +590,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             if (ok) {
                                 reconnecting = false
                                 reconnectAttempt = 0
-                                message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_reconnected)}" else str(R.string.msg_reconnected)
+                                message = listOfNotNull(
+                                    flashMsg, str(R.string.msg_reconnected),
+                                    if (radioRestored) str(R.string.stock_radio_restored) else null,
+                                ).joinToString(" · ")
                                 messageIsError = false
                             } else {
                                 finishDisconnect(flashMsg)
@@ -783,7 +786,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             companion.start()
             companionDevice = device
             // left on the side channel by an update cut short; a stock companion has no such command
-            companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
+            companionOta = runCatching { tempRadioReply(companion.cli("tempradio off")) }.getOrDefault(false)
             afterCompanionStart(device.address)
             canReadRepeater = probeCanReadRepeater()
             companionName = companion.nodeName.ifEmpty {
@@ -1334,6 +1337,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Our companion answers `tempradio off` with OK. Stock firmware v14+ has the same console command but answers
+     * "Unknown command" (older ones have no console command at all: an error).
+     */
+    private fun tempRadioReply(reply: String): Boolean = reply.trim() == "OK"
+
+    /**
      * Right after the companion's start: a stock one the app left on the side channel (connection lost during an
      * update) goes back to its saved settings; then whether a stock one can do an update (its settings are known).
      */
@@ -1345,10 +1354,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             false   // tried again at the next connection
         }
-        if (restored) runCatching { companion.start() }   // its self info again, now with the normal settings
+        // its self info again, now with the normal settings; without it the side channel could pass for them
+        val fresh = !restored || runCatching { companion.start() }.isSuccess
         radioRestored = restored
         if (restored) message = str(R.string.stock_radio_restored)
-        companionStockSide = !companionOta && companion.mainRadio() != null
+        // still saved (the restore failed): no update until a connection puts them back
+        companionStockSide = !companionOta && fresh && savedRadios.get(address) == null && companion.mainRadio() != null
     }
 
     /** How the companion gets to the side channel: `tempradio` on ours, the standard radio command on stock firmware. */
@@ -1356,6 +1367,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (companionOta) return TempRadioSwitch { companion.cli(it) }
         val address = companionDevice?.address ?: ""
         return StockRadioSwitch(address, {
+            // its self info again: the settings may have changed since the connection (e.g. a backup restore)
+            companion.start()
             val main = companion.mainRadio() ?: throw Exception(str(R.string.q_stock_companion))
             // its client repeat is in the device query (v9+); asked again so a stale answer does not turn it off
             runCatching { companion.deviceInfo() }

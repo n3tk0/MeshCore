@@ -75,7 +75,8 @@ class StockRadioSwitch(
 
     override suspend fun enter(radio: SideRadio, leaseMins: Int) {
         if (onSide) return   // no lease to renew: it stays there until leave()
-        val n = normal ?: try {
+        // settings saved earlier and not put back yet are the normal ones: what it runs now may be the side channel
+        val n = normal ?: store.get(address) ?: try {
             normalNow()
         } catch (e: Exception) {
             if (e is CancellationException) throw e

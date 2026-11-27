@@ -44,6 +44,7 @@ class OtaSession(
     }
 
     private var onSide = false
+    private var sideTried = false   // a switch was asked: its reply may be lost while the companion did switch
     private var begun = false   // the repeater took the BEGIN: a Stop drops the update there too
 
     private suspend fun request(data: ByteArray, timeoutMs: Long, tries: Int): OtaProtocol.Reply? {
@@ -60,6 +61,7 @@ class OtaSession(
     }
 
     private suspend fun sideLease() {
+        sideTried = true
         try {
             side.enter(radio, leaseMins())
         } catch (e: SideSwitchFailed) {
@@ -70,6 +72,7 @@ class OtaSession(
     private suspend fun normalRadio() {
         withContext(NonCancellable) { runCatching { side.leave() } }
         onSide = false
+        sideTried = false
     }
 
     /** Long enough for a whole window and its STATUS tries, also with slow side channel settings. */
@@ -230,7 +233,7 @@ class OtaSession(
             throw if (e is OtaFailed || e is CancellationException || stopped) e
                   else OtaFailed(R.string.err_paused, listOf(e.message ?: e.toString()), resumable = true)
         } finally {
-            if (onSide) normalRadio()
+            if (onSide || sideTried) normalRadio()
         }
         return after!!
     }

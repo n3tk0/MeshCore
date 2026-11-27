@@ -80,6 +80,18 @@ class SideSwitchTest {
     }
 
     @Test
+    fun savedSettingsWinOverWhatItRunsNow() = runBlocking<Unit> {
+        val store = SavedRadios(MemoryPrefs())
+        store.put(addr, SavedRadio(main, 1))   // left on the side channel, restore not done yet
+        val sets = mutableListOf<Pair<SideRadio, Int>>()
+        val sw = StockRadioSwitch(addr, { SavedRadio(side, 0) }, store) { r, rep -> sets += r to rep }
+        sw.enter(side, 2)
+        assertEquals(SavedRadio(main, 1), store.get(addr))
+        sw.leave()
+        assertEquals(main to 1, sets.last())
+    }
+
+    @Test
     fun tempRadioUsesTheConsole() = runBlocking<Unit> {
         val sent = mutableListOf<String>()
         val sw = TempRadioSwitch { sent += it; "OK" }
