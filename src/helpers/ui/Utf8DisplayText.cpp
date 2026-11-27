@@ -54,6 +54,7 @@ struct EmojiEntry {
   const char* ascii;
 };
 
+#ifndef NO_EMOJI_TABLE   // small-flash builds (STM32): every emoji is the generic icon / '?'
 // Sorted by Unicode code point for binary search.
 const EmojiEntry kEmojiTable[] = {
   // Common punctuation / typographic characters from mobile keyboards
@@ -199,7 +200,13 @@ const EmojiEntry kEmojiTable[] = {
   { 0x1FAE1, EMOJI_ICON_NONE,   "o7" },       // 🫡
 };
 
+#endif
+
 const EmojiEntry* findEmojiEntry(uint32_t cp) {
+#ifdef NO_EMOJI_TABLE
+  (void)cp;
+  return NULL;
+#else
   size_t lo = 0;
   size_t hi = sizeof(kEmojiTable) / sizeof(kEmojiTable[0]);
   while (lo < hi) {
@@ -209,6 +216,7 @@ const EmojiEntry* findEmojiEntry(uint32_t cp) {
     else hi = mid;
   }
   return NULL;
+#endif
 }
 
 // Variation selectors, keycap combiner, and Fitzpatrick skin-tone modifiers.
