@@ -4,7 +4,7 @@ name: Build Repeater Firmwares
 # no debug), one job per board. For one board (and a lighter image) use "Build Firmware for Boards".
 # - manual run, "release" off: the files are attached to the run (Actions > run > Artifacts)
 # - manual run, "release" on, "version" v1.18.0-n1: also publishes the GitHub release repeaters-v1.18.0-n1
-# - tag "repeater-v1.2.3" pushed: the same release, with that tag and the version v1.2.3
+# - tag "repeater-v1.2.3-n1" pushed: the same release, with that tag and the version v1.2.3-n1
 # The release is a normal one but not marked "Latest". It holds the files of the boards that built, SHA256SUMS,
 # ota-manifest.json (read by the LoRa OTA app: with title and description of every board) and a text made from
 # docs/release-notes/repeater.md + a table of the boards (tools/repeater-release-notes.sh); boards that failed
@@ -53,10 +53,10 @@ jobs:
           IN_VERSION: ${{ inputs.version }}
         run: |
           if [ "$EVENT" = "push" ]; then
-            # a pushed tag repeater-v1.2.3: published as it is, the version is the part after the last "-"
+            # a pushed tag repeater-v1.2.3-n1: published as it is, the version is the tag without "repeater-"
             RELEASE=true
             TAG=$REF_NAME
-            VERSION=$GIT_TAG_VERSION
+            VERSION=${REF_NAME#repeater-}
           else
             RELEASE=$IN_RELEASE
             TAG=""
