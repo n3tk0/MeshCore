@@ -1019,4 +1019,57 @@
     <string name="map_no_nodes">Няма ретранслатори с GPS координати (lat/lon = 0 се пропускат).</string>
     <string name="map_save_confirm">Ще се изтеглят %1$d плочки (мащаб %2$d–%3$d) от OpenStreetMap за текущия видим район. Продължавате ли?</string>
     <string name="map_save_too_many">Районът е твърде голям: %1$d плочки (максимум %2$d). Приближете картата и опитайте пак.</string>
+
+    <!-- link quality (trace) -->
+    <string name="working_link">Измервам връзката…</string>
+    <string name="link_out">→ рипитъра</string>
+    <string name="link_in">← към теб</string>
+    <string name="link_snr">%1$.1f dB</string>
+    <string name="link_unknown">—</string>
+    <string name="link_rssi">RSSI %1$d dBm</string>
+    <string name="link_last_hop">последен hop</string>
+    <string name="link_measure">Измери пак</string>
+    <string name="link_follow">Следи</string>
+    <string name="link_follow_stop">Спри (%1$d s)</string>
+    <string name="link_state_none">още не е измерено</string>
+    <string name="link_state_measuring">мерим…</string>
+    <string name="link_state_ok">измерено в %1$s</string>
+    <string name="link_state_no_reply">няма отговор на trace-а</string>
+    <string name="link_state_failed">trace-ът не тръгна</string>
+    <string name="link_state_budget">лимитът за ефир е изчерпан</string>
+    <string name="link_not_direct_unknown">няма директна връзка (маршрутът не е известен)</string>
+    <plurals name="link_not_direct">
+        <item quantity="one">няма директна връзка (%d скок)</item>
+        <item quantity="other">няма директна връзка (%d скока)</item>
+    </plurals>
+    <string name="link_you">Ти</string>
+    <string name="link_repeater">Рипитър</string>
+    <plurals name="link_hops_short">
+        <item quantity="one">%d скок</item>
+        <item quantity="other">%d скока</item>
+    </plurals>
+    <plurals name="link_weakest">
+        <item quantity="one">най-слабо · %d скок</item>
+        <item quantity="other">най-слабо · %d скока</item>
+    </plurals>
+    <string name="link_tap_measure">Докосни, за да измериш пак</string>
+    <string name="link_asym_phone">Телефонът чува рипитъра по-слабо: шум около теб или нисък tx на рипитъра</string>
+    <string name="link_asym_repeater">Рипитърът те чува по-слабо: слаб tx или антена на companion-а</string>
+    <string name="link_show_details">Покажи подробности</string>
+    <string name="link_hide_details">Скрий подробности</string>
+    <string name="link_check_direct">Провери директно</string>
+    <plurals name="link_direct_ok">
+        <item quantity="one">директно, въпреки маршрута през %d скок</item>
+        <item quantity="other">директно, въпреки маршрута през %d скока</item>
+    </plurals>
+    <string name="link_direct_ok_flood">директно, без познат маршрут</string>
+    <string name="link_direct_none">няма директна връзка</string>
+    <string name="paused_badge">Спрян ъпдейт</string>
+    <string name="link_stat_triple">%1$s %2$.1f / %3$.1f / %4$.1f dB</string>
+    <string name="link_bars_desc">%1$d от %2$d черти</string>
+    <string name="link_strip_desc">Връзка: към рипитъра %1$s, към теб %2$s</string>
+    <string name="running_from_backup">по последен backup</string>
+    <string name="paused_update_note">Има спрян ъпдейт → Firmware</string>
+    <string name="cached_settings">Настройки от преди %1$d мин</string>
+    <string name="cached_settings_reread">Прочети наново</string>
 </resources>

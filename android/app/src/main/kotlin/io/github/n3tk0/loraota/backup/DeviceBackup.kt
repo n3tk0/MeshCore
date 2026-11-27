@@ -265,6 +265,24 @@ object RepeaterBackup {
         return null
     }
 
+    /**
+     * `get <key>` for each of [keys] after a write: what the repeater keeps now (it may round or normalize a value).
+     * Null when any reply is missing or is no value, so the caller reads everything again later instead.
+     */
+    suspend fun readBack(c: CompanionRadio, r: Contact, keys: List<String>): Map<String, String>? {
+        val out = LinkedHashMap<String, String>()
+        try {
+            for (k in keys) {
+                val reply = ask(c, r, "get $k") ?: return null
+                if (!reply.startsWith("> ")) return null
+                out[k] = reply.removePrefix("> ")
+            }
+        } finally {
+            withContext(NonCancellable) { runCatching { c.captureCli(0) } }   // also after Stop
+        }
+        return out
+    }
+
     /** The order of a restore's filter items: lists first, the settings, `enabled` last (a half-restored filter never runs). */
     private fun filterRank(item: BackupItem): Int {
         val name = item.id.removePrefix(RepeaterFilter.BACKUP_PREFIX)

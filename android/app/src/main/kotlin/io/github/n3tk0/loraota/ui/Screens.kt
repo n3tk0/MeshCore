@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -152,25 +153,31 @@ fun AppScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        when (vm.step) {
-                            Step.COMPANION -> stringResource(R.string.app_name)
-                            Step.REPEATER -> vm.companionName
-                            Step.UPDATE -> vm.repeater?.name ?: ""
-                            Step.FLASH -> stringResource(
-                                R.string.flash_title,
-                                vm.flashDeviceName
-                            )
-                            Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
-                            Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
-                            Step.QUEUE -> stringResource(R.string.q_title)
-                            Step.SETTINGS -> stringResource(R.string.settings_title)
-                            Step.CLI -> stringResource(R.string.cli_title_companion, vm.companionName)
-                            Step.SWEEP -> stringResource(R.string.sweep_title)
-                            Step.OFFLINE -> stringResource(R.string.offline_title)
-                        },
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                    val titleText = when (vm.step) {
+                        Step.COMPANION -> stringResource(R.string.app_name)
+                        Step.REPEATER -> vm.companionName
+                        Step.UPDATE -> vm.repeater?.name ?: ""
+                        Step.FLASH -> stringResource(R.string.flash_title, vm.flashDeviceName)
+                        Step.BACKUP -> stringResource(R.string.backup_title, vm.backupDeviceName)
+                        Step.HEALTH -> stringResource(R.string.health_title, vm.healthDeviceName)
+                        Step.QUEUE -> stringResource(R.string.q_title)
+                        Step.SETTINGS -> stringResource(R.string.settings_title)
+                        Step.CLI -> stringResource(R.string.cli_title_companion, vm.companionName)
+                        Step.SWEEP -> stringResource(R.string.sweep_title)
+                        Step.OFFLINE -> stringResource(R.string.offline_title)
+                    }
+                    if (showRepeaterNav && vm.repeaterTab != RepeaterTab.OVERVIEW) {
+                        // the link next to the name instead of a row of its own; the name gives way first, then the numbers
+                        BoxWithConstraints {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(titleText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                Spacer(Modifier.width(8.dp))
+                                LinkTitleIndicator(vm, showNumbers = this@BoxWithConstraints.maxWidth >= 220.dp)
+                            }
+                        }
+                    } else {
+                        Text(titleText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 },
                 navigationIcon = {
                     if (vm.step != Step.COMPANION) IconButton(onClick = { back() }) {
@@ -670,6 +677,7 @@ private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit, onEdi
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     RouteBadge(c.hops)
+                    if (vm.isUpdatePaused(c)) PausedBadge()
                     if (healthRec != null && parsedHealth != null) {
                         val problems = HealthCheck.problems(HealthCheck.warnings(parsedHealth, null))
                         val dotColor = when {
@@ -727,6 +735,19 @@ private fun formatRelativeAge(ageMs: Long): String {
         mins < 60 -> stringResource(R.string.ago_mins, mins)
         hours < 24 -> stringResource(R.string.ago_hours, hours)
         else -> stringResource(R.string.ago_days, days)
+    }
+}
+
+/** An update this repeater keeps (cut short earlier): from the app's own record, no radio traffic. */
+@Composable
+private fun PausedBadge() {
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = MaterialTheme.shapes.small) {
+        Text(
+            stringResource(R.string.paused_badge),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        )
     }
 }
 
@@ -851,7 +872,9 @@ private fun RepeaterHome(vm: AppViewModel) {
     when (vm.repeaterTab) {
         RepeaterTab.OVERVIEW -> {
             StatusCard(vm)
-            vm.info?.let { RunningCard(it) }
+            LinkCard(vm)
+            if (vm.pausedUpdate) PausedUpdateNote(vm)
+            RunningNow(vm)
             QuickActionsCard(vm)
             NeighborsCard(vm)
         }
@@ -859,6 +882,8 @@ private fun RepeaterHome(vm: AppViewModel) {
             HealthScreen(vm)
         }
         RepeaterTab.FIRMWARE -> {
+            // the OTA check waits for this tab: once for a login (and 'Check again' when it did not get an answer)
+            LaunchedEffect(vm.otaChecked, vm.otaTried, vm.busy, vm.step, vm.reconnecting) { vm.checkOtaOnce() }
             vm.info?.let { RunningCard(it) }
             TabRow(selectedTabIndex = vm.firmwareTab) {
                 Tab(selected = vm.firmwareTab == 0, onClick = { vm.showLoraTab() }, enabled = !vm.busy, text = { Text(stringResource(R.string.tab_lora)) })
@@ -872,14 +897,41 @@ private fun RepeaterHome(vm: AppViewModel) {
     }
 }
 
+/** What runs now: the live answer once the Firmware tab asked for it, until then the firmware of the last backup. */
 @Composable
-private fun RunningCard(info: OtaProtocol.Info) {
+private fun RunningNow(vm: AppViewModel) {
+    val info = vm.info
+    val backup = vm.backupFirmware
+    when {
+        info != null -> RunningCard(info)
+        backup != null -> RunningCard(null, backup.first, stringResource(R.string.running_from_backup))
+    }
+}
+
+/** A LoRa update the app paused or stopped here: the repeater may still keep it; the Firmware tab goes on with it. */
+@Composable
+private fun PausedUpdateNote(vm: AppViewModel) {
+    Card(
+        Modifier.fillMaxWidth().clickable(enabled = !vm.busy) { vm.selectRepeaterTab(RepeaterTab.FIRMWARE) },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Warning, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.paused_update_note), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer)
+        }
+    }
+}
+
+@Composable
+private fun RunningCard(info: OtaProtocol.Info?, fallbackIdent: String = "", note: String? = null) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.running_now), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+                if (info != null) Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
                     Text(
                         when (info.platform) {
                             OtaProtocol.PLATFORM_NRF52 -> "nRF52"
@@ -892,7 +944,8 @@ private fun RunningCard(info: OtaProtocol.Info) {
                     )
                 }
             }
-            Text(info.ident.replace('|', '\n'), style = MaterialTheme.typography.bodyMedium)
+            Text((info?.ident ?: fallbackIdent).replace('|', '\n'), style = MaterialTheme.typography.bodyMedium)
+            if (note != null) Text(note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -924,7 +977,7 @@ private fun LoraTab(vm: AppViewModel) {
 
     if (info == null) {
         // a stock repeater (or the answer got lost): login and status only
-        if (vm.busy && !vm.otaChecked) return
+        if (vm.busy && !vm.otaChecked) return   // the check is on its way
         ReadyRow(false, stringResource(R.string.ready_supported), stringResource(R.string.recheck), !vm.busy) { vm.recheck() }
         if (vm.otaChecked) {
             Hint(stringResource(R.string.no_ota_short), stringResource(R.string.no_ota))
@@ -1712,7 +1765,7 @@ private fun StatusCard(vm: AppViewModel) {
                     shape = MaterialTheme.shapes.small,
                 ) {
                     Text(
-                        StatusFormat.routeBadge(routeLabel, s.lastRssi),
+                        routeLabel,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (hops == 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,

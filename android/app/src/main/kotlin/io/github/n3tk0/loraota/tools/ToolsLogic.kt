@@ -45,6 +45,24 @@ object NeighborsParser {
 }
 
 object CliHelper {
+    private val READ_ONLY_PLAIN = setOf("charger", "solar", "mppt", "powersaving", "gps")
+    private val READ_ONLY_HEADS = setOf("get", "ver", "board", "clock", "neighbors", "selftest", "stats", "i2c")
+
+    /** True for a console command known to leave the repeater's settings alone (reads); when unsure it is false. */
+    fun keepsSettings(command: String): Boolean {
+        val n = normalizeCommand(command)
+        val words = n.split(Regex("\\s+"))
+        val head = words[0]
+        if (head == "clock") return words.size == 1
+        if (head == "ota") return words.getOrNull(1) == "status"
+        // read-only when asked without an argument: with one they set (`charger ichg 500`, `powersaving on`, `gps off` ...)
+        if (head in READ_ONLY_PLAIN) return words.size == 1
+        if (head == "mailbox") return words.size == 1 || (words.size == 2 && words[1] == "list")
+        if (head == "smppt") return words.size == 1 || (words.size == 2 && words[1] == "names")
+        if (head == "filter") return words.size == 1 || (words[1] == "stats" && words.getOrNull(2) != "reset")
+        return head in READ_ONLY_HEADS || head.startsWith("stats")
+    }
+
     private val DANGEROUS_EXACT = setOf("reboot", "poweroff", "shutdown", "clkreboot", "erase", "clear stats", "ota rollback")
     private val NO_REPLY_EXACT = setOf("reboot", "poweroff", "shutdown", "clkreboot")
     /** Firmware (`CommonCLI` / `MyMesh`) strips an optional `xx|` tag prefix before dispatching commands. */

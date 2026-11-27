@@ -1,5 +1,7 @@
 package io.github.n3tk0.loraota.ble
 
+import io.github.n3tk0.loraota.ota.LinkTrace
+import io.github.n3tk0.loraota.ota.SideRadio
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -19,6 +21,15 @@ class Contact(val frame: ByteArray) {
     val isRepeater: Boolean get() = type == 2
     /** Hops on the route the companion knows; null: no route yet (messages flood). */
     val hops: Int? get() = if (outPathLen == 0xFF) null else outPathLen and 63
+    /** Bytes per hop hash of the route (the path length byte's top 2 bits: 1..4). */
+    val outHashSize: Int get() = LinkTrace.outHashSize(outPathLen)
+    /** The route's hop hashes (the companion's out_path, as learned), or null: no route, or the frame has no path. */
+    val outPath: ByteArray?
+        get() {
+            val h = hops ?: return null
+            val n = h * outHashSize
+            return if (h == 0 || 36 + n > frame.size) null else frame.copyOfRange(36, 36 + n)
+        }
 }
 
 class CompanionError(msg: String) : Exception(msg)
@@ -79,6 +90,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val PUSH_LOGIN_SUCCESS = 0x85
         const val PUSH_LOGIN_FAIL = 0x86
         const val PUSH_BINARY_RESPONSE = 0x8C
+        const val PUSH_TRACE_DATA = LinkTrace.PUSH_TRACE_DATA
         const val PUSH_CLI_REPLY_CAPTURED = 0xC0   // [code][sender prefix 6][timestamp 4][text]
         const val RESP_TELEMETRY_HISTORY = 0xC1    // [code] + a history piece (see HistorySeries)
     }
@@ -118,7 +130,7 @@ class CompanionRadio(private val link: CompanionLink) {
                 val f = link.frames.receive()
                 if (match(f)) return@withTimeoutOrNull f
                 val c = code(f)
-                if (c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL) {
+                if (kept(c)) {
                     pending.addLast(f)
                     while (pending.size > 32) pending.removeFirst()
                 }
@@ -127,6 +139,10 @@ class CompanionRadio(private val link: CompanionLink) {
             ByteArray(0)
         }
     }
+
+    /** Pushes that may come while waiting for something else: kept for whoever waits for them. */
+    private fun kept(c: Int) = c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS ||
+        c == PUSH_LOGIN_FAIL || c == PUSH_TRACE_DATA
 
     private fun code(f: ByteArray) = if (f.isEmpty()) -1 else f[0].toInt() and 0xff
 
@@ -182,7 +198,7 @@ class CompanionRadio(private val link: CompanionLink) {
                 while (true) {
                     val f = link.frames.tryReceive().getOrNull() ?: break
                     val c = code(f)
-                    if (c == PUSH_BINARY_RESPONSE || c == PUSH_CLI_REPLY_CAPTURED || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL) {
+                    if (kept(c)) {
                         pending.addLast(f)
                         while (pending.size > 32) pending.removeFirst()
                     }
@@ -249,6 +265,40 @@ class CompanionRadio(private val link: CompanionLink) {
         return f.copyOfRange(6, f.size)
     }
 
+    /** The radio settings the companion runs on now (from its self info: frequency, bandwidth, SF, CR); null when it did not say. */
+    fun mainRadio(): SideRadio? {
+        val s = selfInfo
+        if (s.size < 58) return null
+        val b = ByteBuffer.wrap(s).order(ByteOrder.LITTLE_ENDIAN)
+        return SideRadio(b.getInt(48), b.getInt(52), s[56].toInt() and 0xff, s[57].toInt() and 0xff)
+    }
+
+    /** The companion's path hash mode (0: one byte per hop), from the device query; 0 when it did not say. */
+    fun pathHashMode(): Int = if (deviceInfoRaw.size > 81) (deviceInfoRaw[81].toInt() and 0xff).coerceIn(0, 2) else 0
+
+    /** The hash size (1, 2 or 4 bytes) a trace uses with this companion. */
+    fun traceHashSize(): Int = LinkTrace.hashSizeForMode(pathHashMode())
+
+    /**
+     * A trace along the first [hashSize] (1, 2 or 4) bytes of [publicKey] (log2 of it goes in the flags): the companion
+     * sends it direct, and its push comes when the packet has been through the path and was heard again. A push with other
+     * hashes (another node with the same short hash) is not waited for. Null when no trace came back in time.
+     */
+    suspend fun trace(publicKey: ByteArray, hashSize: Int): LinkTrace.Data? = tracePath(publicKey.copyOf(hashSize), hashSize)
+
+    /** The same along [path] (hashes of [hashSize] bytes each; a multi-hop one comes back through the same nodes). */
+    suspend fun tracePath(path: ByteArray, hashSize: Int): LinkTrace.Data? {
+        val tag = java.util.concurrent.ThreadLocalRandom.current().nextInt().let { if (it == 0) 1 else it }
+        val flags = LinkTrace.flagsForHashSize(hashSize)
+        val sent = LinkTrace.parseSent(
+            command(LinkTrace.command(tag, 0, flags, path), 5000, RESP_SENT),
+        ) ?: throw CompanionError("short reply")
+        val f = lock.withLock {
+            await(LinkTrace.waitMs(sent.estTimeoutMs)) { LinkTrace.isAnswer(it, tag, path) }
+        } ?: return null
+        return LinkTrace.parseData(f)
+    }
+
     /**
      * A command for the repeater's console (as an admin). Its reply goes to the companion's message
      * queue like any console reply, so the caller checks the result another way.
@@ -300,7 +350,7 @@ class CompanionRadio(private val link: CompanionLink) {
         while (true) {
             val f = link.frames.tryReceive().getOrNull() ?: break
             val c = code(f)
-            if (c == PUSH_BINARY_RESPONSE || c == PUSH_LOGIN_SUCCESS || c == PUSH_LOGIN_FAIL || (c == PUSH_CLI_REPLY_CAPTURED && !his(f))) {
+            if (kept(c) && !(c == PUSH_CLI_REPLY_CAPTURED && his(f))) {
                 pending.addLast(f)
                 while (pending.size > 32) pending.removeFirst()   // as in await()
             }

@@ -599,6 +599,9 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
         return
     }
 
+    // a read of the last half hour (also an edit made here) opens the editor with no request over the air
+    LaunchedEffect(vm.repeaterSettingsLoaded, vm.busy) { vm.loadCachedSettings() }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -610,8 +613,17 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                OutlinedButton(onClick = { vm.loadRepeaterSettings() }, enabled = !vm.busy) {
+                OutlinedButton(onClick = { vm.loadRepeaterSettings(force = vm.repeaterSettingsLoaded) }, enabled = !vm.busy) {
                     Text(stringResource(if (vm.repeaterSettingsLoaded) R.string.refresh else R.string.rset_load))
+                }
+            }
+            vm.settingsCachedMin?.let { min ->
+                if (vm.repeaterSettingsLoaded) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.cached_settings, min), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.loadRepeaterSettings(force = true) }, enabled = !vm.busy) {
+                        Text(stringResource(R.string.cached_settings_reread))
+                    }
                 }
             }
             vm.repeaterSettingsProgress?.let { (cur, total) ->

@@ -208,6 +208,15 @@ private fun summary(b: Backup): String {
 private fun RestoreView(vm: AppViewModel, b: Backup) {
     Text(stringResource(R.string.restore_title, stamp(b)), style = MaterialTheme.typography.titleMedium)
     if (b.deviceKey != vm.backupDevice) DangerCard(stringResource(R.string.restore_other_device, b.deviceName))
+    vm.restoreCachedMin?.let { min ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.cached_settings, min), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            TextButton(onClick = { vm.startRestore(b, force = true) }, enabled = !vm.busy) {
+                Text(stringResource(R.string.cached_settings_reread))
+            }
+        }
+    }
     if (vm.restoreRows.isEmpty()) {
         Text(stringResource(R.string.restore_same))
         OutlinedButton(onClick = { vm.closeRestore() }, enabled = !vm.busy) { Text(stringResource(R.string.back)) }
