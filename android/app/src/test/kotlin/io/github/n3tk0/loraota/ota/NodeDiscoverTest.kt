@@ -104,7 +104,7 @@ class NodeDiscoverTest {
     fun newRepeaterContactFrameRoundTripsThroughContact() {
         val key = ByteArray(32) { (it * 3 + 1).toByte() }
         val frame = NodeDiscover.newRepeaterContactFrame(key, "  Vitosha-Peak-R1  ")
-        assertEquals(NodeDiscover.CONTACT_FRAME_LEN, frame.size)
+        assertEquals(1 + 32 + 3 + 64 + 32 + 4, frame.size)   // no lastmod: the companion stamps its own clock
         assertEquals(NodeDiscover.CMD_ADD_UPDATE_CONTACT, frame[0].toInt() and 0xff)
 
         val contact = Contact(frame)
