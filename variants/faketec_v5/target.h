@@ -9,6 +9,7 @@
 #ifdef DISPLAY_CLASS
   #include <helpers/ui/SSD1306Display.h>
   #include <helpers/ui/MomentaryButton.h>
+  #include <UITask.h>
 #endif
 #if defined(UI_HAS_ROTARY_INPUT)
   #include <helpers/ui/QuadratureRotaryInput.h>
@@ -25,6 +26,7 @@ extern EnvironmentSensorManager sensors;
 #ifdef DISPLAY_CLASS
   extern DISPLAY_CLASS display;
   extern MomentaryButton user_btn;
+  extern UITask ui_task;
 #endif
 #if defined(UI_HAS_ROTARY_INPUT)
   extern RotaryInput& rotary_input;

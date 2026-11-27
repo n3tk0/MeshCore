@@ -9,7 +9,9 @@
 #include <Utils.h>
 #include <Packet.h>
 #include <helpers/filter/CompanionFilter.h>
-#include "../../examples/companion_radio/NodePrefs.h"
+#include <helpers/CompanionNodePrefs.h>
+#include <helpers/ContactInfo.h>
+#include <helpers/ChannelDetails.h>
 
 #define FIRMWARE_VERSION     "v1.9.0-sim"
 #define FIRMWARE_BUILD_DATE  "11 Oct 2026"
@@ -28,28 +30,8 @@
 #define CTL_TYPE_NODE_DISCOVER_REQ   0x80
 #define CTL_TYPE_NODE_DISCOVER_RESP  0x90
 
-namespace mesh {
-  struct Identity { uint8_t pub_key[PUB_KEY_SIZE]; };
-  struct LocalIdentity : Identity { };
-  struct GroupChannel { uint8_t hash[PATH_HASH_SIZE]; uint8_t secret[PUB_KEY_SIZE]; };
-}
-
-struct ContactInfo {
-  mesh::Identity id;
-  char name[32];
-  uint8_t type;
-  uint8_t flags;
-  uint8_t out_path_len;
-  uint8_t out_path[MAX_PATH_SIZE];
-  uint32_t last_advert_timestamp;
-  uint32_t lastmod;
-  int32_t gps_lat, gps_lon;
-};
-
-struct ChannelDetails {
-  mesh::GroupChannel channel;
-  char name[32];
-};
+inline mesh::Identity::Identity() { memset(pub_key, 0, sizeof(pub_key)); }
+inline mesh::LocalIdentity::LocalIdentity() { memset(pub_key, 0, sizeof(pub_key)); }
 
 struct AdvertPath {
   uint8_t pubkey_prefix[7];

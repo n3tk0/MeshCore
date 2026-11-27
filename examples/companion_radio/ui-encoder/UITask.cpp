@@ -58,7 +58,7 @@ static const uint16_t HAPTIC_REMIND[]  = { 80, 120, 80 };     // the antenna que
 
 #define COLOR_BLACK  0
 
-#include "../ui-new/icons.h"
+#include <helpers/ui/companion-new/icons.h>
 
 using ui::utf8Len;
 using ui::utf8Skip;
