@@ -7,7 +7,7 @@ name: Build Repeater Firmwares
 # - tag "repeater-v1.2.3-n1" pushed: the same release, with that tag and the version v1.2.3-n1
 # The release is a normal one but not marked "Latest". It holds the files of the boards that built, SHA256SUMS,
 # ota-manifest.json (read by the LoRa OTA app: with title and description of every board) and a text made from
-# docs/release-notes/repeater.md + a table of the boards (tools/repeater-release-notes.sh); boards that failed
+# docs/release-notes/repeater.md (with README.md's repeater part between its release-notes markers) + a table of the boards (tools/repeater-release-notes.sh); boards that failed
 # are listed in it. A board's title and note are in docs/release-notes/boards.tsv, the rest of its description
 # comes from its platformio.ini (tools/board-info.sh).
 
@@ -89,6 +89,11 @@ jobs:
       - name: Boards to Build
         id: list
         run: |
+          # the release text takes what the fork adds from README.md: check its markers before ~100 builds
+          for m in start end; do
+            grep -q "^<!-- release-notes:repeater:$m" README.md || \
+              { echo "::error::README.md has no <!-- release-notes:repeater:$m --> marker (tools/repeater-release-notes.sh)"; exit 1; }
+          done
           LIST=$(bash build.sh get-repeater-firmwares-to-build)
           if [ -z "$LIST" ]; then echo "::error::no repeater boards found"; exit 1; fi
           # a repeater env with no title row still builds (its env name is its title)

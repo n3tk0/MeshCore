@@ -3,7 +3,10 @@
 #   tools/repeater-release-notes.sh <out-dir> <targets-file> <notes.md> <tag>
 # - <out-dir>: the downloaded artifacts: the firmware files <env>-<version>.* and <env>.board.json (tools/board-info.sh)
 # - <targets-file>: every env that was to be built, one per line
-# - <notes.md>: the general explanation (docs/release-notes/repeater.md), printed first
+# - <notes.md>: the general explanation (docs/release-notes/repeater.md), printed first; its line
+#   <!-- README:repeater --> becomes README.md's text between <!-- release-notes:repeater:start ... --> and
+#   <!-- release-notes:repeater:end --> (headings one level down, relative links made absolute at <tag>),
+#   so what the fork adds is written once, in README.md
 # - <tag>: the release tag, for the heading
 # Then a table of every board that built (title, env, platform, radio, description) with the Bulgarian
 # descriptions folded below, and the boards that did not build (no file <env>-* in <out-dir>).
@@ -16,6 +19,24 @@ TAG=$4
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TSV=${BOARDS_TSV:-$ROOT/docs/release-notes/boards.tsv}
 LIMIT=${BODY_LIMIT:-120000}
+README=${README_MD:-$ROOT/README.md}
+REPO=${GITHUB_REPOSITORY:-n3tk0/MeshCore}
+REF=${TAG:-main}
+
+# README.md's repeater part, ready for the release page
+readme_part() {
+  if ! grep -q '^<!-- release-notes:repeater:start' "$README" || ! grep -q '^<!-- release-notes:repeater:end' "$README"; then
+    echo "repeater-release-notes: the release-notes:repeater markers are missing in $README" >&2
+    return 1
+  fi
+  local base="https://github.com/$REPO/blob/$REF"
+  awk '/^<!-- release-notes:repeater:end/ { on = 0 } on { print } /^<!-- release-notes:repeater:start/ { on = 1 }' "$README" |
+    sed -E -e 's/^(#{2,5}) /#\1 /' \
+           -e "s|\]\(\./|](${base}/|g" \
+           -e "s|\]\(#|](${base}/README.md#|g"
+}
+part=$(readme_part) || exit 1
+[ -n "$part" ] || { echo "repeater-release-notes: the repeater part of $README is empty" >&2; exit 1; }
 
 built=()
 failed=()
@@ -42,7 +63,9 @@ title_of() {   # the hand-written title of an env, else the env
 }
 
 body() {
-  cat "$NOTES"
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = "<!-- README:repeater -->" ]; then printf '%s\n' "$part"; else printf '%s\n' "$line"; fi
+  done < "$NOTES"
   echo
   echo "---"
   echo
