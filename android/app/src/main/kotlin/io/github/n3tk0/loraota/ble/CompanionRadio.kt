@@ -1,6 +1,7 @@
 package io.github.n3tk0.loraota.ble
 
 import io.github.n3tk0.loraota.ota.LinkTrace
+import io.github.n3tk0.loraota.ota.NodeDiscover
 import io.github.n3tk0.loraota.ota.SideRadio
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -91,6 +92,7 @@ class CompanionRadio(private val link: CompanionLink) {
         const val PUSH_LOGIN_FAIL = 0x86
         const val PUSH_BINARY_RESPONSE = 0x8C
         const val PUSH_TRACE_DATA = LinkTrace.PUSH_TRACE_DATA
+        const val PUSH_CONTROL_DATA = NodeDiscover.PUSH_CONTROL_DATA
         const val PUSH_CLI_REPLY_CAPTURED = 0xC0   // [code][sender prefix 6][timestamp 4][text]
         const val RESP_TELEMETRY_HISTORY = 0xC1    // [code] + a history piece (see HistorySeries)
     }
@@ -297,6 +299,51 @@ class CompanionRadio(private val link: CompanionLink) {
             await(LinkTrace.waitMs(sent.estTimeoutMs)) { LinkTrace.isAnswer(it, tag, path) }
         } ?: return null
         return LinkTrace.parseData(f)
+    }
+
+    /**
+     * Broadcasts a zero-hop `DISCOVER_REQ` for repeaters (`CMD_SEND_CONTROL_DATA`, v8+) and calls
+     * [onReply] for each matching repeater reply received over the next [listenMs] milliseconds.
+     */
+    suspend fun discoverRepeaters(
+        listenMs: Long = NodeDiscover.LISTEN_MS,
+        prefixOnly: Boolean = false,
+        onReply: (NodeDiscover.Reply) -> Unit,
+    ) {
+        val tag = java.util.concurrent.ThreadLocalRandom.current().nextInt().let { if (it == 0) 1 else it }
+        lock.withLock {
+            pending.removeAll { code(it) == PUSH_CONTROL_DATA }
+            link.send(NodeDiscover.command(tag, prefixOnly = prefixOnly))
+            val early = ArrayList<ByteArray>()
+            val ack = await(5000) { f ->
+                val c = code(f)
+                if (c == PUSH_CONTROL_DATA) {
+                    early.add(f)
+                    false
+                } else {
+                    c == RESP_OK || c == RESP_ERR
+                }
+            } ?: throw CompanionError("no reply from the companion")
+            if (code(ack) == RESP_ERR) {
+                throw CompanionError("companion error ${if (ack.size > 1) ack[1].toInt() else 0}")
+            }
+            for (f in early) {
+                val r = NodeDiscover.parsePush(f)
+                if (r != null && r.tag == tag && r.nodeType == NodeDiscover.ADV_TYPE_REPEATER) {
+                    onReply(r)
+                }
+            }
+            val deadlineNs = System.nanoTime() + listenMs * 1_000_000L
+            while (true) {
+                val remMs = (deadlineNs - System.nanoTime()) / 1_000_000L
+                if (remMs <= 0L) break
+                val f = await(remMs) { code(it) == PUSH_CONTROL_DATA } ?: break
+                val r = NodeDiscover.parsePush(f)
+                if (r != null && r.tag == tag && r.nodeType == NodeDiscover.ADV_TYPE_REPEATER) {
+                    onReply(r)
+                }
+            }
+        }
     }
 
     /**

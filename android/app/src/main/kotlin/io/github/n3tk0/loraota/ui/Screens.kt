@@ -164,6 +164,7 @@ fun AppScreen(
                         Step.SETTINGS -> stringResource(R.string.settings_title)
                         Step.CLI -> stringResource(R.string.cli_title_companion, vm.companionName)
                         Step.SWEEP -> stringResource(R.string.sweep_title)
+                        Step.NEARBY -> stringResource(R.string.nearby_title)
                         Step.OFFLINE -> stringResource(R.string.offline_title)
                     }
                     if (showRepeaterNav && vm.repeaterTab != RepeaterTab.OVERVIEW) {
@@ -246,6 +247,7 @@ fun AppScreen(
                         Step.SETTINGS -> SettingsScreen(vm, themeMode, setThemeMode, setLang, dynamicColor, setDynamicColor)
                         Step.CLI -> CliConsole(vm, isCompanion = true)
                         Step.SWEEP -> SweepScreen(vm)
+                        Step.NEARBY -> NearbyScreen(vm)
                         Step.OFFLINE -> OfflineScreen(vm)
                     }
                     Spacer(Modifier.height(24.dp))
@@ -420,7 +422,7 @@ private fun UpdateAvailableBanner(version: String, enabled: Boolean, onOpen: () 
 private fun BottomStatus(vm: AppViewModel, hasNavBarBelow: Boolean = false) {
     val showBusy = vm.busy && !vm.running
     // the login sheet shows them itself, not twice
-    if (vm.step == Step.REPEATER && vm.loginSheet != null) return
+    if ((vm.step == Step.REPEATER || vm.step == Step.NEARBY) && vm.loginSheet != null) return
     // the restore's button stays in sight however long the list of differences
     val restoreBar = vm.step == Step.BACKUP && vm.restoreFrom != null && vm.restoreRows.isNotEmpty()
     val onFirmwareTab = vm.step == Step.UPDATE && !vm.running && vm.repeaterTab == RepeaterTab.FIRMWARE
@@ -569,6 +571,7 @@ private fun RepeaterStep(vm: AppViewModel) {
         }
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedButton(onClick = { vm.openNearby() }, enabled = !vm.busy) { Text(stringResource(R.string.nearby_open)) }
         if (vm.companionCanOta) {
             OutlinedButton(onClick = { vm.openQueue() }, enabled = !vm.busy) { Text(stringResource(R.string.q_open)) }
         }
@@ -783,7 +786,7 @@ private fun RouteText(hops: Int?) {
 
 /** Name, route, password and Login together: the result shows here too, not under the list. */
 @Composable
-private fun LoginSheet(vm: AppViewModel, c: Contact) {
+internal fun LoginSheet(vm: AppViewModel, c: Contact) {
     var password by remember(c) { mutableStateOf(vm.savedPassword(c) ?: "") }
     var showPassword by remember { mutableStateOf(false) }
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

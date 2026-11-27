@@ -28,6 +28,7 @@ import io.github.n3tk0.loraota.ota.AirtimeBudget
 import io.github.n3tk0.loraota.ota.LinkFollow
 import io.github.n3tk0.loraota.ota.LinkSample
 import io.github.n3tk0.loraota.ota.LinkTrace
+import io.github.n3tk0.loraota.ota.NodeDiscover
 import io.github.n3tk0.loraota.ota.OtaFailed
 import io.github.n3tk0.loraota.ota.PausedUpdates
 import io.github.n3tk0.loraota.ota.Phase
@@ -109,7 +110,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE, SETTINGS, CLI, SWEEP, OFFLINE }
+enum class Step { COMPANION, REPEATER, UPDATE, FLASH, BACKUP, HEALTH, QUEUE, SETTINGS, CLI, SWEEP, NEARBY, OFFLINE }
 
 /** Bottom navigation tabs inside a logged-in repeater (Step.UPDATE). */
 enum class RepeaterTab { OVERVIEW, HEALTH, FIRMWARE, TOOLS }
@@ -296,6 +297,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The DFU library's steps of the last Bluetooth flash, seconds from its start first: kept after a failure. */
     var flashLog by mutableStateOf<List<String>>(emptyList())
     var loginSheet by mutableStateOf<Contact?>(null)   // the repeater whose login sheet is open
+    // zero-hop nearby repeater discovery (CMD_SEND_CONTROL_DATA / DISCOVER_REQ)
+    val nearbyRepeaters = mutableStateListOf<NodeDiscover.DiscoveredRepeater>()
+    var nearbyListening by mutableStateOf(false)
+    var nearbySearched by mutableStateOf(false)
+    var nearbySecondsLeft by mutableStateOf(0)
+    var nearbyError by mutableStateOf("")
+    var nearbyAddingKey by mutableStateOf<String?>(null)
     var firmwareTab by mutableStateOf(0)   // the repeater's firmware: 0 over LoRa, 1 over Bluetooth / Wi-Fi
     var companionModel by mutableStateOf("")
     var companionVersion by mutableStateOf("")
@@ -456,6 +464,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         flashImage = null
         repeaterHealthLoadedFor = null
         repeaters.clear()   // that companion's contacts: nothing may act on them without it
+        nearbyRepeaters.clear()
+        nearbyListening = false
+        nearbySearched = false
+        nearbySecondsLeft = 0
+        nearbyError = ""
+        nearbyAddingKey = null
         profileBatchAsk = false
         if (profileBatchCurrent == null) profileBatchOpen = false   // a running batch shows its own end first
     }
@@ -851,6 +865,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Step.OFFLINE -> closeOffline()
             Step.CLI -> closeCli()
             Step.SWEEP -> closeSweep()
+            Step.NEARBY -> closeNearby()
             Step.FLASH -> closeFlash()
             Step.BACKUP -> closeBackup()
             Step.HEALTH -> closeHealth()
@@ -912,7 +927,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            if (step == Step.REPEATER && loginSheet == null) loginSheet = contact
+            if ((step == Step.REPEATER || step == Step.NEARBY) && loginSheet == null) loginSheet = contact
             throw e
         }
         savePassword(contact, password)
@@ -3689,6 +3704,141 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             loginSheet = contact
         } else {
             login(contact, pw, initialTab = RepeaterTab.HEALTH)
+        }
+    }
+
+    // ---- nearby repeaters (zero-hop DISCOVER_REQ) ----
+
+    fun openNearby() {
+        message = ""
+        nearbyError = ""
+        step = Step.NEARBY
+        if (!nearbyListening && !busy && !reconnecting) {
+            searchNearby()
+        }
+    }
+
+    fun closeNearby() {
+        job?.cancel()
+        nearbyListening = false
+        nearbySecondsLeft = 0
+        loginSheet = null
+        step = Step.REPEATER
+    }
+
+    private fun resolveKnownName(reply: NodeDiscover.Reply): String? {
+        val prefix = reply.pubKeyHex
+        val known = fleetState.knownDeviceNames
+        known[prefix]?.takeIf { it.isNotBlank() }?.let { return it }
+        return known.entries.firstOrNull { (k, v) ->
+            v.isNotBlank() && NodeDiscover.sameNode(k, prefix)
+        }?.value
+    }
+
+    fun searchNearby() = work {
+        nearbyRepeaters.clear()
+        nearbyError = ""
+        nearbySearched = false
+        nearbyListening = true
+        val totalSec = (NodeDiscover.LISTEN_MS / 1000L).toInt().coerceAtLeast(1)
+        nearbySecondsLeft = totalSec
+        working = str(R.string.nearby_searching, totalSec)
+        val ticker = viewModelScope.launch {
+            for (s in totalSec downTo 1) {
+                nearbySecondsLeft = s
+                working = str(R.string.nearby_searching, s)
+                delay(1000L)
+            }
+            nearbySecondsLeft = 0
+        }
+        try {
+            companion.discoverRepeaters(listenMs = NodeDiscover.LISTEN_MS) { reply ->
+                val contact = repeaters.firstOrNull { reply.matchesKey(it.publicKey) }
+                val name = contact?.name?.takeIf { it.isNotBlank() } ?: resolveKnownName(reply)
+                val item = NodeDiscover.DiscoveredRepeater(
+                    pubKey = reply.pubKey,
+                    pubKeyHex = reply.pubKeyHex,
+                    outSnr = reply.outSnr,
+                    inSnr = reply.inSnr,
+                    rssi = reply.rssi,
+                    name = name,
+                    inContacts = contact != null,
+                    contactKeyHex = contact?.let { hex(it.publicKey) },
+                    contactHops = contact?.hops,
+                )
+                NodeDiscover.mergeInOrder(nearbyRepeaters, item)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+            nearbyError = str(R.string.nearby_err_companion, e.message ?: "")
+            throw e
+        } catch (e: Exception) {
+            nearbyError = e.message ?: e.toString()
+            throw e
+        } finally {
+            ticker.cancel()
+            nearbyListening = false
+            nearbySecondsLeft = 0
+            nearbySearched = true
+            if (nearbyRepeaters.size > 1) {
+                val sorted = NodeDiscover.sortStrongest(nearbyRepeaters.toList())
+                nearbyRepeaters.clear()
+                nearbyRepeaters.addAll(sorted)
+            }
+        }
+    }
+
+    fun openNearbyRepeater(item: NodeDiscover.DiscoveredRepeater) {
+        if (busy || nearbyListening) return
+        val contact = findContactForNearby(item) ?: return
+        message = ""
+        val saved = savedPassword(contact)
+        if (!saved.isNullOrEmpty()) login(contact, saved) else loginSheet = contact
+    }
+
+    fun editNearbyRepeaterPassword(item: NodeDiscover.DiscoveredRepeater) {
+        if (busy || nearbyListening) return
+        val contact = findContactForNearby(item) ?: return
+        message = ""
+        loginSheet = contact
+    }
+
+    private fun findContactForNearby(item: NodeDiscover.DiscoveredRepeater): Contact? {
+        val byHex = item.contactKeyHex?.let { k -> repeaters.firstOrNull { hex(it.publicKey) == k } }
+        if (byHex != null) return byHex
+        return repeaters.firstOrNull { NodeDiscover.sameNode(hex(it.publicKey), item.pubKeyHex) }
+    }
+
+    fun addNearbyRepeater(item: NodeDiscover.DiscoveredRepeater) = work {
+        if (!item.hasFullKey) throw Exception(str(R.string.nearby_err_prefix_only))
+        nearbyAddingKey = item.pubKeyHex
+        working = str(R.string.nearby_adding)
+        try {
+            val contactName = item.name?.takeIf { it.isNotBlank() } ?: "Repeater ${item.shortId}"
+            val frame = NodeDiscover.newRepeaterContactFrame(item.pubKey, contactName)
+            companion.addContact(frame)
+            loadRepeaters()
+            val added = repeaters.firstOrNull { NodeDiscover.sameNode(hex(it.publicKey), item.pubKeyHex) }
+            val finalName = added?.name?.takeIf { it.isNotBlank() } ?: contactName
+            val idx = nearbyRepeaters.indexOfFirst { NodeDiscover.sameNode(it.pubKeyHex, item.pubKeyHex) }
+            if (idx >= 0) {
+                val cur = nearbyRepeaters[idx]
+                nearbyRepeaters[idx] = NodeDiscover.DiscoveredRepeater(
+                    pubKey = cur.pubKey,
+                    pubKeyHex = cur.pubKeyHex,
+                    outSnr = cur.outSnr,
+                    inSnr = cur.inSnr,
+                    rssi = cur.rssi,
+                    name = finalName,
+                    inContacts = true,
+                    contactKeyHex = added?.let { hex(it.publicKey) } ?: cur.pubKeyHex,
+                    contactHops = added?.hops ?: 0,
+                )
+            }
+            message = str(R.string.nearby_added, finalName)
+        } finally {
+            nearbyAddingKey = null
         }
     }
 

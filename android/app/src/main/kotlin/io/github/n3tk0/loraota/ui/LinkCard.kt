@@ -52,12 +52,12 @@ import io.github.n3tk0.loraota.ota.LinkSample
 import io.github.n3tk0.loraota.ota.BarTier
 import io.github.n3tk0.loraota.ota.Asymmetry
 
-private val OUT_COLOR = Color(0xFF2E9E44)
-private val IN_COLOR = Color(0xFF8E5CC9)
+internal val OUT_COLOR = Color(0xFF2E9E44)
+internal val IN_COLOR = Color(0xFF8E5CC9)
 
 /** Red for 1 bar, orange for 2-3, the side's own colour for 4-5; grey outline when nothing is known. */
 @Composable
-private fun barColor(bars: Int, own: Color): Color = when (LinkQuality.tier(bars)) {
+internal fun barColor(bars: Int, own: Color): Color = when (LinkQuality.tier(bars)) {
     BarTier.RED -> Color(0xFFD32F2F)
     BarTier.ORANGE -> Color(0xFFF57C00)
     BarTier.OWN -> own

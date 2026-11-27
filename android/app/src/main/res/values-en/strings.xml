@@ -1075,4 +1075,29 @@
     <string name="paused_update_note">An update is paused → Firmware</string>
     <string name="cached_settings">Settings from %1$d min ago</string>
     <string name="cached_settings_reread">Read again</string>
+
+    <!-- Nearby repeaters (zero-hop discovery) -->
+    <string name="nearby_open">Find nearby</string>
+    <string name="nearby_title">Nearby repeaters</string>
+    <string name="nearby_hint_short">Sends a zero-hop discovery request on the air and listens 10 s for repeaters in direct range.</string>
+    <string name="nearby_hint">Works without relaying (0 hop) — only repeaters that hear the companion directly reply (unless hidden or with repeating off). Shows SNR in both directions (→ how the repeater heard you, ← how you heard it) and RSSI. New repeaters can be added straight to the companion\'s contacts.</string>
+    <string name="nearby_search">Search nearby</string>
+    <string name="nearby_searching">Listening for nearby repeaters… (%1$d s)</string>
+    <string name="nearby_stop">Stop (%1$d s)</string>
+    <plurals name="nearby_found">
+        <item quantity="one">Found: %1$d nearby repeater</item>
+        <item quantity="other">Found: %1$d nearby repeaters</item>
+    </plurals>
+    <string name="nearby_empty">No nearby repeaters answered. Check the antenna, radio settings, or whether a repeater is in direct range.</string>
+    <string name="nearby_add">Add</string>
+    <string name="nearby_adding">Adding to contacts…</string>
+    <string name="nearby_added">“%1$s” was added to the companion\'s contacts.</string>
+    <string name="nearby_in_contacts">In contacts · direct</string>
+    <plurals name="nearby_in_contacts_hops">
+        <item quantity="one">In contacts · direct (route %1$d hop)</item>
+        <item quantity="other">In contacts · direct (route %1$d hops)</item>
+    </plurals>
+    <string name="nearby_not_in_contacts">New · not in contacts</string>
+    <string name="nearby_err_companion">The companion could not send the discover request (%1$s). Make sure its firmware supports protocol v8+.</string>
+    <string name="nearby_err_prefix_only">The repeater returned only a short key prefix and cannot be added directly.</string>
 </resources>
