@@ -61,6 +61,10 @@ fun NearbyScreen(vm: AppViewModel) {
             OutlinedButton(onClick = { vm.stop() }) {
                 Text(stringResource(R.string.nearby_stop, vm.nearbySecondsLeft))
             }
+        } else if (vm.nearbyNaming) {
+            OutlinedButton(onClick = { vm.stop() }) {
+                Text(stringResource(R.string.nearby_stop_naming))
+            }
         } else {
             Button(onClick = { vm.searchNearby() }, enabled = !vm.busy) {
                 Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
@@ -135,6 +139,15 @@ private fun NearbyRepeaterCard(vm: AppViewModel, item: NodeDiscover.DiscoveredRe
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    item.owner?.let { owner ->
+                        Text(
+                            owner,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     if (item.displayName != item.shortId) {
                         Text(
                             item.shortId,

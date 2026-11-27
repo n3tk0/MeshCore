@@ -104,7 +104,8 @@ class NodeDiscoverTest {
     fun newRepeaterContactFrameRoundTripsThroughContact() {
         val key = ByteArray(32) { (it * 3 + 1).toByte() }
         val frame = NodeDiscover.newRepeaterContactFrame(key, "  Vitosha-Peak-R1  ")
-        assertEquals(1 + 32 + 3 + 64 + 32 + 4, frame.size)   // no lastmod: the companion stamps its own clock
+        assertEquals(1 + 32 + 3 + 64 + 32 + 4 + 8, frame.size)   // gps zero, no lastmod: the companion stamps its own clock
+        assertTrue(frame.copyOfRange(136, 144).all { it.toInt() == 0 })
         assertEquals(NodeDiscover.CMD_ADD_UPDATE_CONTACT, frame[0].toInt() and 0xff)
 
         val contact = Contact(frame)
@@ -157,5 +158,42 @@ class NodeDiscoverTest {
         val sorted = NodeDiscover.sortStrongest(list)
         assertEquals("Peak-2", sorted[0].name)
         assertEquals("Valley-1", sorted[1].name)
+    }
+
+    @Test
+    fun ownerRequestIsTypeOwnerWithZeroHopReplyPath() {
+        assertContentEquals(byteArrayOf(0x02, 0x00), NodeDiscover.ownerRequestData())
+    }
+
+    @Test
+    fun parsesOwnerReplyWithPaddingAndMultilineOwner() {
+        val clock = byteArrayOf(1, 2, 3, 4)
+        val data = clock + "Витоша-R1\nPetko\nSofia".toByteArray(Charsets.UTF_8) + ByteArray(5)
+        val (name, owner) = assertNotNull(NodeDiscover.parseOwnerReply(data))
+        assertEquals("Витоша-R1", name)
+        assertEquals("Petko Sofia", owner)
+    }
+
+    @Test
+    fun parsesOwnerReplyWithoutOwner() {
+        val data = byteArrayOf(0, 0, 0, 0) + "Peak\n".toByteArray()
+        val (name, owner) = assertNotNull(NodeDiscover.parseOwnerReply(data))
+        assertEquals("Peak", name)
+        assertNull(owner)
+        assertNull(NodeDiscover.parseOwnerReply(byteArrayOf(0, 0, 0, 0)))
+        assertNull(NodeDiscover.parseOwnerReply(byteArrayOf(0, 0, 0, 0, 0, 0)))
+    }
+
+    @Test
+    fun mergeKeepsOwner() {
+        val key = ByteArray(32) { 7 }
+        val hexKey = key.joinToString("") { "%02x".format(it) }
+        val list = mutableListOf(
+            NodeDiscover.DiscoveredRepeater(key, hexKey, 1.0, 1.0, -90, "A", false, owner = "Petko"),
+        )
+        NodeDiscover.mergeInOrder(list, NodeDiscover.DiscoveredRepeater(key, hexKey, 2.0, 2.0, -80, null, false))
+        assertEquals(1, list.size)
+        assertEquals("Petko", list[0].owner)
+        assertEquals("A", list[0].name)
     }
 }

@@ -16,6 +16,9 @@ import java.nio.ByteOrder
 object NodeDiscover {
     const val CMD_SEND_CONTROL_DATA = 55
     const val CMD_ADD_UPDATE_CONTACT = 9
+    const val CMD_SEND_ANON_REQ = 57
+    /** Anonymous request a repeater answers without a login: its name and owner info (direct only). */
+    const val ANON_REQ_TYPE_OWNER = 0x02
     const val PUSH_CONTROL_DATA = 0x8E
     const val CTL_TYPE_NODE_DISCOVER_REQ = 0x80
     const val CTL_TYPE_NODE_DISCOVER_RESP = 0x90
@@ -30,12 +33,15 @@ object NodeDiscover {
     const val FULL_KEY_LEN = 32
     const val MIN_KEY_LEN = 8
     /**
-     * `CMD_ADD_UPDATE_CONTACT` without the optional gps_lat/gps_lon/lastmod tail (1+32+3+64+32+4).
-     * Leaving `lastmod` out makes the companion stamp the contact with its own clock; a zero
-     * `lastmod` would make it the first contact evicted when the table is full and hide it from
-     * apps that sync contacts incrementally (`CMD_GET_CONTACTS` with `since`).
+     * `CMD_ADD_UPDATE_CONTACT` with gps_lat/gps_lon (zero) but without the optional lastmod
+     * (1+32+3+64+32+4+8). The zero gps fields keep a companion that does not clear a new contact
+     * from taking stack garbage as a position; leaving `lastmod` out makes the companion stamp the
+     * contact with its own clock (a zero `lastmod` would make it the first contact evicted when the
+     * table is full and hide it from apps that sync contacts with `since`).
      */
-    const val CONTACT_FRAME_LEN = 136
+    const val CONTACT_FRAME_LEN = 144
+    /** A contact as `CMD_GET_CONTACTS` lists it (the frame with gps and lastmod). */
+    const val LISTED_CONTACT_LEN = 148
 
     private fun le(v: Int): ByteArray = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
 
@@ -47,6 +53,27 @@ object NodeDiscover {
     fun command(tag: Int, prefixOnly: Boolean = false, typeFilter: Int = REPEATER_FILTER): ByteArray {
         val flags = CTL_TYPE_NODE_DISCOVER_REQ or (if (prefixOnly) 1 else 0)
         return byteArrayOf(CMD_SEND_CONTROL_DATA.toByte(), flags.toByte(), typeFilter.toByte()) + le(tag)
+    }
+
+    /**
+     * The data of a `CMD_SEND_ANON_REQ` asking a repeater for its name: `[ANON_REQ_TYPE_OWNER][reply_path_len 0]`.
+     * The repeater answers only a direct request; reply path length 0 makes it answer zero-hop direct too.
+     */
+    fun ownerRequestData(): ByteArray = byteArrayOf(ANON_REQ_TYPE_OWNER.toByte(), 0)
+
+    /**
+     * Parses the owner answer after its tag (`[clock 4B][name\nowner info]`, maybe zero-padded):
+     * (name, owner info or null); null when there is no name.
+     */
+    fun parseOwnerReply(data: ByteArray): Pair<String, String?>? {
+        if (data.size <= 4) return null
+        val end = (4 until data.size).firstOrNull { data[it].toInt() == 0 } ?: data.size
+        val text = String(data, 4, end - 4, Charsets.UTF_8)
+        val nl = text.indexOf('\n')
+        val name = (if (nl >= 0) text.substring(0, nl) else text).trim()
+        val owner = if (nl >= 0) text.substring(nl + 1).trim().replace('\n', ' ').takeIf { it.isNotEmpty() } else null
+        if (name.isEmpty()) return null
+        return name to owner
     }
 
     /** One parsed `DISCOVER_RESP` received via `PUSH_CODE_CONTROL_DATA`. */
@@ -111,7 +138,7 @@ object NodeDiscover {
     }
 
     /**
-     * Builds a 136-byte `CMD_ADD_UPDATE_CONTACT` frame for a newly discovered direct repeater
+     * Builds a 144-byte `CMD_ADD_UPDATE_CONTACT` frame for a newly discovered direct repeater
      * (`type = ADV_TYPE_REPEATER`, `out_path_len = 0` for zero-hop direct).
      */
     fun newRepeaterContactFrame(pubKey: ByteArray, name: String): ByteArray {
@@ -125,6 +152,7 @@ object NodeDiscover {
         // [36..99]: 64-byte out_path (zeros)
         // [100..131]: 32-byte null-terminated UTF-8 name (max 31 content bytes)
         // [132..135]: last_advert_timestamp (0: not heard as an advert yet)
+        // [136..143]: gps_lat, gps_lon (0: no position)
         val trimmed = truncateUtf8(name.trim(), 31)
         trimmed.copyInto(frame, 100)
         return frame
@@ -150,6 +178,8 @@ object NodeDiscover {
         val inContacts: Boolean,
         val contactKeyHex: String? = null,
         val contactHops: Int? = null,
+        /** The repeater's owner info, from its answer to the name request. */
+        val owner: String? = null,
     ) {
         val hasFullKey: Boolean get() = pubKey.size == FULL_KEY_LEN
         val shortId: String get() = pubKeyHex.take(8).uppercase()
@@ -179,6 +209,7 @@ object NodeDiscover {
                 inContacts = item.inContacts || prev.inContacts,
                 contactKeyHex = item.contactKeyHex ?: prev.contactKeyHex,
                 contactHops = item.contactHops ?: prev.contactHops,
+                owner = item.owner ?: prev.owner,
             )
         } else {
             list.add(item)
