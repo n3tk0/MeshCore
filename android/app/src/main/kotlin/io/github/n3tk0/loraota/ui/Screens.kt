@@ -139,6 +139,8 @@ fun AppScreen(
         vm.step == Step.OFFLINE && !vm.busy -> vm.closeOffline()
         vm.running && vm.flashPercent >= 0 -> flashNoStop = true
         vm.running -> askStop = true
+        // an Add from the nearby screen finishes on its own: Back goes to the list, which it then refreshes
+        vm.step == Step.NEARBY && vm.nearbyAddingKey != null -> vm.back()
         vm.canStop -> vm.stop()   // a login, a CLI command, a scan...: just stop waiting
         vm.busy -> {}             // a disconnect's clean-up: it ends on its own
         else -> vm.back()

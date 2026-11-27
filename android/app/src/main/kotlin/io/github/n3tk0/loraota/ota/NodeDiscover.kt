@@ -33,12 +33,13 @@ object NodeDiscover {
     const val FULL_KEY_LEN = 32
     const val MIN_KEY_LEN = 8
     /**
-     * `CMD_ADD_UPDATE_CONTACT` without the optional gps_lat/gps_lon/lastmod tail (1+32+3+64+32+4).
-     * Leaving `lastmod` out makes the companion stamp the contact with its own clock; a zero
-     * `lastmod` would make it the first contact evicted when the table is full and hide it from
-     * apps that sync contacts incrementally (`CMD_GET_CONTACTS` with `since`).
+     * `CMD_ADD_UPDATE_CONTACT` with gps_lat/gps_lon (zero) but without the optional lastmod
+     * (1+32+3+64+32+4+8). The zero gps fields keep a companion that does not clear a new contact
+     * from taking stack garbage as a position; leaving `lastmod` out makes the companion stamp the
+     * contact with its own clock (a zero `lastmod` would make it the first contact evicted when the
+     * table is full and hide it from apps that sync contacts with `since`).
      */
-    const val CONTACT_FRAME_LEN = 136
+    const val CONTACT_FRAME_LEN = 144
     /** A contact as `CMD_GET_CONTACTS` lists it (the frame with gps and lastmod). */
     const val LISTED_CONTACT_LEN = 148
 
@@ -137,7 +138,7 @@ object NodeDiscover {
     }
 
     /**
-     * Builds a 136-byte `CMD_ADD_UPDATE_CONTACT` frame for a newly discovered direct repeater
+     * Builds a 144-byte `CMD_ADD_UPDATE_CONTACT` frame for a newly discovered direct repeater
      * (`type = ADV_TYPE_REPEATER`, `out_path_len = 0` for zero-hop direct).
      */
     fun newRepeaterContactFrame(pubKey: ByteArray, name: String): ByteArray {
@@ -151,6 +152,7 @@ object NodeDiscover {
         // [36..99]: 64-byte out_path (zeros)
         // [100..131]: 32-byte null-terminated UTF-8 name (max 31 content bytes)
         // [132..135]: last_advert_timestamp (0: not heard as an advert yet)
+        // [136..143]: gps_lat, gps_lon (0: no position)
         val trimmed = truncateUtf8(name.trim(), 31)
         trimmed.copyInto(frame, 100)
         return frame

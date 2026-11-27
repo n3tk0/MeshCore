@@ -3821,7 +3821,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * direct zero-hop, no login), one at a time: the companion follows one request at a time.
      */
     private suspend fun askNearbyNames() {
-        val todo = nearbyRepeaters.filter { it.name == null && it.hasFullKey && !it.inContacts }.map { it.pubKeyHex }
+        // a contact without a name only on a zero-hop route: the repeater answers this request only direct
+        val todo = nearbyRepeaters.filter { it.name == null && it.hasFullKey && (!it.inContacts || it.contactHops == 0) }
+            .map { it.pubKeyHex }
         if (todo.isEmpty()) return
         nearbyNaming = true
         try {

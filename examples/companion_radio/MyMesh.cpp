@@ -1670,6 +1670,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeOKFrame();
     } else {
       ContactInfo contact;
+      memset(&contact, 0, sizeof(contact));   // the frame's optional gps fields may be left out
       updateContactFromFrame(contact, last_mod, cmd_frame, len);
       contact.lastmod = last_mod;
       contact.sync_since = 0;
