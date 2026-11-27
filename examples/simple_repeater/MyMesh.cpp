@@ -450,6 +450,17 @@ static float findTelemValue(const uint8_t* buf, uint8_t size, uint8_t channel, u
 
 /* ------------------ end Cayenne LPP helpers ----------------------*/
 
+// a client with a live telemetry-push subscription (REQ_TYPE_SUBSCRIBE, not expired)
+bool MyMesh::hasTelemSubscriber(uint32_t now) {
+  for (int i = 0; i < acl.getNumClients(); i++) {
+    auto c = acl.getClientByIdx(i);
+    if (c->permissions != 0 && c->extra.sensor.scope_region_id != 0 && c->extra.sensor.min_deltas_len != 0
+        && now <= c->extra.sensor.expiry_timestamp
+        && region_map.findById(c->extra.sensor.scope_region_id) != NULL) return true;   // region not removed since
+  }
+  return false;
+}
+
 bool MyMesh::telemHasChanged(ClientInfo* c) {
   auto buf = telemetry.getBuffer();
   uint8_t size = telemetry.getSize();
@@ -1960,7 +1971,9 @@ void MyMesh::loop() {
   }
 
   uint32_t curr = getRTCClock()->getCurrentTime();
-  if (curr >= last_read_time + SENSOR_READ_INTERVAL_SECS) {
+  bool read_due = curr >= last_read_time + SENSOR_READ_INTERVAL_SECS;
+  if (read_due) last_read_time = curr;
+  if (read_due && hasTelemSubscriber(curr)) {   // our own: no sensor reads (I2C, power) without a subscriber
     telemetry.reset();
     telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)battMilliVolts() / 1000.0f);
     // query other sensors -- target specific
@@ -1998,8 +2011,6 @@ void MyMesh::loop() {
         }
       }
     }
-
-    last_read_time = curr;
   }
 
   // is pending dirty contacts write needed?

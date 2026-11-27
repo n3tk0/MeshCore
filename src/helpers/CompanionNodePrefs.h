@@ -76,7 +76,6 @@ public:
   uint8_t ui_quiet = 0;          // encoder UI: quiet hours (channels neither wake nor buzz) 0=off, else ui::QUIET_FROM/TO
   float tz_offset = 0;
   float adc_multiplier = 0;      // battery ADC multiplier, 0 = board default
-  float& adc_mult = adc_multiplier;
 #ifdef ENABLE_WIFI_INTERFACE
   #ifndef WIFI_SSID
     #define WIFI_SSID ""

@@ -42,8 +42,10 @@
 #endif
 
 // Copied from simple_repeater
+#ifndef CTL_TYPE_NODE_DISCOVER_REQ
 #define CTL_TYPE_NODE_DISCOVER_REQ      0x80
 #define CTL_TYPE_NODE_DISCOVER_RESP     0x90
+#endif
 
 #include "icons.h"
 
