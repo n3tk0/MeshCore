@@ -455,7 +455,8 @@ bool MyMesh::hasTelemSubscriber(uint32_t now) {
   for (int i = 0; i < acl.getNumClients(); i++) {
     auto c = acl.getClientByIdx(i);
     if (c->permissions != 0 && c->extra.sensor.scope_region_id != 0 && c->extra.sensor.min_deltas_len != 0
-        && now <= c->extra.sensor.expiry_timestamp) return true;
+        && now <= c->extra.sensor.expiry_timestamp
+        && region_map.findById(c->extra.sensor.scope_region_id) != NULL) return true;   // region not removed since
   }
   return false;
 }
