@@ -116,6 +116,7 @@ Every repeater built from this fork (`-D NO_MAILBOX` leaves it out) can keep dir
 - **Shown once:** the companion firmware drops a direct message it already showed (same sender and timestamp, last 32), so a kept copy or a retry is not shown twice; the sender still gets its ACK.
 - **Count:** the number of kept messages is in `selftest` (`mail=N`) and on the app's Health page.
 - **CLI** (serial or remote admin): `mailbox` (state), `mailbox on|off`, `mailbox learn` (the next companion advert with no hop in 2 minutes becomes an owner), `mailbox add <64-hex key>`, `mailbox del <key prefix>`, `mailbox list`, `mailbox ttl <hours>` (default 72), `mailbox away <minutes>` (default 10), `mailbox clear`.
+- **App:** the Android app's Mailbox card (repeater Tools) shows the recipients by contact name, adds the connected companion with one tap ("Add me", its own key, no advert needed), a contact or a pasted key, and changes on/off, `ttl`, `away`; the repeater lists show ✉ N ("you too") from the last read.
 
 ### LoRa OTA for repeaters (nRF52, ESP32)
 

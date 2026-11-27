@@ -232,6 +232,20 @@ class RepeaterToolsState(ctx: Context) {
     var filterStatsStatus by mutableStateOf<String?>(null)
     var filterStatsAir by mutableStateOf<String?>(null)
 
+    /** The repeater's mailbox (the Mailbox card): read with `mailbox` and `mailbox list`, on request. */
+    var mailboxStatus by mutableStateOf<io.github.n3tk0.loraota.tools.MailboxStatus?>(null)
+    var mailboxOwners by mutableStateOf<List<io.github.n3tk0.loraota.tools.MailboxOwner>>(emptyList())
+    var mailboxLoaded by mutableStateOf(false)
+    /** The firmware answered `mailbox` with an unknown-command error: it has no mailbox. */
+    var mailboxUnsupported by mutableStateOf(false)
+
+    fun clearMailbox() {
+        mailboxStatus = null
+        mailboxOwners = emptyList()
+        mailboxLoaded = false
+        mailboxUnsupported = false
+    }
+
     fun clearFilter() {
         filter = FilterConfig()
         filterLoaded = false
@@ -316,6 +330,7 @@ class RepeaterToolsState(ctx: Context) {
         settingsLoaded = false
         settingsProgress = null
         clearFilter()
+        clearMailbox()
         repeaterCliLog.clear()
     }
 }

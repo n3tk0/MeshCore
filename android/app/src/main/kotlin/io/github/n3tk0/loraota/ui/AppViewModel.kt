@@ -853,6 +853,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (c.name.isNotBlank()) allContactsByKey[k] = c.name
         }
         fleetState.rememberDeviceNames(allContactsByKey)
+        peopleContacts.clear()
+        peopleContacts.addAll(all.filter { it.type == 1 }.map { hex(it.publicKey) to it.name.ifBlank { hex(it.publicKey).take(8) } }
+            .sortedBy { it.second.lowercase() })
+        refreshMailboxSummaries()
         val listed = all.filter { it.isRepeater }
         nearbyAdded.keys.removeAll { it in allContactsByKey || listed.any { c -> hex(c.publicKey) == it } }
         val list = (listed + nearbyAdded.values)
@@ -3555,6 +3559,108 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- the repeater's mailbox (Mailbox card in Settings) ----
+
+    private val mailboxCache by lazy { io.github.n3tk0.loraota.tools.MailboxCache(ctx.getSharedPreferences("mailbox_owners", Context.MODE_PRIVATE)) }
+
+    /** Every repeater's recipients from its last read, by key (hex): the ✉ marks in the repeater lists. */
+    var mailboxSummaries by mutableStateOf<Map<String, io.github.n3tk0.loraota.tools.MailboxSummary>>(emptyMap())
+        private set
+
+    /** The companion's contacts that are people (type 1): key (hex) to name, for the recipient picker. */
+    val peopleContacts = mutableStateListOf<Pair<String, String>>()
+
+    val mailboxStatus get() = toolsState.mailboxStatus
+    val mailboxLoaded get() = toolsState.mailboxLoaded
+    val mailboxUnsupported get() = toolsState.mailboxUnsupported
+
+    /** The connected companion's own public key (hex), "" when it did not say. */
+    val selfKeyHex get() = deviceKey(DeviceKind.COMPANION)
+
+    /** The companion's key for the ✉ marks: "" when none is connected (the start screen then shows what was read). */
+    val badgeSelfKey get() = if (hasCompanionConnection) selfKeyHex else ""
+
+    /** The owners with the companion's contact names and "you". */
+    val mailboxRecipients get() = io.github.n3tk0.loraota.tools.RepeaterMailbox.recipients(toolsState.mailboxOwners, allContactsByKey, selfKeyHex)
+
+    fun isMailboxOwner(keyHex: String) = io.github.n3tk0.loraota.tools.RepeaterMailbox.isOwner(toolsState.mailboxOwners, keyHex)
+
+    /** The mail is handed over only to an owner heard with no hop: false when the companion has no direct route to this repeater. */
+    val mailboxDirect get() = repeater?.hops == 0
+
+    fun refreshMailboxSummaries() {
+        viewModelScope.launch { mailboxSummaries = withContext(Dispatchers.IO) { mailboxCache.all() } }
+    }
+
+    /** `mailbox` and `mailbox list` into the card; false: the firmware has no mailbox. Remembers the recipients on the phone. */
+    private suspend fun readMailbox(r: Contact): Boolean {
+        working = io.github.n3tk0.loraota.tools.RepeaterMailbox.STATUS
+        val reply = filterAsk(r, io.github.n3tk0.loraota.tools.RepeaterMailbox.STATUS) ?: throw Exception(str(R.string.health_no_answer))
+        if (io.github.n3tk0.loraota.tools.RepeaterMailbox.isUnsupported(reply)) {
+            toolsState.clearMailbox()
+            toolsState.mailboxUnsupported = true
+            toolsState.mailboxLoaded = true
+            // flashed without a mailbox: no ✉ from an older read
+            val key = hex(r.publicKey)
+            withContext(Dispatchers.IO) { mailboxCache.remove(key) }
+            mailboxSummaries = mailboxSummaries - key
+            return false
+        }
+        val status = io.github.n3tk0.loraota.tools.RepeaterMailbox.parseStatus(reply)
+            ?: throw Exception(str(R.string.mailbox_bad_reply, reply.trim().take(80)))
+        working = io.github.n3tk0.loraota.tools.RepeaterMailbox.LIST
+        val owners = if (status.owners == 0) emptyList() else {
+            val l = filterAsk(r, io.github.n3tk0.loraota.tools.RepeaterMailbox.LIST) ?: throw Exception(str(R.string.health_no_answer))
+            io.github.n3tk0.loraota.tools.RepeaterMailbox.parseList(l) ?: throw Exception(str(R.string.mailbox_bad_reply, l.trim().take(80)))
+        }
+        toolsState.mailboxStatus = status
+        toolsState.mailboxOwners = owners
+        toolsState.mailboxUnsupported = false
+        toolsState.mailboxLoaded = true
+        val key = hex(r.publicKey)
+        val summary = io.github.n3tk0.loraota.tools.MailboxSummary(status.enabled, mailboxRecipients, System.currentTimeMillis())
+        withContext(Dispatchers.IO) { mailboxCache.put(key, summary) }
+        mailboxSummaries = if (!summary.enabled && summary.recipients.isEmpty()) mailboxSummaries - key else mailboxSummaries + (key to summary)
+        return true
+    }
+
+    fun loadMailbox() = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater == null) canReadRepeater = probeCanReadRepeater()
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        try {
+            if (readMailbox(r)) message = str(R.string.mailbox_loaded)
+        } finally {
+            filterCaptureOff()
+        }
+    }
+
+    /**
+     * Sends [cmds] in turn (stopping at the first that does not take, whose error is shown), then reads the mailbox back
+     * so the card shows what the repeater has now.
+     */
+    fun mailboxCommand(vararg cmds: String) = work {
+        val r = repeater ?: return@work
+        if (canReadRepeater != true) throw Exception(str(R.string.health_no_capture))
+        try {
+            for (cmd in cmds) {
+                working = cmd
+                val reply = filterAsk(r, cmd) ?: throw Exception(str(R.string.health_no_answer))
+                if (!io.github.n3tk0.loraota.tools.RepeaterMailbox.isOk(reply)) {
+                    if (io.github.n3tk0.loraota.tools.RepeaterMailbox.isUnsupported(reply)) toolsState.mailboxUnsupported = true
+                    message = str(R.string.mailbox_failed, io.github.n3tk0.loraota.tools.RepeaterMailbox.errorText(reply))
+                    messageIsError = true
+                    runCatching { readMailbox(r) }
+                    return@work
+                }
+            }
+            readMailbox(r)
+            message = str(R.string.mailbox_saved)
+        } finally {
+            filterCaptureOff()
+        }
+    }
+
     /** The editor from the last read of the half hour, with no request over the air; false when there is none. */
     fun loadCachedSettings(): Boolean {
         val r = repeater ?: return false
@@ -4054,6 +4160,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val chems = chemPrefs.all.mapNotNull { (k, v) ->
                 (v as? String)?.let { n -> BatteryChem.entries.firstOrNull { it.name == n } }?.let { k to it }
             }.toMap()
+            val mail = withContext(Dispatchers.IO) { mailboxCache.all() }
+            mailboxSummaries = mail
             knownRepeaters = io.github.n3tk0.loraota.tools.KnownRepeaters.build(
                 health, backups, fleetState.pinnedKeys.toList(), names, chems, savedKeys.toList(),
             )
