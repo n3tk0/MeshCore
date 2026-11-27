@@ -26,7 +26,7 @@ class SideSwitchTest {
     }
 
     @Test
-    fun stockSwitchSavesFirstAndPutsBack() = runBlocking {
+    fun stockSwitchSavesFirstAndPutsBack() = runBlocking<Unit> {
         val store = SavedRadios(MemoryPrefs())
         val sets = mutableListOf<Pair<SideRadio, Int>>()
         var reads = 0
@@ -47,7 +47,7 @@ class SideSwitchTest {
     }
 
     @Test
-    fun lostConnectionIsRestoredAtNextConnect() = runBlocking {
+    fun lostConnectionIsRestoredAtNextConnect() = runBlocking<Unit> {
         val prefs = MemoryPrefs()
         val sw = StockRadioSwitch(addr, { SavedRadio(main, 0) }, SavedRadios(prefs)) { _, _ -> }
         sw.enter(side, 2)
@@ -66,7 +66,7 @@ class SideSwitchTest {
     }
 
     @Test
-    fun refusedSwitchIsSideSwitchFailedAndLeaveNeverRunsWithoutEnter() = runBlocking {
+    fun refusedSwitchIsSideSwitchFailedAndLeaveNeverRunsWithoutEnter() = runBlocking<Unit> {
         val store = SavedRadios(MemoryPrefs())
         val sets = mutableListOf<SideRadio>()
         val sw = StockRadioSwitch(addr, { SavedRadio(main, 0) }, store) { r, _ -> sets += r; if (r == side) error("companion error 6") }
@@ -80,7 +80,7 @@ class SideSwitchTest {
     }
 
     @Test
-    fun tempRadioUsesTheConsole() = runBlocking {
+    fun tempRadioUsesTheConsole() = runBlocking<Unit> {
         val sent = mutableListOf<String>()
         val sw = TempRadioSwitch { sent += it; "OK" }
         sw.enter(side, 3)
