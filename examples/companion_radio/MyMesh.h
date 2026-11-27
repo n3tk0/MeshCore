@@ -90,6 +90,11 @@
 #ifndef CLOCK_ADVERT_AGREE
   #define CLOCK_ADVERT_AGREE  600            // seconds two adverts may differ by to set the clock
 #endif
+// Copied from simple_repeater (Network > Nearby, sendNodeDiscover())
+#ifndef CTL_TYPE_NODE_DISCOVER_REQ
+  #define CTL_TYPE_NODE_DISCOVER_REQ      0x80
+  #define CTL_TYPE_NODE_DISCOVER_RESP     0x90
+#endif
 
 struct AdvertPath {
   uint8_t pubkey_prefix[7];

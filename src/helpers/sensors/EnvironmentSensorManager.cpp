@@ -786,12 +786,14 @@ static const SensorDef SENSOR_TABLE[] = {
 #if ENV_INCLUDE_BQ25798
   { BQ25798_ADDR,          "BQ25798",      init_bq25798,  query_bq25798  },
 #endif
+// INA260 before the INA219 entries: its begin() checks the chip ID, the INA219's does not, so the
+// INA219 fallback on 0x41 would otherwise claim an INA260 (or the MSPM0's INA260 emulation on 0x41)
+#if ENV_INCLUDE_INA260
+  { TELEM_INA260_ADDRESS,  "INA260",       init_ina260,   query_ina260   },
+#endif
 #if ENV_INCLUDE_INA219
   { TELEM_INA219_ADDRESS,  "INA219",       init_ina219,   query_ina219   },
   { TELEM_INA219_ALT_ADDR(TELEM_INA219_ADDRESS), "INA219", init_ina219, query_ina219 },
-#endif
-#if ENV_INCLUDE_INA260
-  { TELEM_INA260_ADDRESS,  "INA260",       init_ina260,   query_ina260   },
 #endif
 #if ENV_INCLUDE_INA226
   { TELEM_INA226_ADDRESS,  "INA226",       init_ina226,   query_ina226   },

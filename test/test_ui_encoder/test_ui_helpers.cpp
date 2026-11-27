@@ -107,6 +107,8 @@ TEST(UIHelpers, LocalTimeAddsZoneAndSummerHour) {
   EXPECT_EQ(july + 2 * 3600, ui::localTime(july, 2, false));
   EXPECT_EQ(jan + 2 * 3600, ui::localTime(jan, 2, true));
   EXPECT_EQ(jan - 5 * 3600, ui::localTime(jan, -5, true));
+  EXPECT_EQ(jan + 5 * 3600 + 1800, ui::localTime(jan, 5.5f, false));   // half-hour zone (tz.offset is a float)
+  EXPECT_EQ(jan - 3 * 3600 - 1800, ui::localTime(jan, -3.5f, false));
 }
 
 // ---- encoder acceleration

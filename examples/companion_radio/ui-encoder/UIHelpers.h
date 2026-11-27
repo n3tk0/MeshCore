@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <math.h>
 
 namespace ui {
 
@@ -129,8 +130,9 @@ inline bool euSummerTime(uint32_t utc) {
 }
 
 // local time: UTC plus the zone offset (hours) plus an hour of EU summer time when enabled
-inline uint32_t localTime(uint32_t utc, int tz_hours, bool eu_dst) {
-  int32_t t = (int32_t)utc + tz_hours * 3600;
+// (tz_offset is a float since upstream #3610: half-hour zones such as +5.5 set from the app)
+inline uint32_t localTime(uint32_t utc, float tz_hours, bool eu_dst) {
+  int32_t t = (int32_t)utc + (int32_t)lroundf(tz_hours * 3600.0f);
   if (eu_dst && euSummerTime(utc)) t += 3600;
   return (uint32_t)t;
 }
