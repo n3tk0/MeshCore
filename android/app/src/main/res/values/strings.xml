@@ -1075,4 +1075,29 @@
     <string name="paused_update_note">Има спрян ъпдейт → Firmware</string>
     <string name="cached_settings">Настройки от преди %1$d мин</string>
     <string name="cached_settings_reread">Прочети наново</string>
+
+    <!-- Nearby repeaters (zero-hop discovery) -->
+    <string name="nearby_open">Търси близки</string>
+    <string name="nearby_title">Близки repeater-и</string>
+    <string name="nearby_hint_short">Изпраща директна zero-hop заявка в ефира и слуша 10 с за repeater-и в обхват.</string>
+    <string name="nearby_hint">Работи без препредаване (0 hop) — отговарят само repeater-и, които чуват companion-а директно (освен скритите или с изключено препредаване). Показва SNR в двете посоки (→ как те чува repeater-ът, ← как го чуваш ти) и RSSI. Новите repeater-и можеш да добавиш директно в контактите на companion-а.</string>
+    <string name="nearby_search">Търси близки</string>
+    <string name="nearby_searching">Слушам за близки repeater-и… (%1$d с)</string>
+    <string name="nearby_stop">Спри (%1$d с)</string>
+    <plurals name="nearby_found">
+        <item quantity="one">Открит: %1$d близък repeater</item>
+        <item quantity="other">Открити: %1$d близки repeater-а</item>
+    </plurals>
+    <string name="nearby_empty">Няма отговор от близки repeater-и. Провери антената, радио параметрите или дали наблизо има repeater в директен обхват. Скритите repeater-и и тези с изключено препредаване не отговарят.</string>
+    <string name="nearby_add">Добави</string>
+    <string name="nearby_adding">Добавям в контактите…</string>
+    <string name="nearby_added">„%1$s“ е добавен в контактите на companion-а.</string>
+    <string name="nearby_in_contacts">В контактите · директен</string>
+    <plurals name="nearby_in_contacts_hops">
+        <item quantity="one">В контактите · директен (маршрут %1$d скок)</item>
+        <item quantity="other">В контактите · директен (маршрут %1$d скока)</item>
+    </plurals>
+    <string name="nearby_not_in_contacts">Нов · не е в контактите</string>
+    <string name="nearby_err_companion">Companion-ът не можа да изпрати discover заявка (%1$s). Провери дали фърмуерът му поддържа протокол v8+.</string>
+    <string name="nearby_err_prefix_only">Repeater-ът върна само кратък префикс на ключа и не може да се добави директно.</string>
 </resources>
