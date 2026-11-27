@@ -176,6 +176,9 @@
     <string name="section_unknown">Route not known</string>
     <string name="password_saved">Password saved</string>
     <string name="companion">Companion</string>
+    <string name="companion_stock_side">Stock firmware: for LoRa OTA the app changes its frequency for a while and then puts it back.</string>
+    <string name="stock_side_warning">The companion runs stock firmware and will not go back to the normal channel by itself. The app changes its frequency for the update and then puts it back. Keep the phone next to it and the app open. If the connection drops, the companion stays on the side channel until you connect it to this app again.</string>
+    <string name="stock_radio_restored">The companion was left on the side channel by an update that was cut short. Its normal settings are back.</string>
     <string name="companion_stock">Stock firmware: no side channel for LoRa OTA.</string>
     <string name="tab_lora">Over LoRa</string>
     <string name="tab_flash">Over Bluetooth / Wi-Fi</string>
@@ -481,7 +484,7 @@
     <string name="q_drop">Drop the queue</string>
     <string name="q_unfinished">Unfinished queue (%1$s): %2$d of %3$d done. Open “Update several repeaters” to continue.</string>
     <string name="q_report">Done: %1$d updated, %2$d already up to date, %3$d skipped, %4$d failed.</string>
-    <string name="q_stock_companion">This companion runs stock firmware and cannot update over LoRa.</string>
+    <string name="q_stock_companion">This companion\'s radio settings are not known, so it cannot update over LoRa.</string>
     <string name="q_not_found">not in the companion\'s contacts</string>
     <string name="q_no_password">no kept password</string>
     <string name="q_not_direct">not a direct (no hop) route</string>

@@ -176,6 +176,9 @@
     <string name="section_unknown">Маршрутът не е известен</string>
     <string name="password_saved">Паролата е запазена</string>
     <string name="companion">Companion</string>
+    <string name="companion_stock_side">Стандартен firmware: за OTA по LoRa приложението временно сменя честотата му и после я връща.</string>
+    <string name="stock_side_warning">Companion-ът е със стандартен firmware и няма да се върне сам на нормалния канал. Приложението сменя честотата му за обновяването и после я връща. Дръж телефона до него и приложението отворено. Ако връзката падне, companion-ът остава на страничния канал, докато не го свържеш пак с това приложение.</string>
+    <string name="stock_radio_restored">Companion-ът беше останал на страничния канал от прекъснато обновяване. Върнат е на нормалните му настройки.</string>
     <string name="companion_stock">Стандартен firmware: без страничен канал за OTA по LoRa.</string>
     <string name="tab_lora">По LoRa</string>
     <string name="tab_flash">По Bluetooth / Wi-Fi</string>
@@ -481,7 +484,7 @@
     <string name="q_drop">Откажи опашката</string>
     <string name="q_unfinished">Недовършена опашка (%1$s): %2$d от %3$d готови. Отвори „Обнови няколко“, за да продължи.</string>
     <string name="q_report">Готово: %1$d обновени, %2$d вече нови, %3$d пропуснати, %4$d неуспешни.</string>
-    <string name="q_stock_companion">Този companion е със стандартен firmware и не може да обновява по LoRa.</string>
+    <string name="q_stock_companion">Не се знаят радио настройките на този companion, затова не може да обновява по LoRa.</string>
     <string name="q_not_found">не е в контактите на companion-а</string>
     <string name="q_no_password">няма пазена парола</string>
     <string name="q_not_direct">не е без hop</string>

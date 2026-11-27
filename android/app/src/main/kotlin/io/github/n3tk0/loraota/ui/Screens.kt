@@ -440,7 +440,11 @@ private fun BottomStatus(vm: AppViewModel, hasNavBarBelow: Boolean = false) {
             if (restoreBar) RestoreBar(vm)
             if (loraInfo != null) {
                 val continuing = loraInfo.state == OtaProtocol.STATE_PAUSED || vm.resumable
-                val ready = vm.oldImage != null && vm.newImage != null && loraInfo.enabled && vm.direct && vm.companionOta
+                val ready = vm.oldImage != null && vm.newImage != null && loraInfo.enabled && vm.direct && vm.companionCanOta
+                if (vm.companionStockSide) {
+                    Text(stringResource(R.string.stock_side_warning), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
                 Button(onClick = { vm.update() }, enabled = ready && !vm.busy, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(if (continuing) R.string.resume else R.string.update))
                 }
@@ -565,7 +569,7 @@ private fun RepeaterStep(vm: AppViewModel) {
         }
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (vm.companionOta) {
+        if (vm.companionCanOta) {
             OutlinedButton(onClick = { vm.openQueue() }, enabled = !vm.busy) { Text(stringResource(R.string.q_open)) }
         }
         if (vm.repeaters.isNotEmpty()) {
@@ -819,7 +823,7 @@ private fun CompanionCard(vm: AppViewModel, withFlashButton: Boolean = true) {
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             if (vm.companionModel.isNotEmpty()) Text("${vm.companionModel} · ${vm.companionVersion}", style = MaterialTheme.typography.titleMedium)
             if (!vm.companionOta) {
-                Text(stringResource(R.string.companion_stock), style = MaterialTheme.typography.bodySmall,
+                Text(stringResource(if (vm.companionStockSide) R.string.companion_stock_side else R.string.companion_stock), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (withFlashButton) FlowRow(
@@ -989,7 +993,7 @@ private fun LoraTab(vm: AppViewModel) {
     }
 
     // Collapsible readiness card: stays collapsed when all prerequisites are green, auto-expands on transition to a problem
-    val prereqsOk = info.enabled && vm.direct && vm.companionOta && vm.oldImage != null
+    val prereqsOk = info.enabled && vm.direct && vm.companionCanOta && vm.oldImage != null
     var readyExpanded by rememberSaveable(vm.repeater?.name) { mutableStateOf(!prereqsOk) }
     var lastPrereqsOk by rememberSaveable(vm.repeater?.name) { mutableStateOf(prereqsOk) }
     LaunchedEffect(prereqsOk) {
@@ -1043,7 +1047,7 @@ private fun LoraTab(vm: AppViewModel) {
                         !vm.busy,
                     ) { vm.recheck() }
                     ReadyRow(
-                        vm.companionOta, stringResource(R.string.ready_companion),
+                        vm.companionCanOta, stringResource(R.string.ready_companion),
                         stringResource(R.string.flash_open), !vm.busy,
                     ) { vm.openFlash(FlashTarget.COMPANION) }
                     ReadyRow(

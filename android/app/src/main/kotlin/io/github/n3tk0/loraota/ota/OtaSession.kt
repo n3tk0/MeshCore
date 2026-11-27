@@ -25,6 +25,7 @@ class OtaSession(
     private val companion: CompanionRadio,
     private val repeater: Contact,
     private val radio: SideRadio,
+    private val side: SideSwitch,
     private val budget: AirtimeBudget,
     private val log: (String) -> Unit,
     private val phase: (Phase, waitUntil: Long) -> Unit,
@@ -43,6 +44,7 @@ class OtaSession(
     }
 
     private var onSide = false
+    private var sideTried = false   // a switch was asked: its reply may be lost while the companion did switch
     private var begun = false   // the repeater took the BEGIN: a Stop drops the update there too
 
     private suspend fun request(data: ByteArray, timeoutMs: Long, tries: Int): OtaProtocol.Reply? {
@@ -59,13 +61,18 @@ class OtaSession(
     }
 
     private suspend fun sideLease() {
-        val r = companion.cli("tempradio ${radio.cliArgs()},${leaseMins()}")
-        if (!r.contains("OK")) throw OtaFailed(R.string.err_side_channel, listOf(r.trim()), resumable = onSide)
+        sideTried = true
+        try {
+            side.enter(radio, leaseMins())
+        } catch (e: SideSwitchFailed) {
+            throw OtaFailed(R.string.err_side_channel, listOf(e.detail), resumable = onSide)
+        }
     }
 
     private suspend fun normalRadio() {
-        withContext(NonCancellable) { runCatching { companion.cli("tempradio off") } }
+        withContext(NonCancellable) { runCatching { side.leave() } }
         onSide = false
+        sideTried = false
     }
 
     /** Long enough for a whole window and its STATUS tries, also with slow side channel settings. */
@@ -226,7 +233,7 @@ class OtaSession(
             throw if (e is OtaFailed || e is CancellationException || stopped) e
                   else OtaFailed(R.string.err_paused, listOf(e.message ?: e.toString()), resumable = true)
         } finally {
-            if (onSide) normalRadio()
+            if (onSide || sideTried) normalRadio()
         }
         return after!!
     }

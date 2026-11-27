@@ -31,6 +31,11 @@ import io.github.n3tk0.loraota.ota.LinkTrace
 import io.github.n3tk0.loraota.ota.OtaFailed
 import io.github.n3tk0.loraota.ota.PausedUpdates
 import io.github.n3tk0.loraota.ota.Phase
+import io.github.n3tk0.loraota.ota.SavedRadio
+import io.github.n3tk0.loraota.ota.SavedRadios
+import io.github.n3tk0.loraota.ota.SideSwitch
+import io.github.n3tk0.loraota.ota.StockRadioSwitch
+import io.github.n3tk0.loraota.ota.TempRadioSwitch
 import io.github.n3tk0.loraota.ota.estimateMinutes
 import io.github.n3tk0.loraota.backup.Backup
 import io.github.n3tk0.loraota.backup.BackupDiff
@@ -180,6 +185,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var scanning by mutableStateOf(false)
     var companionName by mutableStateOf("")
     var companionOta by mutableStateOf(true)   // our companion firmware: it can go to the side channel
+    // stock companion firmware: the app moves it to the side channel with the standard radio command (no auto return)
+    var companionStockSide by mutableStateOf(false)
+    /** The companion can take part in a LoRa update (ours with `tempradio`, or stock with [companionStockSide]). */
+    val companionCanOta get() = companionOta || companionStockSide
+    private val savedRadios by lazy { SavedRadios(ctx.getSharedPreferences("stock_side_radio", Context.MODE_PRIVATE)) }
+    var radioRestored by mutableStateOf(false)   // a stock companion left on the side channel was put back at connect
 
     // repeater
     val repeaters = mutableStateListOf<Contact>()
@@ -428,6 +439,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         companionModel = ""
         companionVersion = ""
         companionOta = false
+        companionStockSide = false
+        radioRestored = false
         canReadRepeater = null
         repeater = null
         info = null
@@ -541,13 +554,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                         val started = try {
                                             companion.start()
                                             companionOta = try {
-                                                companion.cli("tempradio off")
-                                                true
+                                                tempRadioReply(companion.cli("tempradio off"))
                                             } catch (e: CancellationException) {
                                                 throw e
                                             } catch (_: Exception) {
                                                 false
                                             }
+                                            afterCompanionStart(dev.address)
                                             canReadRepeater = try {
                                                 RepeaterBackup.supported(companion)
                                             } catch (e: CancellationException) {
@@ -577,7 +590,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             if (ok) {
                                 reconnecting = false
                                 reconnectAttempt = 0
-                                message = if (flashMsg != null) "$flashMsg · ${str(R.string.msg_reconnected)}" else str(R.string.msg_reconnected)
+                                message = listOfNotNull(
+                                    flashMsg, str(R.string.msg_reconnected),
+                                    if (radioRestored) str(R.string.stock_radio_restored) else null,
+                                ).joinToString(" · ")
                                 messageIsError = false
                             } else {
                                 finishDisconnect(flashMsg)
@@ -770,7 +786,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             companion.start()
             companionDevice = device
             // left on the side channel by an update cut short; a stock companion has no such command
-            companionOta = runCatching { companion.cli("tempradio off") }.isSuccess
+            companionOta = runCatching { tempRadioReply(companion.cli("tempradio off")) }.getOrDefault(false)
+            afterCompanionStart(device.address)
             canReadRepeater = probeCanReadRepeater()
             companionName = companion.nodeName.ifEmpty {
                 runCatching { device.name }.getOrNull() ?: device.address
@@ -1319,7 +1336,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = str(R.string.msg_ota_on)
     }
 
-    private fun session(contact: Contact) = OtaSession(companion, contact, sideRadio(), budget.also { it.duty = duty() },
+    /**
+     * Our companion answers `tempradio off` with OK. Stock firmware v14+ has the same console command but answers
+     * "Unknown command" (older ones have no console command at all: an error).
+     */
+    private fun tempRadioReply(reply: String): Boolean = reply.trim() == "OK"
+
+    /**
+     * Right after the companion's start: a stock one the app left on the side channel (connection lost during an
+     * update) goes back to its saved settings; then whether a stock one can do an update (its settings are known).
+     */
+    private suspend fun afterCompanionStart(address: String) {
+        val restored = try {
+            StockRadioSwitch.restoreSaved(address, savedRadios) { r, rep -> companion.setRadio(r.freqKhz, r.bwHz, r.sf, r.cr, rep) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false   // tried again at the next connection
+        }
+        // its self info again, now with the normal settings; without it the side channel could pass for them
+        val fresh = !restored || runCatching { companion.start() }.isSuccess
+        radioRestored = restored
+        if (restored) message = str(R.string.stock_radio_restored)
+        // still saved (the restore failed): no update until a connection puts them back
+        companionStockSide = !companionOta && fresh && savedRadios.get(address) == null && companion.mainRadio() != null
+    }
+
+    /** How the companion gets to the side channel: `tempradio` on ours, the standard radio command on stock firmware. */
+    private fun sideSwitch(): SideSwitch {
+        if (companionOta) return TempRadioSwitch { companion.cli(it) }
+        val address = companionDevice?.address ?: ""
+        return StockRadioSwitch(address, {
+            // its self info again: the settings may have changed since the connection (e.g. a backup restore)
+            companion.start()
+            val main = companion.mainRadio() ?: throw Exception(str(R.string.q_stock_companion))
+            // its client repeat is in the device query (v9+); asked again so a stale answer does not turn it off
+            runCatching { companion.deviceInfo() }
+            val raw = companion.deviceInfoRaw
+            val repeat = if (raw.size > 80 && (raw[1].toInt() and 0xff) >= 9) raw[80].toInt() and 1 else 0
+            SavedRadio(main, repeat)
+        }, savedRadios) { r, rep -> companion.setRadio(r.freqKhz, r.bwHz, r.sf, r.cr, rep) }
+    }
+
+    private fun session(contact: Contact) = OtaSession(companion, contact, sideRadio(), sideSwitch(), budget.also { it.duty = duty() },
         { log.add(it) }, { p, until -> phase = p; waitUntil = until; notifyProgress() }) { s, t ->
         sent = s
         total = t
@@ -2077,7 +2136,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runQueue() = work {
         val q = queue ?: return@work
-        if (!companionOta) throw Exception(str(R.string.q_stock_companion))
+        if (!companionCanOta) throw Exception(str(R.string.q_stock_companion))
         if (releases.isEmpty()) loadReleases().join()
         // one foreground service (and wake lock) for the whole queue: the next repeater's login, download and
         // backup run with the screen off too, and Android does not let an app in the background start one again

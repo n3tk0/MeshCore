@@ -139,6 +139,10 @@ private fun QueuePick(vm: AppViewModel) {
     }
     val picked = list.filter { vm.queuePicked[hex(it.publicKey)] == true }
     val count = picked.size
+    if (vm.companionStockSide) {
+        Text(stringResource(R.string.stock_side_warning), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error)
+    }
     Button(onClick = { vm.queueAsk = true }, enabled = !vm.busy && count > 0 && vm.queueRelease != null,
         modifier = Modifier.fillMaxWidth()) {
         Text(pluralStringResource(R.plurals.q_start, count, count))
