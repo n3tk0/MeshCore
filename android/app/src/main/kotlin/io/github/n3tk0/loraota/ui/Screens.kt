@@ -687,6 +687,7 @@ private fun RepeaterRow(vm: AppViewModel, c: Contact, onClick: () -> Unit, onEdi
                 ) {
                     RouteBadge(c.hops)
                     if (vm.isUpdatePaused(c)) PausedBadge()
+                    vm.mailboxSummaries[hex(c.publicKey)]?.let { MailboxBadge(it) }
                     if (healthRec != null && parsedHealth != null) {
                         val problems = HealthCheck.problems(HealthCheck.warnings(parsedHealth, null))
                         val dotColor = when {

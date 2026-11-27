@@ -919,6 +919,7 @@ private fun RepeaterSettingsEditor(vm: AppViewModel) {
     }
 
     RepeaterFilterCard(vm)
+    RepeaterMailboxCard(vm)
     TempRadioCard(vm)
     RepeaterBackupCard(vm)
 }
