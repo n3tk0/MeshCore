@@ -1656,6 +1656,13 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     uint32_t last_mod = getRTCClock()->getCurrentTime();  // fallback value if not present in cmd_frame
+    if (recipient && recipient->type == ADV_TYPE_NONE && cmd_frame[1 + PUB_KEY_SIZE] != ADV_TYPE_NONE) {
+      // the key sits in a temporary slot (an anon request to a node outside the contacts): updating it
+      // there would keep a real contact in the hidden anon slots, left out of CMD_GET_CONTACTS until a
+      // restart; free the slot and add the contact as new instead
+      memset(recipient, 0, sizeof(*recipient));
+      recipient = NULL;
+    }
     if (recipient) {
       updateContactFromFrame(*recipient, last_mod, cmd_frame, len);
       recipient->lastmod = last_mod;

@@ -1089,6 +1089,8 @@
         <item quantity="other">Found: %1$d nearby repeaters</item>
     </plurals>
     <string name="nearby_empty">No nearby repeaters answered. Check the antenna, radio settings, or whether a repeater is in direct range. Hidden repeaters and those with repeating off do not answer.</string>
+    <string name="nearby_naming">Asking %1$s for its name…</string>
+    <string name="nearby_stop_naming">Stop names</string>
     <string name="nearby_add">Add</string>
     <string name="nearby_adding">Adding to contacts…</string>
     <string name="nearby_added">“%1$s” was added to the companion\'s contacts.</string>

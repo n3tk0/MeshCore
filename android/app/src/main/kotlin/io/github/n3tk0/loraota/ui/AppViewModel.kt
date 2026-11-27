@@ -304,6 +304,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var nearbySecondsLeft by mutableStateOf(0)
     var nearbyError by mutableStateOf("")
     var nearbyAddingKey by mutableStateOf<String?>(null)
+    var nearbyNaming by mutableStateOf(false)   // asking the found repeaters for their names
+    /**
+     * Repeaters added from the nearby screen, by key: a companion that answered a name request keeps
+     * the key in a hidden temporary slot and a stock one lists it only after a restart, so the list
+     * keeps them until the companion lists them itself.
+     */
+    private val nearbyAdded = HashMap<String, Contact>()
     var firmwareTab by mutableStateOf(0)   // the repeater's firmware: 0 over LoRa, 1 over Bluetooth / Wi-Fi
     var companionModel by mutableStateOf("")
     var companionVersion by mutableStateOf("")
@@ -470,6 +477,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         nearbySecondsLeft = 0
         nearbyError = ""
         nearbyAddingKey = null
+        nearbyNaming = false
+        nearbyAdded.clear()
         profileBatchAsk = false
         if (profileBatchCurrent == null) profileBatchOpen = false   // a running batch shows its own end first
     }
@@ -844,7 +853,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (c.name.isNotBlank()) allContactsByKey[k] = c.name
         }
         fleetState.rememberDeviceNames(allContactsByKey)
-        val list = all.filter { it.isRepeater }
+        val listed = all.filter { it.isRepeater }
+        nearbyAdded.keys.removeAll { it in allContactsByKey || listed.any { c -> hex(c.publicKey) == it } }
+        val list = (listed + nearbyAdded.values)
             .sortedWith(compareBy<Contact>({ it.hops ?: Int.MAX_VALUE }, { it.name.lowercase() }))
         repeaters.clear()
         // the ones next to us first: only those can be updated
@@ -3719,7 +3730,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeNearby() {
-        job?.cancel()
+        // Back ends a search or the name requests, not an Add that is under way
+        if (nearbyListening || nearbyNaming) job?.cancel()
         nearbyListening = false
         nearbySecondsLeft = 0
         loginSheet = null
@@ -3774,6 +3786,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 NodeDiscover.mergeInOrder(nearbyRepeaters, item)
             }
+            ticker?.cancel()
+            nearbyListening = false
+            nearbySecondsLeft = 0
+            sortNearby()
+            askNearbyNames()
         } catch (e: CancellationException) {
             throw e
         } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
@@ -3784,13 +3801,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             ticker?.cancel()
             nearbyListening = false
+            nearbyNaming = false
             nearbySecondsLeft = 0
             nearbySearched = true
-            if (nearbyRepeaters.size > 1) {
-                val sorted = NodeDiscover.sortStrongest(nearbyRepeaters.toList())
-                nearbyRepeaters.clear()
-                nearbyRepeaters.addAll(sorted)
+            sortNearby()
+        }
+    }
+
+    private fun sortNearby() {
+        if (nearbyRepeaters.size > 1) {
+            val sorted = NodeDiscover.sortStrongest(nearbyRepeaters.toList())
+            nearbyRepeaters.clear()
+            nearbyRepeaters.addAll(sorted)
+        }
+    }
+
+    /**
+     * Asks each found repeater with no known name for its name and owner (anonymous `ANON_REQ_TYPE_OWNER`,
+     * direct zero-hop, no login), one at a time: the companion follows one request at a time.
+     */
+    private suspend fun askNearbyNames() {
+        val todo = nearbyRepeaters.filter { it.name == null && it.hasFullKey && !it.inContacts }.map { it.pubKeyHex }
+        if (todo.isEmpty()) return
+        nearbyNaming = true
+        try {
+            for (keyHex in todo) {
+                val item = nearbyRepeaters.firstOrNull { it.pubKeyHex == keyHex } ?: continue
+                working = str(R.string.nearby_naming, item.shortId)
+                val (tag, est) = try {
+                    companion.anonRequest(item.pubKey, NodeDiscover.ownerRequestData())
+                } catch (e: io.github.n3tk0.loraota.ble.CompanionError) {
+                    return   // an older companion firmware (no requests to keys outside its contacts): names stay unknown
+                }
+                val data = companion.awaitResponse(tag, (est.toLong() + 1500L).coerceIn(2500L, 8000L)) ?: continue
+                val (name, owner) = NodeDiscover.parseOwnerReply(data) ?: continue
+                fleetState.rememberDeviceName(keyHex, name)
+                val idx = nearbyRepeaters.indexOfFirst { it.pubKeyHex == keyHex }
+                if (idx >= 0) {
+                    val cur = nearbyRepeaters[idx]
+                    nearbyRepeaters[idx] = NodeDiscover.DiscoveredRepeater(
+                        pubKey = cur.pubKey,
+                        pubKeyHex = cur.pubKeyHex,
+                        outSnr = cur.outSnr,
+                        inSnr = cur.inSnr,
+                        rssi = cur.rssi,
+                        name = name,
+                        inContacts = cur.inContacts,
+                        contactKeyHex = cur.contactKeyHex,
+                        contactHops = cur.contactHops,
+                        owner = owner,
+                    )
+                }
             }
+        } finally {
+            nearbyNaming = false
         }
     }
 
@@ -3823,6 +3887,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val contactName = item.name?.takeIf { it.isNotBlank() } ?: "Repeater ${item.shortId}"
             val frame = NodeDiscover.newRepeaterContactFrame(item.pubKey, contactName)
             companion.addContact(frame)
+            nearbyAdded[item.pubKeyHex] = Contact(frame.copyOf(NodeDiscover.LISTED_CONTACT_LEN))
             loadRepeaters()
             val added = repeaters.firstOrNull { NodeDiscover.sameNode(hex(it.publicKey), item.pubKeyHex) }
             val finalName = added?.name?.takeIf { it.isNotBlank() } ?: contactName
@@ -3839,6 +3904,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     inContacts = true,
                     contactKeyHex = added?.let { hex(it.publicKey) } ?: cur.pubKeyHex,
                     contactHops = added?.hops ?: 0,
+                    owner = cur.owner,
                 )
             }
             message = str(R.string.nearby_added, finalName)

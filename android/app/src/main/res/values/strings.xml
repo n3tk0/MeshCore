@@ -1089,6 +1089,8 @@
         <item quantity="other">Открити: %1$d близки repeater-а</item>
     </plurals>
     <string name="nearby_empty">Няма отговор от близки repeater-и. Провери антената, радио параметрите или дали наблизо има repeater в директен обхват. Скритите repeater-и и тези с изключено препредаване не отговарят.</string>
+    <string name="nearby_naming">Питам %1$s за името…</string>
+    <string name="nearby_stop_naming">Спри имената</string>
     <string name="nearby_add">Добави</string>
     <string name="nearby_adding">Добавям в контактите…</string>
     <string name="nearby_added">„%1$s“ е добавен в контактите на companion-а.</string>

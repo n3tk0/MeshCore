@@ -256,6 +256,17 @@ class CompanionRadio(private val link: CompanionLink) {
         return ByteBuffer.wrap(f, 2, 4).order(ByteOrder.LITTLE_ENDIAN).int
     }
 
+    /**
+     * An anonymous request ([NodeDiscover.CMD_SEND_ANON_REQ]) to a node, also one not in the contacts
+     * (companion firmware v13+): returns its tag and the companion's estimated timeout in ms.
+     */
+    suspend fun anonRequest(pubKey: ByteArray, data: ByteArray): Pair<Int, Int> {
+        val f = command(byteArrayOf(NodeDiscover.CMD_SEND_ANON_REQ.toByte()) + pubKey + data, 5000, RESP_SENT)
+        if (f.size < 10) throw CompanionError("short reply")
+        val b = ByteBuffer.wrap(f, 2, 8).order(ByteOrder.LITTLE_ENDIAN)
+        return b.int to b.int
+    }
+
     /** The response to a request: the data after its tag, or null if none came in time. */
     suspend fun awaitResponse(tag: Int, timeoutMs: Long): ByteArray? {
         val f = lock.withLock {
