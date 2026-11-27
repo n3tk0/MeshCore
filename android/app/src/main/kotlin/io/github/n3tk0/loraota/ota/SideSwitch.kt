@@ -81,7 +81,8 @@ class StockRadioSwitch(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             throw SideSwitchFailed(e.message ?: "")
-        }.also { normal = it }
+        }
+        normal = n
         store.put(address, n)
         try {
             setRadio(radio, 0)
