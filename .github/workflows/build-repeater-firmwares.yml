@@ -195,13 +195,18 @@ jobs:
 
       - name: OTA Manifest
         run: |
-          if ! ls out/*.ota.json >/dev/null 2>&1; then
+          if ! ls out/* >/dev/null 2>&1; then
             echo "::error::no board built: nothing to release"
             exit 1
           fi
-          jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
-          rm out/*.ota.json
-          jq -c '.files | length' out/ota-manifest.json
+          # only nRF52 / ESP32 boards have manifest entries; RP2040 / STM32 files are released without them
+          if ls out/*.ota.json >/dev/null 2>&1; then
+            jq -s '{files: .}' out/*.ota.json > out/ota-manifest.json
+            rm out/*.ota.json
+            jq -c '.files | length' out/ota-manifest.json
+          else
+            echo "::warning::no nRF52 / ESP32 board built: no ota-manifest.json in this release"
+          fi
 
       - name: Release Text
         env:
