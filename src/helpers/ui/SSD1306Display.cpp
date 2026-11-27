@@ -31,6 +31,11 @@ bool SSD1306Display::begin() {
   #ifdef DISPLAY_ROTATION
   display.setRotation(DISPLAY_ROTATION);
   #endif
+  #if defined(PIN_OLED_CS) && defined(PIN_OLED_DC)
+  bool ok = display.begin(SSD1306_SWITCHCAPVCC, DISPLAY_ADDRESS, true, false);
+  if (_dim || _contrast != 0xCF) { applyDrive(); setContrast(_contrast); }   // the brightness from before a re-init
+  return ok;
+  #else
   // The SA0 strap selects 0x3C or 0x3D and differs between modules: fall back to the other address
   // of the pair (as SH1106Display does). The Adafruit init runs even when nothing answered, because
   // it allocates the frame buffer that halt() and turnOn() use regardless.
@@ -40,6 +45,7 @@ bool SSD1306Display::begin() {
   bool ok = display.begin(SSD1306_SWITCHCAPVCC, addr ? addr : DISPLAY_ADDRESS, true, false);
   if (_dim || _contrast != 0xCF) { applyDrive(); setContrast(_contrast); }   // the brightness from before a re-init
   return addr != 0 && ok;
+  #endif
 }
 
 void SSD1306Display::turnOn() {

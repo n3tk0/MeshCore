@@ -58,7 +58,7 @@ static const uint16_t HAPTIC_REMIND[]  = { 80, 120, 80 };     // the antenna que
 
 #define COLOR_BLACK  0
 
-#include "../ui-new/icons.h"
+#include <helpers/ui/companion-new/icons.h>
 
 using ui::utf8Len;
 using ui::utf8Skip;
@@ -2980,7 +2980,7 @@ static void setOpt(UITask* task, uint8_t id, int v) {
       int target = BATT_CAL_MIN_MV + v * 10;
       if (mult > 0 && batt_cal_mv > 0 && target != (int)batt_cal_mv) {
         mult = mult * target / batt_cal_mv;
-        if (board.setAdcMultiplier(mult)) p->adc_mult = mult;
+        if (board.setAdcMultiplier(mult)) p->adc_multiplier = mult;
         task->resetBattery();
       }
       break;

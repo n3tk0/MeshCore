@@ -27,6 +27,11 @@ public:
     ((CustomSX1268 *)_radio)->setMaxPayloadMillis(pm.payloadMillis);
   }
 
+  bool lastRxHadCRC() override {
+    bool crc = true;
+    ((CustomSX1268 *)_radio)->getLoRaRxHeaderInfo(NULL, &crc);
+    return crc;
+  }
   bool isReceivingPacket() override { 
     return ((CustomSX1268 *)_radio)->isReceiving();
   }
@@ -42,6 +47,7 @@ public:
   }
   uint8_t getSpreadingFactor() const override { return ((CustomSX1268 *)_radio)->spreadingFactor; }
 
+  bool supportsRxBoostedGain() const override { return true; }
   bool setRxBoostedGainMode(bool en) override {
     return ((CustomSX1268 *)_radio)->setRxBoostedGainMode(en) == RADIOLIB_ERR_NONE;
   }

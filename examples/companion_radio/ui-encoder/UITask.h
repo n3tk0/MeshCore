@@ -20,8 +20,8 @@
   #include <helpers/ui/GenericVibration.h>
 #endif
 
-#include "../AbstractUITask.h"
-#include "../NodePrefs.h"
+#include <helpers/ui/AbstractUITask.h>
+#include <helpers/CompanionNodePrefs.h>
 
 #ifndef UI_MSG_HISTORY
   #define UI_MSG_HISTORY  24
@@ -143,7 +143,7 @@ class UITask : public AbstractUITask {
   bool isMention(const char* text) const;
 
 public:
-  UITask(mesh::MainBoard* board, MultiSerialInterface* serial) : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
+  UITask(mesh::MainBoard* board, DisplayDriver* display = NULL) : AbstractUITask(board), _display(display), _sensors(NULL) {
     next_batt_chck = _next_refresh = 0;
     _auto_off = _off_at = 0;
     ui_started_at = 0;
@@ -175,7 +175,15 @@ public:
     _air_next = 0;
     _raw_detents = 0;
   }
+  UITask(mesh::MainBoard* board, MultiSerialInterface* serial) : UITask(board, (DisplayDriver*)NULL) {
+    _interfaceManager = serial;
+  }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
+  void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs, MultiSerialInterface* serial,
+             void* /*mesh*/, uint32_t /*ble_pin*/, const char* /*ver*/, const char* /*build_date*/) {
+    _interfaceManager = serial;
+    begin(display, sensors, node_prefs);
+  }
 
   // navigation
   void push(UIScreen* s);

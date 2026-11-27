@@ -61,7 +61,6 @@ protected:
   uint32_t gaugeDay() const;
 
   bool     gps_detected = false;
-  bool     gps_active = false;
   uint32_t gps_update_interval_sec = 1;
 
   #if ENV_INCLUDE_GPS
@@ -69,10 +68,6 @@ protected:
   void start_gps();
   void stop_gps();
   void initBasicGPS();
-  #ifdef RAK_BOARD
-  void rakGPSInit();
-  bool gpsIsAwake(uint8_t ioPin);
-  #endif
   #endif
 
 public:

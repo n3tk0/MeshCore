@@ -12,7 +12,8 @@ VolatileRTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 #if ENV_INCLUDE_GPS
   #include <helpers/sensors/MicroNMEALocationProvider.h>
-  MicroNMEALocationProvider nmea = MicroNMEALocationProvider(Serial1, &rtc_clock);
+  NmeaGpsDriver gps_driver(Serial1);
+  MicroNMEALocationProvider nmea(gps_driver, &rtc_clock);
   EnvironmentSensorManager sensors = EnvironmentSensorManager(nmea);
 #else
   EnvironmentSensorManager sensors;
@@ -25,6 +26,7 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
   #else
     MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true);
   #endif
+  UITask ui_task(&board, &display);
 #endif
 
 #if defined(UI_HAS_ROTARY_INPUT)
