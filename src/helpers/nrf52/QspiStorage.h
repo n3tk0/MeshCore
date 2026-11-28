@@ -83,7 +83,8 @@ class QspiStorage {
 
 public:
   // Asks the chip by hand: IO1 with pull up / pull down (0 with pull up = something holds the line low),
-  // then 0xFF x2 (ends a continuous read mode), reset 0x66 0x99, release 0xAB (answers the device ID),
+  // then 0xAB (out of deep power down), 0xFF x2 (ends a continuous read mode), reset 0x66 0x99,
+  // 0xAB again (answers the device ID),
   // JEDEC 0x9F and 0x90 (maker + device). Out: "pu=1 pd=0 ab=14 9f=856015 90=8514". The pins are left as
   // inputs; the QSPI peripheral takes them again on its next init. Not while the flash is in use.
   void bitbangProbe(char* out, size_t len) {
@@ -105,6 +106,8 @@ public:
       for (int i = 0; i < n; i++) bbByte(sck, io0, c[i]);
     };
     auto end = [&]() { nrf_gpio_pin_set(io0); nrf_gpio_pin_set(cs); delayMicroseconds(5); };
+    const uint8_t ab0[1] = { 0xAB };      cmd(ab0, 1); end();   // out of deep power down first: it ignores the rest
+    delayMicroseconds(50);
     const uint8_t ff[2] = { 0xFF, 0xFF }; cmd(ff, 2); end();
     const uint8_t re[1] = { 0x66 };       cmd(re, 1); end();
     const uint8_t rs[1] = { 0x99 };       cmd(rs, 1); end();
@@ -168,6 +171,23 @@ public:
                                    (_id[0] == 0xFF && _id[1] == 0xFF && _id[2] == 0xFF));
   }
 
+  // `qspi`: probes again (by hand, then with the peripheral) and says what it saw, WITHOUT changing what
+  // the repeater uses: the mailbox and LoRa OTA keep the choice made at boot (a flash found later is
+  // used after a restart). When the flash is in use it is not touched (an OTA may be writing to it).
+  void diagnose(char* out, size_t len) {
+    if (_ok) { describe(out, len); return; }
+    char bb[48];
+    bitbangProbe(bb, sizeof(bb));
+    uint8_t stage = _stage, id0 = _id[0], id1 = _id[1], id2 = _id[2];
+    int err = _err;
+    bool found = probe();
+    char d[16];
+    describe(d, sizeof(d));
+    snprintf(out, len, "%s | %s%s", d, bb, found ? " (restart to use it)" : "");
+    if (_on) off();
+    _ok = false; _stage = stage; _err = err; _id[0] = id0; _id[1] = id1; _id[2] = id2;
+  }
+
   // what the last probe saw, for `selftest` and `qspi`: "ok:856015" (JEDEC ID; P25Q16H), "init:5" (nrfx error
   // of the init, 5 = timeout: the chip did not answer the status read), "xfer:N" (the ID read failed),
   // "id:FFFFFF" / "id:000000" (no chip answers, or a chip under 2 MB)
@@ -197,7 +217,9 @@ public:
 
   void off() {
     if (!_on || _hold) return;
-    waitIdle(1000);
+    // only a chip that answered can be busy: with no chip (or IO1 stuck at 1) the status read says
+    // "busy" for good and each failed probe would wait the whole second
+    if (_ok) waitIdle(1000);
     nrfx_qspi_cinstr_quick_send(0xB9, NRF_QSPI_CINSTR_LEN_1B, NULL);   // deep power down: under 1 uA instead of ~15 uA standby
     nrfx_qspi_uninit();
     _on = false;

@@ -60,6 +60,7 @@ object CliCommands {
         CliCommandInfo("mppt off", "no tracking"),
         CliCommandInfo("mppt <volts>", "fixed set-point (e.g. 5.5)"),
         CliCommandInfo("selftest", "self test: radio, i2c, qspi, battery"),
+        CliCommandInfo("qspi", "probe the external QSPI flash again (diagnostics)"),
         CliCommandInfo("i2c", "I2C devices"),
         CliCommandInfo("sensor list", "list the sensors"),
         CliCommandInfo("ota status", "LoRa OTA status"),
