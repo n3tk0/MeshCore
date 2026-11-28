@@ -29,6 +29,9 @@
 class QspiStorage {
   bool _on, _ok, _hold;
   unsigned long _used;
+  uint8_t _stage;      // where the last probe failed: 0 none, 1 init, 2 ID read, 3 bad ID
+  int _err;            // its nrfx error, counted from NRFX_ERROR_BASE_NUM (5 = timeout)
+  uint8_t _id[3];      // the JEDEC ID read by the last begin() (85 60 15 = P25Q16H)
   uint32_t _buf[64];   // word aligned bounce buffer: the DMA wants RAM, words and 4 byte addresses
 
   // off() leaves the flash in deep power down, where it ignores everything but 0xAB: also the status
@@ -56,6 +59,72 @@ class QspiStorage {
     delayMicroseconds(50);   // tRES1: well under 50 us
   }
 
+  // ---- by hand on the pins, without the QSPI peripheral (diagnostics, `qspi` command) ----
+  static void bbByte(uint32_t sck, uint32_t io0, uint8_t v) {
+    for (int b = 7; b >= 0; b--) {
+      nrf_gpio_pin_write(io0, (v >> b) & 1);
+      delayMicroseconds(1);
+      nrf_gpio_pin_set(sck);
+      delayMicroseconds(1);
+      nrf_gpio_pin_clear(sck);
+    }
+  }
+  static uint8_t bbRead(uint32_t sck, uint32_t io1) {
+    uint8_t v = 0;
+    for (int b = 7; b >= 0; b--) {
+      nrf_gpio_pin_set(sck);
+      delayMicroseconds(1);
+      v = (v << 1) | (nrf_gpio_pin_read(io1) & 1);
+      nrf_gpio_pin_clear(sck);
+      delayMicroseconds(1);
+    }
+    return v;
+  }
+
+public:
+  // Asks the chip by hand: IO1 with pull up / pull down (0 with pull up = something holds the line low),
+  // then 0xAB (out of deep power down), 0xFF x2 (ends a continuous read mode), reset 0x66 0x99,
+  // 0xAB again (answers the device ID),
+  // JEDEC 0x9F and 0x90 (maker + device). Out: "pu=1 pd=0 ab=14 9f=856015 90=8514". The pins are left as
+  // inputs; the QSPI peripheral takes them again on its next init. Not while the flash is in use.
+  void bitbangProbe(char* out, size_t len) {
+    if (_on) off();
+    uint32_t sck = g_ADigitalPinMap[PIN_QSPI_SCK], cs = g_ADigitalPinMap[PIN_QSPI_CS];
+    uint32_t io0 = g_ADigitalPinMap[PIN_QSPI_IO0], io1 = g_ADigitalPinMap[PIN_QSPI_IO1];
+    uint32_t io2 = g_ADigitalPinMap[PIN_QSPI_IO2], io3 = g_ADigitalPinMap[PIN_QSPI_IO3];
+    nrf_gpio_pin_set(cs);   nrf_gpio_cfg_output(cs);
+    nrf_gpio_pin_clear(sck); nrf_gpio_cfg_output(sck);
+    nrf_gpio_pin_set(io0);  nrf_gpio_cfg_output(io0);
+    nrf_gpio_pin_set(io2);  nrf_gpio_cfg_output(io2);   // WP high
+    nrf_gpio_pin_set(io3);  nrf_gpio_cfg_output(io3);   // HOLD high
+    nrf_gpio_cfg_input(io1, NRF_GPIO_PIN_PULLUP);   delayMicroseconds(100);
+    int pu = nrf_gpio_pin_read(io1);
+    nrf_gpio_cfg_input(io1, NRF_GPIO_PIN_PULLDOWN); delayMicroseconds(100);
+    int pd = nrf_gpio_pin_read(io1);
+    auto cmd = [&](const uint8_t* c, int n) {
+      nrf_gpio_pin_clear(cs); delayMicroseconds(1);
+      for (int i = 0; i < n; i++) bbByte(sck, io0, c[i]);
+    };
+    auto end = [&]() { nrf_gpio_pin_set(io0); nrf_gpio_pin_set(cs); delayMicroseconds(5); };
+    const uint8_t ab0[1] = { 0xAB };      cmd(ab0, 1); end();   // out of deep power down first: it ignores the rest
+    delayMicroseconds(50);
+    const uint8_t ff[2] = { 0xFF, 0xFF }; cmd(ff, 2); end();
+    const uint8_t re[1] = { 0x66 };       cmd(re, 1); end();
+    const uint8_t rs[1] = { 0x99 };       cmd(rs, 1); end();
+    delayMicroseconds(100);                 // tRST
+    const uint8_t ab[4] = { 0xAB, 0, 0, 0 }; cmd(ab, 4);
+    uint8_t dev = bbRead(sck, io1); end();
+    delayMicroseconds(50);
+    const uint8_t j[1] = { 0x9F };        cmd(j, 1);
+    uint8_t a = bbRead(sck, io1), b = bbRead(sck, io1), c = bbRead(sck, io1); end();
+    const uint8_t r[4] = { 0x90, 0, 0, 0 }; cmd(r, 4);
+    uint8_t m = bbRead(sck, io1), d = bbRead(sck, io1); end();
+    nrf_gpio_cfg_default(sck); nrf_gpio_cfg_default(io0); nrf_gpio_cfg_default(io1);
+    nrf_gpio_cfg_default(io2); nrf_gpio_cfg_default(io3);
+    snprintf(out, len, "pu=%d pd=%d ab=%02X 9f=%02X%02X%02X 90=%02X%02X", pu, pd, dev, a, b, c, m, d);
+  }
+
+private:
   bool waitIdle(uint32_t timeout_ms) {
     unsigned long start = millis();
     while (nrfx_qspi_mem_busy_check() == NRFX_ERROR_BUSY) {
@@ -66,18 +135,61 @@ class QspiStorage {
   }
 
 public:
-  QspiStorage() : _on(false), _ok(false), _hold(false), _used(0) { }
+  QspiStorage() : _on(false), _ok(false), _hold(false), _used(0), _stage(0), _err(0) { _id[0] = _id[1] = _id[2] = 0; }
 
-  // true when a flash chip of at least 2 MB answers
+  // true when a flash chip of at least 2 MB answers. Tried 3 times: a chip still starting after power up
+  // (or after the bootloader) may miss the first try.
   bool begin() {
-    if (!on()) return false;
-    uint8_t id[3] = { 0, 0, 0 };
+    for (int i = 0; i < 3; i++) {
+      if (i) delay(20);
+      if (probe()) return true;
+    }
+    return false;
+  }
+
+  bool probe() {
+    _ok = false;
+    _id[0] = _id[1] = _id[2] = 0;
+    _err = 0;
+    _stage = 1;
+    if (!on()) return false;   // _err set by on()
+    _stage = 2;
     nrf_qspi_cinstr_conf_t c = NRFX_QSPI_DEFAULT_CINSTR(0x9F, NRF_QSPI_CINSTR_LEN_4B);   // JEDEC ID
-    _ok = nrfx_qspi_cinstr_xfer(&c, NULL, id) == NRFX_SUCCESS && id[0] != 0 && id[0] != 0xFF && id[2] >= 0x15;
+    nrfx_err_t e = nrfx_qspi_cinstr_xfer(&c, NULL, _id);
+    if (e != NRFX_SUCCESS) _err = (int)e - (int)NRFX_ERROR_BASE_NUM;
+    else _stage = 3;
+    _ok = e == NRFX_SUCCESS && _id[0] != 0 && _id[0] != 0xFF && _id[2] >= 0x15;
+    if (_ok) _stage = 0;
     off();
     return _ok;
   }
   bool ok() const { return _ok; }
+
+  // `qspi`: probes again (by hand, then with the peripheral) and says what it saw, WITHOUT changing what
+  // the repeater uses: the mailbox and LoRa OTA keep the choice made at boot (a flash found later is
+  // used after a restart). When the flash is in use it is not touched (an OTA may be writing to it).
+  void diagnose(char* out, size_t len) {
+    if (_ok) { describe(out, len); return; }
+    char bb[48];
+    bitbangProbe(bb, sizeof(bb));
+    uint8_t stage = _stage, id0 = _id[0], id1 = _id[1], id2 = _id[2];
+    int err = _err;
+    bool found = probe();
+    char d[16];
+    describe(d, sizeof(d));
+    snprintf(out, len, "%s | %s%s", d, bb, found ? " (restart to use it)" : "");
+    if (_on) off();
+    _ok = false; _stage = stage; _err = err; _id[0] = id0; _id[1] = id1; _id[2] = id2;
+  }
+
+  // what the last probe saw, for `selftest` and `qspi`: "ok:856015" (JEDEC ID; P25Q16H), "init:5" (nrfx error
+  // of the init, 5 = timeout: the chip did not answer the status read), "xfer:N" (the ID read failed),
+  // "id:FFFFFF" / "id:000000" (no chip answers, or a chip under 2 MB)
+  void describe(char* out, size_t len) const {
+    if (_stage == 1) snprintf(out, len, "init:%d", _err);
+    else if (_stage == 2) snprintf(out, len, "xfer:%d", _err);
+    else snprintf(out, len, "%s:%02X%02X%02X", _ok ? "ok" : "id", _id[0], _id[1], _id[2]);
+  }
 
   bool on() {
     _used = millis();
@@ -89,6 +201,7 @@ public:
     wake();
     nrfx_err_t e = nrfx_qspi_init(&cfg, NULL, NULL);   // NULL handler: blocking calls
     if (e != NRFX_SUCCESS) {
+      _err = (int)e - (int)NRFX_ERROR_BASE_NUM;
       if (e == NRFX_ERROR_TIMEOUT) nrfx_qspi_uninit();   // it stays "initialized": the next try would be refused
       return false;
     }
@@ -98,7 +211,9 @@ public:
 
   void off() {
     if (!_on || _hold) return;
-    waitIdle(1000);
+    // only a chip that answered can be busy: with no chip (or IO1 stuck at 1) the status read says
+    // "busy" for good and each failed probe would wait the whole second
+    if (_ok) waitIdle(1000);
     nrfx_qspi_cinstr_quick_send(0xB9, NRF_QSPI_CINSTR_LEN_1B, NULL);   // deep power down: under 1 uA instead of ~15 uA standby
     nrfx_qspi_uninit();
     _on = false;

@@ -1807,6 +1807,17 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     reply[0] = 0;
   } else if (strcmp(command, "selftest") == 0) {
     formatSelfTest(reply);
+#if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
+  } else if (strcmp(command, "qspi") == 0) {
+    // diagnostics only: the external flash probed again ("ok:856015", "init:5", "id:000000" + the pins
+    // by hand); what the mailbox and OTA use stays as found at boot
+    if (lora_ota.isActive()) strcpy(reply, "Err - OTA in progress");
+    else {
+      char d[100];
+      qspi.diagnose(d, sizeof(d));
+      snprintf(reply, 155, "qspi %s", d);
+    }
+#endif
   } else if (memcmp(command, "battsave", 8) == 0 && (command[8] == 0 || command[8] == ' ')) {
     // not upstream's `powersaving` (MCU sleep between packets): steps by battery voltage
     handlePowerSaveCommand(&command[8], reply);
@@ -3392,6 +3403,7 @@ void MyMesh::formatSelfTest(char* reply) {
   else ST_ADD(" i2c=ok");
 #if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
   ST_ADD(" qspi=%s", qspi_ok ? "ok" : "bad");
+  if (!qspi_ok) { char d[16]; qspi.describe(d, sizeof(d)); ST_ADD(" qe=%s", d); }
 #endif
   uint16_t mv = battMilliVolts();
   BatteryGauge* g = sensors.getBatteryGauge();

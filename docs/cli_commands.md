@@ -303,6 +303,16 @@ For the xiao-solar-lite v0.6 (CN3791) board in `Xiao_nrf52_solar_repeater` (`-D 
 - `radio=bad`: the noise floor is not between -140 and -60 dBm. `i2c=off:N` / `i2c=stuck`. `qspi` only on boards with QSPI storage. `left=chg`: charging. `ota=on,new`: new firmware not confirmed yet; `ota=on,fresh`: it was confirmed in the last hour (a login or a console command does it, so a self test over the air shows `fresh`). `ps`: the power step.
 - The LoRa OTA app reads it for its Health page and keeps every result on the phone.
 - The app also reads `battsave` and, when `day=` shows an INA219, `battery capacity` for its battery card.
+- `qspi=bad` adds `qe=` with where the boot probe failed: `init:N` (nrfx error of the init, 5 = timeout), `xfer:N` (the ID read failed), `id:XXXXXX` (wrong or no JEDEC ID).
+
+---
+
+### QSPI flash diagnostics (nRF52 repeaters with QSPI storage)
+**Usage:** `qspi`
+
+Probes the external flash again: first by hand on the pins (IO1 with pull up/down, 0xAB, 0xFF 0xFF, reset 0x66 0x99, then 0xAB, 0x9F and 0x90 IDs), then with the QSPI peripheral. Diagnostics only: the mailbox and LoRa OTA keep what was found at boot (a flash found now is used after a restart). Refused during an OTA; a flash in use is not touched.
+
+**Example reply:** `qspi id:000000 | pu=1 pd=0 ab=00 9f=000000 90=0000`
 
 ---
 
