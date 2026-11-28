@@ -171,7 +171,7 @@ enum StrId {
   S_STEPS_FMT, S_NOTIFY_NO_PHONE, S_NOTIFY_ALWAYS, S_NOTIFY_NEVER, S_CSORT_NAME, S_CSORT_RECENT,
   S_ANT_POWER_LOSS, S_ANT_ALWAYS, S_ANT_NEVER, S_WAKE_DIRECT, S_WAKE_ALL, S_WAKE_NEVER, S_LOCK_HAND,
   S_LOCK_AUTO, S_PRESET_CUSTOM, S_DST_EU, S_VERSION_FMT, S_BATT_FMT, S_CONTACTS_FMT,
-  S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_BOOT_FMT, S_BL_OURS, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
+  S_UPTIME_FMT, S_CLOCK_FMT, S_NO_CLOCK, S_BOOT_FMT, S_BL_OURS, S_BL_OTHER, S_BL_NONE, S_RESCUE_L1, S_RESCUE_L2, S_RESCUE_L3,
   // tools
   S_NETWORK, S_NEARBY, S_AIRTIME, S_RANGE, S_TRACE, S_SEARCHING, S_NO_ANSWER, S_TRACE_NONE, S_TRACE_NO_PATH, S_MS_FMT, S_START, S_STOP, S_EVERY_FMT, S_OK_OF_FMT, S_PICK_TARGET, S_NO_TARGETS, S_AIR_HOUR_FMT, S_RX_FMT, S_TXN_FMT, S_ERR_FMT, S_RSSI_FMT, S_SNR_FMT, S_AIR_TOTAL_FMT, S_ATTEMPT_FMT, S_DELIVERED, S_NOT_DELIVERED, S_WAITING, S_NEW_CHANNEL, S_CH_TITLE, S_CH_ADDED, S_CH_EXISTS, S_CH_FULL, S_CH_BAD, S_MUTE, S_UNMUTE, S_MUTED, S_UNMUTED, S_DEL_X_Q, S_HARDWARE, S_ENCODER, S_TURNS_FMT, S_PRESSES_FMT, S_HOLDS_FMT, S_RAW_FMT, S_ADC_FMT, S_USB_FMT, S_RESET_FMT, S_WORDS, S_WORDS_Q_FMT, S_WORDS_NONE, S_TODAY, S_TURN_HINT, S_TRACE_WAIT_FMT,
   S_LET_GO_1, S_LET_GO_2, S_BUTTONS, S_PRESS_HINT, S_CHOOSE, S_SET_REPEAT, S_REPEAT_Q, S_REPEAT_FREQ, S_TEST_INPUT, S_TEST_VIBE, S_TEST_SCREEN,
@@ -359,8 +359,10 @@ static const char* const STRINGS[S_COUNT][2] = {
   { "Работи %s", "Up %s" },
   { "Час %02lu:%02lu%s", "Now %02lu:%02lu%s" },
   { "Няма час", "No clock" },
-  { "Зареждач %s %s", "Bootloader %s %s" },
+  { "Зареждач %s%s%s", "Bootloader %s%s%s" },
   { "наш", "ours" },
+  { "друг", "other" },
+  { "няма", "none" },
   { "CLI rescue", "CLI rescue" },
   { "USB порт", "USB port" },
   { "Рестарт", "Restart" },
@@ -3156,7 +3158,9 @@ public:
     readBootloaderInfo(bi);
     char *dash = strchr(bi.version, '-');
     if (dash) *dash = 0;
-    snprintf(_lines[_n++], 40, T(S_BOOT_FMT), bi.kind == BL_OURS ? T(S_BL_OURS) : bootloaderKindName(bi.kind), bi.version);
+    const char *kind = bi.kind == BL_OURS ? T(S_BL_OURS) : bi.kind == BL_OTHER ? T(S_BL_OTHER)
+                     : bi.kind == BL_NONE ? T(S_BL_NONE) : bootloaderKindName(bi.kind);   // otafix, adafruit
+    snprintf(_lines[_n++], 40, T(S_BOOT_FMT), kind, bi.version[0] ? " " : "", bi.version);
 #endif
     reset();
   }

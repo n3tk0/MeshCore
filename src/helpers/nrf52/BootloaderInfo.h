@@ -67,7 +67,7 @@ static inline const char* bl_findLine(const char* from, const char* end, const c
 static inline void bl_isoDate(char* out, size_t n, const char* d) {
   static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
   int m = 0;
-  for (int i = 0; i < 12; i++) if (memcmp(d, &months[i * 3], 3) == 0) { m = i + 1; break; }
+  if (strlen(d) >= 11) for (int i = 0; i < 12; i++) if (memcmp(d, &months[i * 3], 3) == 0) { m = i + 1; break; }
   int day = 0, year = 0;
   if (m && strlen(d) >= 11 && sscanf(d + 3, "%d %d", &day, &year) == 2 && day >= 1 && day <= 31 && year > 2000) {
     snprintf(out, n, "%04d-%02d-%02d", year, m, day);
@@ -95,7 +95,7 @@ static inline bool bl_parseInfoText(const char* begin, const char* end, Bootload
   if (q) bl_copyField(bi.board, sizeof(bi.board), q, end, false);
   q = bl_findLine(v, end, "Date: ");
   if (q) {
-    char d[16];
+    char d[16] = {};
     bl_copyField(d, sizeof(d), q, end, false);
     bl_isoDate(bi.date, sizeof(bi.date), d);
   }

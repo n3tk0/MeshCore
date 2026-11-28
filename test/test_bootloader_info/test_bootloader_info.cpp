@@ -84,6 +84,14 @@ TEST(BootloaderInfo, LongLineIsCut) {
   EXPECT_EQ('X', out[155]);
 }
 
+TEST(BootloaderInfo, ShortDateIsCopied) {
+  std::string img = image("UF2 Bootloader 1.0\r\nDate: X\r\n");
+  BootloaderInfo bi;
+  memset(&bi, 0, sizeof(bi));
+  ASSERT_TRUE(bl_parseInfoText(img.data(), img.data() + img.size(), bi));
+  EXPECT_STREQ("X", bi.date);
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

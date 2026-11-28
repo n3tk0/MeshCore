@@ -2365,9 +2365,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         readBattery(r, hasGauge = "day" in it.values)
                         // what INFO_UF2.TXT says (firmware with `selftest` from 2026-11-28 on)
                         working = str(R.string.working_bootloader)
-                        bootloaderInfo = runCatching {
+                        bootloaderInfo = try {
                             RepeaterBackup.ask(companion, r, BootloaderInfo.COMMAND)?.let { b -> BootloaderInfo.parse(b) }
-                        }.getOrNull()
+                        } catch (e: CancellationException) {
+                            throw e   // Health closed: stop here
+                        } catch (_: Exception) {
+                            null
+                        }
                     }
                     l
                 } finally {
@@ -2391,7 +2395,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             repeaterHealthLoadedFor = dev
         } else {
             // the companion's own console; a stock one has no `bootloader` (or no console at all)
-            bootloaderInfo = runCatching { BootloaderInfo.parse(companion.cli(BootloaderInfo.COMMAND)) }.getOrNull()
+            bootloaderInfo = try {
+                BootloaderInfo.parse(companion.cli(BootloaderInfo.COMMAND))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
         }
         healthWarnings = warnings.toList()
         historyCache.clear()

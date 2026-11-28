@@ -2607,12 +2607,14 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     return true;
   }
 
-#if defined(NRF52_PLATFORM)
   if (strcmp(command, "bootloader") == 0) {   // as in CommonCLI: what INFO_UF2.TXT says
+#if defined(NRF52_PLATFORM)
     formatBootloaderInfo(reply, 155);
+#else
+    strcpy(reply, "n/a (no UF2 bootloader)");
+#endif
     return true;
   }
-#endif
 
   if (strcmp(command, "ver") == 0) {
     sprintf(reply, "%s (Build: %s)", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
