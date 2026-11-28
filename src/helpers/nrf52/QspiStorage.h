@@ -164,12 +164,6 @@ public:
     return _ok;
   }
   bool ok() const { return _ok; }
-  // no chip answers at all (the data line stays 0 or 1): a board without the flash fitted, e.g. some
-  // SenseCAP Solar P1. Not a fault: the repeater keeps the mailbox and LoRa OTA in the internal flash.
-  bool absent() const {
-    return !_ok && _stage == 3 && ((_id[0] == 0 && _id[1] == 0 && _id[2] == 0) ||
-                                   (_id[0] == 0xFF && _id[1] == 0xFF && _id[2] == 0xFF));
-  }
 
   // `qspi`: probes again (by hand, then with the peripheral) and says what it saw, WITHOUT changing what
   // the repeater uses: the mailbox and LoRa OTA keep the choice made at boot (a flash found later is

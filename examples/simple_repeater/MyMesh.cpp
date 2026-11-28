@@ -3388,8 +3388,8 @@ void MyMesh::formatSelfTest(char* reply) {
   bool i2c_stuck = i2cAnyBusStuck();
   if (i2c_off || i2c_stuck) strcat(warn, "i2c,");
 #if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
-  bool qspi_ok = qspi.ok(), qspi_none = qspi.absent();   // none: not fitted, no warning
-  if (!qspi_ok && !qspi_none) strcat(warn, "qspi,");
+  bool qspi_ok = qspi.ok();
+  if (!qspi_ok) strcat(warn, "qspi,");
 #endif
   if (psave.stage() != PSAVE_NORMAL) strcat(warn, "batt,");
   int len = strlen(warn);
@@ -3402,8 +3402,8 @@ void MyMesh::formatSelfTest(char* reply) {
   else if (i2c_off) ST_ADD(" i2c=off:%d", i2c_off);
   else ST_ADD(" i2c=ok");
 #if defined(WITH_LORA_OTA) && defined(QSPI_STORAGE)
-  ST_ADD(" qspi=%s", qspi_ok ? "ok" : qspi_none ? "none" : "bad");
-  if (!qspi_ok && !qspi_none) { char d[16]; qspi.describe(d, sizeof(d)); ST_ADD(" qe=%s", d); }
+  ST_ADD(" qspi=%s", qspi_ok ? "ok" : "bad");
+  if (!qspi_ok) { char d[16]; qspi.describe(d, sizeof(d)); ST_ADD(" qe=%s", d); }
 #endif
   uint16_t mv = battMilliVolts();
   BatteryGauge* g = sensors.getBatteryGauge();

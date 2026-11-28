@@ -328,7 +328,7 @@ private fun SelfTestRows(t: SelfTest) {
             },
         )
     }
-    v["qspi"]?.let { HealthRow(stringResource(R.string.health_flash), stringResource(when (it) { "ok" -> R.string.hv_fine; "none" -> R.string.hv_not_fitted; else -> R.string.hv_no_answer })) }
+    v["qspi"]?.let { HealthRow(stringResource(R.string.health_flash), stringResource(if (it == "ok") R.string.hv_fine else R.string.hv_no_answer)) }
     val batt = buildList {
         t.batteryMv?.let { add(String.format(Locale.ROOT, "%.2f V", it / 1000.0)) }
         t.batteryPercent?.let { add("$it%") }
