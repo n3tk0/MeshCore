@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import io.github.n3tk0.loraota.R
 import io.github.n3tk0.loraota.backup.DeviceKind
 import io.github.n3tk0.loraota.ota.BattSave
+import io.github.n3tk0.loraota.ota.BootloaderInfo
 import io.github.n3tk0.loraota.ota.HealthCheck
 import io.github.n3tk0.loraota.ota.HealthProblem
 import io.github.n3tk0.loraota.ota.HealthSeverity
@@ -93,6 +94,7 @@ fun HealthScreen(vm: AppViewModel) {
         if (vm.selfTestMissing) InfoCard(stringResource(R.string.health_no_selftest))
     }
     if (vm.selfTest != null || problems.isNotEmpty()) SummaryCard(vm.selfTest, problems)
+    vm.bootloaderInfo?.takeIf { it.kind != BootloaderInfo.Kind.NOT_NRF52 }?.let { BootloaderCard(it) }
     HistorySection(vm, defaultExpanded = !repeater || vm.canReadRepeater == false)
     if (repeater && vm.healthRecords.size > 1) PastChecks(vm)
     if (repeater) {
@@ -363,6 +365,54 @@ private fun SelfTestRows(t: SelfTest) {
             stringResource(R.string.health_uptime),
             if (m != null) stringResource(R.string.hv_uptime, m.groupValues[1].toInt(), m.groupValues[2].toInt()) else up,
         )
+    }
+}
+
+/** What INFO_UF2.TXT says, read by the firmware (`bootloader`): ours or another one, and its version. */
+@Composable
+private fun BootloaderCard(b: BootloaderInfo) {
+    val ours = b.kind == BootloaderInfo.Kind.OURS
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (ours) Icons.Default.CheckCircle else Icons.Default.Info, null,
+                    tint = if (ours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(
+                        when (b.kind) {
+                            BootloaderInfo.Kind.OURS -> R.string.bl_ours
+                            BootloaderInfo.Kind.OTAFIX -> R.string.bl_otafix
+                            BootloaderInfo.Kind.ADAFRUIT -> R.string.bl_adafruit
+                            BootloaderInfo.Kind.NONE -> R.string.bl_none
+                            else -> R.string.bl_other
+                        }
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            b.version?.let { HealthRow(stringResource(R.string.bl_version), it) }
+            b.board?.let { HealthRow(stringResource(R.string.bl_board), it.replace('_', ' ')) }
+            b.date?.let { HealthRow(stringResource(R.string.bl_date), it) }
+            b.softDevice?.let { HealthRow("SoftDevice", it) }
+            if (ours) {
+                HealthRow(
+                    stringResource(R.string.bl_protection),
+                    stringResource(if (b.rollback) R.string.bl_feat_rollback else if (b.staged) R.string.bl_feat_staged else R.string.hv_off),
+                )
+            }
+            val hint = when (b.kind) {
+                BootloaderInfo.Kind.OURS -> null
+                BootloaderInfo.Kind.OTAFIX -> R.string.bl_hint_otafix
+                else -> R.string.bl_hint_other
+            }
+            hint?.let {
+                Text(stringResource(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

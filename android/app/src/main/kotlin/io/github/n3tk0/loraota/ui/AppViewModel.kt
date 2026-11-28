@@ -92,6 +92,7 @@ import io.github.n3tk0.loraota.ota.HealthStore
 import io.github.n3tk0.loraota.ota.HealthWarning
 import io.github.n3tk0.loraota.ota.HistorySeries
 import io.github.n3tk0.loraota.ota.SelfTest
+import io.github.n3tk0.loraota.ota.BootloaderInfo
 import io.github.n3tk0.loraota.security.PasswordStore
 import io.github.n3tk0.loraota.tools.CliHelper
 import io.github.n3tk0.loraota.tools.DiagnosticReport
@@ -2280,6 +2281,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var healthKind by mutableStateOf(DeviceKind.REPEATER)
     var selfTest by mutableStateOf<SelfTest?>(null)
     var selfTestMissing by mutableStateOf(false)   // the repeater's firmware has no `selftest`
+    var bootloaderInfo by mutableStateOf<BootloaderInfo?>(null)   // `bootloader`: null when the firmware has no such command
     var healthWarnings by mutableStateOf<List<HealthWarning>>(emptyList())
     var healthRecords by mutableStateOf<List<HealthStore.Record>>(emptyList())
     var historyField by mutableStateOf(HistorySeries.F_BATT_PCT)
@@ -2307,6 +2309,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         healthKind = kind
         selfTest = null
         selfTestMissing = false
+        bootloaderInfo = null
         healthWarnings = emptyList()
         historyCache.clear()
         failedHistoryKeys.clear()
@@ -2358,7 +2361,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val line = try {
                     val l = RepeaterBackup.ask(companion, r, SelfTest.COMMAND)?.removePrefix("> ")?.trim()
                     // "day=" (mAh in/out) only comes with an INA219: no capacity to ask for without one
-                    SelfTest.parse(l ?: "")?.let { readBattery(r, hasGauge = "day" in it.values) }
+                    SelfTest.parse(l ?: "")?.let {
+                        readBattery(r, hasGauge = "day" in it.values)
+                        // what INFO_UF2.TXT says (firmware with `selftest` from 2026-11-28 on)
+                        working = str(R.string.working_bootloader)
+                        bootloaderInfo = runCatching {
+                            RepeaterBackup.ask(companion, r, BootloaderInfo.COMMAND)?.let { b -> BootloaderInfo.parse(b) }
+                        }.getOrNull()
+                    }
                     l
                 } finally {
                     withContext(NonCancellable) { runCatching { companion.captureCli(0) } }
@@ -2379,6 +2389,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             repeaterHealthLoadedFor = dev
+        } else {
+            // the companion's own console; a stock one has no `bootloader` (or no console at all)
+            bootloaderInfo = runCatching { BootloaderInfo.parse(companion.cli(BootloaderInfo.COMMAND)) }.getOrNull()
         }
         healthWarnings = warnings.toList()
         historyCache.clear()
