@@ -1505,6 +1505,21 @@ Covers serial NMEA receivers (`MicroNMEALocationProvider`).
 
 ---
 
+#### Show which bootloader is installed (nRF52 only)
+**Usage:** `bootloader`
+
+What `INFO_UF2.TXT` says (version, board, date), read from the bootloader's flash, so no double reset is needed. Works on repeaters, room servers, sensors and companions (their console). The first word is the kind:
+- `ours`: our OTAFIX with the staged LoRa OTA install (`bootloader/` in this repo, MOT1 marker); `feat=staged,rollback` when it can also roll back from the QSPI flash
+- `otafix`: stock OTAFIX (LoRa OTA works, but no power-cut protection or rollback)
+- `adafruit`: Adafruit UF2 bootloader without OTAFIX
+- `other`: a bootloader without the UF2 info text (`at=` its start address); `none`: no bootloader
+
+**Example:** `ours ver=0.9.2-OTAFIX2.3-BP1.4-mcota1 board=nRF52840-SeeedXiaoSense-v1 date=2026-10-22 sd=S140/6.1.1 feat=staged,rollback`
+
+The Android app shows it in Health; the Faketec companion on its Settings > System > About ("Инфо") screen.
+
+---
+
 #### View power management support
 **Usage:** `get pwrmgt.support`
 

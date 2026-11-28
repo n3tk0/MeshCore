@@ -5,6 +5,9 @@
 #include "TxtDataHelpers.h"
 #include <RTClib.h>
 #include "I2CHealth.h"
+#if defined(NRF52_PLATFORM)
+#include "nrf52/BootloaderInfo.h"
+#endif
 
 #ifndef BRIDGE_MAX_BAUD
 #define BRIDGE_MAX_BAUD 115200
@@ -305,6 +308,13 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       sprintf(reply, "%s (Build: %s)", _callbacks->getFirmwareVer(), _callbacks->getBuildDate());
     } else if (memcmp(command, "board", 5) == 0) {
       sprintf(reply, "%s", _board->getManufacturerName());
+    } else if (strcmp(command, "bootloader") == 0) {
+      // what INFO_UF2.TXT says, without the double reset; "ours" = our OTAFIX with the staged install
+#if defined(NRF52_PLATFORM)
+      formatBootloaderInfo(reply, 155);
+#else
+      strcpy(reply, "n/a (no UF2 bootloader)");
+#endif
     } else if (strcmp(command, "i2c") == 0) {
       i2cFormatList(reply, 155);  // what was found, and what was turned off and why
     } else if (strcmp(command, "power") == 0) {

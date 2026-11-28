@@ -5,6 +5,9 @@
 #include <WiFi.h>
 #endif
 #include <Mesh.h>
+#if defined(NRF52_PLATFORM)
+#include <helpers/nrf52/BootloaderInfo.h>
+#endif
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -2601,6 +2604,15 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
 
   if (strcmp(command, "board") == 0) {
     strcpy(reply, board.getManufacturerName());
+    return true;
+  }
+
+  if (strcmp(command, "bootloader") == 0) {   // as in CommonCLI: what INFO_UF2.TXT says
+#if defined(NRF52_PLATFORM)
+    formatBootloaderInfo(reply, 155);
+#else
+    strcpy(reply, "n/a (no UF2 bootloader)");
+#endif
     return true;
   }
 
