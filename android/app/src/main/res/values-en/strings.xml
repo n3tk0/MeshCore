@@ -413,6 +413,7 @@
     <string name="hv_fine">fine</string>
     <string name="hv_bus_stuck">the bus is stuck</string>
     <string name="hv_no_answer">does not answer</string>
+    <string name="hv_not_fitted">none (not fitted)</string>
     <string name="hv_day">charged %1$s · used %2$s mAh</string>
     <string name="hv_on">on</string>
     <string name="hv_off">off</string>

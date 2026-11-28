@@ -413,6 +413,7 @@
     <string name="hv_fine">наред</string>
     <string name="hv_bus_stuck">шината е блокирана</string>
     <string name="hv_no_answer">не отговаря</string>
+    <string name="hv_not_fitted">няма (не е монтиран)</string>
     <string name="hv_day">заредени %1$s · изразходвани %2$s mAh</string>
     <string name="hv_on">включено</string>
     <string name="hv_off">изключено</string>

@@ -27,6 +27,15 @@ class HealthTest {
     }
 
     @Test
+    fun qspiNotFittedIsNoWarningButAFaultIs() {
+        val none = SelfTest.parse("ok radio=ok rx=1 tx=1 nf=-105 i2c=ok qspi=none batt=4196mV/100% mail=off ota=off ps=normal up=0d00h")!!
+        assertTrue(none.ok)
+        assertTrue(HealthCheck.warnings(none, null).isEmpty())
+        val bad = SelfTest.parse("WARN qspi radio=ok rx=1 tx=1 nf=-105 i2c=ok qspi=bad qe=init:5 batt=4196mV/100% ps=normal up=0d00h")!!
+        assertTrue(HealthWarning.QSPI in HealthCheck.warnings(bad, null))
+    }
+
+    @Test
     fun parsesWarningsAsTheFirmwareWritesThem() {
         // "WARN " + "i2c,batt," (a comma after each), then the values
         val t = SelfTest.parse("WARN i2c,batt, radio=ok rx=1 tx=2 nf=-110 i2c=off:1 batt=3420mV left=chg mail=off ota=on,new ps=critical up=0d01h")!!

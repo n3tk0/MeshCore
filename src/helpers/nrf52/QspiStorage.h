@@ -98,6 +98,12 @@ public:
     return _ok;
   }
   bool ok() const { return _ok; }
+  // no chip answers at all (the data line stays 0 or 1): a board without the flash fitted, e.g. some
+  // SenseCAP Solar P1. Not a fault: the repeater keeps the mailbox and LoRa OTA in the internal flash.
+  bool absent() const {
+    return !_ok && _stage == 3 && ((_id[0] == 0 && _id[1] == 0 && _id[2] == 0) ||
+                                   (_id[0] == 0xFF && _id[1] == 0xFF && _id[2] == 0xFF));
+  }
 
   // what the last probe saw, for `selftest` and `qspi`: "ok:856015" (JEDEC ID; P25Q16H), "init:5" (nrfx error
   // of the init, 5 = timeout: the chip did not answer the status read), "xfer:N" (the ID read failed),
