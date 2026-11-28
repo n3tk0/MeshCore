@@ -29,6 +29,9 @@
 class QspiStorage {
   bool _on, _ok, _hold;
   unsigned long _used;
+  uint8_t _stage;      // where the last probe failed: 0 none, 1 init, 2 ID read, 3 bad ID
+  int _err;            // its nrfx error, counted from NRFX_ERROR_BASE_NUM (5 = timeout)
+  uint8_t _id[3];      // the JEDEC ID read by the last begin() (85 60 15 = P25Q16H)
   uint32_t _buf[64];   // word aligned bounce buffer: the DMA wants RAM, words and 4 byte addresses
 
   // off() leaves the flash in deep power down, where it ignores everything but 0xAB: also the status
@@ -66,18 +69,44 @@ class QspiStorage {
   }
 
 public:
-  QspiStorage() : _on(false), _ok(false), _hold(false), _used(0) { }
+  QspiStorage() : _on(false), _ok(false), _hold(false), _used(0), _stage(0), _err(0) { _id[0] = _id[1] = _id[2] = 0; }
 
-  // true when a flash chip of at least 2 MB answers
+  // true when a flash chip of at least 2 MB answers. Tried 3 times: a chip still starting after power up
+  // (or after the bootloader) may miss the first try.
   bool begin() {
-    if (!on()) return false;
-    uint8_t id[3] = { 0, 0, 0 };
+    for (int i = 0; i < 3; i++) {
+      if (i) delay(20);
+      if (probe()) return true;
+    }
+    return false;
+  }
+
+  bool probe() {
+    _ok = false;
+    _id[0] = _id[1] = _id[2] = 0;
+    _err = 0;
+    _stage = 1;
+    if (!on()) return false;   // _err set by on()
+    _stage = 2;
     nrf_qspi_cinstr_conf_t c = NRFX_QSPI_DEFAULT_CINSTR(0x9F, NRF_QSPI_CINSTR_LEN_4B);   // JEDEC ID
-    _ok = nrfx_qspi_cinstr_xfer(&c, NULL, id) == NRFX_SUCCESS && id[0] != 0 && id[0] != 0xFF && id[2] >= 0x15;
+    nrfx_err_t e = nrfx_qspi_cinstr_xfer(&c, NULL, _id);
+    if (e != NRFX_SUCCESS) _err = (int)e - (int)NRFX_ERROR_BASE_NUM;
+    else _stage = 3;
+    _ok = e == NRFX_SUCCESS && _id[0] != 0 && _id[0] != 0xFF && _id[2] >= 0x15;
+    if (_ok) _stage = 0;
     off();
     return _ok;
   }
   bool ok() const { return _ok; }
+
+  // what the last probe saw, for `selftest` and `qspi`: "ok:856015" (JEDEC ID; P25Q16H), "init:5" (nrfx error
+  // of the init, 5 = timeout: the chip did not answer the status read), "xfer:N" (the ID read failed),
+  // "id:FFFFFF" / "id:000000" (no chip answers, or a chip under 2 MB)
+  void describe(char* out, size_t len) const {
+    if (_stage == 1) snprintf(out, len, "init:%d", _err);
+    else if (_stage == 2) snprintf(out, len, "xfer:%d", _err);
+    else snprintf(out, len, "%s:%02X%02X%02X", _ok ? "ok" : "id", _id[0], _id[1], _id[2]);
+  }
 
   bool on() {
     _used = millis();
@@ -89,6 +118,7 @@ public:
     wake();
     nrfx_err_t e = nrfx_qspi_init(&cfg, NULL, NULL);   // NULL handler: blocking calls
     if (e != NRFX_SUCCESS) {
+      _err = (int)e - (int)NRFX_ERROR_BASE_NUM;
       if (e == NRFX_ERROR_TIMEOUT) nrfx_qspi_uninit();   // it stays "initialized": the next try would be refused
       return false;
     }
