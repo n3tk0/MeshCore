@@ -59,6 +59,69 @@ class QspiStorage {
     delayMicroseconds(50);   // tRES1: well under 50 us
   }
 
+  // ---- by hand on the pins, without the QSPI peripheral (diagnostics, `qspi` command) ----
+  static void bbByte(uint32_t sck, uint32_t io0, uint8_t v) {
+    for (int b = 7; b >= 0; b--) {
+      nrf_gpio_pin_write(io0, (v >> b) & 1);
+      delayMicroseconds(1);
+      nrf_gpio_pin_set(sck);
+      delayMicroseconds(1);
+      nrf_gpio_pin_clear(sck);
+    }
+  }
+  static uint8_t bbRead(uint32_t sck, uint32_t io1) {
+    uint8_t v = 0;
+    for (int b = 7; b >= 0; b--) {
+      nrf_gpio_pin_set(sck);
+      delayMicroseconds(1);
+      v = (v << 1) | (nrf_gpio_pin_read(io1) & 1);
+      nrf_gpio_pin_clear(sck);
+      delayMicroseconds(1);
+    }
+    return v;
+  }
+
+public:
+  // Asks the chip by hand: IO1 with pull up / pull down (0 with pull up = something holds the line low),
+  // then 0xFF x2 (ends a continuous read mode), reset 0x66 0x99, release 0xAB (answers the device ID),
+  // JEDEC 0x9F and 0x90 (maker + device). Out: "pu=1 pd=0 ab=14 9f=856015 90=8514". The pins are left as
+  // inputs; the QSPI peripheral takes them again on its next init. Not while the flash is in use.
+  void bitbangProbe(char* out, size_t len) {
+    if (_on) off();
+    uint32_t sck = g_ADigitalPinMap[PIN_QSPI_SCK], cs = g_ADigitalPinMap[PIN_QSPI_CS];
+    uint32_t io0 = g_ADigitalPinMap[PIN_QSPI_IO0], io1 = g_ADigitalPinMap[PIN_QSPI_IO1];
+    uint32_t io2 = g_ADigitalPinMap[PIN_QSPI_IO2], io3 = g_ADigitalPinMap[PIN_QSPI_IO3];
+    nrf_gpio_pin_set(cs);   nrf_gpio_cfg_output(cs);
+    nrf_gpio_pin_clear(sck); nrf_gpio_cfg_output(sck);
+    nrf_gpio_pin_set(io0);  nrf_gpio_cfg_output(io0);
+    nrf_gpio_pin_set(io2);  nrf_gpio_cfg_output(io2);   // WP high
+    nrf_gpio_pin_set(io3);  nrf_gpio_cfg_output(io3);   // HOLD high
+    nrf_gpio_cfg_input(io1, NRF_GPIO_PIN_PULLUP);   delayMicroseconds(100);
+    int pu = nrf_gpio_pin_read(io1);
+    nrf_gpio_cfg_input(io1, NRF_GPIO_PIN_PULLDOWN); delayMicroseconds(100);
+    int pd = nrf_gpio_pin_read(io1);
+    auto cmd = [&](const uint8_t* c, int n) {
+      nrf_gpio_pin_clear(cs); delayMicroseconds(1);
+      for (int i = 0; i < n; i++) bbByte(sck, io0, c[i]);
+    };
+    auto end = [&]() { nrf_gpio_pin_set(io0); nrf_gpio_pin_set(cs); delayMicroseconds(5); };
+    const uint8_t ff[2] = { 0xFF, 0xFF }; cmd(ff, 2); end();
+    const uint8_t re[1] = { 0x66 };       cmd(re, 1); end();
+    const uint8_t rs[1] = { 0x99 };       cmd(rs, 1); end();
+    delayMicroseconds(100);                 // tRST
+    const uint8_t ab[4] = { 0xAB, 0, 0, 0 }; cmd(ab, 4);
+    uint8_t dev = bbRead(sck, io1); end();
+    delayMicroseconds(50);
+    const uint8_t j[1] = { 0x9F };        cmd(j, 1);
+    uint8_t a = bbRead(sck, io1), b = bbRead(sck, io1), c = bbRead(sck, io1); end();
+    const uint8_t r[4] = { 0x90, 0, 0, 0 }; cmd(r, 4);
+    uint8_t m = bbRead(sck, io1), d = bbRead(sck, io1); end();
+    nrf_gpio_cfg_default(sck); nrf_gpio_cfg_default(io0); nrf_gpio_cfg_default(io1);
+    nrf_gpio_cfg_default(io2); nrf_gpio_cfg_default(io3);
+    snprintf(out, len, "pu=%d pd=%d ab=%02X 9f=%02X%02X%02X 90=%02X%02X", pu, pd, dev, a, b, c, m, d);
+  }
+
+private:
   bool waitIdle(uint32_t timeout_ms) {
     unsigned long start = millis();
     while (nrfx_qspi_mem_busy_check() == NRFX_ERROR_BUSY) {
